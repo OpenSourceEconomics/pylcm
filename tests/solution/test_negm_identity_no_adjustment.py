@@ -48,6 +48,7 @@ def _model(*, no_adjustment: str) -> Model:
             start=20, stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
         ),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
+        initial_regimes={20: "alive"},
     )
 
 

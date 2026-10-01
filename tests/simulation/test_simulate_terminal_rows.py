@@ -55,7 +55,7 @@ def test_first_is_all_minus_post_entry_terminal_rows(result: SimulationResult):
     pd.testing.assert_frame_equal(df_first, expected)
 
 
-def test_all_emits_every_active_period(result: SimulationResult):
+def test_all_emits_every_covered_period(result: SimulationResult):
     """`"all"` keeps the absorbing representation: one row per subject and period."""
     df = result.to_dataframe(terminal_rows="all")
     assert len(df) == N_SUBJECTS * N_PERIODS

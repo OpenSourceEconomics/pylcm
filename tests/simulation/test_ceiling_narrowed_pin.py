@@ -16,6 +16,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 
@@ -24,7 +25,9 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=8)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -37,6 +40,7 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution,
+        initial_regimes={18: "working_life"},
     )
 
 

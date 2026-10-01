@@ -24,6 +24,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -64,10 +65,6 @@ def _one_probability() -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _source_is_early(age: float) -> bool:
-    return age < 22
-
-
 def _target_process() -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -90,14 +87,13 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -105,6 +101,7 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 
@@ -201,8 +198,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 # The top of this grid lies outside the target's `(0, 1, 2)`.
                 states={"wealth": LinSpacedGrid(start=1.0, stop=9.0, n_points=3)},
                 state_transitions={
@@ -212,7 +208,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -220,6 +216,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -258,14 +255,13 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at_half}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _one_plus_shock},
             ),
@@ -273,6 +269,7 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
     got = _source_value(model=model, params=_PARAMS)
@@ -304,8 +301,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=QuasiArithmeticMean(
@@ -314,7 +310,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
                 ),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -322,6 +318,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -360,8 +357,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": _enter_first},
                     "other": {"target": _enter_second},
@@ -370,7 +366,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "other": UniformIIDProcess(n_points=2, start=0.0, stop=1.0),
@@ -381,6 +377,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -425,14 +422,13 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "extra": UniformIIDProcess(n_points=2, start=1.0, stop=3.0),
@@ -443,6 +439,7 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {
@@ -491,8 +488,7 @@ def test_the_entry_representation_decides_the_action() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition=_choose,
-                active=_source_is_early,
+                regime_transitions=Choose(func=_choose, targets=("stay", "enter")),
                 actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={
                     "wealth": {"stay": lambda: jnp.asarray(1.0)},
@@ -502,12 +498,12 @@ def test_the_entry_representation_decides_the_action() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "stay": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 functions={"utility": _stay_utility},
             ),
             "enter": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -515,6 +511,7 @@ def test_the_entry_representation_decides_the_action() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
     params = {
         "source": {

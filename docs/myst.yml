@@ -44,6 +44,8 @@ project:
       children:
         - file: user_guide/write_economics.ipynb
         - file: user_guide/defining_models.md
+        - file: user_guide/dated_regime_graph.md
+        - file: user_guide/migrating_dated_regimes.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb

@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -36,6 +37,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -119,7 +121,7 @@ def borrowing_constraint(
 
 def _make_dead_regime() -> UserRegime:
     return UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": BEQUEST_WEALTH_GRID},
         functions={
             "utility": bequest_utility,
@@ -146,7 +148,13 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     last_age = ages.exact_values[-1]
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     retirement = regime_type(
-        transition=next_regime_from_retirement,
+        regime_transitions=until_exit(
+            last_age,
+            law=Choose(
+                func=next_regime_from_retirement, targets=("dead", "retirement")
+            ),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -184,13 +192,13 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
             if is_dcegm
             else {}
         ),
-        active=lambda age, la=last_age: age < la,
     )
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
         regime_id_class=RegimeId,
         fixed_params=_fixed_scale() if scale_is_fixed else {},
+        initial_regimes={ages.exact_values[0]: "retirement"},
     )
 
 

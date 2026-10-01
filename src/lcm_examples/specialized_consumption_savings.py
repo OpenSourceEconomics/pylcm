@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -74,7 +74,7 @@ ONE_MARGIN = LiquidMargin(
 def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, one-margin model solved by plain EGM."""
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -87,17 +87,16 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
         },
         liquid=ONE_MARGIN,
         solver=EGM(savings_grid=SAVINGS_GRID),
-        active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
-        active=lambda age: age == 1,
     )
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )
@@ -163,7 +162,7 @@ TAX_MARGIN = LiquidMargin(
 def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
     """Build the smallest NBEGM model with a continuous tax-bracket kink."""
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"liquid": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"liquid": next_liquid},
@@ -182,17 +181,16 @@ def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
         },
         liquid=TAX_MARGIN,
         solver=NBEGM(savings_grid=SAVINGS_GRID),
-        active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": WEALTH_GRID},
         functions={"utility": tax_terminal_utility},
-        active=lambda age: age == 1,
     )
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )
@@ -298,7 +296,7 @@ OUTER_MARGIN = OuterContinuousMargin(
 def build_nested_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, two-margin model solved by nested EGM."""
     working = NestedConsumptionSavingsRegime(
-        transition=next_regime,
+        regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -328,17 +326,16 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
             inner=DCEGM(savings_grid=SAVINGS_GRID, envelope=LTMEnvelope()),
             outer_grid=ILLIQUID_GRID,
         ),
-        active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": nested_terminal_utility},
-        active=lambda age: age == 1,
     )
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
+        initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
     )

@@ -13,6 +13,8 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -48,13 +50,18 @@ def _prob_dead(*, age: float, hazard: float) -> FloatND:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "transition": {
-            "retired": MarkovTransition(
-                lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
-            ),
-            "dead": MarkovTransition(_prob_dead),
-        },
-        "active": lambda age: age < 2,
+        "regime_transitions": ByAge(
+            cases={
+                AgeRange(stop=2): {
+                    "retired": MarkovTransition(
+                        func=lambda age, hazard: (
+                            1.0 - _prob_dead(age=age, hazard=hazard)
+                        )
+                    ),
+                    "dead": MarkovTransition(func=_prob_dead),
+                }
+            }
+        ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {
             "wealth": {
@@ -75,12 +82,15 @@ def _certain_death(age: float) -> FloatND:
 
 def _retired_regime() -> UserRegime:
     return UserRegime(
-        transition={
-            "dead": MarkovTransition(_certain_death),
-        },
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=3): {
+                    "dead": MarkovTransition(func=_certain_death),
+                }
+            }
+        ),
         # Outlives `work` by one age, so the mass `work` sends it in its final
         # transition lands on an active regime.
-        active=lambda age: age < 3,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -93,10 +103,13 @@ def _build_model(work: UserRegime) -> Model:
         regimes={
             "work": work,
             "retired": _retired_regime(),
-            "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            "dead": UserRegime(
+                regime_transitions=None, functions={"utility": lambda: 0.0}
+            ),
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
 
 
@@ -140,7 +153,8 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
         "retired": {"discount_factor": 0.95},
     }
     regime_to_v = model.solve(params=params, log_level="debug").values
-    assert set(regime_to_v[0]) >= {"work", "retired"}
+    assert set(regime_to_v[0]) == {"work"}
+    assert "retired" in regime_to_v[1]
 
 
 def test_old_mangled_spelling_is_gone() -> None:
@@ -162,7 +176,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
 
     work = _work_regime(state_transitions={"wealth": _next_wealth_growth})
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         functions={"utility": lambda wealth: 0.1 * wealth},
     )
@@ -170,6 +184,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "work"},
     )
     params = {
         "work": {
@@ -235,10 +250,16 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
 
     def _prob_vector(*, age: float, hazard: float) -> FloatND:
         dead = jnp.clip(hazard * age, 0.0, 1.0)
-        return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
+        return jnp.stack([1.0 - dead, dead])
 
     work = _work_regime(
-        transition=MarkovTransition(_prob_vector),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=2): MarkovTransition(
+                    func=_prob_vector, targets=("retired", "dead")
+                )
+            }
+        ),
         state_transitions={"wealth": _next_wealth},
     )
     model = _build_model(work)

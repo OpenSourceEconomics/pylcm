@@ -29,6 +29,7 @@ from lcm import (
 from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
@@ -68,11 +69,14 @@ def _utility(
 
 def _build_model(*, fold: bool) -> Model:
     alive = Regime(
-        transition={
-            "alive": MarkovTransition(_probability_alive),
-            "dead": MarkovTransition(_probability_dead),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "alive": MarkovTransition(func=_probability_alive),
+                "dead": MarkovTransition(func=_probability_dead),
+            },
+            exits=("dead",),
+        ),
         states={
             "wealth": WEALTH,
             "wage_shock": NormalIIDProcess(
@@ -89,14 +93,14 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility},
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age >= LAST_ALIVE_AGE,
+        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -186,7 +190,7 @@ def test_the_folded_panel_matches_its_unfolded_twin() -> None:
     pd.testing.assert_frame_equal(_simulate(fold=True), _simulate(fold=False))
 
 
-def test_every_active_period_redraws_the_shock() -> None:
+def test_every_covered_period_redraws_the_shock() -> None:
     """A subject meets a different shock each period, not one carried forward.
 
     A panel that reused one draw would still match an equally broken twin, so

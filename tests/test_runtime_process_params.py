@@ -7,6 +7,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -16,6 +17,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -61,13 +63,20 @@ def _make_model(*, fixed_params=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        transition=lambda period: jnp.where(period >= 1, RegimeId.dead, RegimeId.alive),
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law=Choose(
+                func=lambda period: jnp.where(
+                    period >= 1, RegimeId.dead, RegimeId.alive
+                ),
+                targets=("alive", "dead"),
+            ),
+            exits=("dead",),
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age >= 2,
     )
 
     return Model(
@@ -75,6 +84,7 @@ def _make_model(*, fixed_params=None):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params or {},
+        initial_regimes={0: "alive"},
     )
 
 

@@ -14,6 +14,9 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -65,16 +68,22 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
-        transition=_next_bonus,
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): Choose(func=_next_bonus, targets=("bonus",))}
+        ),
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_start},
     )
     bonus = Regime(
-        transition=_next_terminal,
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=_next_terminal, targets=("terminal",)
+                )
+            }
+        ),
         states={
             "bonus_shock": NormalIIDProcess(
                 n_points=N_POINTS,
@@ -89,14 +98,14 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility_bonus},
     )
     terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(
         regimes={"start": start, "bonus": bonus, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
+        initial_regimes={0: "start"},
     )
 
 

@@ -158,14 +158,9 @@ def build_params(
             "medicaid_eligible": {"medicaid_asset_limit": medicaid_asset_limit},
             "subsidy_medicaid": {"subsidy_high": subsidy_high},
             "subsidy_private": {"subsidy_low": subsidy_low},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

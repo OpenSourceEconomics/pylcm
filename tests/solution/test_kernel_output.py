@@ -485,7 +485,7 @@ def _solve_egm() -> None:
 
 def _solve_nbegm() -> None:
     nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=2).solve(
-        params=nbegm_ride_along_toy.build_params(), log_level="off"
+        params=nbegm_ride_along_toy.build_params(final_age_alive=1.0), log_level="off"
     )
 
 

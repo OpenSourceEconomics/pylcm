@@ -13,6 +13,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     JointTransition,
     LinSpacedGrid,
@@ -22,6 +23,7 @@ from lcm import (
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _SUPPORT = jnp.asarray([1.0, 2.0])
 
@@ -78,8 +80,11 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _build_model(*, probabilities) -> Model:
     working = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 64,
+        regime_transitions=until_exit(
+            64,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
         actions={"effort": DiscreteGrid(category_class=Effort)},
         functions={"utility": _utility},
@@ -94,11 +99,14 @@ def _build_model(*, probabilities) -> Model:
             }
         },
     )
-    dead = Regime(transition=None, functions={"utility": lambda: jnp.asarray(0.0)})
+    dead = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.asarray(0.0)}
+    )
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, stop=64, step="2Y"),
         regime_id_class=RegimeId,
+        initial_regimes={60: "working"},
     )
 
 
@@ -119,4 +127,4 @@ def test_a_correctly_shaped_probability_function_is_accepted(probabilities) -> N
 
     period_to_regime_to_V_arr = model.solve(params=_params(), log_level="debug").values
 
-    assert set(period_to_regime_to_V_arr[0]) == {"working", "dead"}
+    assert set(period_to_regime_to_V_arr[0]) == {"working"}

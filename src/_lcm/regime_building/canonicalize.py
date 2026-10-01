@@ -249,7 +249,6 @@ def _canonicalize_phase_transitions(
             state_name=state_name,
             named_targets=frozenset(named),
             required=frozenset(required),
-            declared_targets=declared_targets,
             all_regime_names=all_regime_names,
             source_label=source_label,
         )
@@ -406,34 +405,24 @@ def _per_target_law_errors(
     state_name: StateName,
     named_targets: frozenset[RegimeName],
     required: frozenset[RegimeName],
-    declared_targets: frozenset[RegimeName],
     all_regime_names: frozenset[RegimeName],
     source_label: str,
 ) -> list[str]:
-    """Check a per-target state law against graph coverage and candidate support."""
+    """Check a per-target state law against graph coverage and known regimes."""
     error_messages: list[str] = []
     missing = required - named_targets
     if missing:
         error_messages.append(
             f"{source_label}: state_transitions['{state_name}'] does not "
             f"cover reachable target(s) {sorted(missing)} retained in the temporal "
-            "graph. Provide a law "
-            f"for each, or narrow candidate support by declaring per-target "
-            f"regime transitions (`transition={{target: "
-            f"MarkovTransition(...)}}`).",
+            "graph. Provide a law for each, or remove the target from the "
+            "regime transition's declared support.",
         )
     unknown = named_targets - all_regime_names
     if unknown:
         error_messages.append(
             f"{source_label}: state_transitions['{state_name}'] names "
             f"unknown regime(s) {sorted(unknown)}.",
-        )
-    unreachable = (named_targets & all_regime_names) - declared_targets
-    if unreachable:
-        error_messages.append(
-            f"{source_label}: state_transitions['{state_name}'] names "
-            f"target(s) {sorted(unreachable)} that the regime transition "
-            f"does not include in its candidate support.",
         )
     return error_messages
 
@@ -447,7 +436,8 @@ def _declared_target_errors(
     """Read declared target support and report unknown mapping keys.
 
     - per-target dict ⇒ its key set (unknown regime names are errors)
-    - coarse callable / `MarkovTransition` ⇒ all regimes
+    - vector `MarkovTransition` with `targets` ⇒ its declared targets
+    - any other coarse callable or `MarkovTransition` ⇒ all regimes
 
     Return the declared targets and the violations found along the way.
     """

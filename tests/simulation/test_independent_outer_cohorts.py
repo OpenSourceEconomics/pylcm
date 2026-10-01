@@ -20,6 +20,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -30,6 +31,7 @@ from lcm import (
 )
 from lcm.typing import ScalarInt
 from tests.test_models import n_nbegm_toy as toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -49,9 +51,15 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                active=lambda age: age < 2,
-                transition=lambda age: jnp.where(
-                    age < 1, _RegimeId.working, _RegimeId.retired
+                regime_transitions=until_exit(
+                    2,
+                    law=Choose(
+                        func=lambda age: jnp.where(
+                            age < 1, _RegimeId.working, _RegimeId.retired
+                        ),
+                        targets=("working", "retired"),
+                    ),
+                    exits=("retired",),
                 ),
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
@@ -65,7 +73,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
                 },
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
             ),
@@ -80,6 +88,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
             axis_widths={} if width is None else {"subject": width},
             device_memory_bytes=2**30,
         ),
+        initial_regimes={0: "working"},
     )
 
 
@@ -359,7 +368,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
             np.asarray(result.raw_results["working"][0].states["wealth"]),
             initial["wealth"],
         )
-        assert not np.asarray(result.raw_results["retired"][0].in_regime).any()
+        assert 0 not in result.raw_results["retired"]
     assert maps[0] == maps[1]
     _assert_raw_equal(actual=results[1], expected=results[0])
     for targets in (None, ["utility"]):

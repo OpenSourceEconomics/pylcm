@@ -29,6 +29,7 @@ from tests.solution.test_grid_search_cell_axis import (
     _params,
     _RegimeId,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 
 _KINDS = ("singleton", "ev1", "collective")
 _BUDGET = 10**8
@@ -47,6 +48,7 @@ def _model(*, kind: str, enabled: bool, budget: int | None) -> Model:
         execution_config=ExecutionConfig(
             halve_on_materialised_gather=enabled, device_memory_bytes=budget
         ),
+        initial_regimes=initial_regimes_of(model=base),
     )
 
 

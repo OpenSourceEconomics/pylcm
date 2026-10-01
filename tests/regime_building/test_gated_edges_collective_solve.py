@@ -31,6 +31,8 @@ from _lcm.regime_building.processing import (
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -54,7 +56,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 
 
 @categorical(ordered=True)
@@ -114,8 +116,9 @@ def _consent_source_declaring(
 ) -> Regime:
     """The consent source, declaring `transition_into_married` into the couple."""
     return Regime(
-        transition={"married_terminal": transition_into_married},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): {"married_terminal": transition_into_married}}
+        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -126,7 +129,7 @@ def _consent_source_declaring(
 def _make_consent_regimes() -> dict[str, Regime]:
     single_f = _consent_source_declaring(
         ValueDependentTransition(
-            probability=MarkovTransition(_prob_one),
+            probability=MarkovTransition(func=_prob_one),
             gate=_consent_gate,
             routes={
                 "f": StakeholderRoute(
@@ -150,20 +153,17 @@ def _make_consent_regimes() -> dict[str, Regime]:
         )
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -192,11 +192,14 @@ def _solve_consent(*, enable_jit: bool = False):
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_consent_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_consent_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -304,27 +307,32 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
-        transition={
-            "married_ir": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "married_ir": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -335,8 +343,13 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "married_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -365,8 +378,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -376,21 +388,25 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE3},
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     single_m_terminal = single_f_terminal.replace()
@@ -418,11 +434,14 @@ def _solve_dissolution(*, enable_jit: bool = False):
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_dissolution_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=_make_dissolution_regimes(),
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -510,7 +529,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
     """A singleton regime reaching a collective target WITHOUT an edge is rejected."""
     regimes = _make_consent_regimes()
     # Drop the gated edge but keep the singleton -> collective transition.
-    regimes["single_f"] = _consent_source_declaring(MarkovTransition(_prob_one))
+    regimes["single_f"] = _consent_source_declaring(MarkovTransition(func=_prob_one))
     ages = AgeGrid(start=0, stop=2, step="Y")
     with pytest.raises(NotImplementedError, match="stakeholders"):
         process_regimes(
@@ -523,11 +542,14 @@ def test_raw_ungated_mixed_transition_still_rejected():
                 ),
                 ages=ages,
             ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
+            user_regimes=lower_declarations(
+                finalize_regimes(
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=LinearAggregator(),
+                    certainty_equivalent=LinearExpectation(),
+                ),
+                ages=ages,
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -541,22 +563,25 @@ def test_probabilistic_gate_is_rejected():
     """A stochastic (MarkovTransition) gate is out of scope — boolean only."""
     with pytest.raises(RegimeInitializationError, match="boolean"):
         Regime(
-            transition={
-                "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
-                    gate=MarkovTransition(_prob_one),
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(stop=1): {
+                        "married_terminal": ValueDependentTransition(
+                            probability=MarkovTransition(func=_prob_one),
+                            gate=MarkovTransition(func=_prob_one),
+                            routes={
+                                "f": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_f_terminal",
+                                        projection={"wage": _identity_wage},
+                                    ),
+                                )
+                            },
                         )
-                    },
-                )
-            },
-            active=lambda age: age < 1,
+                    }
+                }
+            ),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -568,7 +593,7 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
     """A gated edge whose fallback names a missing regime is rejected at build."""
     regimes = _make_consent_regimes()
     bad_edge = ValueDependentTransition(
-        probability=MarkovTransition(_prob_one),
+        probability=MarkovTransition(func=_prob_one),
         gate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -600,11 +625,14 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
                 ),
                 ages=ages,
             ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
+            user_regimes=lower_declarations(
+                finalize_regimes(
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=LinearAggregator(),
+                    certainty_equivalent=LinearExpectation(),
+                ),
+                ages=ages,
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -618,7 +646,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
     """An edge leg naming a target stakeholder the target lacks is rejected."""
     regimes = _make_consent_regimes()
     bad_edge = ValueDependentTransition(
-        probability=MarkovTransition(_prob_one),
+        probability=MarkovTransition(func=_prob_one),
         gate=_consent_gate,
         routes={
             "f": StakeholderRoute(
@@ -650,11 +678,14 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
                 ),
                 ages=ages,
             ),
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
+            user_regimes=lower_declarations(
+                finalize_regimes(
+                    user_regimes=regimes,
+                    derived_categoricals={},
+                    koopmans_aggregator=LinearAggregator(),
+                    certainty_equivalent=LinearExpectation(),
+                ),
+                ages=ages,
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -703,17 +734,20 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
 
     def _consent_source(*, fallback_regime: str, stakeholder: str) -> Regime:
         return Regime(
-            transition={
-                "married": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
-                    gate=_consent_gate,
-                    routes=_consent_leg(
-                        fallback_regime=fallback_regime, stakeholder=stakeholder
-                    ),
-                    gate_references=_consent_gate_refs,
-                )
-            },
-            active=lambda age: age < 1,
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(stop=1): {
+                        "married": ValueDependentTransition(
+                            probability=MarkovTransition(func=_prob_one),
+                            gate=_consent_gate,
+                            routes=_consent_leg(
+                                fallback_regime=fallback_regime, stakeholder=stakeholder
+                            ),
+                            gate_references=_consent_gate_refs,
+                        )
+                    }
+                }
+            ),
             states={"wage": _WAGE3},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -723,41 +757,49 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     single_f = _consent_source(fallback_regime="single_f_p1", stakeholder="f")
     single_m = _consent_source(fallback_regime="single_m_p1", stakeholder="m")
     single_f_p1 = Regime(
-        transition={"single_f_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                }
+            }
+        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_m_p1 = single_f_p1.replace(
-        transition={"single_m_terminal": MarkovTransition(_prob_one)},
+        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     married = Regime(
-        transition={
-            "married_terminal": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "married_terminal": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -786,8 +828,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -797,8 +838,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         },
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE3},
         functions={"utility": _u_zero},
     )
@@ -835,6 +875,7 @@ def test_full_ekl_topology_via_public_model_api():
         regimes=_make_full_topology_regimes(),
         ages=ages,
         regime_id_class=EKLRegimeId,
+        initial_regimes={ages.exact_values[0]: "single_f"},
     )
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
@@ -859,29 +900,32 @@ def test_singleton_source_with_two_legs_is_rejected():
     """A singleton source must declare exactly one edge leg."""
     with pytest.raises(RegimeInitializationError, match="exactly one leg"):
         Regime(
-            transition={
-                "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
-                    gate=_consent_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "extra": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
-            },
-            active=lambda age: age < 1,
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(stop=1): {
+                        "married_terminal": ValueDependentTransition(
+                            probability=MarkovTransition(func=_prob_one),
+                            gate=_consent_gate,
+                            routes={
+                                "f": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_f_terminal",
+                                        projection={"wage": _identity_wage},
+                                    ),
+                                ),
+                                "extra": StakeholderRoute(
+                                    target_stakeholder="m",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_m_terminal",
+                                        projection={"wage": _identity_wage},
+                                    ),
+                                ),
+                            },
+                        )
+                    }
+                }
+            ),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -920,9 +964,9 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
     )
 
 
-def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
-    """A gate reference (or fallback) inactive in a period whose ``Wbar`` is
-    actually CONSUMED (target active at t, source active at t-1) must be rejected
+def test_gated_edge_reference_uncovered_in_consumed_period_is_rejected():
+    """A gate reference (or fallback) uncovered in a period whose ``Wbar`` is
+    actually CONSUMED (target covered at t, source covered at t-1) must be rejected
     at construction, so the solve-side `_roll_gated_edges` never feeds the source
     a stale later-period ``Wbar``.
     """
@@ -931,15 +975,15 @@ def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
     )
     regimes_to_active_periods = MappingProxyType(
         {
-            "single_f": (0,),  # source active in period 0
-            "married_terminal": (1,),  # target active in period 1 -> consumed
-            "single_f_terminal": (1,),  # co-active — fine
-            "single_m_terminal": (2,),  # NOT active in consumed period 1
+            "single_f": (0,),  # source solved in period 0
+            "married_terminal": (1,),  # target solved in period 1 -> consumed
+            "single_f_terminal": (1,),  # also solved in period 1
+            "single_m_terminal": (2,),  # not solved in consumed period 1
         }
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"single_m_terminal.*active.*\[1\]",
+        match=r"single_m_terminal.*solved.*\[1\]",
     ):
         _fail_if_gated_edge_references_inactive(
             prefix=(
@@ -950,11 +994,12 @@ def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
             target_name="married_terminal",
             edge=edge,
             regimes_to_active_periods=regimes_to_active_periods,
+            gated_periods=(0,),
         )
 
 
-def test_gated_edge_coactive_references_pass():
-    """References active in every consumed period pass the guard."""
+def test_gated_edge_references_covered_in_every_consumed_period_pass():
+    """References covered in every consumed period pass the guard."""
     edge = _edge_with_refs(
         fallback_regime="single_f_terminal", gate_ref_regime="single_m_terminal"
     )
@@ -975,20 +1020,21 @@ def test_gated_edge_coactive_references_pass():
         target_name="married_terminal",
         edge=edge,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_periods=(0,),
     )
 
 
-def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
-    """Over-reach guard: a self-loop edge's reference may be inactive in a
-    target-active period whose ``Wbar`` is NEVER consumed — the target's earliest
-    active period, where no source exists one period earlier. Requiring
-    co-activity across ALL target-active periods would wrongly reject the
+def test_gated_edge_reference_uncovered_at_unconsumed_boundary_passes():
+    """Over-reach guard: a self-loop edge's reference may be uncovered in a
+    target-covered period whose ``Wbar`` is NEVER consumed — the target's earliest
+    covered period, where no source exists one period earlier. Requiring
+    joint coverage across ALL target-covered periods would wrongly reject the
     legitimate repeating self-loop model (regression: see
     ``test_collective_regime_simulate.py::
-    test_repeating_self_loop_gated_edge_simulates_past_activity_boundary``).
+    test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age``).
     """
-    # Self-loop: source == target == "src", active in periods {0, 1}; the
-    # fallback is active in {1, 2}, i.e. NOT in target-active period 0 — but
+    # Self-loop: source == target == "src", solved in periods {0, 1}; the
+    # fallback is solved in {1, 2}, i.e. not in target-solved period 0 — but
     # period 0's Wbar is unconsumed (no source at period -1), so it is legal.
     edge = _edge_with_refs(
         fallback_regime="src_fallback", gate_ref_regime="src_fallback"
@@ -999,12 +1045,13 @@ def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
             "src_fallback": (1, 2),
         }
     )
-    # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback active {1,2} covers
-    # it. No raise, even though the fallback is absent in target-active period 0.
+    # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback solved {1,2} covers
+    # it. No raise, even though the fallback is absent in target-solved period 0.
     _fail_if_gated_edge_references_inactive(
         prefix="Regime 'src', value-dependent transition into 'src': ",
         source_name="src",
         target_name="src",
         edge=edge,
         regimes_to_active_periods=regimes_to_active_periods,
+        gated_periods=(0, 1),
     )

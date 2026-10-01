@@ -12,7 +12,7 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, Model, categorical
+from lcm import AgeGrid, ByAge, Choose, DiscreteGrid, Model, categorical
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -20,6 +20,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserAge,
     UserParams,
 )
 from tests.test_models.deterministic.regression import (
@@ -29,6 +30,7 @@ from tests.test_models.deterministic.regression import (
     next_wealth,
     utility,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -103,6 +105,16 @@ def borrowing_constraint(
 _DEFAULT_N_PERIODS = 4
 _DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
 
+
+def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
+    """Work until the age before `last_age`, then die."""
+    return until_exit(
+        last_age,
+        law=Choose(func=next_regime, targets=("working_life", "dead")),
+        exits=("dead",),
+    )
+
+
 working_life = UserRegime(
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -117,18 +129,17 @@ working_life = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime,
+    regime_transitions=working_life_transitions(last_age=_DEFAULT_LAST_ACTIVE_AGE + 10),
     functions={
         "utility": utility_discrete,
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda age: age <= _DEFAULT_LAST_ACTIVE_AGE,
 )
 
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -140,12 +151,15 @@ def get_model(n_periods: int) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 10
+                )
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 
@@ -163,7 +177,7 @@ def get_params(
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
+        "final_age_alive": final_age_alive,
     }

@@ -22,6 +22,8 @@ from _lcm.regime_building.collective import _gather_along_actions
 from _lcm.regime_building.V import _get_identity_coordinate
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -65,7 +67,7 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     """A regime's Pareto weights are its own; the declaring dict cannot rewrite them."""
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -146,6 +148,7 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
             regimes=_make_singleton_target_dissolution_gate_regimes(),
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
+            initial_regimes={0: "source"},
         )
 
 
@@ -185,36 +188,37 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
     """
     source = Regime(
-        transition={
-            "target": ValueDependentTransition(
-                probability=MarkovTransition(_enters_target),
-                gate=_no_dissolution,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            ),
-            "fallback": MarkovTransition(_never_entered),
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(func=_enters_target),
+                        gate=_no_dissolution,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            )
+                        },
+                    ),
+                    "fallback": MarkovTransition(func=_never_entered),
+                }
+            }
+        ),
         states={"wage": GATE_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _wage_utility},
     )
     target = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _terminal_wage_utility},
     )
     fallback = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _fallback_wage_utility},
     )

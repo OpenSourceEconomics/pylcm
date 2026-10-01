@@ -9,10 +9,11 @@ or simulation refuses to run when one of those bindings has since been rebound
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelSealError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _UTILITY_SCALE = jnp.asarray(1.0)
 
@@ -41,20 +42,24 @@ def _next_regime(age: float) -> ScalarInt:
 
 def _build_model(*, enable_jit: bool) -> Model:
     working = Regime(
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            19,
+            law=Choose(func=_next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": _utility},
         constraints={"feasible": _feasible},
-        active=lambda age: age < 19,
     )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={18: "working"},
     )
 
 

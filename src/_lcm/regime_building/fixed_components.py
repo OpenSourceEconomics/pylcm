@@ -571,7 +571,7 @@ def _lower_law(
             probabilities=law.func,
         ),
     )
-    return MarkovTransition(_publish_fixed_component_law(provenance))
+    return MarkovTransition(func=_publish_fixed_component_law(provenance))
 
 
 def _publish_fixed_component_law(

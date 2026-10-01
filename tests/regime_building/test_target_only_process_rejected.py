@@ -4,6 +4,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -53,36 +56,25 @@ _PROCESS_SOLVE_PARAMS = {
 }
 
 
-def _source_is_early(age: float) -> bool:
-    return age < 22
-
-
-def _source_is_forced_out(age: float) -> bool:
-    return age >= 65
-
-
-def _target_can_work(age: float) -> bool:
-    return age < 65
-
-
 def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Model:
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
     transition = (
-        _next_target if coarse else {"target": MarkovTransition(_one_probability)}
+        Choose(func=_next_target, targets=("target",))
+        if coarse
+        else {"target": MarkovTransition(func=_one_probability)}
     )
     return Model(
         regimes={
             "source": Regime(
-                transition=transition,
-                active=_source_is_early,
+                regime_transitions=transition,
                 states=source_states,
                 functions={
                     "utility": _shock_utility if carry_process else _zero_utility
                 },
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -90,6 +82,7 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 
@@ -100,12 +93,11 @@ def _target_only_process_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -113,10 +105,11 @@ def _target_only_process_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 
-def test_activity_compatible_target_only_ar1_is_rejected() -> None:
+def test_retained_target_only_ar1_is_rejected() -> None:
     """A retained edge cannot introduce an AR(1) process without a value.
 
     Its next draw is conditioned on a previous value that the source neither
@@ -131,7 +124,7 @@ def test_activity_compatible_target_only_ar1_is_rejected() -> None:
         )
 
 
-def test_activity_compatible_target_only_iid_is_entered_at_its_own_law() -> None:
+def test_retained_target_only_iid_is_entered_at_its_own_law() -> None:
     """A target-only IID process is priced at its unconditional mean.
 
     An IID draw does not depend on its previous value, so the source has
@@ -213,13 +206,14 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=_source_is_early,
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -227,6 +221,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            initial_regimes={20: "source"},
         )
 
     def _shock_and_inert_utility(
@@ -238,8 +233,9 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=_source_is_early,
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": process},
                     state_transitions={
                         "extra": {"target": lambda: jnp.float32(0.0)},
@@ -247,7 +243,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={
                         "shock": process,
                         "extra": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -258,6 +254,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            initial_regimes={20: "source"},
         )
 
     process_only = _process_only_model()
@@ -288,15 +285,14 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -304,6 +300,7 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
 
@@ -344,70 +341,6 @@ def test_explicit_entry_into_a_runtime_parameterized_process_is_rejected() -> No
         _explicit_entry_model(TauchenAR1Process(n_points=3, gauss_hermite=False))
 
 
-def test_activity_incompatible_target_only_process_is_accepted() -> None:
-    """A declared target outside the adjacent activity window needs no handoff."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_forced_out,
-                functions={"utility": _zero_utility},
-            ),
-            "target": Regime(
-                transition=None,
-                active=_target_can_work,
-                states={
-                    "shock": TauchenAR1Process(
-                        n_points=3,
-                        gauss_hermite=False,
-                    )
-                },
-                functions={"utility": _shock_utility},
-            ),
-        },
-        ages=AgeGrid(start=60, stop=68, step="Y"),
-        regime_id_class=RegimeId,
-        enable_jit=False,
-    )
-
-    assert (
-        model.reachability.solution.periods_for_edge(source="source", target="target")
-        == ()
-    )
-
-
-def test_coarse_activity_incompatible_target_only_process_is_accepted() -> None:
-    """A coarse declaration needs no handoff outside the adjacent activity window."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                transition=_next_target,
-                active=_source_is_forced_out,
-                functions={"utility": _zero_utility},
-            ),
-            "target": Regime(
-                transition=None,
-                active=_target_can_work,
-                states={
-                    "shock": TauchenAR1Process(
-                        n_points=3,
-                        gauss_hermite=False,
-                    )
-                },
-                functions={"utility": _shock_utility},
-            ),
-        },
-        ages=AgeGrid(start=60, stop=68, step="Y"),
-        regime_id_class=RegimeId,
-        enable_jit=False,
-    )
-
-    assert (
-        model.reachability.solution.periods_for_edge(source="source", target="target")
-        == ()
-    )
-
-
 def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
     """A retained edge cannot invent a value for a target-only ordinary state."""
     with pytest.raises(
@@ -417,12 +350,13 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=_source_is_early,
+                    regime_transitions={
+                        "target": MarkovTransition(func=_one_probability)
+                    },
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     states={
                         "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                     },
@@ -432,6 +366,7 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            initial_regimes={20: "source"},
         )
 
 
@@ -462,12 +397,19 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
         Model(
             regimes={
                 "source": Regime(
-                    transition={"target": MarkovTransition(_one_probability)},
-                    active=_source_is_early,
+                    regime_transitions=ByAge(
+                        cases={
+                            AgeRange(start=20, stop=22): {
+                                "target": MarkovTransition(func=_one_probability)
+                            }
+                        }
+                    ),
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    transition={"terminal": MarkovTransition(_one_probability)},
+                    regime_transitions={
+                        "terminal": MarkovTransition(func=_one_probability)
+                    },
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
@@ -476,13 +418,14 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                     functions={"utility": _shock_utility},
                 ),
                 "terminal": Regime(
-                    transition=None,
+                    regime_transitions=None,
                     functions={"utility": _zero_utility},
                 ),
             },
             ages=AgeGrid(start=20, stop=23, step="Y"),
             regime_id_class=_ThreeRegimeId,
             enable_jit=False,
+            initial_regimes={20: "source"},
         )
 
 
@@ -495,13 +438,12 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={
                     "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                 },
@@ -511,6 +453,7 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
@@ -539,13 +482,14 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
-                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                state_transitions={
+                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
@@ -553,6 +497,7 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={20: "source"},
     )
 
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
@@ -588,13 +533,14 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=_source_is_early,
-                state_transitions={"shock": {"target": MarkovTransition(_entry_probs)}},
+                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                state_transitions={
+                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
@@ -602,6 +548,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        initial_regimes={(20, 21): "source"},
     )
 
     solution = model.solve(
@@ -621,7 +568,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     )
 
 
-def test_coarse_transition_validates_each_activity_compatible_candidate() -> None:
-    """A function-based transition must be valid for every retained candidate."""
+def test_coarse_transition_validates_each_declared_candidate() -> None:
+    """A function-based transition must be valid for every declared candidate."""
     with pytest.raises(ModelInitializationError, match=r"source.*target.*shock"):
         _build_overlapping_model(coarse=True)

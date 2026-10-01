@@ -261,8 +261,8 @@ def attach_gated_simulation_programs(
                 continue
             folded_targets = tuple(
                 target
-                for target in regime.gated_edges
-                if period + 1 in regimes[target].active_periods
+                for target, edge in regime.gated_edges.items()
+                if period + 1 in edge.folds_by_period
             )
             if not folded_targets:
                 continue
@@ -346,19 +346,78 @@ def attach_gated_simulation_programs(
     return attached
 
 
-def gated_simulation_programs_ready(*, regime: Regime) -> bool:
-    """Return whether every declared gate stage has a planned companion."""
-    if not regime.gated_edges:
+def budgeted_simulation_programs_ready(
+    *, regimes: Mapping[RegimeName, Regime], n_periods: int, enable_jit: bool
+) -> bool:
+    """Return whether budgeted simulation can profile every forward unit it runs.
+
+    Requirements derive from `forward_regimes_by_period`, the inventory profiling
+    and dispatch walk. A unit needs compiled programs, an in-graph decision route
+    and the gate stages it folds; a registered regime no subject can occupy owes
+    nothing, so its declaration never vetoes admission. Chunk admission and the
+    simulation loop both ask this one question.
+    """
+    return enable_jit and all(
+        gated_simulation_programs_ready(
+            regime=regime, period=period, n_periods=n_periods
+        )
+        and not (
+            regime.simulation.replay_route.policy_applicable
+            and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
+        )
+        and regime.simulation.external_replay_route is None
+        for period, active in enumerate(
+            forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+        )
+        for regime in active.values()
+    )
+
+
+def gated_simulation_programs_ready(
+    *, regime: Regime, period: int, n_periods: int
+) -> bool:
+    """Return whether a forward unit's gate stages have planned programs.
+
+    The unit owes a fold and a route program exactly when a gated edge folds at
+    the next period. Otherwise its required gate domain is empty and satisfied.
+    """
+    if period + 1 >= n_periods or not any(
+        period + 1 in edge.folds_by_period for edge in regime.gated_edges.values()
+    ):
         return True
     programs = regime.simulation.programs
-    return (
-        bool(programs.gate_fold)
-        and programs.gate_fold.keys() == programs.gate_route.keys()
-        and all(
-            program.disposition is CoreExecutionDisposition.PLANNED
-            for family in (programs.gate_fold, programs.gate_route)
-            for program in family.values()
+    return all(
+        period in family
+        and family[period].disposition is CoreExecutionDisposition.PLANNED
+        for family in (programs.gate_fold, programs.gate_route)
+    )
+
+
+def forward_regimes_by_period(
+    *, regimes: Mapping[RegimeName, Regime], n_periods: int
+) -> tuple[MappingProxyType[RegimeName, Regime], ...]:
+    """Return, per period, the regimes whose forward programs simulation runs.
+
+    A `(period, regime)` pair is forward work only when a subject can occupy it:
+    the regime is active at the period and the simulation graph reaches it. A
+    pair solved only for its value (a perceived target no subject physically
+    enters) has no decision program and is absent here, while its solved value
+    stays available to the decisions that read it. Each period keeps the
+    insertion order of `regimes`, so traversal order and random-site identity
+    follow the regime mapping. Chunk profiling (the compilation wave and the
+    sequential carrier walk) and dispatch all read this one inventory.
+    """
+    return tuple(
+        MappingProxyType(
+            {
+                name: regime
+                for name, regime in regimes.items()
+                if period in regime.active_periods
+                and name
+                in regime.simulation.reachability.active_regimes_by_period[period]
+            }
         )
+        for period in range(n_periods)
     )
 
 

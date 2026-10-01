@@ -10,12 +10,12 @@ path is a REPEATING self-loop gated edge (mutual-consent, eq. 27) — and in the
 collective `married` regime. Before wiring six coupled EKL regimes on the
 assumption the mechanism composes, pin the interaction here in isolation.
 
-Topology (the singleton half of EKL's `single_f`): `src` is active over ages
+Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
 0-1 with a repeating self-loop `GatedEdge` back to itself, fallback into a
-terminal `src_fallback`; past its activity boundary the ordinary transition
+terminal `src_fallback`; at its last covered age the ordinary transition
 routes it to `src_exit`. This mirrors
-`test_repeating_self_loop_gated_edge_simulates_past_activity_boundary` exactly,
-plus a carried `career` state that accumulates `+1` each period and is read by
+`test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`
+exactly, plus a carried `career` state that accumulates `+1` each period and is read by
 utility with a ZERO coefficient — so the value function (and hence the gate
 routing) is byte-identical to that test, isolating the carried-state machinery.
 
@@ -64,8 +64,9 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
+from tests.test_models.schedules import until_exit
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -124,22 +125,25 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={
-            "src": ValueDependentTransition(
-                probability=MarkovTransition(_prob_stay),
-                gate=_repeat_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="src_fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            ),
-            "src_exit": MarkovTransition(_prob_exit_boundary),
-        },
-        active=lambda age: age < 2,
+        regime_transitions=until_exit(
+            2,
+            law={
+                "src": ValueDependentTransition(
+                    probability=MarkovTransition(func=_prob_stay),
+                    gate=_repeat_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="src_fallback",
+                                projection={"wage": _identity_wage},
+                            ),
+                        )
+                    },
+                ),
+                "src_exit": MarkovTransition(func=_prob_exit_boundary),
+            },
+            exits=("src_exit",),
+        ),
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -159,14 +163,12 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_src_exit},
     )
     src_fallback = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_src_fallback},
     )
@@ -190,11 +192,14 @@ def _solve_and_simulate():
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes=regimes_dict,
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes=regimes_dict,
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,

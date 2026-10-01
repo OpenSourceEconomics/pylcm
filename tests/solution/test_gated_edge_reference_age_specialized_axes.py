@@ -33,6 +33,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -173,48 +174,50 @@ def _build_model() -> Model:
 
     """
     saver = Regime(
-        transition={
-            "saver": MarkovTransition(_probability_of_staying_put),
-            "account": ValueDependentTransition(
-                probability=MarkovTransition(_probability_of_opening_the_account),
-                gate=_index_clears_the_hurdle,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity",
-                            projection={"principal": _principal_from_balance},
+        regime_transitions=until_exit(
+            2,
+            law={
+                "saver": MarkovTransition(func=_probability_of_staying_put),
+                "account": ValueDependentTransition(
+                    probability=MarkovTransition(
+                        func=_probability_of_opening_the_account
+                    ),
+                    gate=_index_clears_the_hurdle,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="annuity",
+                                projection={"principal": _principal_from_balance},
+                            )
                         )
-                    )
-                },
-                gate_references={
-                    "index_value": ProjectedRegimeValue(
-                        regime="index",
-                        projection={"level": _level_from_balance},
-                    )
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                    gate_references={
+                        "index_value": ProjectedRegimeValue(
+                            regime="index",
+                            projection={"level": _level_from_balance},
+                        )
+                    },
+                ),
+            },
+            exits=("account",),
+        ),
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
     account = Regime(
-        transition=None,
-        active=lambda age: (age >= 1) & (age < 3),
+        regime_transitions=None,
         states={"balance": _BALANCE_GRID},
         functions={"utility": _account_utility},
     )
     index = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={
             "level": AgeSpecializedGrid(build=_level_grid, signature=_level_ceiling)
         },
         functions={"utility": _index_utility},
     )
     annuity = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
@@ -227,6 +230,7 @@ def _build_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "saver"},
     )
 
 

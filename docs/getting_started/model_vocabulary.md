@@ -7,15 +7,15 @@ title: Model vocabulary
 A pylcm model is a collection of **regimes** observed over a finite **age grid**. Each
 regime describes one decision problem:
 
-| Economic object                          | pylcm declaration   | Example                               |
-| ---------------------------------------- | ------------------- | ------------------------------------- |
-| Predetermined information                | `states`            | wealth, health, employment status     |
-| Choices made now                         | `actions`           | consumption, work, next durable stock |
-| Flow payoffs and intermediate quantities | `functions`         | utility, resources, taxes             |
-| Feasible choices                         | `constraints`       | borrowing or time constraints         |
-| Laws of motion                           | `state_transitions` | next wealth, health probabilities     |
-| Movement between decision problems       | `transition`        | work → retirement → death             |
-| Numerical method                         | `solver`            | grid search or an EGM-family solver   |
+| Economic object                          | pylcm declaration    | Example                               |
+| ---------------------------------------- | -------------------- | ------------------------------------- |
+| Predetermined information                | `states`             | wealth, health, marital status        |
+| Choices made now                         | `actions`            | consumption, work, next durable stock |
+| Flow payoffs and intermediate quantities | `functions`          | utility, resources, taxes             |
+| Feasible choices                         | `constraints`        | borrowing or time constraints         |
+| Laws of motion                           | `state_transitions`  | next wealth, health probabilities     |
+| Movement between decision problems       | `regime_transitions` | work → retirement → death             |
+| Numerical method                         | `solver`             | grid search, EGM-family solvers       |
 
 Functions form a dependency graph through their argument names. If `utility` takes
 `consumption` and `leisure`, pylcm supplies those names from actions, states, other

@@ -29,6 +29,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 _N_PERIODS = 3
@@ -87,7 +88,9 @@ def _model(
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=3, n_points=n_wealth_points)
                 },
@@ -102,6 +105,7 @@ def _model(
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -355,7 +359,7 @@ def test_the_key_refusal_names_the_equivalent_callable_case(
 
 
 @pytest.mark.parametrize(("build_model", "regime_name"), _GROUPING_SOLVER_CASES)
-def test_a_grouping_solver_publishes_one_group_key_per_active_period(
+def test_a_grouping_solver_publishes_one_group_key_per_covered_period(
     *, build_model: Callable[[], Model], regime_name: RegimeName
 ) -> None:
     """An EGM-family regime reports the group key it built each period under."""

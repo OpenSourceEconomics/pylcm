@@ -47,6 +47,7 @@ from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
+from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
 
@@ -202,8 +203,11 @@ def _make_participation_model() -> Model:
 
     """
     couple = Regime(
-        transition={"couple_terminal": MarkovTransition(_certain_transition)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={"couple_terminal": MarkovTransition(func=_certain_transition)},
+            exits=("couple_terminal",),
+        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -224,8 +228,7 @@ def _make_participation_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -235,16 +238,18 @@ def _make_participation_model() -> Model:
         },
     )
     single_f = Regime(
-        transition={"single_f_terminal": MarkovTransition(_certain_transition)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law={"single_f_terminal": MarkovTransition(func=_certain_transition)},
+            exits=("single_f_terminal",),
+        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_f_utility},
     )
     single_f_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},
     )
@@ -257,6 +262,7 @@ def _make_participation_model() -> Model:
         },
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=ParticipationRegimeId,
+        initial_regimes={0: "couple"},
     )
 
 

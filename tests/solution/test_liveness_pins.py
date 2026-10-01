@@ -197,6 +197,7 @@ def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
         },
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
+        initial_regimes={0: "single_f"},
     )
 
     assert (

@@ -1,8 +1,9 @@
 """The PRNG keys behind every simulation draw.
 
 `create_simulation_key` turns a caller seed into the call's root key,
-`split_simulation_key` and `generate_simulation_keys` derive the per-period and
-per-chunk keys from it, and `draw_random_seed` supplies a seed when the caller
+`site_simulation_key` derives one key per `(period, regime)` draw site from it,
+`split_simulation_key` and `generate_simulation_keys` derive the site's streams and
+per-subject keys, and `draw_random_seed` supplies a seed when the caller
 gave none.
 """
 
@@ -11,7 +12,7 @@ import os
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Int, Scalar
+from jaxtyping import Int, Scalar, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.typing import PRNGKeyND
@@ -48,6 +49,42 @@ def _create_simulation_key(
     if seed_offset != jax.config.jax_random_seed_offset:
         raise ExecutionPlanningError("Simulation seed offset changed before tracing.")
     return jax.random.key(seed=seed, impl=impl)
+
+
+def site_simulation_key(
+    *,
+    key: PRNGKeyND,
+    period: int,
+    regime_id: int,
+    memory: SimulationMemory | None = None,
+) -> PRNGKeyND:
+    """Derive the key of one `(period, regime)` draw site from the call's root key.
+
+    The site key depends on the root key, the period and the registered regime
+    code only, so a subject's draws at a site do not move when the declared
+    starts make other pairs visitable or unvisitable.
+    """
+    return run_simulation_operation(
+        memory=memory,
+        function=_site_simulation_key,
+        arguments={
+            "key": key,
+            "period": np.uint32(period),
+            "regime_id": np.uint32(regime_id),
+        },
+    )
+
+
+def _site_simulation_key(
+    *,
+    key: PRNGKeyND,
+    period: np.unsignedinteger | UInt32[Scalar, ""],
+    regime_id: np.unsignedinteger | UInt32[Scalar, ""],
+) -> PRNGKeyND:
+    """Fold the period, then the regime code, into the root key."""
+    return jax.random.fold_in(
+        key=jax.random.fold_in(key=key, data=period), data=regime_id
+    )
 
 
 def split_simulation_key(

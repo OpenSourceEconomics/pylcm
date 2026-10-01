@@ -175,12 +175,7 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         tree=host_tree, class_name="ProfiledSimulationOperations", name="admit_producer"
     )
     compile_calls = _calls(
-        node=_method(
-            tree=host_tree,
-            class_name="ProfiledSimulationOperations",
-            name="compile_candidate",
-        ),
-        name="jit",
+        node=_definition(tree=host_tree, name="_lower_operation"), name="jit"
     )
     if (
         "output_sharding=output_sharding" not in ast.unparse(admit)

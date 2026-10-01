@@ -19,6 +19,7 @@ import jax.numpy as jnp
 from _lcm.grids.base import Grid
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     Model,
     Regime,
@@ -39,6 +40,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy as smooth
+from tests.test_models.schedules import until_exit
 
 # Flat utility gain from holding insurance — makes the branch worth buying.
 INSURANCE_UTILITY = 0.15
@@ -111,7 +113,11 @@ def build_model(
         "illiquid_investment": illiquid_investment_grid,
         "buy_private": DiscreteGrid(category_class=BuyPrivate),
     }
-    active = lambda age, n=final_age_alive: age <= n  # noqa: E731
+    transitions = until_exit(
+        final_age_alive + 5,
+        law=Choose(func=smooth.next_regime, targets=("alive", "dead")),
+        exits=("dead",),
+    )
     if variant == "brute":
         # Same oracle correction as the smooth toy: reaching `s'` through an
         # investment action would let the oracle land on only 3 of the 15 outer
@@ -125,22 +131,20 @@ def build_model(
             "buy_private": DiscreteGrid(category_class=BuyPrivate),
         }
         alive = Regime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=smooth.next_regime,
+            regime_transitions=transitions,
             functions=functions,
             constraints={"budget_feasible": smooth.budget_feasible},
             solver=build_solver(variant=variant),
         )
     else:
         alive = NestedConsumptionSavingsRegime(
-            active=active,
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=smooth.next_regime,
+            regime_transitions=transitions,
             functions=functions,
             solver=build_solver(variant=variant),
             liquid=LiquidMargin(
@@ -157,8 +161,7 @@ def build_model(
             ),
         )
     dead = Regime(
-        transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        regime_transitions=None,
         states=states,
         functions={"utility": smooth.terminal_utility},
     )
@@ -167,4 +170,5 @@ def build_model(
         regime_id_class=smooth.RegimeId,
         ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={20: "alive"},
     )

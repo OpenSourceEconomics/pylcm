@@ -28,6 +28,7 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -36,6 +37,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -102,16 +104,16 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+        ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
     )
     last = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={
@@ -125,6 +127,7 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
         ages=AgeGrid(exact_values=(0, 1)),
         regime_id_class=RegimeId,
         description="phase closure of a collective regime's flow sub-DAG",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="off")
     return (

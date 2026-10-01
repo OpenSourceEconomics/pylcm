@@ -7,6 +7,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -35,11 +36,9 @@ from tests.simulation.initial_conditions._models import (
     make_state_only_constraint_model,
 )
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
+from tests.test_models.schedules import until_exit
 
-_CONSTRAINT_PARAMS = {
-    "discount_factor": 0.95,
-    "working_life": {"next_regime": {"final_age_alive": 1}},
-}
+_CONSTRAINT_PARAMS = {"discount_factor": 0.95, "final_age_alive": 1}
 
 
 def _constraint_model() -> Model:
@@ -321,10 +320,8 @@ def test_runtime_supplied_grid_points_are_used() -> None:
         },
         params={
             "discount_factor": 0.95,
-            "working_life": {
-                "wealth": {"points": jnp.linspace(0.3, 10, 15)},
-                "next_regime": {"final_age_alive": 1},
-            },
+            "working_life": {"wealth": {"points": jnp.linspace(0.3, 10, 15)}},
+            "final_age_alive": 1,
         },
     )
 
@@ -336,10 +333,7 @@ def test_inputs_are_not_mutated() -> None:
     model = _constraint_model()
     initial = _mixed_population(model)
     before = {name: np.asarray(value).copy() for name, value in initial.items()}
-    params = {
-        "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
-    }
+    params = {"discount_factor": 0.95, "final_age_alive": 1}
     params_before = repr(params)
 
     model.initial_conditions_feasibility(initial_conditions=initial, params=params)
@@ -417,19 +411,23 @@ def _sealed_model() -> Model:
         return jnp.where(age >= 18, RegimeId.dead, RegimeId.working)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=until_exit(
+            19,
+            law=Choose(func=next_regime, targets=("working", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": utility},
         constraints={"feasible": feasible},
-        active=lambda age: age < 19,
     )
-    dead = UserRegime(transition=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working"},
     )
 
 
@@ -491,8 +489,11 @@ def _age_specialized_model() -> Model:
         return jnp.where(age >= 65, RegimeId.dead, RegimeId.working_life)
 
     working_life = UserRegime(
-        transition=next_regime,
-        active=lambda age: age < 75,
+        regime_transitions=until_exit(
+            75,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         state_transitions={"wealth": next_wealth},
@@ -505,14 +506,14 @@ def _age_specialized_model() -> Model:
         functions={"utility": utility},
     )
     dead = UserRegime(
-        transition=None,
-        active=lambda age: age >= 75,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, stop=75, step="10Y"),
         regime_id_class=RegimeId,
+        initial_regimes={25: "working_life", 35: "working_life"},
     )
 
 
@@ -576,6 +577,7 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
         regimes=make_dissolution_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
+        initial_regimes={0: "married"},
     )
     initial = _collective_population_without_roles(model)
 

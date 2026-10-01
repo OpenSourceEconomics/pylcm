@@ -18,6 +18,7 @@ from _lcm.execution.execution_plan import (
 )
 from lcm import Model
 from lcm.execution import ExecutionConfig
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import MultiRegimeId, get_multi_regime_model
 
 _POOL_LIMIT = 48_000_000_000
@@ -379,6 +380,7 @@ def test_model_construction_caps_the_budget_against_the_real_devices(
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(device_memory_bytes=_POOL_LIMIT),
+        initial_regimes=initial_regimes_of(model=base),
     )
 
     assert model._execution.device_memory_bytes == _POOL_LIMIT - 7_200_000_000
@@ -400,6 +402,7 @@ def test_model_construction_records_the_requested_budget(
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(device_memory_bytes=_POOL_LIMIT),
+        initial_regimes=initial_regimes_of(model=base),
     )
 
     assert model._execution.requested_device_memory_bytes == _POOL_LIMIT

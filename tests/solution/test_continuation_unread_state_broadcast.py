@@ -56,6 +56,7 @@ from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -84,6 +85,7 @@ from tests.solution.test_covered_axis_parity import (
     _shapes_and_dtypes,
     _ulp_excess,
 )
+from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FINAL_AGE_ALIVE = _N_PERIODS - 2
@@ -211,21 +213,25 @@ def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
             "wealth": LinSpacedGrid(start=1, stop=60, n_points=_N_WEALTH),
         },
         state_transitions={
-            "health": MarkovTransition(_next_health),
+            "health": MarkovTransition(func=_next_health),
             "habit": _next_habit,
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        regime_transitions=until_exit(
+            _FINAL_AGE_ALIVE + 1,
+            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         functions={"utility": _utility},
-        active=lambda age: age <= _FINAL_AGE_ALIVE,
     )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=_FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -236,8 +242,8 @@ def _params() -> UserParams:
         "alive": {
             "utility": {"disutility_of_work": 0.3},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"final_age_alive": _FINAL_AGE_ALIVE},
         },
+        "final_age_alive": _FINAL_AGE_ALIVE,
     }
     return params
 

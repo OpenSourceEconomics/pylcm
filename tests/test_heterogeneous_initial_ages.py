@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 
+from lcm import Model
 from tests.test_models.deterministic.base import RegimeId, get_model, get_params
 
 
@@ -13,7 +14,13 @@ def test_simulation_with_heterogeneous_initial_ages():
     the simulation does not yet use them to offset each subject's timeline.
     """
     n_periods = 5
-    model = get_model(n_periods=n_periods)
+    example = get_model(n_periods=n_periods)
+    model = Model(
+        regimes=example.user_regimes,
+        ages=example.ages,
+        regime_id_class=RegimeId,
+        initial_regimes={(40, 60): "working_life"},
+    )
     params = get_params(n_periods=n_periods)
 
     # Subject 0 starts at age 40, subject 1 starts at age 60

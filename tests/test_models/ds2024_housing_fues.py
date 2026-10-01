@@ -25,6 +25,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -53,6 +54,7 @@ from tests.test_models.ds2024_housing import (
     income_transition,
     income_value,
 )
+from tests.test_models.schedules import until_exit
 
 START_AGE = 60
 
@@ -253,8 +255,7 @@ def build_model(  # noqa: C901
         )
 
     dead = UserRegime(
-        transition=None,
-        active=lambda age, fa=final_age: age >= fa,
+        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -269,8 +270,11 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         alive = UserRegime(
-            transition=next_regime,
-            active=lambda age, fa=final_age: age < fa,
+            regime_transitions=until_exit(
+                final_age,
+                law=Choose(func=next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -279,7 +283,7 @@ def build_model(  # noqa: C901
             state_transitions={
                 "liquid": next_liquid_brute,
                 "housing": next_housing,
-                "income": MarkovTransition(income_transition),
+                "income": MarkovTransition(func=income_transition),
             },
             actions={"consumption": consumption_grid, "housing_choice": housing_grid},
             constraints={"borrowing_constraint": borrowing_constraint},
@@ -290,6 +294,7 @@ def build_model(  # noqa: C901
             regimes={"alive": alive, "dead": dead},
             ages=ages,
             regime_id_class=DS2024HousingFuesRegimeId,
+            initial_regimes={ages.exact_values[0]: "alive"},
         )
 
     inner_solver = DCEGM(
@@ -298,8 +303,11 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     alive = ConsumptionSavingsRegime(
-        transition=next_regime,
-        active=lambda age, fa=final_age: age < fa,
+        regime_transitions=until_exit(
+            final_age,
+            law=Choose(func=next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -308,7 +316,7 @@ def build_model(  # noqa: C901
         state_transitions={
             "liquid": next_liquid,
             "housing": next_housing,
-            "income": MarkovTransition(income_transition),
+            "income": MarkovTransition(func=income_transition),
         },
         actions={"consumption": consumption_grid, "housing_choice": housing_grid},
         functions={
@@ -329,6 +337,7 @@ def build_model(  # noqa: C901
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=DS2024HousingFuesRegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

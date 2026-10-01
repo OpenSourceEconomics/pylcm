@@ -26,6 +26,7 @@ from lcm import (
 from lcm.exceptions import PyLCMError
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=40, stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -77,41 +78,43 @@ def _make_model(*, gate) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={
-                    "target": ValueDependentTransition(
-                        probability=MarkovTransition(_prob_one),
-                        gate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"x": _identity_x},
+                regime_transitions=until_exit(
+                    45,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_prob_one),
+                            gate=gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={"x": _identity_x},
+                                    )
                                 )
-                            )
-                        },
-                    )
-                },
-                active=lambda age: age < 45,
+                            },
+                        )
+                    },
+                    exits=("target",),
+                ),
                 states={"x": _X},
                 state_transitions={"x": fixed_transition("x")},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                transition=None,
-                active=lambda age: age >= 45,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                transition=None,
-                active=lambda age: age >= 45,
+                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},
             ),
         },
         ages=_AGES,
         regime_id_class=RegimeId,
+        initial_regimes={40: "source"},
     )
 
 

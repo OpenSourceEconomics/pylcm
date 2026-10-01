@@ -106,10 +106,14 @@ from _lcm.simulation.program_arguments import (
     policy_prepare_arguments,
     policy_rank_arguments,
 )
-from _lcm.simulation.programs import gated_simulation_programs_ready
+from _lcm.simulation.programs import (
+    budgeted_simulation_programs_ready,
+    forward_regimes_by_period,
+)
 from _lcm.simulation.random import (
     create_simulation_key,
     draw_random_seed,
+    site_simulation_key,
     split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import PreparedReplayReader, place_replay_payload
@@ -333,17 +337,10 @@ def simulate(  # noqa: C901, PLR0915
                 raise ExecutionPlanningError(
                     "Budgeted simulation requires retained solution residency."
                 )
-            if not runtime.enable_jit or any(
-                (
-                    regime.gated_edges
-                    and not gated_simulation_programs_ready(regime=regime)
-                )
-                or (
-                    regime.simulation.replay_route.policy_applicable
-                    and regime.simulation.replay_route.consumer_route != "nnbegm_finite"
-                )
-                or regime.simulation.external_replay_route is not None
-                for regime in regimes.values()
+            if not budgeted_simulation_programs_ready(
+                regimes=regimes,
+                n_periods=ages.n_periods,
+                enable_jit=runtime.enable_jit,
             ):
                 raise ExecutionPlanningError(
                     "Budgeted simulation currently requires compiled decision "
@@ -729,7 +726,9 @@ def _simulate_subject_chunk(
         regime_name: {} for regime_name in regimes
     }
 
-    for period in range(ages.n_periods):
+    for period, active_regimes in enumerate(
+        forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
+    ):
         period_start = time.monotonic()
         if memory is not None:
             memory.unit_inputs = (
@@ -770,12 +769,6 @@ def _simulate_subject_chunk(
         prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
         new_own_stakeholder = own_stakeholder
-
-        active_regimes = {
-            regime_name: regime
-            for regime_name, regime in regimes.items()
-            if period in regime.active_periods
-        }
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
@@ -819,7 +812,7 @@ def _simulate_subject_chunk(
                     age,
                 ),
             )
-            result, new_states, new_subject_regime_ids, new_own_stakeholder, key = (
+            result, new_states, new_subject_regime_ids, new_own_stakeholder = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=dispatched_regime,
@@ -858,7 +851,12 @@ def _simulate_subject_chunk(
                             period=period, source=regime_name
                         )
                     ),
-                    key=key,
+                    key=site_simulation_key(
+                        key=key,
+                        period=period,
+                        regime_id=int(regime_names_to_ids[regime_name]),
+                        memory=memory,
+                    ),
                     taste_key=taste_key,
                     taste_address=taste_addresses.get((period, regime_name)),
                     logger=logger,
@@ -1090,7 +1088,7 @@ def _referenced_value_kwargs(
     # The same per-period set the AOT lowering consults, so a compiled
     # program's pytree and this call's arguments name the same channels — and
     # only the regimes this period's edges land in, since an edge whose target
-    # is inactive at `period + 1` reads nothing there.
+    # is not declared at `period + 1` reads nothing there.
     edge_reference_regimes = regime.simulation.edge_reference_regimes_by_period.get(
         period
     )
@@ -1385,7 +1383,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
     replay_reader: PreparedReplayReader | ReplayReader | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_address: tuple[int, ...] | None = None,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -1448,7 +1446,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
         - Updated state carrier
         - Updated new_subject_regime_ids array
         - Updated new_own_stakeholder array
-        - Updated JAX random key
 
     """
     # Select subjects in the current regime
@@ -1806,7 +1803,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
         states,
         new_subject_regime_ids,
         new_own_stakeholder,
-        key,
     )
 
 

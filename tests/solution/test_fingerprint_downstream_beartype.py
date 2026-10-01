@@ -29,6 +29,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 # The configuration a downstream package's claw applies to every function it
@@ -56,7 +57,9 @@ def _downstream_model(scale: float) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={"wealth": grid},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -69,6 +72,7 @@ def _downstream_model(scale: float) -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 

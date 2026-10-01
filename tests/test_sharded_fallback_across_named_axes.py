@@ -65,6 +65,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -194,11 +195,14 @@ def build_model(
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
     solo = Regime(
-        transition={
-            "solo": MarkovTransition(_solo_stays_before_age_two),
-            "dead": MarkovTransition(_solo_leaves_from_age_two),
-        },
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law={
+                "solo": MarkovTransition(func=_solo_stays_before_age_two),
+                "dead": MarkovTransition(func=_solo_leaves_from_age_two),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -208,25 +212,28 @@ def build_model(
         },
     )
     pair = Regime(
-        transition={
-            "pair": MarkovTransition(_stay_before_age_one),
-            "dead": ValueDependentTransition(
-                probability=MarkovTransition(_leave_from_age_one),
-                gate=_gate_open_above_the_middle,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="solo",
-                            projection={
-                                "wealth": _projected_wealth,
-                                "x": _projected_x,
-                            },
+        regime_transitions=until_exit(
+            2,
+            law={
+                "pair": MarkovTransition(func=_stay_before_age_one),
+                "dead": ValueDependentTransition(
+                    probability=MarkovTransition(func=_leave_from_age_one),
+                    gate=_gate_open_above_the_middle,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="solo",
+                                projection={
+                                    "wealth": _projected_wealth,
+                                    "x": _projected_x,
+                                },
+                            )
                         )
-                    )
-                },
-            ),
-        },
-        active=lambda age: age < 2,
+                    },
+                ),
+            },
+            exits=("dead",),
+        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": pair_utility},
@@ -237,8 +244,7 @@ def build_model(
         },
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
@@ -252,6 +258,7 @@ def build_model(
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
+        initial_regimes={0: "pair"},
     )
 
 

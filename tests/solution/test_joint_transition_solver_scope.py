@@ -17,6 +17,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -51,8 +52,9 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
 
 def _model(solver: EGM | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
-        transition={"target": MarkovTransition(_certain_target)},
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1, law={"target": MarkovTransition(func=_certain_target)}, exits=("target",)
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -76,8 +78,7 @@ def _model(solver: EGM | GridSearch) -> Model:
         solver=solver,
     )
     target = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"estate": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         functions={"utility": _target_utility},
     )
@@ -86,6 +87,7 @@ def _model(solver: EGM | GridSearch) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
+        initial_regimes={0: "source"},
     )
 
 

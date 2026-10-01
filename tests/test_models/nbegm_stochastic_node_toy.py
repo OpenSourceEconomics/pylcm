@@ -237,21 +237,14 @@ def build_params(
             "tax": {"tax_rate": tax_rate, "tax_exemption": tax_exemption}
             | ({"tax_lump": tax_lump} if tax_lump else {}),
             "resources": {
-                "base_income": (
-                    jnp.array([base_income, base_income_hi])
-                    if with_kind
-                    else base_income
-                )
+                "base_income": jnp.array([base_income, base_income_hi])
+                if with_kind
+                else base_income
             },
             "income": {"mu": income_mu, "sigma": income_sigma},
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+            "alive": {"next_liquid": alive_budget},
+            "dead": {"next_liquid": alive_budget},
+            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

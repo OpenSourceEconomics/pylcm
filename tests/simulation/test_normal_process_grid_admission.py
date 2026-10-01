@@ -16,7 +16,15 @@ import pytest
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.utils.logging import LogLevel
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, NormalIIDProcess, Regime
+from lcm import (
+    AgeGrid,
+    Choose,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    Regime,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import load_solution
 from lcm.typing import UserInitialConditions, UserParams, ValueND
@@ -24,7 +32,6 @@ from tests.execution.test_compiler_allocation_reservation import synthetic_memor
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_process_grid_entry_admission import (
     _forbid_profiled_dispatch,
-    _initial_age,
     _next_regime,
     _terminal_utility,
     _utility,
@@ -57,8 +64,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_initial_age,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={
                     "income": NormalIIDProcess(
                         n_points=n_points,
@@ -71,11 +77,14 @@ def _inputs(
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
+        initial_regimes={0: "alive"},
     )
     return (
         model,

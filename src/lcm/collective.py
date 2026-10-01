@@ -3,7 +3,7 @@
 Six objects, each declared inside a slot the regime already has:
 `CollectiveUtility` and its `ParetoObjective` in `functions["utility"]`, a
 `ValueDependentConstraint` in `constraints`, and a
-`ValueDependentTransition` with stakeholder routes in `transition`.
+`ValueDependentTransition` with stakeholder routes in `regime_transitions`.
 `ProjectedRegimeValue` is the common reference used by the last two — a
 reading of another regime's value in the same period.
 """
@@ -295,7 +295,7 @@ class StakeholderRoute:
 class ValueDependentTransition:
     """A transition into one target whose branch depends on values there.
 
-    Declared inside the regime's `transition`, keyed by target regime name, so
+    Declared inside the regime's `regime_transitions`, keyed by target regime name, so
     target selection and value-dependent routing are one declaration of one
     semantic transition rather than two.
 

@@ -14,6 +14,9 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import (
+    AgeRange,
+    ByAge,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -66,8 +69,13 @@ def _resources(wealth: ContinuousState) -> FloatND:
 def _couple(*, functions: Mapping[str, object]) -> Regime:
     """The collective regime of the miniature."""
     return Regime(
-        transition=lambda: RegimeId.couple_terminal,
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
+                )
+            }
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},

@@ -34,6 +34,7 @@ from lcm import ExecutionConfig, Model
 from lcm.solver_api import SIMULATION_POLICY
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as smooth_toy
+from tests.test_models.initial_regimes import initial_regimes_of
 
 type CandidateBank = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 type RankedBank = tuple[Mapping[str, jax.Array], jax.Array, jax.Array]
@@ -103,6 +104,7 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
         regime_id_class=smooth_toy.RegimeId,
         fixed_params=base.fixed_params,
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        initial_regimes=initial_regimes_of(model=base),
     )
     params = {"discount_factor": 0.95}
     if discrete:

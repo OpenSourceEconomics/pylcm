@@ -14,6 +14,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -31,6 +32,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
@@ -81,8 +83,14 @@ def _couple(
 ) -> Regime:
     """The collective regime of the miniature, with `functions` supplied."""
     return Regime(
-        transition=lambda: RegimeId.couple_terminal,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(
+                func=lambda: RegimeId.couple_terminal,
+                targets=("couple", "couple_terminal"),
+            ),
+            exits=("couple_terminal",),
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -113,8 +121,7 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -128,6 +135,7 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         functions={"utility_f": _u_f},
+        initial_regimes={0: "couple"},
     )
 
     assert model.user_regimes["couple"].decomposed_functions["utility_f"] is _u_f
@@ -139,8 +147,7 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -154,6 +161,7 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
             regimes={"couple": couple, "couple_terminal": terminal},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
+            initial_regimes={0: "couple"},
         )
 
 
@@ -202,8 +210,7 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         }
     )
     terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -215,6 +222,7 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         regimes={"couple": couple, "couple_terminal": terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "couple"},
     )
 
     solved = model.solve(

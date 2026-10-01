@@ -38,6 +38,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
     LinearAggregator,
     LinSpacedGrid,
     MarkovTransition,
@@ -55,6 +56,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.schedules import until_exit
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
@@ -330,17 +332,17 @@ def get_model(
             "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
-        transition={
-            "working": MarkovTransition(prob_stay_working),
-            "retired": MarkovTransition(prob_retire),
-        },
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=retirement_age,
+            law={"working": MarkovTransition(func=prob_stay_working)},
+            then={"retired": MarkovTransition(func=prob_retire)},
+        ),
         functions={
             "utility": utility_working,
             **_euler_inversion_functions(
                 solver=working_solver, analytic=analytic_inverse_marginal_utility
             ),
         },
-        active=lambda age, ra=retirement_age: age < ra,
         solver=working_solver,
     )
     retired = (ConsumptionSavingsRegime if isinstance(retired_solver, EGM) else Regime)(
@@ -355,10 +357,15 @@ def get_model(
         constraints={}
         if isinstance(retired_solver, EGM)
         else {"feasible": feasible_retired},
-        transition={
-            "retired": MarkovTransition(prob_stay_retired),
-            "dead": MarkovTransition(prob_die),
-        },
+        regime_transitions=until_exit(
+            final_age,
+            law={
+                "retired": MarkovTransition(func=prob_stay_retired),
+                "dead": MarkovTransition(func=prob_die),
+            },
+            exits=("dead",),
+            start=retirement_age,
+        ),
         functions={
             "utility": utility_retired,
             "resources": resources_retired,
@@ -367,7 +374,6 @@ def get_model(
                 solver=retired_solver, analytic=analytic_inverse_marginal_utility
             ),
         },
-        active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
         solver=cast("EGM | GridSearch", retired_solver),
         **(
             {
@@ -383,7 +389,7 @@ def get_model(
         ),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
@@ -394,6 +400,7 @@ def get_model(
         regime_id_class=RegimeId,
         koopmans_aggregator=koopmans_aggregator,
         enable_jit=enable_jit,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 
@@ -461,15 +468,14 @@ def get_params(
                 "next_liquid": {
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
-                },
-                "next_regime": {"final_age_alive": final_age_alive},
+                }
             },
             "dead": {
                 "next_liquid": {
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
-                },
-                "next_regime": {"final_age_alive": final_age_alive},
+                }
             },
+            "final_age_alive": final_age_alive,
         },
     }

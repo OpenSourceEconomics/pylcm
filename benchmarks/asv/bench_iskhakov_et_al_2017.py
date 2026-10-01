@@ -16,6 +16,8 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
+from lcm import ByAge, Choose
+
 from . import _gpu_mem
 
 # Warm samples each class's setup_cache collects per commit, shared by
@@ -144,24 +146,35 @@ def _make_model_and_params(
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime_from_working,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=last_age,
+            law=Choose(
+                func=next_regime_from_working,
+                targets=("working_life", "retirement", "dead"),
+            ),
+            then=Choose(func=next_regime_from_working, targets=("dead",)),
+        ),
         functions={
             "utility": utility_working,
             "labor_income": labor_income,
             "is_working": is_working,
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        active=lambda age: age < last_age,
     )
 
     retirement = Regime(
-        transition=next_regime_from_retirement,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=last_age,
+            law=Choose(
+                func=next_regime_from_retirement, targets=("retirement", "dead")
+            ),
+            then=Choose(func=next_regime_from_retirement, targets=("dead",)),
+        ),
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
-        active=lambda age: age < last_age,
     )
 
     if solver == "dcegm":
@@ -191,11 +204,10 @@ def _make_model_and_params(
             "inverse_marginal_utility": inverse_marginal_utility,
         }
         working_life = ConsumptionSavingsRegime(
-            transition=working_life.transition,
+            regime_transitions=working_life.regime_transitions,
             states=working_life.states,
             actions=working_life.actions,
             taste_shocks=working_life.taste_shocks,
-            active=working_life.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(working_life.functions), **dcegm_functions},
@@ -203,10 +215,9 @@ def _make_model_and_params(
             liquid=liquid_margin,
         )
         retirement = ConsumptionSavingsRegime(
-            transition=retirement.transition,
+            regime_transitions=retirement.regime_transitions,
             states=retirement.states,
             actions=retirement.actions,
-            active=retirement.active,
             state_transitions={"wealth": next_wealth_from_savings},
             constraints={},
             functions={**dict(retirement.functions), **dcegm_functions},
@@ -215,9 +226,8 @@ def _make_model_and_params(
         )
 
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-        active=lambda _age: True,
     )
 
     model = Model(
@@ -228,6 +238,7 @@ def _make_model_and_params(
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={40: "working_life"},
     )
 
     params = {

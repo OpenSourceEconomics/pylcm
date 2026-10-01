@@ -25,6 +25,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -47,6 +48,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -201,9 +203,6 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(*, age: int, la: float = last_age) -> bool:
-        return age < la
-
     states = {"wealth": WEALTH_GRID, "income": _income_process(shock_type)}
     if shock_type == "rouwenhorst":
         actions = {
@@ -225,8 +224,11 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
 
     if solver == "dcegm":
         alive = ConsumptionSavingsRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states=states,
             state_transitions={"wealth": dcegm_next_wealth},
@@ -245,8 +247,11 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         )
     else:
         alive = UserRegime(
-            transition=next_regime,
-            active=active,
+            regime_transitions=until_exit(
+                last_age,
+                law=Choose(func=next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             actions=actions,
             states=states,
             state_transitions={"wealth": brute_next_wealth},
@@ -257,6 +262,7 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=ProcessRegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
 

@@ -11,6 +11,7 @@ from _lcm.solution import backward_induction
 from benchmarks.warm_solve_phases import CallPhases, parse_phase_records
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -21,6 +22,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _PHASES = (
     "params_validation",
@@ -80,8 +82,11 @@ def _terminal_utility(*, wealth: float) -> float:
 def get_model(*, budget_bytes: int | None = None) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        transition=_next_regime,
-        active=lambda age: age < 3,
+        regime_transitions=until_exit(
+            3,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -91,8 +96,7 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        transition=None,
-        active=lambda age: age >= 3,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
@@ -101,6 +105,7 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),
+        initial_regimes={0: "acting"},
     )
 
 

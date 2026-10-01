@@ -62,10 +62,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
     return wealth + income
 
 
-def _active_source(age: float) -> bool:
-    return age == 0
-
-
 def _active_target(age: float) -> bool:
     return age == 1
 
@@ -129,8 +125,7 @@ def _inputs(
     model = Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=_active_source,
+                regime_transitions={"target": MarkovTransition(func=_certain_target)},
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -147,8 +142,7 @@ def _inputs(
                 },
             ),
             "target": Regime(
-                transition=None,
-                active=_active_target,
+                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),
                     "income": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -159,6 +153,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "source"},
     )
     params: UserParams = {
         "source": {
@@ -259,11 +254,12 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         for executable in compiled
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
-    # The shared compiler also sees the valid regime producer in summary and serial.
+    # The shared compiler also sees the valid regime producer in regime selection,
+    # summary and serial.
     assert (weight_devices, support_devices, output_devices) == (
         expected_weights,
         expected_supports,
-        [(selected_id,)] * 11,
+        [(selected_id,)] * 12,
     ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """

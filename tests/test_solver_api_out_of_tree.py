@@ -21,7 +21,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
@@ -67,6 +77,7 @@ from lcm.typing import (
     StateName,
 )
 from tests.test_models import n_nbegm_toy
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -189,34 +200,106 @@ class WealthSolver(Solver):
         )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TerminalPublisher(Solver):
+    """Solves a terminal regime to zero and publishes a parent's continuation.
+
+    A parent reading its own continuation key demands it from every regime it
+    transitions into, so the terminal regime it dies into publishes the parent
+    solver's continuation template: the payload a period with no future reads.
+    """
+
+    parent: Solver
+
+    @property
+    def capabilities(self) -> SolverExecutionCapabilities:
+        """Describe the fixture's narrowly scoped reference computation."""
+        return SolverExecutionCapabilities(
+            required_declaration="Regime",
+            problem_shape="Reference fixture computation",
+            prerequisites="Fixture-specific model contract",
+            main_tradeoff="Reference implementation for contract tests",
+        )
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        spec = self.parent.build_period_kernels(context=context).continuation_spec
+        if spec is None:
+            raise TypeError("The terminal publisher's parent publishes nothing.")
+        template = spec.template
+
+        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, object]:
+            return jnp.zeros_like(wealth), template
+
+        program = CoreProgram(
+            name="main",
+            function=terminal_value,
+            argument_builder=_wealth_arguments,
+            requirements=CoreExecutionRequirements(),
+            output_roles=(
+                OutputRole.VALUE,
+                jax.tree.map(
+                    lambda leaf: StateAxesLeading(
+                        state_names=(), shape=tuple(jnp.shape(leaf))
+                    ),
+                    template,
+                ),
+            ),
+            disposition=CoreExecutionDisposition.DENSE,
+            disposition_reason="one_row_per_state_node",
+        )
+        kernels = {
+            period: _GraphKernel(
+                programs=MappingProxyType({"main": program}),
+                continuation_key=spec.artifact_key,
+            )
+            for period in context.regimes_to_active_periods[context.regime_name]
+        }
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=spec,
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
+
+
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
-    transition = (
-        {"alive": MarkovTransition(stay_alive)} if self_looping else next_regime_dead
-    )
     # A regime that dies into the terminal one leaves the last period to it, so
     # a simulated subject always has somewhere to go. A self-looping regime is
-    # its own target and stays active throughout.
-    alive_active = (
-        (lambda _age: True) if self_looping else (lambda age: age < _N_PERIODS - 1)
+    # its own target at every one of `_N_PERIODS` acting ages, which takes one
+    # more age for it to die into the terminal regime at the end, which then
+    # publishes the continuation the self-looping solver reads.
+    transition = (
+        ByAge.until(
+            stop_age_exclusive=_N_PERIODS,
+            law={"alive": MarkovTransition(func=stay_alive)},
+            then={"dead": MarkovTransition(func=stay_alive)},
+        )
+        if self_looping
+        else Choose(func=next_regime_dead, targets=("dead",))
     )
+    last_age = _N_PERIODS if self_looping else _N_PERIODS - 1
     return Model(
         regimes={
             "alive": Regime(
-                transition=transition,
-                active=alive_active,
+                regime_transitions=transition,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
                 solver=solver,
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
+                **(
+                    {"solver": TerminalPublisher(parent=solver)} if self_looping else {}
+                ),
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, stop=last_age, step="Y"),
         regime_id_class=RegimeId,
+        # Every acting age is a start, so each one is solved even where the
+        # regime dies into the terminal one after a single period.
+        initial_regimes={AgeRange(stop=last_age): "alive"},
     )
 
 
@@ -662,15 +745,18 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=next_regime_dead,
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law=Choose(func=next_regime_dead, targets=("alive", "dead")),
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
                 solver=_MarginalDemandingSolver(),
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 solver=target_solver,
@@ -678,6 +764,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -731,8 +818,11 @@ def _choice_model(*, solver: Solver) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                transition=_die_at_the_end,
-                active=lambda age: age < _N_PERIODS - 1,
+                regime_transitions=until_exit(
+                    _N_PERIODS - 1,
+                    law=Choose(func=_die_at_the_end, targets=("alive", "dead")),
+                    exits=("dead",),
+                ),
                 states={"wealth": _WEALTH},
                 actions={"consumption": _CONSUMPTION},
                 state_transitions={"wealth": next_wealth},
@@ -740,13 +830,14 @@ def _choice_model(*, solver: Solver) -> Model:
                 solver=solver,
             ),
             "dead": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),
         },
         ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

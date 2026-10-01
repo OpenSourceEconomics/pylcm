@@ -76,7 +76,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
     # it is the only one that qualifies for the off-grid read.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        active=lambda age: age < 50,
+        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
@@ -91,7 +91,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         constraints=constraints or {},
     )
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
@@ -99,6 +99,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

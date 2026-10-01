@@ -61,6 +61,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -85,6 +86,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
+from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors. The working life starts at 20, retires at 60, and the
 # terminal bequest regime is entered at T = 70. The short default horizon keeps
@@ -381,8 +383,7 @@ def build_model(  # noqa: C901
 
     housing_grid = DiscreteGrid(category_class=housing_class)
     dead = UserRegime(
-        transition=None,
-        active=lambda age, fa=final_age: age >= fa,
+        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -395,8 +396,11 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         working = UserRegime(
-            transition=next_regime,
-            active=lambda age, ra=retirement_age: age < ra,
+            regime_transitions=until_exit(
+                retirement_age,
+                law=Choose(func=next_regime, targets=("working",)),
+                exits=("retired",),
+            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -416,8 +420,12 @@ def build_model(  # noqa: C901
             solver=GridSearch(),
         )
         retired = UserRegime(
-            transition=next_regime_from_retired,
-            active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+            regime_transitions=until_exit(
+                final_age,
+                law=Choose(func=next_regime_from_retired, targets=("retired",)),
+                exits=("dead",),
+                start=retirement_age,
+            ),
             states={"liquid": liquid_grid, "housing": housing_grid},
             state_transitions={"liquid": next_liquid_brute, "housing": next_housing},
             actions={
@@ -433,6 +441,7 @@ def build_model(  # noqa: C901
             ages=ages,
             regime_id_class=HousingFuesRegimeId,
             execution_config=execution_config,
+            initial_regimes={ages.exact_values[0]: "working"},
         )
 
     inner_solver = DCEGM(
@@ -441,8 +450,11 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     working = ConsumptionSavingsRegime(
-        transition=next_regime,
-        active=lambda age, ra=retirement_age: age < ra,
+        regime_transitions=until_exit(
+            retirement_age,
+            law=Choose(func=next_regime, targets=("working",)),
+            exits=("retired",),
+        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -470,8 +482,12 @@ def build_model(  # noqa: C901
         ),
     )
     retired = ConsumptionSavingsRegime(
-        transition=next_regime_from_retired,
-        active=lambda age, ra=retirement_age, fa=final_age: ra <= age < fa,
+        regime_transitions=until_exit(
+            final_age,
+            law=Choose(func=next_regime_from_retired, targets=("retired",)),
+            exits=("dead",),
+            start=retirement_age,
+        ),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         actions={
@@ -498,6 +514,7 @@ def build_model(  # noqa: C901
         ages=ages,
         regime_id_class=HousingFuesRegimeId,
         execution_config=execution_config,
+        initial_regimes={ages.exact_values[0]: "working"},
     )
 
 

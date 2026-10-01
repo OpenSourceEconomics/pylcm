@@ -23,7 +23,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -34,6 +40,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.98
@@ -124,12 +131,16 @@ def _model(*, solver, n_consumption=14):
             "estate": {"gone": next_estate},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        transition={
-            "alive": MarkovTransition(prob_survive),
-            "gone": MarkovTransition(prob_gone),
-        },
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law={
+                "alive": MarkovTransition(func=prob_survive),
+                "gone": MarkovTransition(func=prob_gone),
+            },
+            exits=("gone",),
+            stays=("alive",),
+        ),
         functions={"utility": utility, "savings": savings},
-        active=lambda age: age < _LAST_AGE,
         solver=solver,
         **(
             {
@@ -145,16 +156,16 @@ def _model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"estate": _ESTATE_GRID},
         functions={"utility": bequest},
-        active=lambda age: age >= _LAST_AGE,
         solver=GridSearch(),
     )
     return Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 

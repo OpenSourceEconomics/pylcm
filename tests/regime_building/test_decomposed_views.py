@@ -176,7 +176,7 @@ def test_decomposing_constraints_twice_changes_nothing():
 
 def test_a_value_dependent_transition_leaves_its_selection_probability():
     """The cell the canonical pipeline reads is the declared probability."""
-    probability = MarkovTransition(_prob_one)
+    probability = MarkovTransition(func=_prob_one)
     raw = {
         "couple": ValueDependentTransition(
             probability=probability, gate=_gate, routes={"f": _ROUTE_F}
@@ -199,7 +199,7 @@ def test_a_bare_probability_is_wrapped_into_the_cell_grammar():
 
 def test_an_ordinary_target_cell_passes_through_untouched():
     """Only the value-dependent cells are rewritten."""
-    cell = MarkovTransition(_prob_one)
+    cell = MarkovTransition(func=_prob_one)
 
     assert _cells({"couple": cell})["couple"] is cell
 
@@ -216,8 +216,8 @@ def test_a_coarse_transition_passes_through_untouched():
 
 def test_each_phase_of_a_phased_transition_is_decomposed_on_its_own():
     """A value-dependent transition may be declared inside `Phased`."""
-    solve_probability = MarkovTransition(_prob_one)
-    simulate_probability = MarkovTransition(_prob_one)
+    solve_probability = MarkovTransition(func=_prob_one)
+    simulate_probability = MarkovTransition(func=_prob_one)
     raw = Phased(
         solve={
             "couple": ValueDependentTransition(
@@ -241,7 +241,7 @@ def test_each_phase_of_a_phased_transition_is_decomposed_on_its_own():
 @pytest.mark.parametrize(
     "raw",
     [
-        {"couple": MarkovTransition(_prob_one)},
+        {"couple": MarkovTransition(func=_prob_one)},
         None,
         _prob_one,
     ],
@@ -261,14 +261,14 @@ def test_a_transition_with_nothing_to_decompose_is_the_very_same_object():
     per-target transition look phase-varying, so the view returns its input
     untouched when there is no declaration in it.
     """
-    raw = {"couple": MarkovTransition(_prob_one)}
+    raw = {"couple": MarkovTransition(func=_prob_one)}
 
     assert decompose_transition(raw) is raw
 
 
 def test_one_object_written_into_both_phases_still_reads_as_one():
     """The two phases of an undecomposed `Phased` stay identical objects."""
-    shared = {"couple": MarkovTransition(_prob_one)}
+    shared = {"couple": MarkovTransition(func=_prob_one)}
     raw = Phased(solve=shared, simulate=shared)
     decomposed = _phases(raw)
 

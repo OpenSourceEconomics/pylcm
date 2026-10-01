@@ -32,6 +32,17 @@ from lcm.ages import AgeGrid
 from lcm.typing import FloatND
 
 
+@dataclass(frozen=True, kw_only=True)
+class PolicyLookup:
+    """The optimal choice and value at caller-supplied states of one regime-period."""
+
+    actions: MappingProxyType[ActionName, FloatND]
+    """Argmax action value per action name, one entry per queried state row."""
+
+    value: FloatND
+    """Max over the action grid of Q, using the solved continuation, per row."""
+
+
 class SimulationResult:
     """Result object from model simulation with deferred DataFrame computation."""
 
@@ -177,7 +188,7 @@ class SimulationResult:
                 with frozen state through every later period the regime is active.
                 - `"first"` (default): keep only each subject's entry row — a dead
                   subject appears once at death, like leaving a panel.
-                - `"all"`: emit every active period (the absorbing representation).
+                - `"all"`: emit every solved period (the absorbing representation).
 
         Returns:
             DataFrame with simulation results.

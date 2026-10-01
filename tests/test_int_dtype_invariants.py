@@ -27,6 +27,7 @@ from tests.test_models.deterministic.regression import (
     get_model,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 
@@ -232,12 +233,15 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     model = Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
             ),
             "dead": dead,
         },
         ages=AgeGrid(start=18, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
     params = get_params(n_periods=n_periods)
 

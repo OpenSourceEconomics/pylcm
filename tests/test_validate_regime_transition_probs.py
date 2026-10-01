@@ -12,6 +12,8 @@ from _lcm.transition_checks import (
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -26,6 +28,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, FloatND, ScalarFloat, ScalarInt
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
+from tests.test_models.schedules import until_exit
 
 
 def test_valid_probs_accept_boundary_inputs():
@@ -77,8 +80,8 @@ def test_raises_for_mass_large_enough_to_reverse_an_argmax():
         )
 
 
-def test_valid_probs_with_inactive_regime_at_zero():
-    """Inactive regime with zero probability passes validation."""
+def test_valid_probs_with_undeclared_target_at_zero():
+    """A target outside the declared support with zero probability passes validation."""
     probs = MappingProxyType(
         {
             "working_life": jnp.array([0.7, 0.6]),
@@ -116,8 +119,8 @@ def test_raises_for_probs_not_summing_to_one():
         )
 
 
-def test_raises_for_positive_probability_on_inactive_regime():
-    """Positive probability on an inactive regime raises an error."""
+def test_raises_for_positive_probability_outside_the_declared_targets():
+    """Positive probability outside the declared targets raises an error."""
     probs = MappingProxyType(
         {
             "working_life": jnp.array([0.7, 0.6]),
@@ -127,7 +130,7 @@ def test_raises_for_positive_probability_on_inactive_regime():
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match=r"'dead' is inactive at age 26\.0",
+        match=r"'dead' is outside the declared targets of 'working_life'",
     ):
         _validate_regime_transition_probs(
             regime_transition_probs=probs,
@@ -246,8 +249,13 @@ def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
 def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = UserRegime(
-        transition=MarkovTransition(_next_regime_only_fails_for_leave),
-        active=lambda age: age < 27,
+        regime_transitions=until_exit(
+            27,
+            law=MarkovTransition(
+                func=_next_regime_only_fails_for_leave, targets=("active", "terminal")
+            ),
+            exits=("terminal",),
+        ),
         actions={
             "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -258,7 +266,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -266,6 +274,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "active"},
     )
     params: dict = {"discount_factor": 0.95}
     return model, params
@@ -301,8 +310,13 @@ def test_regime_transition_validation_passes_period_as_int32():
         )
 
     active = UserRegime(
-        transition=MarkovTransition(_transition_recording_period),
-        active=lambda age: age < 27,
+        regime_transitions=until_exit(
+            27,
+            law=MarkovTransition(
+                func=_transition_recording_period, targets=("active", "terminal")
+            ),
+            exits=("terminal",),
+        ),
         actions={
             "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -313,7 +327,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -321,6 +335,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         regimes={"active": active, "terminal": terminal},
         ages=AgeGrid(start=25, stop=27, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={25: "active"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -352,7 +367,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     bad_params = get_params(
         n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
-    solution = model.solve(log_level="off", params=bad_params)
+    solution = model.solve(log_level="off", params=get_params(n_periods=N_PERIODS))
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
@@ -439,40 +454,37 @@ def _malformed_aux_probs() -> FloatND:
 
 
 def test_coarse_state_transition_is_checked_with_empty_period_targets():
-    """A coarse stochastic state law is checked even with no retained regime target.
+    """A coarse stochastic state law is checked at every age its regime is solved.
 
-    `solo` is active only at period 1 (age 21) and `term` only at period 0
-    (age 20) — temporally disjoint, so `solo`'s only candidate target
-    (`term`) is never adjacent-period compatible and `solo`'s
-    regime-transition graph retains no target at any period it is active
-    (`targets(period=1, source="solo") == ()`). The coarse
-    (`target_regime_name is None`) `MarkovTransition` on state `aux` must
-    still be numerically validated at period 1 regardless — that emptiness
-    is a fact about the regime transition, not about whether the coarse
-    state law applies.
+    `solo` is solved only at age 21 and moves to the terminal `term`. The coarse
+    (`target_regime_name is None`) `MarkovTransition` on state `aux` is
+    numerically validated there.
     """
     model = Model(
         regimes={
             "solo": UserRegime(
-                transition={"term": MarkovTransition(_one_probability)},
-                active=lambda age: age >= 21,
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=21, stop=22): {
+                            "term": MarkovTransition(func=_one_probability)
+                        }
+                    }
+                ),
                 states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
-                state_transitions={"aux": MarkovTransition(_malformed_aux_probs)},
+                state_transitions={"aux": MarkovTransition(func=_malformed_aux_probs)},
                 constraints={"aux_is_valid": lambda aux: aux >= 0},
                 functions={"utility": _zero_utility},
             ),
             "term": UserRegime(
-                transition=None,
-                active=lambda age: age < 21,
+                regime_transitions=None,
                 functions={"utility": _zero_utility},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_SoloTermRegimeId,
         enable_jit=False,
+        initial_regimes={21: "solo"},
     )
-    assert model.reachability.solution.targets(period=1, source="solo") == ()
-
     flat_params = model._process_params({"discount_factor": 1.0})
     logger = get_logger(log_level="debug")
 

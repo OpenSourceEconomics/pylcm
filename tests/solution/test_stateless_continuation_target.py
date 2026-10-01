@@ -17,6 +17,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -26,6 +27,7 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LEAVE_AT_WEALTH = 3.0
@@ -68,18 +70,24 @@ def _enter_shock() -> FloatND:
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
     alive = Regime(
-        transition=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(bequest)})
+    gone = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
+    )
     model = Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -97,7 +105,7 @@ def test_a_stateless_regime_carries_its_own_value():
     """The stateless regime's value is its utility, not zero."""
     solution = _solve_with_bequest(10.0)
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["gone"]).ravel(), [10.0], decimal=DECIMAL_PRECISION
+        np.asarray(solution[1]["gone"]).ravel(), [10.0], decimal=DECIMAL_PRECISION
     )
 
 
@@ -146,28 +154,34 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
     alive = Regime(
-        transition={
-            "alive": MarkovTransition(
-                lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-            ),
-            "gone": MarkovTransition(
-                lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-            ),
-        },
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law={
+                "alive": MarkovTransition(
+                    func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+                ),
+                "gone": MarkovTransition(
+                    func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+                ),
+            },
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(transition=None, functions={"utility": lambda: jnp.array(10.0)})
+    gone = Regime(
+        regime_transitions=None, functions={"utility": lambda: jnp.array(10.0)}
+    )
     limbo = Regime(
-        transition=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
+        regime_transitions=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
     )
     model = Model(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=_ThreeRegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -204,8 +218,11 @@ def _solve_with_process_only_target(level: float):
     target's process. Once entered, the process carries its own intrinsic law.
     """
     alive = Regime(
-        transition=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={
@@ -215,7 +232,7 @@ def _solve_with_process_only_target(level: float):
         functions={"utility": _utility},
     )
     retired = Regime(
-        transition=None,
+        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -230,6 +247,7 @@ def _solve_with_process_only_target(level: float):
         regimes={"alive": alive, "gone": retired},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -247,7 +265,7 @@ def _solve_with_process_only_target(level: float):
 def test_a_process_only_regime_carries_its_own_value():
     """The process-only regime's value varies with the shock, centred on the level."""
     solution = _solve_with_process_only_target(10.0)
-    retired = np.asarray(solution[0]["gone"]).ravel()
+    retired = np.asarray(solution[1]["gone"]).ravel()
     # Tauchen nodes are symmetric about the mean, so the middle node is the level.
     np.testing.assert_array_almost_equal(retired[1], 10.0, decimal=DECIMAL_PRECISION)
     assert retired[0] < retired[1] < retired[2]

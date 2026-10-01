@@ -45,7 +45,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.value_placement import simulation_value_sharding
-from _lcm.solution.backward_induction import _lowering_key
+from _lcm.solution.backward_induction import CompilationWave, _lowering_key
 from lcm.exceptions import ExecutionPlanningError
 
 type StaticArgument = bool | int | float | str | tuple[StaticArgument, ...] | None
@@ -182,33 +182,63 @@ class ProfiledSimulationOperations:
         refused; shared containers are canonicalized exactly as at dispatch. Only
         executable code and its complete compiler accounting enter the shared cache.
         """
-        static = _validated_static_arguments(
+        key, abstract, static, output_sharding = _abstract_operation(
             function=function,
             arguments=arguments,
+            subject_arg_names=subject_arg_names,
+            devices=devices,
             static_arguments=static_arguments,
             subject_outputs=subject_outputs,
         )
-        subject = subject_operand_sharding(devices=devices)
-        shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
-        abstract = {
-            name: _abstract_operation_tree(
-                tree=value,
-                required=subject if name in subject_arg_names else shared,
-            )
-            for name, value in sorted(arguments.items())
-        }
         return self.compile_candidate(
-            key=_operation_key(
-                function=function,
-                arguments=abstract,
-                static_arguments=static,
-                subject_outputs=subject_outputs,
-                devices=devices,
-            ),
+            key=key,
             function=function,
             arguments=abstract,
             static_arguments=static,
-            output_sharding=subject if subject_outputs else None,
+            output_sharding=output_sharding,
+        )
+
+    def lower_abstract(
+        self,
+        *,
+        function: Callable[..., object],
+        arguments: Mapping[str, object],
+        subject_arg_names: tuple[str, ...],
+        devices: tuple[jax.Device, ...],
+        wave: CompilationWave,
+        label: str,
+    ) -> object:
+        """Lower placed shape descriptors into `wave`; return compiled descriptors.
+
+        The wave compiles the operation off the calling thread and publishes its
+        executable and compiler accounting to the shared cache when it closes. An
+        operation already in the cache is not lowered again. The call waits for
+        the compile, so the descriptors carry the shardings the compiler chose.
+        """
+        key, abstract, static, output_sharding = _abstract_operation(
+            function=function,
+            arguments=arguments,
+            subject_arg_names=subject_arg_names,
+            devices=devices,
+            static_arguments=MappingProxyType({}),
+            subject_outputs=False,
+        )
+        with self.lock:
+            cached = self.cache.get(key)
+        if cached is not None:
+            return cached.executable.out_info
+        return wave.lower(
+            lowering_key=key,
+            label=label,
+            lower=partial(
+                _lower_operation,
+                function=function,
+                arguments=abstract,
+                static_arguments=static,
+                output_sharding=output_sharding,
+            ),
+            publish=partial(self._publish, key=key),
+            wait=True,
         )
 
     def admit_producer(
@@ -293,17 +323,12 @@ class ProfiledSimulationOperations:
         if not owns_compilation:
             return future.result()
         try:
-            # Bind only validated immutable metadata. A fresh callable also keeps
-            # JAX's own static-argument cache from conflating signed float zeros.
-            bound = partial(function, **static_arguments)
-            # Residency excludes arguments charged by the compiler reservation.
-            # Keep shape-only inputs in that report while their callers own them.
-            jitted = (
-                jax.jit(bound, keep_unused=True)
-                if output_sharding is None
-                else jax.jit(bound, keep_unused=True, out_shardings=output_sharding)
-            )
-            executable = jitted.lower(**arguments).compile()
+            executable = _lower_operation(
+                function=function,
+                arguments=arguments,
+                static_arguments=static_arguments,
+                output_sharding=output_sharding,
+            ).compile()
             compiled = _ProfiledOperation(
                 executable=executable,
                 memory=compiler_memory_reservation(compiled=executable, widths={}),
@@ -318,6 +343,15 @@ class ProfiledSimulationOperations:
             del self.in_flight[key]
             future.set_result(compiled)
         return compiled
+
+    def _publish(self, *, executable: jax.stages.Compiled, key: Hashable) -> None:
+        """Cache an executable compiled by a wave under its operation key."""
+        compiled = _ProfiledOperation(
+            executable=executable,
+            memory=compiler_memory_reservation(compiled=executable, widths={}),
+        )
+        with self.lock:
+            self.cache.setdefault(key, compiled)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -344,6 +378,70 @@ class _OperationCompiler:
             static_arguments=self.static_arguments,
             output_sharding=self.output_sharding,
         )
+
+
+def _abstract_operation(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    subject_arg_names: tuple[str, ...],
+    devices: tuple[jax.Device, ...],
+    static_arguments: Mapping[str, object],
+    subject_outputs: bool,
+) -> tuple[
+    Hashable, Mapping[str, object], Mapping[str, object], jax.sharding.Sharding | None
+]:
+    """Canonicalize one operation's placed descriptors and derive its cache key.
+
+    Returns:
+        The cache key, the abstract operands, the validated static bindings and
+        the output sharding.
+
+    """
+    static = _validated_static_arguments(
+        function=function,
+        arguments=arguments,
+        static_arguments=static_arguments,
+        subject_outputs=subject_outputs,
+    )
+    subject = subject_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+    abstract = {
+        name: _abstract_operation_tree(
+            tree=value,
+            required=subject if name in subject_arg_names else shared,
+        )
+        for name, value in sorted(arguments.items())
+    }
+    key = _operation_key(
+        function=function,
+        arguments=abstract,
+        static_arguments=static,
+        subject_outputs=subject_outputs,
+        devices=devices,
+    )
+    return key, abstract, static, subject if subject_outputs else None
+
+
+def _lower_operation(
+    *,
+    function: Callable[..., object],
+    arguments: Mapping[str, object],
+    static_arguments: Mapping[str, object],
+    output_sharding: jax.sharding.Sharding | None,
+) -> jax.stages.Lowered:
+    """Trace and lower one pure operation over abstract operands."""
+    # Bind only validated immutable metadata. A fresh callable also keeps JAX's
+    # own static-argument cache from conflating signed float zeros.
+    bound = partial(function, **static_arguments)
+    # Residency excludes arguments charged by the compiler reservation. Keep
+    # shape-only inputs in that report while their callers own them.
+    jitted = (
+        jax.jit(bound, keep_unused=True)
+        if output_sharding is None
+        else jax.jit(bound, keep_unused=True, out_shardings=output_sharding)
+    )
+    return jitted.lower(**arguments)
 
 
 def _abstract_operand(value: object) -> object:

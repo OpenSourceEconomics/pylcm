@@ -55,13 +55,11 @@ def _simulate(
     *,
     seed: int,
     initial_conditions=_INITIAL,
-    terminal_active_from_start: bool = False,
 ) -> pd.DataFrame:
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=3,
         outer_search=_MESH,
-        terminal_active_from_start=terminal_active_from_start,
     )
     return model.simulate(
         params=_PARAMS,
@@ -143,7 +141,6 @@ def test_mixed_regime_placeholders_do_not_abort_nested_replay() -> None:
     mixed = _simulate(
         seed=42,
         initial_conditions=_MIXED_INITIAL,
-        terminal_active_from_start=True,
     )
     period0 = mixed[mixed["period"] == 0].sort_values("subject_id")
 

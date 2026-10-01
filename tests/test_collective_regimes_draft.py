@@ -7,6 +7,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -23,6 +24,7 @@ from lcm.typing import (
     IntND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 # Shared building blocks: a stripped-down couples problem, in which the two
 # stakeholders differ only in their disutility of work.
@@ -93,7 +95,7 @@ def test_declaring_non_terminal_stakeholders_constructs():
         return 0
 
     regime = Regime(
-        transition=_some_transition,
+        regime_transitions=_some_transition,
         states={"wealth": _WEALTH},
         actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -113,8 +115,11 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     property of the merged regime and is reported when the model finalizes it.
     """
     married = Regime(
-        transition=_next_regime_widowed,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime_widowed, targets=("married", "widowed")),
+            exits=("widowed",),
+        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -127,8 +132,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         },
     )
     widowed = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         actions={
             "labor_supply_f": DiscreteGrid(category_class=LaborSupply),
@@ -144,6 +148,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
             regimes={"married": married, "widowed": widowed},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_CoupleRegimeId,
+            initial_regimes={0: "married"},
         )
 
 
@@ -159,7 +164,7 @@ def test_singleton_default_is_untouched():
         return jnp.log(consumption)
 
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},

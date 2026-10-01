@@ -54,6 +54,8 @@ from _lcm.simulation.gated_routing import (
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
@@ -275,7 +277,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     """
     edges = {
         "target_a": ValueDependentTransition(
-            probability=MarkovTransition(_prob_half),
+            probability=MarkovTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -286,7 +288,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
             },
         ),
         "target_b": ValueDependentTransition(
-            probability=MarkovTransition(_prob_half),
+            probability=MarkovTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -298,34 +300,31 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         ),
     }
     src = Regime(
-        transition={name: edges[name] for name in edge_order},
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): {name: edges[name] for name in edge_order}}
+        ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target_a = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_a},
     )
     target_b = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_b},
     )
     fallback_a = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_a},
     )
     fallback_b = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_b},
     )

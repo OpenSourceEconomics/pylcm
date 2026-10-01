@@ -15,6 +15,8 @@ import jax.numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
+    AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -107,28 +109,31 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
     it, and nothing in `retired` or `outside` does.
     """
     worker = Regime(
-        transition={
-            "retired": ValueDependentTransition(
-                probability=MarkovTransition(_probability_one),
-                gate=_gate_reading_bonus,
-                routes={
-                    "self": StakeholderRoute(
-                        target_stakeholder=None,
-                        fallback=ProjectedRegimeValue(
-                            regime="outside",
-                            projection={"wage": _project_wage_identically},
-                        ),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "retired": ValueDependentTransition(
+                        probability=MarkovTransition(func=_probability_one),
+                        gate=_gate_reading_bonus,
+                        routes={
+                            "self": StakeholderRoute(
+                                target_stakeholder=None,
+                                fallback=ProjectedRegimeValue(
+                                    regime="outside",
+                                    projection={"wage": _project_wage_identically},
+                                ),
+                            )
+                        },
+                        gate_references={
+                            "V_outside_ref": ProjectedRegimeValue(
+                                regime="outside",
+                                projection={"wage": _project_wage_identically},
+                            )
+                        },
                     )
-                },
-                gate_references={
-                    "V_outside_ref": ProjectedRegimeValue(
-                        regime="outside",
-                        projection={"wage": _project_wage_identically},
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -144,6 +149,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         regime_id_class=GatedRegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
+        initial_regimes={0: "worker"},
     )
 
 
@@ -155,28 +161,31 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
     which the incoming edge's gate reference reads `outside`'s value.
     """
     worker = Regime(
-        transition={
-            "retired": ValueDependentTransition(
-                probability=MarkovTransition(_probability_one),
-                gate=_gate_comparing_values,
-                routes={
-                    "self": StakeholderRoute(
-                        target_stakeholder=None,
-                        fallback=ProjectedRegimeValue(
-                            regime="outside",
-                            projection={"wage": _project_wage_identically},
-                        ),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "retired": ValueDependentTransition(
+                        probability=MarkovTransition(func=_probability_one),
+                        gate=_gate_comparing_values,
+                        routes={
+                            "self": StakeholderRoute(
+                                target_stakeholder=None,
+                                fallback=ProjectedRegimeValue(
+                                    regime="outside",
+                                    projection={"wage": _project_wage_identically},
+                                ),
+                            )
+                        },
+                        gate_references={
+                            "V_outside_ref": ProjectedRegimeValue(
+                                regime="outside",
+                                projection={"wage": _project_wage_from_bonus},
+                            )
+                        },
                     )
-                },
-                gate_references={
-                    "V_outside_ref": ProjectedRegimeValue(
-                        regime="outside",
-                        projection={"wage": _project_wage_from_bonus},
-                    )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"wage": _WAGE_GRID, "bonus": _BONUS_GRID},
         state_transitions={"wage": _next_wage, "bonus": fixed_transition("bonus")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -192,14 +201,14 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         },
         ages=AGES,
         regime_id_class=GatedRegimeId,
+        initial_regimes={0: "worker"},
     )
 
 
 def _make_retired_regime(*, states: dict[str, LinSpacedGrid]) -> Regime:
     """Build the gated edge's target regime over the given states."""
     return Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states=states,
         functions={"utility": _utility_retired},
     )
@@ -208,8 +217,7 @@ def _make_retired_regime(*, states: dict[str, LinSpacedGrid]) -> Regime:
 def _make_outside_regime() -> Regime:
     """Build the reference regime the gate-closed branch falls back to."""
     return Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_outside},
     )

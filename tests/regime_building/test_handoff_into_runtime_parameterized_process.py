@@ -24,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 _RUNTIME_PROCESS = NormalIIDProcess(n_points=3, gauss_hermite=False)
 _SHOCK_PARAMS = {"mu": 1.0, "sigma": 0.5, "n_std": 2.0}
@@ -59,20 +60,24 @@ def _build(*, source_states, source_state_transitions) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_to_target)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_to_target)},
+                    exits=("target",),
+                ),
                 states=source_states,
                 state_transitions=source_state_transitions,
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"shock": _RUNTIME_PROCESS},
                 functions={"utility": _shock_utility},
             ),
         },
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "source"},
     )
 
 

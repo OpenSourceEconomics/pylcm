@@ -24,6 +24,7 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -69,10 +70,6 @@ def _next_regime() -> ScalarInt:
     return _LifecycleRegimeId.done
 
 
-def _initial_age(age: float) -> bool:
-    return age == 0
-
-
 def _inputs(
     *,
     budget: int | None,
@@ -83,8 +80,7 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_initial_age,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"income": UniformIIDProcess(n_points=5, start=fixed_start)}
                 | ({} if companion is None else {"companion": companion}),
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
@@ -94,11 +90,14 @@ def _inputs(
                     else _utility_with_companion
                 },
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
+        initial_regimes={0: "alive"},
     )
     params = {
         "alive": {

@@ -25,10 +25,12 @@ from _lcm.regime_building.processing import (
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.variables import from_regime, get_grids
 from lcm import (
+    AgeRange,
+    ByAge,
+    Choose,
     LinearAggregator,
     LinearExpectation,
     Phased,
-    categorical,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
@@ -37,13 +39,14 @@ from lcm.regime import Regime as UserRegime
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, GridSearch, Solver
 from lcm.typing import FloatND, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 from tests.mock_regime import MockRegime
 from tests.solution.test_egm_solver import _SAVINGS_GRID as EGM_SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as egm_model
 from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 from tests.test_models.deterministic.base import dead, working_life
+from tests.test_models.deterministic.regression import working_life_transitions
 from tests.test_nbegm_constraint_validation import _build_smooth_model
 
 
@@ -131,7 +134,12 @@ def test_get_grids_reorder(binary_category_class):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    user_regimes = {"working_life": working_life, "dead": dead}
+    user_regimes = {
+        "working_life": working_life.replace(
+            regime_transitions=working_life_transitions(last_age=4)
+        ),
+        "dead": dead,
+    }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
@@ -142,7 +150,7 @@ def test_process_regimes():
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
@@ -220,40 +228,42 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     def next_x(x):
         return x
 
-    def regime_transition(*, age, final_age):
-        return jnp.where(age >= final_age, 1, 0)
-
-    @categorical(ordered=False)
-    class TwoRegimeId:
-        early: ScalarInt
-        late: ScalarInt
+    def regime_transition(age):
+        return jnp.where(age >= 1, 2, 1)
 
     early = UserRegime(
-        transition=regime_transition,
+        regime_transitions=ByAge(
+            cases={AgeRange(stop=1): Choose(func=regime_transition, targets=("late",))}
+        ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
-        active=lambda age: age < 1,
     )
     late = UserRegime(
-        transition=regime_transition,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): Choose(
+                    func=regime_transition, targets=("done",)
+                )
+            }
+        ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
-        active=lambda age: age >= 1,
     )
+    done = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
     ages = AgeGrid(start=0, stop=2, step="Y")
     finalized_user_regimes = finalize_regimes(
-        user_regimes={"early": early, "late": late},
+        user_regimes={"early": early, "late": late, "done": done},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     return process_regimes(
-        user_regimes=finalized_user_regimes,
+        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
-            {"early": jnp.int32(0), "late": jnp.int32(1)}
+            {"early": jnp.int32(0), "late": jnp.int32(1), "done": jnp.int32(2)}
         ),
         enable_jit=True,
         prepared_structure=build_prepared_structure(
@@ -348,7 +358,7 @@ def _pair_handover_regime() -> UserRegime:
         return jnp.asarray(wealth)
 
     return UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -416,7 +426,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         return jnp.asarray(wealth)
 
     working = UserRegime(
-        transition=next_regime,
+        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -474,7 +484,7 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         return jnp.asarray(wealth)
 
     kwargs: dict = {
-        "transition": next_regime,
+        "regime_transitions": next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(

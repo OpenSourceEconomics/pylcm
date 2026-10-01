@@ -18,6 +18,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -43,12 +44,15 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_one_probability)},
-                active=lambda age: age < 22,
+                regime_transitions=until_exit(
+                    22,
+                    law={"target": MarkovTransition(func=_one_probability)},
+                    exits=("target",),
+                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                transition=None,
+                regime_transitions=None,
                 actions={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=True, mu=0.5, sigma=1.0
@@ -60,6 +64,7 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        initial_regimes={20: "source"},
     )
 
 

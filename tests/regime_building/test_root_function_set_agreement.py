@@ -18,6 +18,8 @@ from _lcm import model_processing
 from _lcm.regime_building import broadcast
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -191,6 +193,7 @@ def _record_root_calls(
         regime_id_class=RegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
+        initial_regimes={0: "couple"},
     )
     return recorded
 
@@ -204,32 +207,37 @@ def _make_regimes() -> dict[str, Regime]:
     carries the value constraints and same-period references that flag drives.
     """
     couple = Regime(
-        transition={
-            "couple_ir": ValueDependentTransition(
-                probability=MarkovTransition(_probability_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                },
-                gate_references={
-                    "V_single_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "couple_ir": ValueDependentTransition(
+                        probability=MarkovTransition(func=_probability_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                        gate_references={
+                            "V_single_ref": ProjectedRegimeValue(
+                                regime="single_f", projection={"wage": _identity_wage}
+                            )
+                        },
                     )
-                },
-            )
-        },
-        active=lambda age: age < 1,
+                }
+            }
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -246,8 +254,13 @@ def _make_regimes() -> dict[str, Regime]:
         constraints={"work_pays": _work_pays},
     )
     couple_ir = Regime(
-        transition={"couple_terminal": MarkovTransition(_probability_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "couple_terminal": MarkovTransition(func=_probability_one)
+                }
+            }
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -276,8 +289,7 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -287,8 +299,13 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        transition={"single_terminal": MarkovTransition(_probability_one)},
-        active=lambda age: (age >= 1) & (age < 2),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, stop=2): {
+                    "single_terminal": MarkovTransition(func=_probability_one)
+                }
+            }
+        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -296,8 +313,7 @@ def _make_regimes() -> dict[str, Regime]:
     )
     single_m = single_f.replace(functions={"utility": _utility_single_m})
     single_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 2,
+        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_terminal_single},
     )

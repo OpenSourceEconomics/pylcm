@@ -18,13 +18,20 @@ import pytest
 
 from _lcm.execution import workspace_planning
 from _lcm.simulation import chunk_admission, host_operations, runtime
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, NormalIIDProcess, Regime
+from lcm import (
+    AgeGrid,
+    Choose,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    Regime,
+)
 from lcm.exceptions import ExecutionPlanningError
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_normal_process_grid_admission import _inputs
 from tests.simulation.test_process_grid_entry_admission import (
-    _initial_age,
     _next_regime,
     _terminal_utility,
     _utility,
@@ -68,18 +75,24 @@ def budgeted_case() -> tuple[Any, Any, Any, Any]:
 def _executable_cache_size(*, model: Any) -> int:
     """Read the number of distinct compiled executables every cache retains.
 
-    A dispatch reads the compiler report from two independent caches: the
+    A dispatch reads the compiler report from independent caches: the
     core/forward-program cache on `SimulationRuntime` (`executor.cache`,
     `CompiledSimulationProgram.memory`) and the pure-host-operation cache on
     `ProfiledSimulationOperations` (`executor.operations.cache`,
-    `_ProfiledOperation.memory`). Both are exact-executable-identity caches;
-    summing their sizes gives the total distinct-executable count a complete
-    cold dispatch reads memory for exactly once.
+    `_ProfiledOperation.memory`), plus the model's user-law producer cache
+    (`_simulate_entry_operations`), which regime selection fills under entry
+    admission. All are exact-executable-identity caches; summing their sizes
+    gives the total distinct-executable count a complete cold dispatch reads
+    memory for exactly once.
     """
     (regimes,) = model._simulate_runtime_regimes.values()
     regime = next(iter(regimes.values()))
     executor = regime.simulation.programs.executor
-    return len(executor.cache) + len(executor.operations.cache)
+    return (
+        len(executor.cache)
+        + len(executor.operations.cache)
+        + len(model._simulate_entry_operations.cache)
+    )
 
 
 def _simulate(
@@ -221,19 +234,21 @@ def _axis_width_case(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_initial_age,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"income": NormalIIDProcess(n_points=5, gauss_hermite=False)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},
             ),
-            "done": Regime(transition=None, functions={"utility": _terminal_utility}),
+            "done": Regime(
+                regime_transitions=None, functions={"utility": _terminal_utility}
+            ),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(
             device_memory_bytes=budget, axis_widths=axis_widths
         ),
+        initial_regimes={0: "alive"},
     )
     params = {
         "alive": {

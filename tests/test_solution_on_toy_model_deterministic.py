@@ -9,7 +9,14 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    Choose,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -20,6 +27,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -88,14 +96,12 @@ alive_deterministic = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime,
-    active=lambda age: age < 1,  # n_periods=2, so active in period 0
+    regime_transitions=Choose(func=next_regime, targets=("dead",)),
 )
 
 dead = UserRegime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
-    active=lambda age: age >= 1,  # n_periods=2, so active in period 1
 )
 
 
@@ -213,6 +219,11 @@ def matrix_to_dict_of_vectors(*, arr, col_names):
     return dict(zip(col_names, arr.transpose(), strict=True))
 
 
+THREE_PERIOD_TRANSITIONS = until_exit(
+    2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+)
+
+
 def dict_of_vectors_to_matrix(d):
     """Transform a dict of vectors into a matrix."""
     return np.column_stack(list(d.values()))
@@ -230,12 +241,13 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
     model = Model(
         regimes={
             "alive": alive_deterministic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {
@@ -280,12 +292,13 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
     model = Model(
         regimes={
             "alive": alive_deterministic.replace(
-                states=new_states, active=lambda age: age < n_periods - 1
+                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

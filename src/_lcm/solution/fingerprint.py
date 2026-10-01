@@ -61,6 +61,7 @@ from lcm.solver_api import (
     PersistencePolicy,
     SolverIdentity,
 )
+from lcm.transition import AgeRange
 
 # beartype compiles every guard it writes under this synthetic filename.
 _BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
@@ -633,8 +634,9 @@ def fingerprint_model_structure(
     """Hash the mathematical facts a model fixes at build.
 
     No parameter vector reaches this record: it carries period and regime
-    topology, state and action names, stakeholders, solver and replay
-    identities, artifact descriptors, per-period state axes, the user
+    topology (the solved and the visited periods of every regime, but not the
+    declared starts that produced them), state and action names, stakeholders,
+    solver and replay identities, artifact descriptors, per-period state axes, the user
     declaration's callable semantics, and the regimes' own fixed parameters.
     Concrete grid support and canonical solution parameters belong to
     `fingerprint_model`, which reads them from the parameter vector.
@@ -650,12 +652,19 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 7),
+        ("pylcm-model-structure", 8),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {
                 "active_periods": regime.active_periods,
+                "visited_periods": tuple(
+                    period
+                    for period, visited in enumerate(
+                        regime.simulation.reachability.active_regimes_by_period
+                    )
+                    if name in visited
+                ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
                 "fold_state_names": regime.fold_state_names,
@@ -707,7 +716,7 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
 
 
 def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
@@ -2173,7 +2182,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         value=value, candidates=_TRUSTED_TERMINAL_OBJECT_TYPES
     ) or isinstance(value, CertaintyEquivalent):
         return True
-    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased):
+    if isinstance(value, Fraction | Enum | DiscreteGrid | Phased | AgeRange):
         return True
     if isinstance(value, Array | np.dtype):
         return True
@@ -2188,9 +2197,14 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     if isinstance(value, type):
         return _is_closed_direct_type(value)
 
-    if not isinstance(value, functools.partial) and not _has_exact_type(
-        value=value,
-        candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+    engine_callable = _is_engine_callable_dataclass(value)
+    if (
+        not engine_callable
+        and not isinstance(value, functools.partial)
+        and not _has_exact_type(
+            value=value,
+            candidates=(tuple, list, frozenset, set, dict, _MAPPING_PROXY_TYPE),
+        )
     ):
         return False
 
@@ -2200,6 +2214,15 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         return False
     active.add(identity)
     try:
+        if engine_callable:
+            # The class is pylcm's, so its `__call__` is sealed by the pylcm
+            # version; what varies per instance is its fields.
+            return all(
+                _is_closed_terminal_reference(
+                    value=getattr(value, field.name), _active=active
+                )
+                for field in dataclasses.fields(cast("Any", value))
+            )
         if isinstance(value, functools.partial):
             return _is_closed_terminal_reference(
                 value=value.func, _active=active
@@ -2220,6 +2243,16 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         )
     finally:
         active.remove(identity)
+
+
+def _is_engine_callable_dataclass(value: object) -> bool:
+    """Whether `value` is a callable dataclass instance of a shipped pylcm class."""
+    value_type = type(value)
+    return (
+        dataclasses.is_dataclass(value_type)
+        and callable(value)
+        and _is_shipped_pylcm_module_name(value_type.__module__)
+    )
 
 
 def _is_closed_direct_type(value: type) -> bool:

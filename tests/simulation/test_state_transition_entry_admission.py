@@ -18,6 +18,7 @@ from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     MarkovTransition,
@@ -59,10 +60,6 @@ def _utility(*, health: ScalarInt) -> ScalarFloat:
 
 def _next_regime() -> ScalarInt:
     return _RegimeId.done
-
-
-def _alive(age: float) -> bool:
-    return age == 0
 
 
 def _done(age: float) -> bool:
@@ -108,15 +105,13 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                transition=_next_regime,
-                active=_alive,
+                regime_transitions=Choose(func=_next_regime, targets=("done",)),
                 states={"health": grid},
-                state_transitions={"health": MarkovTransition(law)},
+                state_transitions={"health": MarkovTransition(func=law)},
                 functions={"utility": _utility},
             ),
             "done": Regime(
-                transition=None,
-                active=_done,
+                regime_transitions=None,
                 states={"health": grid},
                 functions={"utility": _utility},
             ),
@@ -124,6 +119,7 @@ def _inputs(
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
+        initial_regimes={0: "alive"},
     )
     return (
         model,

@@ -50,6 +50,7 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import (
+    Choose,
     CollectiveUtility,
     ExecutionConfig,
     fixed_transition,
@@ -62,6 +63,7 @@ from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized (a serial run importing
@@ -119,6 +121,7 @@ def _make_correct_distributed_model(
     cell_width: int | None = None,
     subject_width: int | None = None,
     exact_layout: bool = False,
+    one_regime_per_period: bool = False,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
@@ -162,10 +165,17 @@ def _make_correct_distributed_model(
             if exact_layout
             else LinSpacedGrid(start=1, stop=50, n_points=10)
         },
-        transition=lambda age: jnp.where(
-            age >= 4, RegimeId.retirement, RegimeId.working_life
+        regime_transitions=until_exit(
+            5,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 4, RegimeId.retirement, RegimeId.working_life
+                ),
+                targets=("working_life", "retirement"),
+            ),
+            exits=("retirement",),
+            stays=("working_life",) if one_regime_per_period else None,
         ),
-        active=lambda age: age < 5,
     )
 
     def retirement_utility_with_type2(*, wealth, type1, type2):
@@ -181,14 +191,13 @@ def _make_correct_distributed_model(
     )
 
     retirement = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": retirement_utility},
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
             if exact_layout
             else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
-        active=lambda age: age >= 5,
     )
 
     return Model(
@@ -219,6 +228,7 @@ def _make_correct_distributed_model(
                 ),
             ),
         ),
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -254,15 +264,19 @@ def _get_exact_layout_values(
     values: dict[int, dict[str, np.ndarray]] = {
         period: {"working_life": np.empty((4, 4, 9))} for period in range(5)
     }
+    # `working_life`'s declared support names `retirement` at every source age, so
+    # the terminal value is solved at every period after the first; it does not
+    # depend on the period.
     terminal_shape = (4, 4, 9) if retirement_reads_type2 else (4, 9)
-    values[5] = {"retirement": np.empty(terminal_shape)}
+    terminal_value = np.empty(terminal_shape)
+    values[5] = {}
     for type1 in range(4):
         for type2 in range(4):
             slope = Fraction(type1 * (type2 if retirement_reads_type2 else 1), 2)
             intercept = Fraction(0)
             terminal = [float(slope * wealth) for wealth in range(8, 73, 8)]
             index = (type1, type2) if retirement_reads_type2 else type1
-            values[5]["retirement"][index] = terminal
+            terminal_value[index] = terminal
             for period in reversed(range(5)):
                 intercept = intercept / 2 + max(
                     (type1 * type2 - slope / 2) * consumption
@@ -272,6 +286,8 @@ def _get_exact_layout_values(
                 values[period]["working_life"][type1, type2] = [
                     float(slope * wealth + intercept) for wealth in range(8, 73, 8)
                 ]
+    for period in range(1, 6):
+        values[period]["retirement"] = terminal_value
     return values
 
 
@@ -356,8 +372,11 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
     return Model(
         regimes={
             "working": UserRegime(
-                transition=next_regime,
-                active=lambda age: age < 1,
+                regime_transitions=until_exit(
+                    1,
+                    law=Choose(func=next_regime, targets=("working", "retired")),
+                    exits=("retired",),
+                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
                 state_transitions={
                     "wealth": lambda wealth, consumption: wealth - consumption
@@ -370,8 +389,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
                 },
             ),
             "retired": UserRegime(
-                transition=None,
-                active=lambda age: age >= 1,
+                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
                 functions={
                     "utility": CollectiveUtility(
@@ -387,6 +405,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
             sharded_states=("type1",) if distributed else ()
         ),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: "working"},
     )
 
 
@@ -426,21 +445,26 @@ def _make_wrong_distributed_model() -> Model:
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
-            age >= 4, RegimeId.retirement, RegimeId.working_life
+        regime_transitions=until_exit(
+            5,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 4, RegimeId.retirement, RegimeId.working_life
+                ),
+                targets=("working_life", "retirement"),
+            ),
+            exits=("retirement",),
         ),
-        active=lambda age: age < 5,
     )
 
     retirement = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={
             "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
-        active=lambda age: age >= 5,
     )
 
     return Model(
@@ -456,6 +480,7 @@ def _make_wrong_distributed_model() -> Model:
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -878,18 +903,29 @@ def _make_two_source_distributed_model() -> Model:
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=to_retirement,
-        active=lambda age: age < 5,
+        regime_transitions=until_exit(
+            5,
+            law=Choose(func=to_retirement, targets=("retirement", "working_life")),
+            exits=("retirement",),
+        ),
     )
     return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(transition=to_retirement_b),
+            "working_life_b": working.replace(
+                regime_transitions=until_exit(
+                    5,
+                    law=Choose(
+                        func=to_retirement_b,
+                        targets=("retirement", "working_life_b"),
+                    ),
+                    exits=("retirement",),
+                )
+            ),
             "retirement": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": retirement_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-                active=lambda age: age >= 5,
             ),
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
@@ -897,6 +933,7 @@ def _make_two_source_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: ("working_life", "working_life_b")},
     )
 
 
@@ -1303,17 +1340,22 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda age: jnp.where(
-            age >= 4, RegimeId.retirement, RegimeId.working_life
+        regime_transitions=until_exit(
+            5,
+            law=Choose(
+                func=lambda age: jnp.where(
+                    age >= 4, RegimeId.retirement, RegimeId.working_life
+                ),
+                targets=("working_life", "retirement"),
+            ),
+            exits=("retirement",),
         ),
-        active=lambda age: age < 5,
     )
 
     retirement = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        active=lambda age: age >= 5,
     )
 
     return Model(
@@ -1331,6 +1373,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
+        initial_regimes={0: "working_life"},
     )
 
 
@@ -1402,9 +1445,19 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
         )
         .values
     )
+    # The sharded and single-device solves reduce in different orders, and the
+    # gap grows toward earlier periods. On CPU with eight host devices under jax
+    # 0.11.1, `working_life` differs by 1 ulp in period 3 and by at most 3 ulp in
+    # period 0, at float64 and at float32, identically on the pull request's base
+    # commit, so it is a reduction-order effect, not a value change.
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
-            np.testing.assert_array_equal(value, single[period][regime_name])
+            assert_agrees_to_ulp(
+                got=np.asarray(value),
+                expected=np.asarray(single[period][regime_name]),
+                n_ulp=3,
+                err_msg=f"regime {regime_name!r}, period {period}",
+            )
 
 
 def test_execution_config_cannot_shard_an_action():
@@ -1429,17 +1482,20 @@ def test_execution_config_cannot_shard_an_action():
         actions={
             "choice": DiscreteGrid(category_class=Choice),
         },
-        transition=lambda: RegimeId.dead,
+        regime_transitions="dead",
     )
     with pytest.raises(ExecutionPlanningError, match="choice"):
         Model(
             regimes={
                 "alive": regime,
-                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+                "dead": UserRegime(
+                    regime_transitions=None, functions={"utility": lambda: 0.0}
+                ),
             },
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=RegimeId,
             execution_config=ExecutionConfig(sharded_states=("choice",)),
+            initial_regimes={0: "alive"},
         )
 
 
@@ -1521,18 +1577,29 @@ def _make_two_source_partially_distributed_model() -> Model:
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=to_retirement,
-        active=lambda age: age < 5,
+        regime_transitions=until_exit(
+            5,
+            law=Choose(func=to_retirement, targets=("retirement", "working_life")),
+            exits=("retirement",),
+        ),
     )
     return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(transition=to_retirement_b),
+            "working_life_b": working.replace(
+                regime_transitions=until_exit(
+                    5,
+                    law=Choose(
+                        func=to_retirement_b,
+                        targets=("retirement", "working_life_b"),
+                    ),
+                    exits=("retirement",),
+                )
+            ),
             "retirement": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": retirement_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-                active=lambda age: age >= 5,
             ),
         },
         ages=AgeGrid(start=0, stop=5, step="Y"),
@@ -1540,6 +1607,7 @@ def _make_two_source_partially_distributed_model() -> Model:
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
+        initial_regimes={0: ("working_life", "working_life_b")},
     )
 
 

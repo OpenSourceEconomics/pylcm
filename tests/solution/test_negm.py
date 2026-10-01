@@ -78,7 +78,7 @@ def _nested_regime(
     if outer_no_adjustment_candidate != outer_unchanged:
         functions[outer_no_adjustment_candidate] = lambda illiquid: illiquid
     return NestedConsumptionSavingsRegime(
-        transition=lambda: 0,
+        regime_transitions=lambda: 0,
         states={"wealth": _OUTER_GRID, "illiquid": _OUTER_GRID},
         state_transitions={
             "wealth": lambda liquid_savings: liquid_savings,
@@ -190,6 +190,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
     grid_search_model = Model(
         regimes={
@@ -199,6 +200,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
+        initial_regimes={ages.exact_values[0]: "alive"},
     )
 
     assert negm_model.reachability == grid_search_model.reachability

@@ -12,6 +12,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinSpacedGrid,
@@ -36,6 +37,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy
+from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.05, stop=19.0, n_points=8)
@@ -92,14 +94,15 @@ def next_regime(age: int) -> ScalarInt:
 def test_nbegm_regime_declaring_taste_shocks_is_rejected():
     """A bare NB-EGM regime with EV1 taste shocks fails at model build."""
     alive = ConsumptionSavingsRegime(
-        active=lambda age: age <= 20,
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth},
         actions={
             "consumption": CONSUMPTION_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        transition=next_regime,
+        regime_transitions=until_exit(
+            25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility,
@@ -116,8 +119,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age > 20,
+        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
     )
@@ -126,13 +128,13 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             regimes={"alive": alive, "dead": dead},
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, stop=25, step="5Y"),
+            initial_regimes={20: "alive"},
         )
 
 
 def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
     """The nested solver inherits the inner NB-EGM's taste-shock rejection."""
     alive = NestedConsumptionSavingsRegime(
-        active=lambda age: age <= 20,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -146,7 +148,11 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        transition=n_nbegm_toy.next_regime,
+        regime_transitions=until_exit(
+            25,
+            law=Choose(func=n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility_with_labor_disutility,
@@ -171,8 +177,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        transition=None,
-        active=lambda age: age > 20,
+        regime_transitions=None,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -185,4 +190,5 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
+            initial_regimes={20: "alive"},
         )

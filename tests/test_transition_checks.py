@@ -15,6 +15,7 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -31,6 +32,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -75,10 +77,9 @@ def _utility_terminal(wealth: ContinuousState) -> FloatND:
 
 def _terminal_regime() -> UserRegime:
     return UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
-        active=lambda age: age >= 1,
     )
 
 
@@ -88,17 +89,21 @@ def _model_with_state_probs(next_health_func) -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(next_health_func),
+            "health": MarkovTransition(func=next_health_func),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
 
 
@@ -238,18 +243,20 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(swapped_probs),
+            "health": MarkovTransition(func=swapped_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_local_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_local_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
-        active=lambda age: age >= 1,
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subscript"):
@@ -257,6 +264,7 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
             regimes={"alive": alive, "terminal": terminal},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=_LocalRegimeId,
+            initial_regimes={0: "alive"},
         )
 
 
@@ -274,82 +282,6 @@ def test_ast_check_is_permissive_when_no_probs_array_subscript() -> None:
     # Model construction must not raise just because the function lacks
     # the subscript pattern; runtime numerical checks still apply.
     model = _model_with_state_probs(no_subscript_probs)
-    model.solve(log_level="debug", params={"discount_factor": 0.95})
-
-
-def test_per_target_dict_skips_unreachable_targets() -> None:
-    """Per-target entries to regimes inactive at the next period are skipped.
-
-    `solve()` and `simulate()` only dispatch a per-target transition for
-    targets in `active_regimes_next_period` at the source's period; the
-    pre-solve validator mirrors that gate so an unreachable target's
-    function — whose output shape might not even match the (always-zero-
-    weighted) target's outcome grid — is not numerically evaluated.
-    """
-
-    @categorical(ordered=False)
-    class _Heir:
-        no: ScalarInt
-        yes: ScalarInt
-
-    @categorical(ordered=False)
-    class _RegId:
-        alive: ScalarInt
-        unreachable: ScalarInt
-        dead: ScalarInt
-
-    def bad_heir_probs(wealth: ContinuousState) -> FloatND:  # noqa: ARG001
-        # Would fail sum-to-1 if the validator ran it; the test asserts
-        # it does NOT run because `unreachable` deactivates before `alive`
-        # can transition into it.
-        return jnp.array([0.5, 0.3])
-
-    def next_wealth_passthrough(wealth: ContinuousState) -> ContinuousState:
-        return wealth
-
-    def _utility(wealth: ContinuousState) -> FloatND:
-        return wealth
-
-    def _utility_with_heir(
-        *, wealth: ContinuousState, heir_present: DiscreteState
-    ) -> FloatND:
-        return wealth * heir_present
-
-    def _to_dead(age: float) -> ScalarInt:  # noqa: ARG001
-        return jnp.asarray(_RegId.dead)
-
-    alive = UserRegime(
-        functions={"utility": _utility},
-        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
-        state_transitions={
-            "wealth": next_wealth_passthrough,
-            "heir_present": {"unreachable": MarkovTransition(bad_heir_probs)},
-        },
-        transition=_to_dead,
-        active=lambda age: age < 1,
-    )
-    unreachable = UserRegime(
-        transition=None,
-        functions={"utility": _utility_with_heir},
-        states={
-            "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
-            "heir_present": DiscreteGrid(category_class=_Heir),
-        },
-        # Active only at age 0 — never the next period of `alive`.
-        active=lambda age: age < 1,
-    )
-    dead = UserRegime(
-        transition=None,
-        functions={"utility": _utility},
-        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
-        active=lambda age: age >= 1,
-    )
-    model = Model(
-        regimes={"alive": alive, "unreachable": unreachable, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=_RegId,
-    )
-
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
@@ -390,24 +322,25 @@ def test_per_target_dict_validates_each_entry() -> None:
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
         state_transitions={
             "wealth": next_wealth_passthrough,
-            "heir_present": {"dead": MarkovTransition(bad_heir_probs)},
+            "heir_present": {"dead": MarkovTransition(func=bad_heir_probs)},
         },
-        transition=_to_dead,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1, law=Choose(func=_to_dead, targets=("alive", "dead")), exits=("dead",)
+        ),
     )
     dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
-        active=lambda age: age >= 1,
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegId,
+        initial_regimes={0: "alive"},
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
@@ -474,13 +407,17 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
+        initial_regimes={0: "alive"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -503,18 +440,22 @@ def _model_with_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(health_probs),
+            "health": MarkovTransition(func=health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -562,24 +503,27 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": {"terminal": MarkovTransition(health_probs)},
+            "health": {"terminal": MarkovTransition(func=health_probs)},
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     terminal = UserRegime(
-        transition=None,
+        regime_transitions=None,
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
-        active=lambda age: age >= 1,
     )
     return Model(
         regimes={"alive": alive, "terminal": terminal},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
+        initial_regimes={0: "alive"},
     )
 
 
@@ -624,18 +568,22 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(bad_health_probs),
+            "health": MarkovTransition(func=bad_health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        transition=_next_regime,
-        active=lambda age: age < 1,
+        regime_transitions=until_exit(
+            1,
+            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            exits=("terminal",),
+        ),
     )
     model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.6},
+        initial_regimes={0: "alive"},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):

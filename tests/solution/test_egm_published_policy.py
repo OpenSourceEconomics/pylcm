@@ -43,17 +43,20 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _two_period_bequest_model() -> Model:
     """Two-period log-utility retirement model with a terminal bequest."""
     bequest_dead = UserRegime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
     return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(active=lambda age: age < 50),
+            "retirement": dcegm_retirement.replace(
+                regime_transitions=retirement_only.retirement_transitions(last_age=50)
+            ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_regimes={40: "retirement"},
     )
 
 

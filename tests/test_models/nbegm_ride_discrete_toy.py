@@ -482,7 +482,7 @@ def build_model(  # noqa: C901, PLR0912
     if action_in_health_transition:
         extra_states["health"] = DiscreteGrid(category_class=Health)
         extra_state_transitions["health"] = {
-            "alive": MarkovTransition(prob_health_action),
+            "alive": MarkovTransition(func=prob_health_action),
         }
     if action_in_costate:
         extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
@@ -522,8 +522,8 @@ def build_model(  # noqa: C901, PLR0912
 
     if action_in_regime_transition:
         survival_transition = {
-            "alive": MarkovTransition(prob_stay_alive_action),
-            "dead": MarkovTransition(prob_die_action),
+            "alive": MarkovTransition(func=prob_stay_alive_action),
+            "dead": MarkovTransition(func=prob_die_action),
         }
     elif transition_reads_liquid:
         stay, die = (
@@ -532,8 +532,8 @@ def build_model(  # noqa: C901, PLR0912
             else (prob_stay_alive_liquid, prob_die_liquid)
         )
         survival_transition = {
-            "alive": MarkovTransition(stay),
-            "dead": MarkovTransition(die),
+            "alive": MarkovTransition(func=stay),
+            "dead": MarkovTransition(func=die),
         }
     else:
         survival_transition = None
@@ -624,13 +624,8 @@ def build_params(
         **oop_params,
         **derived_income_params,
         **surcharge_params,
-        "alive": {
-            "next_liquid": alive_budget,
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
-        "dead": {
-            "next_liquid": alive_budget,
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
+        "alive": {"next_liquid": alive_budget},
+        "dead": {"next_liquid": alive_budget},
+        "final_age_alive": final_age_alive,
     }
     return {"alive": alive, "dead": {"utility": {"crra": crra}}}

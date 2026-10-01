@@ -551,7 +551,7 @@ def test_direct_oracle_is_independent_of_the_production_expectation(
 
     kernel, context = ride_along_kernel(
         model=nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=3, **_SMALL),
-        params=nbegm_ride_along_toy.build_params(),
+        params=nbegm_ride_along_toy.build_params(final_age_alive=2.0),
     )
     monkeypatch.setattr(continuation_module, "bind_continuation", refuse)
     monkeypatch.setattr(query_module, "envelope_at_query", refuse)

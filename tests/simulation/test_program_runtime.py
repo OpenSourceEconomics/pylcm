@@ -29,11 +29,21 @@ from _lcm.simulation.program_types import (
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
+from tests.test_models.initial_regimes import initial_regimes_of
 from tests.test_models.processes import MultiRegimeId
 
 
@@ -65,15 +75,20 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
     model = Model(
         regimes={
             "alive": UserRegime(
-                transition=_width_collision_next_regime,
-                active=lambda age: age == 0,
+                regime_transitions=ByAge(
+                    cases={
+                        AgeRange(start=0, stop=1): Choose(
+                            func=_width_collision_next_regime, targets=("done",)
+                        )
+                    }
+                ),
                 functions={"utility": _width_collision_utility},
                 actions={
                     "_lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
                 },
             ),
             "done": UserRegime(
-                transition=None,
+                regime_transitions=None,
                 functions={"utility": _width_collision_terminal_utility},
             ),
         },
@@ -82,6 +97,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        initial_regimes={0: "alive"},
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(
@@ -109,6 +125,7 @@ def test_simulate_dispatches_the_declared_program_body(
         ages=model.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=model.fixed_params,
+        initial_regimes=initial_regimes_of(model=model),
     )
     solution = model.solve(params=params, log_level="off")
     body_ids = {

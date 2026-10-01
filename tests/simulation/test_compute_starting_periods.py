@@ -1,8 +1,13 @@
 """Tests for _compute_starting_periods."""
 
+from fractions import Fraction
+
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+from _lcm.dtypes import canonical_float_dtype
+from _lcm.simulation.initial_conditions import resolve_initial_periods
 from _lcm.simulation.simulate import _compute_starting_periods
 from lcm import AgeGrid
 
@@ -113,3 +118,28 @@ def test_sub_annual_monthly_grid():
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
     expected = jnp.array([0, 12])
     assert jnp.array_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "ages",
+    [
+        AgeGrid(exact_values=(0, Fraction(1, 3), 1)),
+        AgeGrid(start=25, stop=26, step="M"),
+    ],
+)
+def test_resolve_initial_periods_matches_simulation_starting_periods(
+    ages: AgeGrid,
+) -> None:
+    """Host-side admission assigns every age the period and validity simulation does."""
+    grid = [float(age) for age in ages.exact_values]
+    probes = np.array(
+        [*grid, *(age + 1e-3 for age in grid), grid[0] - 1.0, grid[-1] + 1.0],
+        dtype=canonical_float_dtype(),
+    )
+    host_periods, host_on_grid = resolve_initial_periods(ages=ages, initial_ages=probes)
+    on_grid = np.isin(np.arange(len(probes)), np.arange(len(grid)))
+    device_periods = _compute_starting_periods(
+        initial_ages=jnp.asarray(probes[on_grid]), ages=ages
+    )
+    assert (host_on_grid == on_grid).all()
+    np.testing.assert_array_equal(host_periods[on_grid], device_periods)

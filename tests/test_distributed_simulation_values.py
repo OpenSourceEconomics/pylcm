@@ -17,6 +17,7 @@ import pytest
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -29,6 +30,7 @@ from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
+from tests.test_models.schedules import until_exit
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -244,15 +246,18 @@ def _build_model(
     return Model(
         regimes={
             "working": Regime(
-                transition=_transition,
-                active=lambda age: age < 3,
+                regime_transitions=until_exit(
+                    3,
+                    law=Choose(func=_transition, targets=("working", "retired")),
+                    exits=("retired",),
+                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": _next_wealth},
                 actions={"consumption": LinSpacedGrid(start=1, stop=5, n_points=5)},
                 functions={"utility": _utility},
             ),
             "retired": Regime(
-                transition=None,
+                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _terminal_utility},
             ),
@@ -269,6 +274,7 @@ def _build_model(
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
         ),
+        initial_regimes={0: "working"},
     )
 
 

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -26,6 +27,7 @@ from lcm.typing import (
     FloatND,
     Period,
     ScalarInt,
+    UserAge,
 )
 
 
@@ -121,6 +123,29 @@ _DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 
+def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
+    """Work, retire or die until the age before `last_age`, then die."""
+    return ByAge.until(
+        stop_age_exclusive=last_age,
+        law=MarkovTransition(
+            func=next_regime_from_working,
+            targets=("working_life", "retirement", "dead"),
+        ),
+        then=MarkovTransition(func=next_regime_from_working, targets=("dead",)),
+    )
+
+
+def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
+    """Stay retired or die until the age before `last_age`, then die."""
+    return ByAge.until(
+        stop_age_exclusive=last_age,
+        law=MarkovTransition(
+            func=next_regime_from_retirement, targets=("retirement", "dead")
+        ),
+        then=MarkovTransition(func=next_regime_from_retirement, targets=("dead",)),
+    )
+
+
 working_life = Regime(
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -129,29 +154,26 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
-    transition=MarkovTransition(next_regime_from_working),
+    regime_transitions=working_life_transitions(last_age=_DEFAULT_LAST_AGE),
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 retirement = Regime(
-    transition=MarkovTransition(next_regime_from_retirement),
+    regime_transitions=retirement_transitions(last_age=_DEFAULT_LAST_AGE),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
     functions={"utility": utility_retirement},
-    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 dead = Regime(
-    transition=None,
+    regime_transitions=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,
 )
 
 
@@ -170,13 +192,16 @@ def get_model(n_periods: int) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age, la=last_age: age < la
+                regime_transitions=working_life_transitions(last_age=last_age)
             ),
-            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "retirement": retirement.replace(
+                regime_transitions=retirement_transitions(last_age=last_age)
+            ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
+        initial_regimes={ages.exact_values[0]: "working_life"},
     )
 
 

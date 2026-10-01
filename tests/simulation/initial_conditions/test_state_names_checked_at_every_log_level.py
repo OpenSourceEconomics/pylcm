@@ -8,7 +8,7 @@ the mapping form must too.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, Choose, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import (
     BoolND,
@@ -18,6 +18,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -57,8 +58,11 @@ def _next_regime(age: float) -> ScalarInt:
 _MODEL = Model(
     regimes={
         "alive": Regime(
-            active=lambda age: age < 2,
-            transition=_next_regime,
+            regime_transitions=until_exit(
+                2,
+                law=Choose(func=_next_regime, targets=("alive", "dead")),
+                exits=("dead",),
+            ),
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),
                 "health": DiscreteGrid(_Health),
@@ -68,10 +72,11 @@ _MODEL = Model(
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "health": _next_health},
         ),
-        "dead": Regime(transition=None, functions={"utility": lambda: 0.0}),
+        "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
     },
     ages=AgeGrid(start=0, stop=3, step="Y"),
     regime_id_class=_RegimeId,
+    initial_regimes={0: "alive"},
 )
 _PARAMS = {"discount_factor": 0.95}
 

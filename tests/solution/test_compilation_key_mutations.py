@@ -40,6 +40,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
+    working_life_transitions,
 )
 
 _N_PERIODS = 3
@@ -56,7 +57,9 @@ def _reordered_actions_model() -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "consumption": LinSpacedGrid(start=1, stop=3, n_points=3),
@@ -68,6 +71,7 @@ def _reordered_actions_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -83,7 +87,9 @@ def _rewaged_model() -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive,
+                regime_transitions=working_life_transitions(
+                    last_age=final_age_alive + 1
+                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -96,6 +102,7 @@ def _rewaged_model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -104,7 +111,9 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age: age <= START_AGE + _N_PERIODS - 2,
+                regime_transitions=working_life_transitions(
+                    last_age=START_AGE + _N_PERIODS - 1
+                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -117,6 +126,7 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
         ages=AgeGrid(start=START_AGE, stop=START_AGE + _N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"discount_factor": discount_factor},
+        initial_regimes={18: "working_life"},
     )
 
 
@@ -211,7 +221,7 @@ def test_disabling_donation_relowers_every_donating_core(
     Cores that donate nothing either way are lowered under one key in both
     arms; only the donating cores' keys must vanish from the non-donating solve.
     """
-    params = nbegm_ride_along_toy.build_params()
+    params = nbegm_ride_along_toy.build_params(final_age_alive=2.0)
     donating = _keys_of(
         model=_nbegm_model(donate_buffers=True),
         params=params,
@@ -321,8 +331,9 @@ def test_admission_is_checked_per_candidate_not_per_lowering_key(
 ) -> None:
     """Every admitted candidate is measured, also when its key was compiled already.
 
-    The toy's five candidates lower to three executables (two working-life
-    periods share one, two dead periods another), yet residency depends on the
+    The toy's four candidates lower to three executables (two working-life
+    periods share one, the two dead periods reached from the start another), yet
+    residency depends on the
     candidate's position in the plan, so each candidate is measured against the
     budget on its own.
     """
@@ -344,7 +355,7 @@ def test_admission_is_checked_per_candidate_not_per_lowering_key(
     model = _model(execution_config=ExecutionConfig(device_memory_bytes=2**32))
     model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
 
-    assert (len(measured), set(measured) == set(lowered), len(lowered)) == (5, True, 3)
+    assert (len(measured), set(measured) == set(lowered), len(lowered)) == (4, True, 3)
 
 
 def test_a_budget_change_reruns_admission_on_the_same_keys(
@@ -369,7 +380,7 @@ def test_a_budget_change_reruns_admission_on_the_same_keys(
         params=params, log_level="off"
     )
 
-    assert (first == measured, len(first)) == (True, 5)
+    assert (first == measured, len(first)) == (True, 4)
 
 
 def test_no_lowering_key_keeps_its_model_alive(monkeypatch: pytest.MonkeyPatch) -> None:

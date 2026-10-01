@@ -398,12 +398,10 @@ def _read_initial_cohorts(
     provided = set(initial_conditions) - {"regime_id", "own_stakeholder"}
     if required - provided or provided - known:
         raise _SerialValidationRequired
-    valid_ages = np.array(
-        [float(age) for age in ages.exact_values], dtype=age_values.dtype
-    )
-    if not np.isin(host_ages, valid_ages).all():
+    host_periods, on_grid = resolve_initial_periods(ages=ages, initial_ages=host_ages)
+    if not on_grid.all():
         raise _SerialValidationRequired
-    periods = tuple(ages.age_to_period(age.item()) for age in host_ages)
+    periods = tuple(host_periods.tolist())
     if (
         any(
             periods[index] not in regimes[name].active_periods
@@ -414,6 +412,37 @@ def _read_initial_cohorts(
     ):
         raise _SerialValidationRequired
     return _InitialCohorts(indices=MappingProxyType(indices), periods=periods)
+
+
+def resolve_initial_periods(
+    *, ages: AgeGrid, initial_ages: jax.Array | np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve each initial age to the period the simulation starts it in.
+
+    Evaluates the simulation's own starting-period rule on the host with NumPy.
+    The grid is built from `ages.exact_values` with the same float rounding that
+    produces `ages.values`, so it equals the device grid without reading it back.
+    Ages and grid are cast to the canonical float dtype the simulation compares
+    them in, so a grid age resolves to its period whatever float conversion
+    produced it, and admission, validation and simulation agree on each
+    subject's starting period. No device operation runs.
+
+    Args:
+        ages: AgeGrid for the model.
+        initial_ages: One initial age per subject.
+
+    Returns:
+        Host arrays of each subject's period index and of whether its age is a
+        grid point. The period of an off-grid age is meaningless.
+
+    """
+    dtype = canonical_float_dtype()
+    periods, on_grid, _ = population_operations.match_starting_periods(
+        initial_ages=np.asarray(initial_ages, dtype=dtype),
+        age_values=np.asarray([float(age) for age in ages.exact_values], dtype=dtype),
+        xp=np,
+    )
+    return np.asarray(periods), np.asarray(on_grid)
 
 
 def canonicalize_initial_conditions(
@@ -1357,29 +1386,18 @@ def _collect_structural_errors(
     if errors:
         return errors
 
-    # Validate that all age values are representable on the age grid.  Compare
-    # against float64 conversions of AgeGrid.exact_values to avoid float32
-    # precision issues with sub-annual steps.
-    valid_ages = {float(v) for v in ages.exact_values}
+    # Validate that all age values are grid points in the active precision.
     age_values = initial_states["age"]
-    valid_ages_arr = jnp.array(sorted(valid_ages))
-    age_invalid_mask = ~jnp.isin(age_values, valid_ages_arr)
-    invalid_ages = (
-        sorted(set(np.asarray(age_values[age_invalid_mask]).tolist()))
-        if jnp.any(age_invalid_mask)
-        else []
-    )
-    if invalid_ages:
+    host_periods, on_grid = resolve_initial_periods(ages=ages, initial_ages=age_values)
+    if not on_grid.all():
+        invalid_ages = sorted(set(np.asarray(age_values)[~on_grid].tolist()))
         errors.append(
             f"Invalid age values {invalid_ages} in initial_states. "
-            f"Valid ages are: {sorted(valid_ages)}"
+            f"Valid ages are: {[float(v) for v in ages.exact_values]}"
         )
     else:
-        # Validate that each subject's initial regime is active at their starting age.
-        # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
-        periods = jnp.array(
-            [ages.age_to_period(a.item()) for a in age_values], dtype=jnp.int32
-        )
+        # Validate that each subject's initial regime is declared at their starting age.
+        periods = jnp.asarray(host_periods, dtype=jnp.int32)
 
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, regime in regimes.items():
@@ -1397,11 +1415,11 @@ def _collect_structural_errors(
                 for i in invalid_indices
             }
             details = "\n".join(
-                f"  regime '{name}' is not active at age {age}"
+                f"  regime '{name}' is not declared at age {age}"
                 for name, age in sorted(invalid_combos)
             )
             errors.append(
-                f"Subjects are assigned to regimes that are not active "
+                f"Subjects are assigned to regimes that are not declared "
                 f"at their starting age:\n{details}"
             )
 
@@ -1712,9 +1730,8 @@ def _age_specialized_feasibility_message(
     representative_period = regime.active_periods[0]
     idx_arr = np.asarray(subject_indices)
     if cohorts is None:
-        subject_ages = np.asarray(initial_states["age"])[idx_arr]
-        subject_periods = np.array(
-            [ages.age_to_period(age.item()) for age in subject_ages]
+        subject_periods, _ = resolve_initial_periods(
+            ages=ages, initial_ages=np.asarray(initial_states["age"])[idx_arr]
         )
     else:
         subject_periods = np.array(
@@ -1944,10 +1961,9 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
                     (
                         cohorts.periods
                         if cohorts is not None
-                        else tuple(
-                            ages.age_to_period(age.item())
-                            for age in np.asarray(initial_states["age"])
-                        )
+                        else resolve_initial_periods(
+                            ages=ages, initial_ages=initial_states["age"]
+                        )[0]
                     )
                     if needs_period
                     else (),
@@ -1969,8 +1985,10 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
         if needs_age:
             subject_states["age"] = initial_states["age"][idx_arr]
         if needs_period:
-            subject_states["period"] = jnp.array(
-                [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]],
+            subject_states["period"] = jnp.asarray(
+                resolve_initial_periods(
+                    ages=ages, initial_ages=initial_states["age"][idx_arr]
+                )[0],
                 dtype=jnp.int32,
             )
 

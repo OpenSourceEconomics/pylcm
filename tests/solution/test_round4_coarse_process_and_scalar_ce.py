@@ -26,6 +26,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -38,6 +39,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LAST_AGE = 22
@@ -106,15 +108,18 @@ def _solve_coarse_into_process_only_target(
     """
     process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
-        transition=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"shock": process},
         functions={"utility": lambda shock: shock + level},
     )
@@ -122,6 +127,7 @@ def _solve_coarse_into_process_only_target(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -183,15 +189,18 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
 def _solve_with_entry_law(level: float):
     """The same model, with the parent declaring how the target is entered."""
     alive = Regime(
-        transition=_next_regime,
-        active=lambda age: age < _LAST_AGE,
+        regime_transitions=until_exit(
+            _LAST_AGE,
+            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            exits=("gone",),
+        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth, "shock": {"gone": _enter_shock}},
         functions={"utility": _utility},
     )
     gone = Regime(
-        transition=None,
+        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -206,6 +215,7 @@ def _solve_with_entry_law(level: float):
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
+        initial_regimes={20: "alive"},
     )
     params = {
         "alive": {
@@ -291,8 +301,11 @@ def _tiny_next_regime() -> ScalarInt:
 def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     """Solve a model whose entire continuation sits at the `1e-8` scale."""
     alive = Regime(
-        transition=_tiny_next_regime,
-        active=lambda age: age < 41,
+        regime_transitions=until_exit(
+            41,
+            law=Choose(func=_tiny_next_regime, targets=("alive", "dead")),
+            exits=("dead",),
+        ),
         states={"wealth": _TINY_WEALTH},
         actions={"consumption": _TINY_CONSUMPTION},
         state_transitions={"wealth": _next_wealth},
@@ -301,7 +314,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         certainty_equivalent=PowerMean(),
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=5.0, n_points=5)},
         functions={"utility": _tiny_terminal_utility},
     )
@@ -309,6 +322,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=_TinyRegimeId,
+        initial_regimes={40: "alive"},
     )
     params = {
         "alive": {

@@ -5,7 +5,7 @@ Five boundary conditions on the collective-regimes forward-simulation path
 `_lcm.simulation.simulate`):
 
 - A gated edge whose target is solved at `period + 1` while a declared
-  reference regime (fallback / gate ref) is not: a malformed ACTIVE edge, so
+  reference regime (fallback / gate ref) is not: a malformed edge, so
   `substitute_gated_edge_continuations` raises rather than no-opping, which
   would leave the edge silently ungated.
 - Two legs of one gated edge sharing the same fallback regime: rejected at
@@ -47,6 +47,9 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
+    ByAge,
+    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinearAggregator,
@@ -122,7 +125,7 @@ def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
     the missing-reference guard must leave alone. Mirrors
-    `test_repeating_self_loop_gated_edge_simulates_past_activity_boundary`'s
+    `test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_age`'s
     scenario at the kernel level: an empty `period_to_regime_to_V_arr` for
     period+1 (no target, hence no references either) must not raise.
     """
@@ -216,27 +219,32 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     different projections -- the topology model construction must reject.
     """
     married = Regime(
-        transition={
-            "married_ir": ValueDependentTransition(
-                probability=MarkovTransition(_prob_one),
-                gate=_no_dissolution_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_shared", projection={"wage": _identity_wage}
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_shared", projection={"wage": _reverse_wage}
-                        ),
-                    ),
-                },
-            )
-        },
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): {
+                    "married_ir": ValueDependentTransition(
+                        probability=MarkovTransition(func=_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_shared",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_shared",
+                                    projection={"wage": _reverse_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -247,8 +255,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -258,8 +265,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         },
     )
     single_shared = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_shared},
     )
@@ -419,8 +425,13 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
-        transition=lambda: jnp.int32(1),
-        active=lambda age: age < 1,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(stop=1): Choose(
+                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
+                )
+            }
+        ),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -429,8 +440,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        transition=None,
-        active=lambda age: age >= 1,
+        regime_transitions=None,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -522,7 +532,7 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
-        transition=None,
+        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -604,7 +614,7 @@ def test_stateless_collective_without_any_action_finalizes():
     finalized = finalize_regimes(
         user_regimes={
             "couple": Regime(
-                transition=None,
+                regime_transitions=None,
                 functions={
                     "utility": CollectiveUtility(
                         utilities={

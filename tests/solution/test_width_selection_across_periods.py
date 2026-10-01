@@ -15,6 +15,7 @@ from _lcm.execution.workspace_planning import (
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -30,6 +31,7 @@ from tests.solution.test_footprint_width_selection import (
     _terminal_utility,
     _utility,
 )
+from tests.test_models.schedules import until_exit
 
 _N_WEALTH = 64
 _N_PERIODS = 8
@@ -55,8 +57,11 @@ def _fake_peak(
 
 def _model(*, budget_bytes: int) -> Model:
     acting = Regime(
-        transition=_next_regime,
-        active=lambda age: age < _N_PERIODS,
+        regime_transitions=until_exit(
+            _N_PERIODS,
+            law=Choose(func=_next_regime, targets=("acting", "done")),
+            exits=("done",),
+        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -66,8 +71,7 @@ def _model(*, budget_bytes: int) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        transition=None,
-        active=lambda age: age >= _N_PERIODS,
+        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
@@ -78,6 +82,7 @@ def _model(*, budget_bytes: int) -> Model:
         execution_config=ExecutionConfig(
             device_memory_bytes=budget_bytes,
         ),
+        initial_regimes={0: "acting"},
     )
 
 

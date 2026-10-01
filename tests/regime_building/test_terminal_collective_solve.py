@@ -27,7 +27,7 @@ from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure
+from tests.conftest import build_prepared_structure, lower_declarations
 
 
 @categorical(ordered=True)
@@ -50,7 +50,7 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
 
 def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
-        transition=None,  # terminal
+        regime_transitions=None,  # terminal
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -68,11 +68,14 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
             ),
             ages=ages,
         ),
-        user_regimes=finalize_regimes(
-            user_regimes={"couple": regime},
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
+        user_regimes=lower_declarations(
+            finalize_regimes(
+                user_regimes={"couple": regime},
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+            ),
+            ages=ages,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),

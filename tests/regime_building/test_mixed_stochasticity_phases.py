@@ -15,6 +15,7 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -23,6 +24,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -86,16 +88,19 @@ def _simulate(law: Any) -> pd.DataFrame:
         "functions": {"utility": utility},
     }
     live = Regime(
-        transition=_next_regime, state_transitions={"good": law}, **common
-    ).replace(active=lambda age: age < 2)
-    last = Regime(transition=None, state_transitions={}, **common).replace(
-        active=lambda age: age >= 2
-    )
+        regime_transitions=until_exit(
+            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+        ),
+        state_transitions={"good": law},
+        **common,
+    ).replace()
+    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
     model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="mixed stochasticity probe",
+        initial_regimes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return (
@@ -114,7 +119,9 @@ def _simulate(law: Any) -> pd.DataFrame:
 def test_stochastic_solve_deterministic_simulate():
     """Perceived law is a kernel; the world realizes a point value."""
     df = _simulate(
-        Phased(solve=MarkovTransition(markov_belief), simulate=deterministic_actual)
+        Phased(
+            solve=MarkovTransition(func=markov_belief), simulate=deterministic_actual
+        )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"
     assert (df[df["period"] == 1]["good"] == "bad").all(), "draw must follow TRUTH"
@@ -123,7 +130,9 @@ def test_stochastic_solve_deterministic_simulate():
 def test_deterministic_solve_stochastic_simulate():
     """Perceived law is a point value; the world realizes from a kernel."""
     df = _simulate(
-        Phased(solve=deterministic_belief, simulate=MarkovTransition(markov_actual))
+        Phased(
+            solve=deterministic_belief, simulate=MarkovTransition(func=markov_actual)
+        )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"
     assert (df[df["period"] == 1]["good"] == "bad").all(), "draw must follow TRUTH"

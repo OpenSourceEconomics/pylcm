@@ -25,6 +25,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -46,6 +47,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -156,11 +158,6 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _active(age: int) -> bool:
-    last_age = 40 + (N_PERIODS - 1) * 10
-    return age < last_age
-
-
 DCEGM_SOLVER = DCEGM(
     savings_grid=SAVINGS_GRID,
     n_constrained_points=64,
@@ -209,13 +206,16 @@ def _same_grid_markov_model(solver: str) -> Model:
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": MarkovTransition(health_transition),
+            "health": MarkovTransition(func=health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -240,6 +240,7 @@ def _same_grid_markov_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -332,16 +333,19 @@ def _cross_grid_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     early = regime_type(
-        transition={
-            "late": MarkovTransition(to_live_prob),
-            "dead": MarkovTransition(to_dead_prob),
-        },
-        active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "late": MarkovTransition(func=to_live_prob),
+                "dead": MarkovTransition(func=to_dead_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": {"late": MarkovTransition(remap_health_to_two)},
+            "health": {"late": MarkovTransition(func=remap_health_to_two)},
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -370,16 +374,19 @@ def _cross_grid_markov_model(solver: str) -> Model:
         ),
     )
     late = regime_type(
-        transition={
-            "late": MarkovTransition(to_live_prob),
-            "dead": MarkovTransition(to_dead_prob),
-        },
-        active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law={
+                "late": MarkovTransition(func=to_live_prob),
+                "dead": MarkovTransition(func=to_dead_prob),
+            },
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
-            "health": {"late": MarkovTransition(late_health_transition)},
+            "health": {"late": MarkovTransition(func=late_health_transition)},
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -404,6 +411,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         regimes={"early": early, "late": late, "dead": dead},
         ages=_ages(),
         regime_id_class=CrossGridRegimeId,
+        initial_regimes={40: "early"},
     )
 
 
@@ -424,7 +432,12 @@ def test_cross_grid_markov_state_matches_brute_force():
         .solve(params=params, log_level="debug")
         .values
     )
-    for period in sorted(brute_solution)[:-1]:
+    early_periods = [p for p in sorted(brute_solution) if "early" in brute_solution[p]]
+    assert early_periods == [
+        p for p in sorted(dcegm_solution) if "early" in dcegm_solution[p]
+    ]
+    assert early_periods
+    for period in early_periods:
         brute_V = np.asarray(brute_solution[period]["early"])
         dcegm_V = np.asarray(dcegm_solution[period]["early"])
         assert brute_V.shape == dcegm_V.shape == (3, 160)
@@ -485,8 +498,11 @@ def _joint_process_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -495,7 +511,7 @@ def _joint_process_markov_model(solver: str) -> Model:
         },
         state_transitions={
             "wealth": next_wealth_joint_dcegm if is_dcegm else next_wealth_joint_brute,
-            "health": MarkovTransition(joint_health_transition),
+            "health": MarkovTransition(func=joint_health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -527,6 +543,7 @@ def _joint_process_markov_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 
@@ -617,13 +634,16 @@ def _point_mass_floor_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        transition=next_regime,
-        active=_active,
+        regime_transitions=until_exit(
+            40 + (N_PERIODS - 1) * 10,
+            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            exits=("dead",),
+        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_floor_dcegm if is_dcegm else next_wealth_floor_brute,
-            "health": MarkovTransition(point_mass_health_transition),
+            "health": MarkovTransition(func=point_mass_health_transition),
         },
         constraints={} if is_dcegm else {"budget_constraint": budget_constraint},
         functions={
@@ -649,6 +669,7 @@ def _point_mass_floor_model(solver: str) -> Model:
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=MarkovRegimeId,
+        initial_regimes={40: "working_life"},
     )
 
 

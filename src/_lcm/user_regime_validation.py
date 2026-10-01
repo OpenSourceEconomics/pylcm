@@ -22,11 +22,11 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
-from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
+from _lcm.typing import ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.koopmans_aggregation import CESAggregator
+from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
 from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
@@ -369,7 +369,7 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    transition_targets = _regime_transition_target_names(regime.transition)
+    transition_targets = _regime_transition_target_names(regime.regime_transitions)
     source_stakeholders = regime.stakeholders
 
     for target_name, edge in regime.gated_edges.items():
@@ -523,7 +523,6 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
-    error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_joint_transition_grammar_errors(regime))
     error_messages.extend(
@@ -649,8 +648,8 @@ def _age_specialized_scope_errors(
     non-terminal regimes only. Rejected — loudly, before any per-period program
     is built:
 
-    - a regime `transition` that is (or contains) an `AgeSpecializedFunction` — a
-      policy-specialized *regime* transition;
+    - a `regime_transitions` declaration that is (or contains) an
+      `AgeSpecializedFunction` — a policy-specialized *regime* transition;
     - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state
       transition — a policy-specialized *stochastic* transition;
     - an `AgeSpecializedFunction` directly as a state-transition value — express the
@@ -674,10 +673,9 @@ def _age_specialized_scope_errors(
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
-            "A regime `transition` cannot be `AgeSpecializedFunction` (bare or "
-            "wrapped in `MarkovTransition`): policy-specialized regime transitions "
-            "are not "
-            "supported. Specialize `functions` or `constraints` instead.",
+            "`regime_transitions` cannot be an `AgeSpecializedFunction`, bare or "
+            "wrapped in `MarkovTransition`: age-specialized regime transitions are "
+            "not supported. Specialize `functions` or `constraints` instead.",
         )
 
     specialized_ancestor = _first_age_specialized_ancestor_of_transition(
@@ -685,7 +683,7 @@ def _age_specialized_scope_errors(
     )
     if specialized_ancestor is not None:
         error_messages.append(
-            f"The regime `transition` depends on the `AgeSpecializedFunction` function "
+            f"`regime_transitions` depends on the `AgeSpecializedFunction` "
             f"'{specialized_ancestor}'. Regime-transition probabilities are built "
             f"once, not per period, so a policy-specialized value flowing into "
             f"them would silently reuse one age's policy closure across all "
@@ -712,7 +710,7 @@ def _age_specialized_scope_errors(
 
 
 def _regime_transition_grammar_errors(transition: object) -> list[str]:
-    """Validate the regime `transition` value vocabulary.
+    """Validate the vocabulary of a regime's `regime_transitions`.
 
     A `Phased` container's sides are each held to the bare vocabulary
     (callable, `MarkovTransition`, or a per-target dict); per-target cells
@@ -733,7 +731,7 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
         if not side:
             error_messages.append(
                 f"transition{label}: an empty per-target dict declares no "
-                f"candidate targets — use `transition=None` for a terminal "
+                f"candidate targets — use `regime_transitions=None` for a terminal "
                 f"regime.",
             )
         for target_regime_name, cell in side.items():
@@ -815,6 +813,7 @@ def _validate_completeness(
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_koopmans_aggregator_errors(regime))
     error_messages.extend(_certainty_equivalent_errors(regime))
+    error_messages.extend(_expected_utility_aggregator_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -894,6 +893,33 @@ def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
             "no continuation value to aggregate."
         )
     return error_messages
+
+
+def _expected_utility_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Refuse a non-additive aggregator on the endogenous-grid EU route.
+
+    Without a nonlinear certainty equivalent, NBEGM and NNBEGM run the
+    expected-utility kernels, which invert the Euler equation of
+    `W = utility + discount_factor * CE`. Any other solve-phase aggregator would
+    be ignored rather than solved.
+    """
+    if not isinstance(regime.solver, (NBEGM, NNBEGM)) or aggregates_nonlinearly(
+        regime.certainty_equivalent
+    ):
+        return []
+    declared = regime.koopmans_aggregator
+    solve_W = declared.solve if isinstance(declared, Phased) else declared
+    if solve_W is None or isinstance(solve_W, LinearAggregator):
+        return []
+    msg = (
+        f"{type(regime.solver).__name__} without a nonlinear "
+        "`certainty_equivalent` solves the additive aggregator "
+        "`W = utility + discount_factor * CE` only, got "
+        f"{type(solve_W).__name__}. Use `koopmans_aggregator=LinearAggregator()` "
+        "(or leave it unset), pair a `CESAggregator` with `PowerMean()`, or "
+        "solve the regime with GridSearch()."
+    )
+    return [msg]
 
 
 def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
@@ -1082,8 +1108,8 @@ def _collect_indexing_consumers(
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
-    if callable(regime.transition):
-        consumers.append(("regime_transition", regime.transition))
+    if callable(regime.regime_transitions):
+        consumers.append(("regime_transition", regime.regime_transitions))
     return consumers
 
 
@@ -1132,13 +1158,6 @@ def _find_function_output_grid_indexing(
     return clashes
 
 
-def _validate_active(active: ActiveFunction) -> list[str]:
-    """Validate the active attribute is a callable."""
-    if not callable(active):
-        return ["active must be a callable that takes age (float) and returns bool."]
-    return []
-
-
 def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
     """Validate each `state_transitions` entry against the value vocabulary."""
     error_messages: list[str] = []
@@ -1159,7 +1178,7 @@ def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
         return ["Terminal regimes must have empty joint_transitions."]
 
     error_messages: list[str] = []
-    reachable = _regime_transition_target_names(regime.transition)
+    reachable = _regime_transition_target_names(regime.regime_transitions)
     # A joint node's name may not clash with anything already spoken for,
     # and that is both what the author wrote and what the engine binds: a
     # value constraint's own key is a live name, and so is each
@@ -1481,7 +1500,7 @@ def _is_folded(grid: object) -> bool:
 
 
 def _flatten_transition_callables(value: object) -> list[Callable]:
-    """Return every callable reachable from a `state_transitions` / `transition` entry.
+    """Return every callable reachable from a state or regime transition entry.
 
     Unwraps `Phased` (both variants) and per-target `Mapping`s; `MarkovTransition`
     and `_IdentityTransition` are themselves callables with an introspectable
@@ -1729,7 +1748,7 @@ def _reachable_regime_targets(
     keys agree by the phase grammar. Every remaining form is coarse and reaches
     every regime in the model.
     """
-    transition = regime.transition
+    transition = regime.regime_transitions
     if transition is None:
         return frozenset()
     if isinstance(transition, Phased):

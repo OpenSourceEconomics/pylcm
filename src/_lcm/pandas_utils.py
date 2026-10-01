@@ -29,10 +29,11 @@ from _lcm.typing import (
 from _lcm.utils.ast_inspection import _get_func_indexing_params
 from _lcm.utils.namespace import ParamsQnameDepth
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid, JointTransition
+from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition
 from lcm.typing import Float1D, FloatND, Int1D
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
@@ -467,7 +468,9 @@ def _resolve_param_consumer(
         # Ordinary per-target transition param: the engine keys the callable
         # ``func__target`` even though the public params path is target-first.
         resolved = qname_from_tree_path((public_func_name, target))
-        return all_funcs[resolved], resolved
+        return _scheduled_consumer(
+            func=all_funcs[resolved], param_name=param_name
+        ), resolved
 
     resolved = parts[0]
     if resolved == "koopmans_aggregator":
@@ -479,7 +482,10 @@ def _resolve_param_consumer(
         func_name=cast("FunctionName", resolved), user_regime=user_regime
     ):
         return None, cast("FunctionName", resolved)
-    return all_funcs[resolved], cast("FunctionName", resolved)
+    return (
+        _scheduled_consumer(func=all_funcs[resolved], param_name=param_name),
+        cast("FunctionName", resolved),
+    )
 
 
 def _convert_param_value(
@@ -1155,6 +1161,33 @@ def _build_discrete_grid_lookup(
 # name set rather than by a callable's signature, so there is no source for
 # `array_from_series` to inspect.
 _PSEUDO_KEYS_WITHOUT_A_SIGNATURE = frozenset({"certainty_equivalent", "taste_shocks"})
+
+
+def _scheduled_consumer(*, func: object, param_name: str) -> Callable[..., Any]:
+    """Return the callable law of a `ByAge` schedule that declares `param_name`.
+
+    A schedule is a declaration, not a callable; the law it selects is what
+    reads the parameter. Any other consumer is returned unchanged.
+    """
+    if not isinstance(func, ByAge):
+        return cast("Callable[..., Any]", func)
+    laws = tuple(
+        variant
+        for law in func.laws
+        for variant in (
+            (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
+        )
+        if callable(variant)
+    )
+    if not laws:
+        msg = (
+            f"Parameter {param_name!r} is given for a `ByAge` schedule with no "
+            "callable law: each of its laws is a regime name or a per-target "
+            "mapping, so none can read a parameter."
+        )
+        raise InvalidParamsError(msg)
+
+    return _variant_declaring(variants=laws, param_name=param_name)
 
 
 def _variant_declaring(

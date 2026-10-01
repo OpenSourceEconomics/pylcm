@@ -24,7 +24,16 @@ from _lcm.grids.base import Grid
 from _lcm.solution import backward_induction
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    AgeSpecializedGrid,
+    ByAge,
+    Choose,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -62,6 +71,7 @@ def _model() -> Model:
         regimes=_make_full_topology_regimes(),
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
+        initial_regimes={0: ("single_f", "single_m")},
     )
 
 
@@ -184,7 +194,13 @@ def _pass_through_model(
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
-        transition=_pass_through_next_regime,
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=0, stop=1): Choose(
+                    func=_pass_through_next_regime, targets=("dead",)
+                )
+            }
+        ),
         states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
@@ -197,19 +213,18 @@ def _pass_through_model(
         },
         liquid=margin,
         solver=EGM(savings_grid=_PASS_THROUGH_SAVINGS_GRID),
-        active=lambda age: age == 0,
     )
     dead = Regime(
-        transition=None,
+        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
-        active=lambda age: age == 1,
     )
     return Model(
         regimes={"working": working, "dead": dead},
         regime_id_class=_PassThroughRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
+        initial_regimes={0: "working"},
     )
 
 
