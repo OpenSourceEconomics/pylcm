@@ -131,7 +131,7 @@ class SettingsKey:
     device_pool_limit_bytes: tuple[int | None, ...]
     """Allocator pool limit of each device; empty on an unbudgeted model."""
     device_memory_bytes: int | None
-    """Requested per-device memory budget."""
+    """Budget the model planned against before the headroom; `None` unbudgeted."""
     device_memory_headroom_fraction: float
     """Share of each device's pool kept out of the budget."""
     precision: str
@@ -726,7 +726,7 @@ def _settings_key(
             sorted({devices[i].device_kind for i in model.execution_devices})
         ),
         device_pool_limit_bytes=tuple(execution.device_pool_limit_bytes.values()),
-        device_memory_bytes=config.device_memory_bytes,
+        device_memory_bytes=execution.requested_device_memory_bytes,
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
         precision="float64" if jax.config.read("jax_enable_x64") else "float32",
         pylcm_version=pylcm_version,

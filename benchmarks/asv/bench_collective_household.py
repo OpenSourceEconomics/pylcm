@@ -61,6 +61,7 @@ def _make_model():
         n_periods=_N_PERIODS,
         wealth_n_points=_WEALTH_N_POINTS,
         consumption_n_points=_CONSUMPTION_N_POINTS,
+        **_gpu_mem.default_budget_execution_kwargs(),
     )
     return model, collective_household.get_params()
 
@@ -370,6 +371,7 @@ def _make_reference_chain(*, depth):
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regime_id_class=regime_id_class,
             initial_regimes={0: tuple(link_names)},
+            **_gpu_mem.default_budget_execution_kwargs(),
         ),
         params,
     )

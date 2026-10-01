@@ -43,7 +43,7 @@ except RuntimeError:
     _TOPOLOGY_UNAVAILABLE = True
 
 # This fixture defines categoricals and arrays at import, after topology setup.
-from _lcm.simulation import value_reads
+from _lcm.simulation import chunk_profiles, value_reads
 from _lcm.simulation.chunk_profiles import _period_copy_reservation
 from _lcm.simulation.residency import (
     measure_buffer_footprint,
@@ -156,6 +156,42 @@ def test_finite_profile_reserves_addressed_policy_copies_once_on_ordered_submesh
     if aliased:
         assert len({id(leaf) for leaf in sources.values()}) < len(sources)
     _close_finite_copy_owner(owner=owner, sources=sources, copies=copies)
+
+
+def test_finite_profile_keeps_host_policy_scratch_outside_the_device_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A policy retained on the host stages its copy scratch in host RAM.
+
+    The solve retains finite policies on the host CPU. On GPU that device is not a
+    budgeted chunk device, so charging its source scratch made every budgeted
+    finite replay refuse with "names an unbudgeted device". Device 2 stands in for
+    the host on the four-device CPU layout.
+    """
+    model, params, _ = _finite_inputs(discrete=False, budget=None)
+    solution = model.solve(params=params, log_level="off")
+    view = cast("OwnedSolutionView", solution._engine_view)
+    host = jax.devices()[2]
+    devices = (jax.devices()[3], jax.devices()[1])
+    policy = jax.tree.map(
+        lambda leaf: jax.device_put(leaf, host), view.simulation_policies[0]["alive"]
+    )
+    values = jax.tree.map(lambda leaf: jax.device_put(leaf, host), view.values)
+    regime = model._runtime_regimes_for_shape(compile_batch_size=2)["alive"]
+    monkeypatch.setattr(
+        chunk_profiles,
+        "_host_outside_device_ceiling",
+        lambda *, devices: host,  # noqa: ARG005
+        raising=False,
+    )
+    reservation = _period_copy_reservation(
+        regimes={"alive": regime},
+        values=values,
+        period=0,
+        devices=devices,
+        policies={0: {"alive": policy}},
+    )
+    assert set(reservation) == set(devices)
 
 
 def _close_finite_copy_owner(

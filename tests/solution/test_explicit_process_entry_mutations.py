@@ -11,7 +11,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, MarkovTransition, Model, NormalIIDProcess, Regime, categorical
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    MarkovTransition,
+    Model,
+    NormalIIDProcess,
+    Regime,
+    categorical,
+)
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
@@ -84,6 +92,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

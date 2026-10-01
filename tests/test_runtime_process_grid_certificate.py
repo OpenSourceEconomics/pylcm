@@ -153,13 +153,23 @@ def _runtime_process_admission_errors(  # noqa: C901, PLR0912, PLR0915
     ):
         errors.append("staged roots must release on success and failure")
 
+    # The trace is cached per abstract parameter signature: the caller maps the
+    # values to their types in positional order, and the cached body binds the
+    # names and traces those types positionally, so both halves are pinned.
     trace = ast.unparse(_definition(tree=tree, name="_trace_process_jaxpr"))
+    cached = _definition(tree=tree, name="_process_jaxpr")
+    cached_trace = ast.unparse(cached)
     call = ast.unparse(_definition(tree=tree, name="_process_grid_call"))
     if (
         "dict(zip(parameter_names, values, strict=True))" not in call
-        or "partial(_process_grid_call, spec=spec, parameter_names=parameter_names)"
+        or "_process_jaxpr(spec=spec, parameter_names=parameter_names, "
+        "parameter_types=tuple((jax.ShapeDtypeStruct(kind.shape, kind.dtype, "
+        "weak_type=kind.weak_type) for kind in map(jax.typeof, parameter_values))))"
         not in trace
-        or "jax.make_jaxpr(bound)(*parameter_values)" not in trace
+        or [ast.unparse(decorator) for decorator in cached.decorator_list] != ["cache"]
+        or "partial(_process_grid_call, spec=spec, parameter_names=parameter_names)"
+        not in cached_trace
+        or "jax.make_jaxpr(bound)(*parameter_types)" not in cached_trace
     ):
         errors.append("traced inputs must use one explicit positional order")
 
@@ -398,6 +408,18 @@ def test_runtime_process_admission_contract_is_complete() -> None:
             "_process_grid_call",
             "strict=True",
             "strict=False",
+            "traced inputs must use one explicit positional order",
+        ),
+        (
+            "_process_jaxpr",
+            "jax.make_jaxpr(bound)(*parameter_types)",
+            "jax.make_jaxpr(bound)(*reversed(parameter_types))",
+            "traced inputs must use one explicit positional order",
+        ),
+        (
+            "_trace_process_jaxpr",
+            "weak_type=kind.weak_type",
+            "weak_type=False",
             "traced inputs must use one explicit positional order",
         ),
         (

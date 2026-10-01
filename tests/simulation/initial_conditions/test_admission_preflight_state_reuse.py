@@ -22,6 +22,7 @@ from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.typing import FlatRegimeParams
 from _lcm.utils.logging import LogLevel, get_logger
 from benchmarks.asv._simulation_witnesses import WITNESSES
+from lcm import ExecutionConfig
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarInt, UserParams
 from tests.simulation.test_compile_requests import _lcm_log_output_held_fixed
@@ -107,7 +108,10 @@ def test_public_preflight_evaluates_each_identical_state_law_once_per_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The real five-period health sweep has two distinct bound law inputs."""
-    model, params, initial = WITNESSES["multi_regime"]()
+    # The observed grid-point call is the unbudgeted preflight's evaluation route.
+    model, params, initial = WITNESSES["multi_regime"](
+        execution_config=ExecutionConfig(device_memory_bytes=None)
+    )
     solution = model.solve(params=params, log_level="off")
     original: Callable[..., Any] = checks._GridPointCall.__call__
     evaluations: list[object] = []

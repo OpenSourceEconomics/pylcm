@@ -257,9 +257,9 @@ A larger GPU can run larger chunks and may benefit from more concurrent independ
 work. It does not automatically shorten a workload made of small sequential kernels.
 Measure occupancy and memory rather than extrapolating from device memory alone.
 
-With an explicit memory budget, solve execution waits for earlier compiled work that
-uses any of the next core's execution or transfer devices. Work on disjoint device sets
-can remain asynchronous. A shared source array can therefore serialize cores assigned to
+Under a device-memory budget, solve execution waits for earlier compiled work that uses
+any of the next core's execution or transfer devices. Work on disjoint device sets can
+remain asynchronous. A shared source array can therefore serialize cores assigned to
 different regime submeshes. The wait covers returned auxiliary arrays and declared
 copies as well as values; it does not bound memory used by compiler autotuning.
 
@@ -267,12 +267,34 @@ copies as well as values; it does not bound memory used by compiler autotuning.
 
 ## Set a device-memory budget
 
-`ExecutionConfig(device_memory_bytes=...)` declares a per-device ceiling for the
-compiler's reservation plus the accounted live residency, and turns on budget admission:
-a plan that does not fit is refused with `ExecutionPlanningError` rather than left to
-the allocator. The default `None` omits admission entirely. Pass a positive integer
-resolved for the hardware you will run on --- the population count is not a memory
-budget.
+`ExecutionConfig(device_memory_bytes=...)` sets a per-device ceiling for the compiler's
+reservation plus the accounted live residency, and turns on budget admission: a plan
+that does not fit is refused with `ExecutionPlanningError` rather than left to the
+allocator. It takes one of three values:
+
+- `"device"`, the default: the budget is the smallest selected device's allocator pool
+  limit, less `device_memory_headroom_fraction`. GPUs and TPUs report a pool limit, so
+  there the planner picks the widest widths that fit. A CPU reports none, so on CPU the
+  default is unbudgeted. The default needs a preallocated pool, which is JAX's default:
+  without preallocation the allocator grows its pool in separate regions and the limit
+  does not promise one contiguous block. If you set
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` (to share a GPU on demand, say), pass an integer
+  or `None`; the default is refused there unless
+  `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Processes sharing a GPU can instead
+  each keep preallocation and set `XLA_PYTHON_CLIENT_MEM_FRACTION` to their share; each
+  one's default budget is derived from its own slice.
+- `None`: no admission. Every axis you leave out compiles at its conservative bootstrap
+  width, at most 64 for a reduced axis such as `action_product` and 1,024 for a tiled
+  axis such as `cell`. That is slower, and it can still exhaust device memory, because
+  nothing checks it.
+- A positive integer: a budget you resolved for the hardware you will run on. The
+  population count is not a memory budget.
+
+A few routes cannot be budgeted: `enable_jit=False`, forward simulation through host
+gated or replay adapters, and simulating from a supplied foreign result that carries
+replay payloads. They refuse any budget, the default included, with an error that names
+the budget's source and the remedies. Pass `device_memory_bytes=None` to run them
+unbudgeted.
 
 You may pass a device's whole allocator pool limit. The model does not plan against all
 of it: `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
@@ -295,6 +317,9 @@ execution_config = ExecutionConfig(
 
 Resolving the budget is logged, so you can see which of the two bounds actually bound:
 
+- The budget came from the device default: one summary line at `log_level="progress"`
+  and `"debug"`, naming the fraction, each selected device's pool limit and the
+  effective ceiling.
 - The devices did not cap the request: one summary line at `log_level="progress"` and
   `"debug"`, naming the request, the fraction, each selected device's pool limit and the
   effective ceiling.
@@ -302,11 +327,17 @@ Resolving the budget is logged, so you can see which of the two bounds actually 
   `log_level="warning"` up. Read it --- the plan was admitted against less memory than
   you asked for.
 
-Every admission refusal repeats both budgets: when the devices capped the request, the
-message appends the effective bytes, the requested bytes, and the headroom fraction that
-separates them, so a refusal is never ambiguous about which ceiling it was measured
-against. Field-by-field contracts are in
-[Runtime, results, and persistence](../reference/runtime_and_results.md).
+Every admission refusal names the ceiling it was measured against and where it came
+from: the request, the request capped by the device headroom (with the effective bytes,
+the requested bytes and the fraction that separates them), or the device default. It
+then lists what you can change to fit:
+
+- raise `device_memory_bytes` or lower `device_memory_headroom_fraction`;
+- cap widths with `axis_width_ceilings` or fix them with `axis_widths`;
+- shard over more devices with `sharded_states` or `devices`;
+- or pass `device_memory_bytes=None` to disable admission, at bootstrap widths.
+  Field-by-field contracts are in
+  [Runtime, results, and persistence](../reference/runtime_and_results.md).
 
 ### Exhaustive width selection across periods
 
@@ -326,9 +357,9 @@ width of three. Completed chunks are offloaded to host. Random keys retain their
 original population and global subject indices, so changing the width does not change
 simulated draws.
 
-With a positive `device_memory_bytes` budget, every call is planned by the same
-top-first outer-cohort search, whether or not `axis_widths["subject"]` is pinned.
-Unsupported budgeted replay routes still refuse execution.
+Under a device-memory budget, every call is planned by the same top-first outer-cohort
+search, whether or not `axis_widths["subject"]` is pinned. Replay routes that cannot be
+budgeted refuse the budget, whether it is the device default or explicit.
 
 A pinned `axis_widths["subject"]` fixes the anchor width the frontier doubles from.
 Without a pin, the existing single-axis workspace search proposes the widest

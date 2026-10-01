@@ -13,10 +13,14 @@ What it changes, and nothing else:
   weight is not a file that costs nothing;
 - the `files` list of every `general-shard-<n>-<leg>` invocation is recomputed
   from that universe with the manifest's own weighted partition, so the
-  recorded split is the one CI computes at run time.
+  recorded split is the one CI computes at run time;
+- the `files` list of every `solution-shard-<n>-fp<p>-linux` invocation is
+  recomputed the way `cpu.yml` selects it at run time
+  (`shard_test_files tests/solution --weights-leg fp<p>-solution`): a new
+  solution file joins one shard, and the weighted partition may move others.
 
 What it leaves alone: `frozen_head`, the observed weights, the exclusion list,
-the guardrail budgets, the shard *counts*, and every non-general lane.
+the guardrail budgets, the shard *counts*, and every other lane.
 `frozen_head` names the commit the per-file weights were measured at, not the
 commit the manifest was last edited at, so registering a file does not advance
 it. Re-measuring the weights does.
@@ -90,6 +94,24 @@ def regenerate(
         )
         for index, group in enumerate(groups, start=1):
             invocation_id = f"general-shard-{index}-{leg}"
+            if invocation_id not in by_id:
+                raise KeyError(f"{invocation_id} is not a recorded invocation")
+            by_id[invocation_id]["files"] = sorted(group)
+    solution_files = tuple(
+        path.relative_to(repo_root).as_posix()
+        for path in (repo_root / "tests/solution").rglob("test_*.py")
+    )
+    for leg, config in updated["shard_layout"]["solution"].items():
+        weights = {
+            file_: float(seconds)
+            for file_, seconds in updated["leg_weights"][leg]["seconds"].items()
+        }
+        groups = assign_weighted_test_files(
+            files=solution_files, n_shards=config["shards"], weights=weights
+        )
+        precision = leg.removesuffix("-solution")
+        for index, group in enumerate(groups, start=1):
+            invocation_id = f"solution-shard-{index}-{precision}-linux"
             if invocation_id not in by_id:
                 raise KeyError(f"{invocation_id} is not a recorded invocation")
             by_id[invocation_id]["files"] = sorted(group)

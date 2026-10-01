@@ -1008,6 +1008,7 @@ def _period_copy_reservation(
     )
     seen = set()
     result: dict[jax.Device, int] = {}
+    host = _host_outside_device_ceiling(devices=devices)
     for read in reads:
         source = _retained_read_source(
             read=read,
@@ -1041,11 +1042,25 @@ def _period_copy_reservation(
         add_bytes(
             target=result,
             source=dict.fromkeys(
-                required.device_set | source.sharding.device_set,
+                (required.device_set | source.sharding.device_set) - {host},
                 transfer.cost.temporary_bytes,
             ),
         )
     return result
+
+
+def _host_outside_device_ceiling(
+    *, devices: tuple[jax.Device, ...]
+) -> jax.Device | None:
+    """Return the host CPU whose RAM stays outside these chunk devices' ceiling.
+
+    GPU execution keeps host RAM out of the device budget, as completed-chunk
+    offload does, so a source the solve retained on the host (a finite policy)
+    stages its copy scratch outside it. A CPU chunk budgets its own host: `None`.
+    """
+    if all(device.platform == "gpu" for device in devices):
+        return chunk_host_device(subject_devices=devices)
+    return None
 
 
 def _policy_read_sources(

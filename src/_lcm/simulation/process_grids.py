@@ -8,7 +8,7 @@ bindings, temporary arrays, and grids never enter the code cache.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cache, partial
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -559,9 +559,33 @@ def _trace_process_jaxpr(
     parameter_names: tuple[str, ...],
     parameter_values: tuple[object, ...],
 ) -> Jaxpr:
-    """Trace an explicit positional binding for deterministic input ordering."""
+    """Trace an explicit positional binding for deterministic input ordering.
+
+    The graph depends on the process and its parameters' types only, so a warm
+    budgeted call reuses it instead of tracing again.
+    """
+    return _process_jaxpr(
+        spec=spec,
+        parameter_names=parameter_names,
+        parameter_types=tuple(
+            jax.ShapeDtypeStruct(kind.shape, kind.dtype, weak_type=kind.weak_type)
+            for kind in map(jax.typeof, parameter_values)
+        ),
+    )
+
+
+# ponytail: unbounded, keyed by model-static processes and parameter types; bound it
+# if processes ever become call-dependent.
+@cache
+def _process_jaxpr(
+    *,
+    spec: _ContinuousStochasticProcess,
+    parameter_names: tuple[str, ...],
+    parameter_types: tuple[jax.ShapeDtypeStruct, ...],
+) -> Jaxpr:
+    """Trace the process once per parameter type signature."""
     bound = partial(_process_grid_call, spec=spec, parameter_names=parameter_names)
-    return jax.make_jaxpr(bound)(*parameter_values)
+    return jax.make_jaxpr(bound)(*parameter_types)
 
 
 def _validated_process_recipe(  # noqa: C901

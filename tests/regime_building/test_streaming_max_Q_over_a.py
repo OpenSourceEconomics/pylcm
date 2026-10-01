@@ -93,6 +93,67 @@ def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
     assert_array_equal(actual[1], jnp.array([8.75, 10.0]))
 
 
+@pytest.mark.parametrize(
+    ("block_width", "decodes"), [(4, True), (6, False), (8, False)]
+)
+def test_full_width_action_block_maps_the_named_action_grids(
+    *, block_width: int, decodes: bool
+) -> None:
+    """A block covering the action product reads each grid instead of a flat index."""
+    arguments = {
+        "first": jnp.array([0, 1]),
+        "second": jnp.array([0, 1, 2]),
+        "row": jnp.array([0, 1, 2]),
+        "shift": jnp.array([-0.5, 0.75]),
+        "next_regime_to_V_arr": MappingProxyType({}),
+        "offset": jnp.float32(0.25),
+    }
+    raw_streamed = get_streaming_max_Q_over_a(
+        Q_and_F=_Q_and_F,
+        batch_sizes={"row": 0, "shift": 0},
+        action_names=("first", "second"),
+        state_names=("row", "shift"),
+    )
+    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
+
+    jaxpr = str(jax.make_jaxpr(streamed)(**arguments))
+
+    assert ("gather" in jaxpr) is decodes
+    assert ("scan" in jaxpr) is decodes
+
+
+def _feasible_nan_Q_and_F(*, first, second, row, next_regime_to_V_arr):
+    del next_regime_to_V_arr
+    value = jnp.where((row == 0) & (first == 1) & (second == 7), jnp.nan, 0.0)
+    return value, jnp.ones((), dtype=bool)
+
+
+@pytest.mark.parametrize("block_width", [7, 60])
+def test_feasible_nan_survives_a_large_whole_product_block(*, block_width: int) -> None:
+    """A feasible NaN publishes NaN at every width, however large the reduction.
+
+    XLA:CPU's vectorized maximum drops NaN once a reduction spans more than a few
+    thousand elements, so the whole-product block states the rule explicitly.
+    """
+    raw_streamed = get_streaming_max_Q_over_a(
+        Q_and_F=_feasible_nan_Q_and_F,
+        batch_sizes={"row": 0},
+        action_names=("first", "second"),
+        state_names=("row",),
+    )
+    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
+
+    actual = jax.jit(streamed)(
+        first=jnp.arange(3),
+        second=jnp.arange(20),
+        row=jnp.arange(100),
+        next_regime_to_V_arr=MappingProxyType({}),
+    )
+
+    assert bool(jnp.isnan(actual[0]))
+    assert_array_equal(actual[1:], jnp.zeros(99))
+
+
 def _signed_zero_Q_and_F(*, action, next_regime_to_V_arr):
     del next_regime_to_V_arr
     value = jnp.where(action == 0, jnp.float32(-0.0), jnp.float32(0.0))

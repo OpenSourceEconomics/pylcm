@@ -494,7 +494,10 @@ def test_gpu_peak_is_captured_before_warm_calls(
     assert instance.track_peak_cpu_mem(cache) == 999.0
     assert instance.track_compilation_time(cache) == 5.0
     assert instance.track_execution_time(cache) == 2.0
-    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "4"
+    assert (
+        bench_mahler_yum.MahlerYumBudgetedGpu.version
+        == f"4-{bench_mahler_yum.POLICY_LABEL}"
+    )
 
 
 def test_teardown_accepts_the_cache_asv_passes_once_setup_cache_exists(
@@ -692,3 +695,56 @@ def test_budgeted_mahler_refusal_precedes_input_creation(
 
     with pytest.raises(ValueError, match="refused"):
         benchmark._build()
+
+
+def test_default_budget_kwargs_are_the_device_default_as_an_explicit_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The explicit budget equals what the default resolves to on a preallocated pool,
+    and is admitted with preallocation off."""
+    from _lcm.execution import execution_plan
+    from lcm.execution import ExecutionConfig
+
+    limits = {0: 48_000_000_000, 1: 40_000_000_000}
+    monkeypatch.setattr(execution_plan, "visible_device_pool_limits", lambda: limits)
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "true")
+    default = execution_plan.resolve_execution_config(
+        config=ExecutionConfig(),
+        visible_device_ids=(0, 1),
+        state_names=frozenset(),
+        device_pool_limit_bytes=limits,
+    )
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+    config = _gpu_mem.default_budget_execution_kwargs()["execution_config"]
+    explicit = execution_plan.resolve_execution_config(
+        config=config,
+        visible_device_ids=(0, 1),
+        state_names=frozenset(),
+        device_pool_limit_bytes=limits,
+    )
+
+    assert config.device_memory_bytes == default.device_memory_bytes
+    assert explicit.device_memory_bytes == default.device_memory_bytes
+
+
+def test_default_budget_kwargs_keep_the_default_without_a_pool_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend reporting no pool, as CPU, keeps the unbudgeted device default."""
+    from _lcm.execution import execution_plan
+
+    monkeypatch.setattr(execution_plan, "visible_device_pool_limits", lambda: {0: None})
+
+    assert _gpu_mem.default_budget_execution_kwargs() == {}
+
+
+def test_default_budget_kwargs_leave_a_revision_without_the_device_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A historical revision whose default is unbudgeted has nothing to replace."""
+    import lcm
+
+    monkeypatch.delattr(lcm, "ExecutionConfig")
+
+    assert _gpu_mem.default_budget_execution_kwargs() == {}

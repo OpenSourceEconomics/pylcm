@@ -15,6 +15,7 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -483,6 +484,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_SoloTermRegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={21: "solo"},
     )
     flat_params = model._process_params({"discount_factor": 1.0})

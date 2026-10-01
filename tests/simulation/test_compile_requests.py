@@ -28,7 +28,7 @@ from benchmarks.asv._simulation_witnesses import (
     MULTI_INITIAL_CONDITIONS,
     WITNESSES,
 )
-from lcm import Model
+from lcm import ExecutionConfig, Model
 from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.ci.simulation_timings import (
     HOST_TIME_MAX_RELATIVE_IQR,
@@ -74,9 +74,16 @@ def _double(x: FloatND) -> FloatND:
     return 2.0 * x
 
 
-def _warm_then_count(*, witness: str, log_level: LogLevel) -> tuple[int, int, int]:
+def _warm_then_count(
+    *,
+    witness: str,
+    log_level: LogLevel,
+    execution_config: ExecutionConfig | None = None,
+) -> tuple[int, int, int]:
     """Return the trace, lowering, and compile requests of a second simulate call."""
-    model, params, initial_conditions = WITNESSES[witness]()
+    model, params, initial_conditions = WITNESSES[witness](
+        execution_config=execution_config
+    )
     solution = model.solve(params=params, log_level="off")
     model.simulate(
         params=params,
@@ -103,6 +110,20 @@ def test_second_simulate_call_requests_no_compilation(
 ) -> None:
     """After one warm call, a simulate call at any log level compiles nothing."""
     assert _warm_then_count(witness=witness, log_level=log_level) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("witness", sorted(WITNESSES))
+def test_second_budgeted_simulate_call_requests_no_compilation(*, witness: str) -> None:
+    """A budget admits the same warm call without tracing anything again.
+
+    GPU models are budgeted by default, so the budgeted path carries the same
+    second-call contract as the unbudgeted one.
+    """
+    assert _warm_then_count(
+        witness=witness,
+        log_level="off",
+        execution_config=ExecutionConfig(device_memory_bytes=2**34),
+    ) == (0, 0, 0)
 
 
 def test_counters_report_one_of_each_for_a_freshly_compiled_function() -> None:

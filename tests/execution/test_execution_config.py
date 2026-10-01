@@ -29,8 +29,12 @@ def test_execution_config_is_a_public_frozen_keyword_only_value() -> None:
         config.device_memory_bytes = 2048  # ty: ignore[invalid-assignment]
 
 
-def test_execution_config_defaults_to_no_device_memory_budget() -> None:
-    assert ExecutionConfig().device_memory_bytes is None
+def test_execution_config_defaults_to_the_device_derived_budget() -> None:
+    assert ExecutionConfig().device_memory_bytes == "device"
+
+
+def test_execution_config_accepts_an_explicit_opt_out_of_the_budget() -> None:
+    assert ExecutionConfig(device_memory_bytes=None).device_memory_bytes is None
 
 
 @pytest.mark.parametrize("device_memory_bytes", [True, 0, -1])
@@ -41,7 +45,7 @@ def test_execution_config_rejects_nonpositive_or_boolean_budgets(
         ExecutionConfig(device_memory_bytes=device_memory_bytes)
 
 
-@pytest.mark.parametrize("device_memory_bytes", [1.5, "1024"])
+@pytest.mark.parametrize("device_memory_bytes", [1.5, "1024", "devices", "Device"])
 def test_execution_config_rejects_noninteger_budgets(
     *, device_memory_bytes: object
 ) -> None:

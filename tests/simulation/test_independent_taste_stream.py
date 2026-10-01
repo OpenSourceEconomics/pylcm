@@ -93,9 +93,11 @@ def test_independent_seed_is_effective_and_subject_window_is_stable(
     captured = _capture_decision_keys(monkeypatch=monkeypatch)
     params = taste_shocks_toy.get_params(scale=0.2)
     for taste_seed, count, batch in ((12, 24, 0), (12, 27, 8), (13, 24, 0)):
+        # The pinned chunks are the windows under test; a budget may merge them.
         model = taste_shocks_toy.get_model(
             execution_config=ExecutionConfig(
-                axis_widths={} if batch == 0 else {"subject": batch}
+                axis_widths={} if batch == 0 else {"subject": batch},
+                device_memory_bytes=None,
             )
         )
         solution = model.solve(params=params, log_level="debug")

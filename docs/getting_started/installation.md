@@ -141,11 +141,8 @@ smaller models.
 
 ## JAX Settings
 
-pylcm sets three JAX configuration defaults on import:
+pylcm sets two JAX configuration defaults on import:
 
-- **`XLA_PYTHON_CLIENT_PREALLOCATE=false`** — disables JAX's default of reserving 75% of
-  GPU memory upfront. This lets `nvidia-smi` reflect actual usage and plays nicely with
-  other GPU processes.
 - **`JAX_COMPILATION_CACHE_DIR=~/.cache/jax`** — enables persistent JIT compilation
   caching. Large models (many regimes and states) can take minutes to compile on first
   run; the cache makes subsequent runs near-instant.
@@ -154,7 +151,14 @@ pylcm sets three JAX configuration defaults on import:
   second to compile, which excludes most of the many small programs a pylcm model
   compiles — leaving the cache empty and every fresh process recompiling everything.
 
-All three only apply if you have not already set the variable yourself.
+Both only apply if you have not already set the variable yourself.
+
+pylcm leaves GPU memory allocation to JAX, which reserves 75% of the device up front.
+The default device-memory budget is derived from that preallocated pool. To allocate on
+demand instead, set `XLA_PYTHON_CLIENT_PREALLOCATE=false` before JAX initialises its
+backend and pass an explicit `ExecutionConfig(device_memory_bytes=...)`, or `None` to
+disable admission; the default budget refuses an on-demand pool (see
+[tuning](../user_guide/tuning.md)).
 
 ### Import order does not matter
 
@@ -164,9 +168,6 @@ compilation-cache settings through `jax.config` as well, and they hold whether `
 imported before or after `jax`. This matters in practice: test suites, notebooks, and
 other libraries routinely import `jax` first, and a cache that is switched off reports
 nothing at all — it simply recompiles, which on a large model costs minutes per process.
-
-`XLA_PYTHON_CLIENT_PREALLOCATE` is read by XLA when the backend is first initialised
-rather than at import, so it is enough to import `lcm` before running any computation.
 
 To confirm caching is live in a given process:
 

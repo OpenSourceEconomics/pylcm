@@ -14,6 +14,7 @@ from lcm import (
     AgeRange,
     ByAge,
     Choose,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -149,6 +150,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         },
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "source"},
     )
 

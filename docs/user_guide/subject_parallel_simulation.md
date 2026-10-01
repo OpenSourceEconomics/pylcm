@@ -66,10 +66,10 @@ positive integer resolved for the selected hardware and existing owners; the pop
 count is not a memory budget. Other valid solve-state declarations, including
 `sharded_states=()`, can use the same forward mode.
 
-A positive `device_memory_bytes` budget lets the top-first planner explore larger
-**global** outer cohorts. It does not force full-population admission. Inspect the
-selected global extent and divide by the number of subject devices to obtain the local
-row count.
+A device-memory budget, derived by default on a GPU or TPU or passed explicitly, lets
+the top-first planner explore larger **global** outer cohorts. It does not force
+full-population admission. Inspect the selected global extent and divide by the number
+of subject devices to obtain the local row count.
 
 In `"subjects"` mode the configured inner subject width is an upper bound per device,
 clamped to the local population. In `"legacy"` mode its meaning is unchanged.

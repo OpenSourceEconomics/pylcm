@@ -144,7 +144,10 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
         regime_id_class=MultiRegimeId,
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
-        execution_config=ExecutionConfig(axis_widths={"subject": 2}),
+        # Unbudgeted pinned chunks offload each one; a budget may admit one chunk.
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 2}, device_memory_bytes=None
+        ),
         initial_regimes=initial_regimes_of(model=base),
     )
     params = get_multi_regime_params("normal")

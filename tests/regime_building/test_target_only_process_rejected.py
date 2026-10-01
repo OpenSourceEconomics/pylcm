@@ -8,6 +8,7 @@ from lcm import (
     ByAge,
     Choose,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -82,6 +83,7 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -105,6 +107,7 @@ def _target_only_process_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -221,6 +224,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes={20: "source"},
         )
 
@@ -254,6 +258,7 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes={20: "source"},
         )
 
@@ -300,6 +305,7 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -366,6 +372,7 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
             ages=AgeGrid(start=20, stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes={20: "source"},
         )
 
@@ -425,6 +432,7 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
             ages=AgeGrid(start=20, stop=23, step="Y"),
             regime_id_class=_ThreeRegimeId,
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes={20: "source"},
         )
 
@@ -453,6 +461,7 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -497,6 +506,7 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -548,6 +558,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={(20, 21): "source"},
     )
 

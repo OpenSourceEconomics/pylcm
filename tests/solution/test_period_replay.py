@@ -19,7 +19,7 @@ import pytest
 
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, ExecutionConfig, Model
 from lcm.persistence import replay_period
 from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
@@ -27,9 +27,11 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     _make_full_topology_regimes,
 )
 from tests.test_models.deterministic.discrete import (
+    RegimeId,
     get_model,
     get_params,
 )
+from tests.test_models.initial_regimes import initial_regimes_of
 
 _N_PERIODS = 3
 
@@ -41,7 +43,14 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     else:
         monkeypatch.setenv("LCM_CAPTURE_PERIOD", target)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    model = get_model(n_periods=_N_PERIODS)
+    base = get_model(n_periods=_N_PERIODS)
+    model = Model(
+        regimes=base.user_regimes,
+        ages=base.ages,
+        regime_id_class=RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        initial_regimes=initial_regimes_of(model=base),
+    )
     params = get_params(n_periods=_N_PERIODS)
     solution = model.solve(params=params, log_level="off").values
     return model, solution

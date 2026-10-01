@@ -42,6 +42,7 @@ from _lcm.optimization.implicit_outer_derivative import (
     implicit_optimum_diagnostics,
 )
 from _lcm.utils.logging import get_logger
+from lcm import ExecutionConfig
 from lcm.typing import FloatND
 
 if TYPE_CHECKING:
@@ -123,9 +124,13 @@ def capture_pilot_problem(
 
     # enable_jit=False keeps the kernel cores traceable: AOT-compiled
     # cores reject JAX transformations, and the pilot objective must be
-    # vmapped (per-cell f) and forward-differentiated (the JVP rule).
+    # vmapped (per-cell f) and forward-differentiated (the JVP rule). No
+    # compiler then reports a workspace, so the model runs unbudgeted.
     model = create_mahler_yum_model(
-        implementation="paper", outer_search=mesh, enable_jit=False
+        implementation="paper",
+        outer_search=mesh,
+        enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     model_params, _ = create_inputs(
         seed=0, n_simulation_subjects=10, params=START_PARAMS

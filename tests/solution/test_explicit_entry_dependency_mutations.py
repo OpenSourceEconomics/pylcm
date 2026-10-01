@@ -13,6 +13,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -136,6 +137,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     params = {
@@ -189,6 +191,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     params = {
@@ -249,6 +252,7 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     params = {
