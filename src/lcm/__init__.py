@@ -1,7 +1,7 @@
 """pylcm: finite-horizon discrete-continuous dynamic choice models in JAX.
 
-Importing this package is what installs the runtime perimeter: JAX's allocation
-and persistent-compilation-cache settings, the beartype claw over both `lcm` and
+Importing this package is what installs the runtime perimeter: JAX's
+persistent-compilation-cache settings, the beartype claw over both `lcm` and
 the private `_lcm` package, and `MappingProxyType` as a JAX pytree. It then
 re-exports the public surface, so a user writes `from lcm import Model, Regime`.
 Exceptions are reached through `lcm.exceptions` rather than from here.
@@ -13,13 +13,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 from lcm._compilation_cache import compilation_cache_name
-
-# Use on-demand GPU memory allocation instead of JAX's default of pre-allocating
-# 75% of GPU memory. This plays nicely with other GPU processes, makes nvidia-smi
-# reflect actual usage, and enables meaningful GPU memory benchmarks. Users can
-# override by setting XLA_PYTHON_CLIENT_PREALLOCATE=true before importing lcm.
-os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-
 
 # Enable persistent JIT compilation cache. Large models (many regimes/states) can
 # take minutes to compile; the cache makes subsequent runs near-instant. Skip the

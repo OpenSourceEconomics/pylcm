@@ -55,7 +55,7 @@ def _model(width: int | None = None) -> Model:
     the width to the plan.
     """
     config = (
-        ExecutionConfig()
+        ExecutionConfig(device_memory_bytes=None)
         if width is None
         else ExecutionConfig(axis_widths={STOCHASTIC_NODE_AXIS: width})
     )

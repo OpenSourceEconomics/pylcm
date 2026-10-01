@@ -11,6 +11,7 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
@@ -74,6 +75,7 @@ def _model(
             )
         },
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
     )
 
 
@@ -169,6 +171,7 @@ def test_a_value_only_node_is_a_valid_coordinate_request():
         regime_id_class=RouteId,
         initial_regimes={0: "source"},
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "source": Regime(
                 regime_transitions=Phased(solve="end", simulate="other"),
@@ -206,6 +209,7 @@ def test_period_is_an_index_not_the_calendar_age():
         regime_id_class=EndId,
         initial_regimes={(10, 11): "end"},
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "end": Regime(
                 regime_transitions=None,

@@ -51,6 +51,7 @@ from lcm.transition import (
     Choose,
     JointTransition,
     MarkovTransition,
+    fail_if_phased_wraps_a_schedule,
 )
 from lcm.typing import UserFunction
 
@@ -455,6 +456,7 @@ class Regime:
 
     def __post_init__(self) -> None:
         transition = self.regime_transitions
+        fail_if_phased_wraps_a_schedule(transition)
         if not uses_declaration_vocabulary(transition):
             self._post_init_engine_view()
             return

@@ -532,6 +532,10 @@ concurrent-output burdens were planned.
 ### Device memory: the headroom, and the note
 
 `ExecutionConfig(device_memory_bytes=...)` is a request, not the ceiling admission uses.
+The default `"device"` requests the smallest selected device's pool limit
+(`_requested_budget`), so the headroom is the only reduction; with no reported limit it
+resolves unbudgeted. `ResolvedExecution.budget_source` records whether the budget is
+`"explicit"`, derived from the `"device"` default, or `"none"`.
 `_effective_device_memory_bytes` takes the minimum of the request and every selected
 device's allocator pool limit less `device_memory_headroom_fraction` of it (0.15 by
 default), so an already-conservative request is never reduced twice and a device that
@@ -541,11 +545,18 @@ The result is floored at one byte: a pool small enough that its headroom consume
 it still yields a budget, one that refuses every width — which is the honest outcome,
 where a non-positive budget would not be a budget at all.
 
-The resolved budget is logged as a summary line naming the request, the headroom
-fraction, the per-device limits and the effective ceiling — at warning level when the
-devices capped the request, at info level otherwise. `device_memory_cap_note()` returns
-the same fact as a clause that admission refusals append, so a refusal always says which
-of the two budgets it was measured against.
+The resolved budget is logged as a summary line naming the request or the device
+default, the headroom fraction, the per-device limits and the effective ceiling — at
+warning level when the devices capped an explicit request, at info level otherwise.
+`device_memory_cap_note()` returns the effective budget and its source as a clause that
+admission refusals append, followed by the remedies (raise the request or lower the
+fraction, cap or fix widths, shard over more devices, or disable admission), so a
+refusal always says which budget it was measured against and what to change.
+
+Routes that cannot be budgeted — `enable_jit=False`, and simulation through host gated
+or replay adapters (`simulation_uses_host_adapters`) — refuse every budget, the device
+default included, appending `device_memory_cap_note()`. Nothing falls back to unbudgeted
+planning on its own; `device_memory_bytes=None` is the caller's explicit opt-out.
 
 Workspace admission combines a represented compiler allocation reservation with external
 resident storage. The reservation enforces both the raw peak and
@@ -665,14 +676,14 @@ own configuration is immutable for its lifetime and therefore deliberately absen
 the key — a different execution config, device order, width or JIT disposition is a
 different runtime with its own empty cache.
 
-Without a declared budget the runtime still derives a subject tile width rather than
-using a fixed one: `_unbudgeted_subject_width` caps one tile's argument slice at a
-constant byte block, weighing only the operands the materialized program already holds
-abstractly, so the result depends on nothing but the model's shapes, dtypes and the
-population size and is identical on every backend. It never falls below the fixed
-default width, and it passes through the same admissible-width check, so axis alignment,
-the floor and the extent clamp are unchanged. Width is a lowering specialization only: a
-wider tile moves no value and no RNG stream.
+Without a budget the runtime still derives a subject tile width rather than using a
+fixed one: `_unbudgeted_subject_width` caps one tile's argument slice at a constant byte
+block, weighing only the operands the materialized program already holds abstractly, so
+the result depends on nothing but the model's shapes, dtypes and the population size and
+is identical on every backend. It never falls below the fixed default width, and it
+passes through the same admissible-width check, so axis alignment, the floor and the
+extent clamp are unchanged. Width is a lowering specialization only: a wider tile moves
+no value and no RNG stream.
 
 ## The solver seam: keys and routes
 

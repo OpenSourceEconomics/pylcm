@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, MarkovTransition, Model, Regime, categorical
+from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
 from lcm.typing import ScalarFloat, ScalarInt
 
 
@@ -55,6 +55,7 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "source"},
     )
     graph_targets = model.reachability.solution.targets(period=0, source="source")

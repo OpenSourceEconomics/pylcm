@@ -104,6 +104,39 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
     return env
 
 
+def default_budget_execution_kwargs() -> dict[str, object]:
+    """Return the device-default budget as an explicit `execution_config` keyword.
+
+    Benchmarks run with preallocation off, where `device_memory_bytes="device"`
+    refuses; an explicit budget of the same size is admitted there. The result is
+    empty when nothing needs replacing: a revision without the device default
+    (the paired GridSearch harness builds historical revisions too) or a backend
+    reporting no pool limit, as CPU, where the default resolves unbudgeted.
+
+    Imports are deferred so the ASV forkserver never initialises JAX.
+    """
+    import lcm
+
+    config_type = getattr(lcm, "ExecutionConfig", None)
+    if config_type is None or config_type().device_memory_bytes != "device":
+        return {}
+    from _lcm.execution import execution_plan
+
+    default = config_type()
+    limits = execution_plan.visible_device_pool_limits()
+    requested, _ = execution_plan._requested_budget(  # noqa: SLF001
+        requested=default.device_memory_bytes, pool_limits=limits
+    )
+    if requested is None:
+        return {}
+    budget = execution_plan._effective_device_memory_bytes(  # noqa: SLF001
+        requested_bytes=requested,
+        headroom_fraction=default.device_memory_headroom_fraction,
+        pool_limits=limits,
+    )
+    return {"execution_config": config_type(device_memory_bytes=budget)}
+
+
 def _file_provenance(path: Path) -> dict[str, object]:
     """Return identity for one persisted solution archive, without loading it."""
     if not path.is_file():

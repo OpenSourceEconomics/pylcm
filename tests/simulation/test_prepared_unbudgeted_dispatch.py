@@ -111,7 +111,7 @@ def _reset(counts: dict[str, int]) -> None:
 
 def _small_unbudgeted_model():
     """Build a small multi-regime witness with no device-memory budget."""
-    return multi_regime(execution_config=ExecutionConfig())
+    return multi_regime(execution_config=ExecutionConfig(device_memory_bytes=None))
 
 
 def _simulate(*, model, params, solution, initial_conditions, seed):

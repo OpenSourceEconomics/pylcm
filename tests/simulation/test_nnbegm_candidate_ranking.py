@@ -631,7 +631,11 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
         width: toy.build_model(
             variant="n_nbegm",
             n_periods=2,
-            execution_config=ExecutionConfig(axis_widths={"subject": width}),
+            # Unbudgeted: the recorder is read from the executor cached per subject
+            # width, which a budget replaces with one keyed by the padded population.
+            execution_config=ExecutionConfig(
+                axis_widths={"subject": width}, device_memory_bytes=None
+            ),
         )
         for width in (7, 3, 1)
     }

@@ -18,6 +18,7 @@ from lcm import (
     AgeGrid,
     Choose,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     categorical,
@@ -108,6 +109,7 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "acting"},
     )
 

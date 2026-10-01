@@ -9,6 +9,7 @@ import pytest
 
 from lcm import AgeGrid, AgeRange, ByAge, Choose, MarkovTransition, Phased
 from lcm.exceptions import RegimeInitializationError
+from lcm.regime import Regime
 
 
 def _probs() -> jnp.ndarray:
@@ -163,6 +164,55 @@ def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
     """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
     with pytest.raises(RegimeInitializationError, match=match):
         build()
+
+
+_LAWS = {
+    "regime_name": lambda: "retired",
+    "choose": lambda: Choose(func=_code, targets=("working", "retired")),
+    "markov_transition": lambda: MarkovTransition(
+        func=_probs, targets=("working", "retired")
+    ),
+    "per_target_dict": lambda: {
+        "working": MarkovTransition(func=_probs),
+        "retired": MarkovTransition(func=_probs),
+    },
+}
+
+
+def _phased(*, schedule_side: str, law: object) -> Phased:
+    schedule = ByAge.until(stop_age_exclusive=63, law=law, then="retired")
+    sides = {"solve": "working", "simulate": "working"}
+    for side in ("solve", "simulate"):
+        if schedule_side in (side, "both"):
+            sides[side] = schedule
+    return Phased(**sides)
+
+
+@pytest.mark.parametrize("law_form", list(_LAWS))
+@pytest.mark.parametrize("schedule_side", ["solve", "simulate", "both"])
+def test_regime_rejects_a_schedule_inside_a_top_level_phased(
+    *, schedule_side: str, law_form: str
+) -> None:
+    """A top-level `Phased` may not wrap a `ByAge` on either side."""
+    transition = _phased(schedule_side=schedule_side, law=_LAWS[law_form]())
+    side_pattern = {
+        "solve": "`solve`",
+        "simulate": "`simulate`",
+        "both": "`solve`.*`simulate`",
+    }[schedule_side]
+    with pytest.raises(
+        RegimeInitializationError,
+        match=rf"`ByAge` cannot be nested inside `ByAge` or `Phased`.*{side_pattern}",
+    ):
+        Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+
+
+@pytest.mark.parametrize("law_form", list(_LAWS))
+def test_regime_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
+    """A top-level `Phased` whose sides are plain laws constructs."""
+    transition = Phased(solve=_LAWS[law_form](), simulate=_LAWS[law_form]())
+    regime = Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+    assert regime.regime_transitions is transition
 
 
 def test_until_rejects_a_stop_age_without_a_predecessor() -> None:

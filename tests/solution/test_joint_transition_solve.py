@@ -15,6 +15,7 @@ from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
@@ -135,6 +136,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -431,6 +433,7 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=BDYRegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "single"},
     )
 

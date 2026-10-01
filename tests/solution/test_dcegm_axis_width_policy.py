@@ -237,7 +237,9 @@ def test_an_unbudgeted_solve_streams_every_axis_at_its_bootstrap_width(
 ) -> None:
     """With nothing declared, each loop runs bounded rather than fused."""
     assert _captured_widths(
-        monkeypatch=monkeypatch, tmp_path=tmp_path, execution_config=ExecutionConfig()
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
     ) == dict(_BOOTSTRAP)
 
 

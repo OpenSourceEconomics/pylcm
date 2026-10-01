@@ -182,9 +182,11 @@ def _keys_by_triple(
 ) -> dict[Hashable, tuple[Mapping[str, int], set[Hashable]]]:
     """Solve the identity toy and group its lowering keys by core."""
     captured = _capture_lowering_keys(monkeypatch=monkeypatch)
-    _model(execution_config=ExecutionConfig(covered_axes=covered_axes)).solve(
-        params=get_params(n_periods=3), log_level="off"
-    )
+    _model(
+        execution_config=ExecutionConfig(
+            device_memory_bytes=None, covered_axes=covered_axes
+        )
+    ).solve(params=get_params(n_periods=3), log_level="off")
     grouped: dict[Hashable, tuple[Mapping[str, int], set[Hashable]]] = {}
     for candidate, key in captured[0].items():
         triple, widths = cast("tuple[Hashable, Any]", candidate)

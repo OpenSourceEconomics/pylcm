@@ -28,6 +28,7 @@ from _lcm.execution.core_program import (
     InternalOutputSpec,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.solution import backward_induction
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.typing import FlatParams, FloatND
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
@@ -308,10 +309,80 @@ def _solve(*, convention: str) -> object:
     )
 
 
-def test_a_width_dependent_published_weak_typing_is_refused_by_a_solve() -> None:
-    """A solve refuses a published scalar whose weak typing follows the width."""
+def _observe(
+    *, monkeypatch: pytest.MonkeyPatch, convention: str
+) -> tuple[object, list[backward_induction._LazyCandidateFrontier]]:
+    """Solve the fixture and return its result and the frontier of every plan."""
+    frontiers: list[backward_induction._LazyCandidateFrontier] = []
+    original_planning = backward_induction._resolve_output_layouts_and_lowering_keys
+
+    def observe_planning(**kwargs: Any) -> tuple:
+        result = original_planning(**kwargs)
+        frontiers.append(result[7])
+        return result
+
+    monkeypatch.setattr(
+        backward_induction,
+        "_resolve_output_layouts_and_lowering_keys",
+        observe_planning,
+    )
+    return _solve(convention=convention), frontiers
+
+
+def _consumed_producer(
+    *, frontiers: list[backward_induction._LazyCandidateFrontier]
+) -> tuple[backward_induction._LazyCandidateFrontier, Any, int]:
+    """Return a consumed producer with several widths, and its narrowest rank."""
+    consumed = [
+        (frontier, triple)
+        for frontier in frontiers
+        for triple, core in frontier.frontiers.items()
+        if core.consumed and len(core.widths) > 1
+    ]
+    assert consumed
+    frontier, triple = consumed[0]
+    return frontier, triple, len(frontier.frontiers[triple].widths) - 1
+
+
+def test_a_width_dependent_published_weak_typing_is_refused_where_it_binds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A published scalar whose weak typing follows the width is refused when bound.
+
+    Consumers are lowered against the producer's top-ranked record, and a
+    narrower width is traced and held against it when a refusal or a width
+    search binds it. Weak typing is only visible in that trace, so a solve whose
+    budget admits the widest width publishes its consumer's row, and binding the
+    narrowest width, where the fixture's scalar turns weak, raises.
+    """
+    result, frontiers = _observe(monkeypatch=monkeypatch, convention="width_dependent")
+    frontier, triple, narrowest = _consumed_producer(frontiers=frontiers)
+
+    aaae(
+        np.asarray(cast("Any", result).values[0]["working_life"]),
+        np.linspace(1.0, float(_N_WEALTH), _N_WEALTH) + 1.0,
+        decimal=DECIMAL_PRECISION,
+    )
+    assert {
+        len(candidates)
+        for observed in frontiers
+        for candidates in observed.candidates_by_triple.values()
+    } == {1}
     with pytest.raises(ExecutionPlanningError, match="scalar"):
-        _solve(convention="width_dependent")
+        frontier.candidate(triple=triple, position=narrowest)
+
+
+@pytest.mark.parametrize("convention", ["weak", "strong"])
+def test_a_uniformly_typed_published_scalar_binds_at_every_width(
+    *, monkeypatch: pytest.MonkeyPatch, convention: str
+) -> None:
+    """The bind-time check admits a scalar published with one typing throughout."""
+    _, frontiers = _observe(monkeypatch=monkeypatch, convention=convention)
+    frontier, triple, narrowest = _consumed_producer(frontiers=frontiers)
+
+    frontier.candidate(triple=triple, position=narrowest)
+
+    assert len(frontier.candidates_by_triple[triple]) == narrowest + 1
 
 
 @pytest.mark.parametrize("convention", ["weak", "strong"])

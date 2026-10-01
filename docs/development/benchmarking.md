@@ -62,7 +62,10 @@ pixi run asv-publish
 
 The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false`
 automatically so JAX allocates GPU memory on demand rather than grabbing it all up
-front.
+front. The default device-memory budget refuses an on-demand pool, so every benchmark
+that builds a model without an explicit budget passes
+`_gpu_mem.default_budget_execution_kwargs()`: the default budget the devices would
+resolve to, as an explicit `device_memory_bytes`.
 
 ### Exact paired GridSearch measurements
 

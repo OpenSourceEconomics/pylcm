@@ -67,7 +67,10 @@ def _run_legacy(*, log_level: LogLevel) -> tuple[SimulationResult, list[str]]:
     collector = _Collector()
     logger.addHandler(collector)
     try:
-        model = get_model(n_periods=_N_PERIODS)
+        model = get_model(
+            n_periods=_N_PERIODS,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
+        )
         params = get_params(n_periods=_N_PERIODS)
         solution = model.solve(params=params, log_level="off")
         result = model.simulate(

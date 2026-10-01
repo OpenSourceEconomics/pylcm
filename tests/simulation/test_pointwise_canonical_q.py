@@ -21,7 +21,14 @@ import pytest
 import _lcm.simulation.simulate as simulate_module
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
-from lcm import AgeGrid, DiscreteGrid, LogSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LogSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     ContinuousAction,
@@ -99,6 +106,8 @@ def _bonus_model() -> Model:
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_regimes={40: "retirement"},
+        # Direct dispatch here carries no live residency context.
+        execution_config=ExecutionConfig(device_memory_bytes=None),
     )
 
 

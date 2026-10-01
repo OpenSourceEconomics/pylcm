@@ -17,6 +17,7 @@ import pytest
 from lcm import (
     AgeGrid,
     Choose,
+    ExecutionConfig,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
@@ -83,6 +84,7 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values

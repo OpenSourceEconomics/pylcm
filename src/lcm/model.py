@@ -98,6 +98,7 @@ from _lcm.simulation.initial_conditions import (
     canonicalize_initial_conditions,
     initial_conditions_feasibility_mask,
     pad_initial_conditions_to_multiple,
+    resolve_initial_periods,
     validate_simulation_inputs,
 )
 from _lcm.simulation.initial_conditions import (
@@ -1478,6 +1479,7 @@ class Model:
                         f"Budgeted foreign solution for regime {regime_name!r} "
                         "requires unprofiled artifact authority or payload copies; "
                         "only canonical eager and admitted native values are supported."
+                        f"{self._execution.device_memory_cap_note()}"
                     )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
@@ -3272,11 +3274,13 @@ class Model:
     ) -> None:
         """Reject subjects starting at any pair outside `initial_nodes`.
 
-        A pair the engine solves or visits is still refused unless it is a
-        declared start. Pairs with an unknown regime code or an off-grid age are
-        left to the simulation input validator, which reports them in its own
-        terms, as are a missing `age` or `regime_id` column and columns of
-        unequal length.
+        Each age resolves to the period the simulation would start it in, so a
+        grid age is admitted or refused on its (period, regime) pair whatever its
+        floating-point representation. A pair the engine solves or visits is
+        still refused unless it is a declared start. Pairs with an unknown regime
+        code or an off-grid age are left to the simulation input validator,
+        which reports them in its own terms, as are a missing `age` or
+        `regime_id` column and columns of unequal length.
         """
         if codes is None or ages is None:
             return
@@ -3287,17 +3291,26 @@ class Model:
         ids_to_names = {
             int(code): name for name, code in self.regime_names_to_ids.items()
         }
-        age_by_float = {float(age): age for age in self.ages.exact_values}
+        periods, on_grid = resolve_initial_periods(
+            ages=self.ages, initial_ages=age_values
+        )
         pairs = {
-            (age_by_float[age], ids_to_names[code])
-            for code, age in zip(code_values.tolist(), age_values.tolist(), strict=True)
-            if code in ids_to_names and age in age_by_float
+            (period, ids_to_names[code])
+            for code, period, admissible in zip(
+                code_values.tolist(), periods.tolist(), on_grid.tolist(), strict=True
+            )
+            if code in ids_to_names and admissible
         }
-        refused = sorted(pairs - self.initial_nodes, key=repr)
+        period_by_age: dict[object, int] = {
+            age: p for p, age in enumerate(self.ages.exact_values)
+        }
+        permitted = {(period_by_age[age], name) for age, name in self.initial_nodes}
+        refused = sorted(pairs - permitted)
         if refused:
             details = "\n".join(
-                f"  ({age}, '{name}') is not an admissible entry"
-                for age, name in refused
+                f"  ({self.ages.exact_values[period]}, '{name}') is not an "
+                "admissible entry"
+                for period, name in refused
             )
             raise InvalidInitialConditionsError(
                 "Subjects start at (age, regime) pairs that `initial_regimes` does "

@@ -27,11 +27,15 @@ class _MahlerYum:
     simulation_seed: int | None = None
 
     def _build(self):
-        from lcm_examples.mahler_yum_2024 import (
-            MAHLER_YUM_MODEL,
-        )
+        import lcm_examples.mahler_yum_2024 as mahler_yum
 
-        self.model = MAHLER_YUM_MODEL
+        execution = _gpu_mem.default_budget_execution_kwargs()
+        # Historical revisions ASV builds have only the module-level model.
+        self.model = (
+            mahler_yum.create_model(**execution)
+            if execution
+            else mahler_yum.MAHLER_YUM_MODEL
+        )
         self._build_inputs()
 
     def _build_inputs(self):
