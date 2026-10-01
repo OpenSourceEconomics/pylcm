@@ -27,7 +27,7 @@ if _REPOSITORY_ROOT not in sys.path:
 
 from tests.test_models.processes import (  # noqa: E402
     MultiRegimeId,
-    build_multi_regime_model,
+    get_multi_regime_model,
     get_multi_regime_params,
 )
 
@@ -44,7 +44,7 @@ def multi_regime(
     *, execution_config: ExecutionConfig | None = None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
-    model = build_multi_regime_model(
+    model = get_multi_regime_model(
         n_periods=6,
         distribution_type="normal",
         execution_config=execution_config or ExecutionConfig(),

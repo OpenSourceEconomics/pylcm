@@ -103,7 +103,10 @@ def test_model_with_cross_regime_processes(distribution_type: str) -> None:
     source regime into cross-regime transition dicts, causing a `vmap` error in
     `joint_weights_from_marginals` (receives `None` instead of arrays).
     """
-    model = get_multi_regime_model(n_periods=6, distribution_type=distribution_type)
+    model = get_multi_regime_model(
+        n_periods=6,
+        distribution_type=distribution_type,  # ty: ignore[invalid-argument-type]
+    )
     params = get_multi_regime_params(distribution_type)  # ty: ignore[invalid-argument-type]
 
     result = model.simulate(
