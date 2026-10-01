@@ -1,8 +1,9 @@
-"""Chunk planning compiles forward programs on worker threads without changing them."""
+"""Chunk planning lowers forward programs on the caller and compiles them on a pool."""
 
 import re
 import threading
-from typing import Any, cast
+from collections.abc import Hashable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +12,6 @@ import pytest
 
 import lcm.model as model_module
 from _lcm.simulation.chunk_planning import SimulationChunkPlan
-from _lcm.simulation.runtime import _SimulationCandidateCompiler
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
@@ -21,6 +21,7 @@ _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
 _DEBUG_SECTIONS = frozenset(
     {"FileNames", "FunctionNames", "FileLocations", "StackFrames"}
 )
+_WORKERS = (1, 2)
 
 
 def _program_text(*, hlo: str) -> str:
@@ -37,10 +38,22 @@ def _program_text(*, hlo: str) -> str:
     return re.sub(r", metadata=\{[^}]*\}", "", "\n\n".join(blocks))
 
 
+def _readable_key(key: Hashable) -> tuple[object, ...]:
+    """Project a runtime lowering key onto its argument names and specialization.
+
+    The program identity is an object address, so it is dropped; the argument
+    names, subject extent and axis widths identify each forward program of the
+    small model.
+    """
+    _, arguments, specialization, *_ = key  # ty: ignore[not-iterable]
+    return (tuple(name for name, _ in arguments), *specialization[:2])
+
+
 def _simulate_and_observe(
     *, monkeypatch: pytest.MonkeyPatch, max_compilation_workers: int
 ) -> dict[str, Any]:
-    """Simulate a fresh budgeted model, recording chunk-planning compiles and plan."""
+    """Simulate a fresh budgeted model, recording chunk planning's lowerings,
+    compiles, published forward executables and plan."""
     model = _stateful_target_model()
     initial = {
         "wealth": jnp.asarray([1.0, 2.0, 3.0]),
@@ -48,44 +61,57 @@ def _simulate_and_observe(
         "regime_id": jnp.full(3, _LifecycleRegimeId.alive, dtype=jnp.int32),
     }
     solution = model.solve(params=_PARAMS, log_level="off")
+    caller = threading.get_ident()
     planning = [False]
-    compiles: list[tuple[bool, str, tuple[tuple[str, int], ...], str]] = []
-    plans: list[SimulationChunkPlan] = []
     lock = threading.Lock()
-    compile_body = _SimulationCandidateCompiler.__call__
+    lowerings: list[bool] = []
+    compiles: list[tuple[bool, str]] = []
+    published: dict[Hashable, str] = {}
+    plans: list[SimulationChunkPlan] = []
+    lower_body = jax.stages.Traced.lower
+    compile_body = jax.stages.Lowered.compile
     prepare = model_module.prepare_simulation_chunks
 
-    def observe_compile(self: _SimulationCandidateCompiler, *args: Any) -> Any:
-        (widths,) = args
-        compiled = compile_body(self, widths)
+    def observe_lower(self: jax.stages.Traced, *args: Any, **kwargs: Any) -> Any:
+        lowered = lower_body(self, *args, **kwargs)
+        if planning[0]:
+            with lock:
+                lowerings.append(threading.get_ident() == caller)
+        return lowered
+
+    def observe_compile(self: jax.stages.Lowered, *args: Any, **kwargs: Any) -> Any:
+        compiled = compile_body(self, *args, **kwargs)
         if planning[0]:
             with lock:
                 compiles.append(
                     (
-                        threading.current_thread() is threading.main_thread(),
-                        self.program.name,
-                        tuple(sorted(widths.items())),
-                        _program_text(
-                            hlo=cast(
-                                "jax.stages.Compiled", compiled.executable
-                            ).as_text()
-                            or ""
-                        ),
+                        threading.get_ident() == caller,
+                        _program_text(hlo=compiled.as_text() or ""),
                     )
                 )
         return compiled
 
     def observe_prepare(**call: Any) -> Any:
+        runtime = next(iter(call["regimes"].values())).simulation.programs.executor
+        before = set(runtime.cache)
         planning[0] = True
         try:
             prepared = prepare(**call)
         finally:
             planning[0] = False
+        published.update(
+            {
+                key: _program_text(hlo=entry.executable.as_text() or "")
+                for key, entry in runtime.cache.items()
+                if key not in before
+            }
+        )
         plans.append(prepared.plan)
         return prepared
 
     with monkeypatch.context() as patch:
-        patch.setattr(_SimulationCandidateCompiler, "__call__", observe_compile)
+        patch.setattr(jax.stages.Traced, "lower", observe_lower)
+        patch.setattr(jax.stages.Lowered, "compile", observe_compile)
         patch.setattr(model_module, "prepare_simulation_chunks", observe_prepare)
         result = model.simulate(
             params=_PARAMS,
@@ -110,60 +136,93 @@ def _simulate_and_observe(
         dict(plan.required_bytes),
     )
     return {
+        "lowerings": lowerings,
         "compiles": compiles,
+        "published": published,
         "contract": contract,
         "panel": result.to_dataframe(),
     }
 
 
 @pytest.fixture(scope="module")
-def serial_and_parallel() -> dict[int, dict[str, Any]]:
+def observed() -> dict[int, dict[str, Any]]:
     with pytest.MonkeyPatch.context() as monkeypatch:
         return {
             workers: _simulate_and_observe(
                 monkeypatch=monkeypatch, max_compilation_workers=workers
             )
-            for workers in (1, 2)
+            for workers in _WORKERS
         }
 
 
-def test_chunk_planning_compiles_every_forward_program_off_the_main_thread(
-    serial_and_parallel: dict[int, dict[str, Any]],
+@pytest.mark.parametrize("workers", _WORKERS)
+def test_chunk_planning_lowers_every_program_on_the_calling_thread(
+    *, observed: dict[int, dict[str, Any]], workers: int
 ) -> None:
-    compiles = serial_and_parallel[2]["compiles"]
-    assert compiles
-    assert not any(on_main for on_main, *_ in compiles)
+    lowerings = observed[workers]["lowerings"]
+    assert (len(lowerings) > 0, all(lowerings)) == (True, True)
 
 
-def test_serial_chunk_planning_compiles_on_the_main_thread(
-    serial_and_parallel: dict[int, dict[str, Any]],
+@pytest.mark.parametrize("workers", _WORKERS)
+def test_chunk_planning_compiles_every_forward_program_off_the_calling_thread(
+    *, observed: dict[int, dict[str, Any]], workers: int
 ) -> None:
-    compiles = serial_and_parallel[1]["compiles"]
-    assert compiles
-    assert all(on_main for on_main, *_ in compiles)
+    pooled = {
+        text for on_caller, text in observed[workers]["compiles"] if not on_caller
+    }
+    assert set(observed[workers]["published"].values()) - pooled == set()
 
 
-def test_parallel_chunk_planning_compiles_the_same_executables_as_serial(
-    serial_and_parallel: dict[int, dict[str, Any]],
+@pytest.mark.parametrize("workers", _WORKERS)
+def test_chunk_planning_publishes_one_executable_per_forward_program(
+    *, observed: dict[int, dict[str, Any]], workers: int
 ) -> None:
-    def executables(workers: int) -> list[tuple[str, tuple, str]]:
-        return sorted(entry[1:] for entry in serial_and_parallel[workers]["compiles"])
+    """The small model's four forward programs, each at three subjects."""
+    step = ("age", "koopmans_aggregator__discount_factor", "period", "saving", "wealth")
+    keys = sorted(map(_readable_key, observed[workers]["published"]), key=repr)
+    assert keys == [
+        # The alive decision, over its two-point action product.
+        (
+            (
+                "age",
+                "koopmans_aggregator__discount_factor",
+                "next_regime_to_V_arr",
+                "period",
+                "saving",
+                "wealth",
+            ),
+            3,
+            (("action_product", 2), ("subject", 3)),
+        ),
+        # The alive transition and route, which read the same operands.
+        (step, 3, (("subject", 3),)),
+        (step, 3, (("subject", 3),)),
+        # The terminal done decision.
+        (("age", "next_regime_to_V_arr", "period", "wealth"), 3, (("subject", 3),)),
+    ]
 
-    assert all("ENTRY" in entry[-1] for entry in executables(1))
-    assert executables(2) == executables(1)
 
-
-def test_parallel_chunk_planning_admits_the_same_chunk_contract_as_serial(
-    serial_and_parallel: dict[int, dict[str, Any]],
+def test_chunk_planning_compiles_the_same_forward_programs_for_every_worker_count(
+    observed: dict[int, dict[str, Any]],
 ) -> None:
-    assert serial_and_parallel[2]["contract"] == serial_and_parallel[1]["contract"]
+    def programs(workers: int) -> list[str]:
+        return sorted(observed[workers]["published"].values())
+
+    assert (all("ENTRY" in text for text in programs(1)), programs(2)) == (
+        True,
+        programs(1),
+    )
 
 
-def test_parallel_chunk_planning_simulates_the_same_panel_as_serial(
-    serial_and_parallel: dict[int, dict[str, Any]],
+def test_chunk_planning_admits_the_same_chunk_contract_for_every_worker_count(
+    observed: dict[int, dict[str, Any]],
+) -> None:
+    assert observed[2]["contract"] == observed[1]["contract"]
+
+
+def test_chunk_planning_simulates_the_same_panel_for_every_worker_count(
+    observed: dict[int, dict[str, Any]],
 ) -> None:
     pd.testing.assert_frame_equal(
-        serial_and_parallel[2]["panel"],
-        serial_and_parallel[1]["panel"],
-        check_exact=True,
+        observed[2]["panel"], observed[1]["panel"], check_exact=True
     )

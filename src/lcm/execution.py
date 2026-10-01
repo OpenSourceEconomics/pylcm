@@ -52,13 +52,6 @@ class WidthSearchPolicy:
     """Start from the conservative bootstrap anchor, or from the widest candidate."""
     hints: Mapping[RegimeName, Mapping[str, int]] = MappingProxyType({})
     """Regime name to a width mapping tried first; an incompatible hint is skipped."""
-    carry_across_periods: bool = False
-    """Reserved compatibility flag; it has no effect on width selection.
-
-    Exhaustive search checks each core's ranked candidates independently and
-    selects its first admitted rank. Another period's refusal does not exclude
-    a candidate for this period. Compilation still reuses identical lowering keys.
-    """
 
     def __post_init__(self) -> None:
         """Reject unusable counts, seeds and hints at construction."""
@@ -68,8 +61,6 @@ class WidthSearchPolicy:
             refinement_share=self.refinement_share,
         )
         _fail_if_seed_invalid(seed=self.seed)
-        if type(self.carry_across_periods) is not bool:
-            raise TypeError("WidthSearchPolicy.carry_across_periods must be a bool.")
         object.__setattr__(
             self, "hints", MappingProxyType(_normalized_hints(hints=self.hints))
         )

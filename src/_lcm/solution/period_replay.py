@@ -550,9 +550,9 @@ def replay_period_on_recorded_layout(
         devices: Devices standing in for the recorded ones, in recorded order.
             Only leaves the solve committed are re-placed through them, because
             committing a leaf the solve left uncommitted makes the jit call
-            refuse the mix. A substitution that is not the identity therefore
-            moves the committed leaves and leaves the rest on the backend's
-            default device.
+            refuse the mix. A leaf the solve left uncommitted stays uncommitted
+            and is lowered, as in the solve, on the source value's mesh,
+            replicated.
 
     Returns:
         The captured identity, the kernel's result, and scope `layout`.

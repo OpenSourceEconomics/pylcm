@@ -404,7 +404,7 @@ def forward_regimes_by_period(
     enters) has no decision program and is absent here, while its solved value
     stays available to the decisions that read it. Each period keeps the
     insertion order of `regimes`, so traversal order and random-site identity
-    follow the regime mapping. Chunk profiling (parallel compilation and the
+    follow the regime mapping. Chunk profiling (the compilation wave and the
     sequential carrier walk) and dispatch all read this one inventory.
     """
     return tuple(
