@@ -108,3 +108,40 @@ def test_model_import_keeps_runtime_type_checking_decoratable() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_importing_lcm_leaves_gpu_preallocation_to_jax():
+    """`import lcm` does not turn off JAX's GPU preallocation behind the user's back.
+
+    The default device-memory budget is derived from the preallocated pool, and
+    refuses an on-demand one.
+    """
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "XLA_PYTHON_CLIENT_PREALLOCATE"
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, lcm; print(os.environ.get('XLA_PYTHON_CLIENT_PREALLOCATE'))",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "None"
+
+
+def test_importing_the_mahler_yum_example_builds_no_model():
+    """The example's module-level model is built on first access, not at import.
+
+    Building a `Model` resolves its execution config, which a device-default
+    budget may refuse; an import must not be where that happens.
+    """
+    import lcm_examples.mahler_yum_2024 as mahler_yum  # noqa: PLC0415
+
+    assert "MAHLER_YUM_MODEL" not in vars(mahler_yum)

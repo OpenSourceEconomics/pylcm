@@ -103,7 +103,11 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
         ages=base.ages,
         regime_id_class=smooth_toy.RegimeId,
         fixed_params=base.fixed_params,
-        execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        # Unbudgeted: the fixture reads the executor cached per subject width, which
+        # a budget replaces with one keyed by the padded population.
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 1}, device_memory_bytes=None
+        ),
         initial_regimes=initial_regimes_of(model=base),
     )
     params = {"discount_factor": 0.95}

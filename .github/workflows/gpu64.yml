@@ -10,8 +10,13 @@ jobs:
     name: Run fp64 GPU policy
     runs-on: ubuntu-latest-gpu
     timeout-minutes: 90
+    # The `test` task runs its policy children one after another, each with `-n0`
+    # (tests/ci/policy_launcher.py), so one pytest process holds the GPU at a time
+    # and it reserves 0.75 / 1 worker of the device up front. The default
+    # device-memory budget is derived from that preallocated pool.
     env:
-      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
+      XLA_PYTHON_CLIENT_PREALLOCATE: 'true'
+      XLA_PYTHON_CLIENT_MEM_FRACTION: '0.75'
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Select the runner's actual CUDA architecture

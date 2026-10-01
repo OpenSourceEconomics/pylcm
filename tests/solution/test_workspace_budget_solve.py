@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.execution_plan import visible_device_ids
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
@@ -53,7 +54,8 @@ def _fixed_owner_bytes() -> int:
 
 def _model(
     *,
-    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+    execution_config: ExecutionConfig = ExecutionConfig(device_memory_bytes=None),  # noqa: B008
+    enable_jit: bool = True,
 ) -> Model:
     """Hold the state-cell width at one to isolate action-width budget selection."""
     final_age_alive = START_AGE + _N_PERIODS - 2
@@ -80,6 +82,7 @@ def _model(
             execution_config, axis_widths={"cell": 1, **execution_config.axis_widths}
         ),
         initial_regimes={18: "working_life"},
+        enable_jit=enable_jit,
     )
 
 
@@ -310,3 +313,72 @@ def test_replay_of_a_budgeted_capture_reproduces_its_value(
         np.asarray(replay.output.value),
         np.asarray(budgeted.values[0]["working_life"]),
     )
+
+
+def _report_pool_limit(*, monkeypatch: pytest.MonkeyPatch, bytes_limit: int) -> None:
+    """Make every visible device report `bytes_limit`, as a preallocated GPU does."""
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "true")
+    monkeypatch.setattr(
+        "lcm.model.visible_device_pool_limits",
+        lambda: dict.fromkeys(visible_device_ids(), bytes_limit),
+    )
+
+
+def test_an_eager_solve_refuses_the_default_budget_and_runs_without_one(
+    *, monkeypatch
+) -> None:
+    """`enable_jit=False` refuses the device default; opting out solves alike."""
+    _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=1 << 30)
+    params = get_params(n_periods=_N_PERIODS)
+    compiled = _model().solve(params=params, log_level="off")
+
+    with pytest.raises(
+        ExecutionPlanningError,
+        match=r"requires JIT compilation.*device_memory_bytes=None",
+    ):
+        _model(execution_config=ExecutionConfig(), enable_jit=False).solve(
+            params=params, log_level="off"
+        )
+    eager = _model(
+        execution_config=ExecutionConfig(device_memory_bytes=None), enable_jit=False
+    ).solve(params=params, log_level="off")
+
+    for period in range(_N_PERIODS - 1):
+        assert_agrees_to_ulp(
+            got=np.asarray(eager.values[period]["working_life"]),
+            expected=np.asarray(compiled.values[period]["working_life"]),
+            n_ulp=16,
+        )
+
+
+def test_an_eager_solve_with_an_explicit_budget_is_refused() -> None:
+    """An explicit budget requires admission, which needs a compiled program."""
+    model = _model(
+        execution_config=ExecutionConfig(device_memory_bytes=1 << 30),
+        enable_jit=False,
+    )
+
+    with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
+        model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+
+
+def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
+    *, monkeypatch
+) -> None:
+    """A model too large for the device default is told what to change."""
+    _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=2)
+
+    with pytest.raises(ExecutionPlanningError) as refusal:
+        _model(execution_config=ExecutionConfig()).solve(
+            params=get_params(n_periods=_N_PERIODS), log_level="off"
+        )
+
+    message = str(refusal.value)
+    assert "derived from the device pool limit (default)" in message
+    for remedy in (
+        "device_memory_headroom_fraction",
+        "axis_width_ceilings",
+        "sharded_states",
+        "`device_memory_bytes=None` disables admission",
+    ):
+        assert remedy in message

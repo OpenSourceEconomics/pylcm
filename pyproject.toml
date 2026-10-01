@@ -123,7 +123,10 @@ pylcm = { path = ".", editable = true }
 # native manifest then never matched the runtime, on every platform and every PR.
 no-build-isolation = [ "pylcm" ]
 [tool.pixi.tasks]
-test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+# The policy launcher runs its children one after another with `-n0`, so one pytest
+# process holds a GPU at a time and preallocates 0.75 / 1 of it; the default
+# device-memory budget is derived from that pool. No-ops on CPU.
+test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.75" } }
 asv-compare = "asv compare"
 asv-preview = "asv preview"
 asv-preflight = "python -m benchmarks.preflight"
@@ -138,7 +141,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 # Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
 # execution keywords are rejected; omitted GPU policies derive an allocator budget.
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "fd308231f1ff122fdbb03fd5cb141e53e5ae2aa9" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "ad38653696ec366e318ac61b9a81b597a4ecb700" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -200,19 +203,19 @@ py-spy = ">=0.4.2,<0.5"
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
 # Run the suite across 4 xdist workers (`--dist loadfile` in addopts keeps each
-# file on one worker). `XLA_PYTHON_CLIENT_PREALLOCATE=false` is a no-op on CPU but
-# required on GPU: it stops each of the 4 worker processes from preallocating ~75%
-# of the device and OOMing — they grow to their actual (small) per-test need
-# instead, and `loadfile` keeps the one heavy file (Mahler-Yum) on a single worker.
+# file on one worker). On GPU each of the 4 workers preallocates its own slice,
+# `XLA_PYTHON_CLIENT_MEM_FRACTION = 0.75 / 4 = 0.1875`, so together they reserve
+# what one JAX process would by default and the device-memory budget default of each
+# worker is derived from its slice. Both settings are no-ops on CPU.
 #
 # `-v` and `--junitxml` are not decoration. The JUnit report is written when the run
 # ends, so a run that is killed part-way leaves none; `-v` has by then already streamed
 # one line per test, which is the only record such a run leaves behind. Together they
 # give a count that is complete by construction when the run finishes and an
 # attributable partial record when it does not. `reports/` is gitignored.
-tests = { cmd = "pytest tests -n 4 -v --junitxml=reports/tests.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-tests-32bit = { cmd = "pytest tests --precision=32 -n 4 -v --junitxml=reports/tests-32bit.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junitxml=reports/tests-with-cov.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+tests = { cmd = "pytest tests -n 4 -v --junitxml=reports/tests.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.1875" } }
+tests-32bit = { cmd = "pytest tests --precision=32 -n 4 -v --junitxml=reports/tests-32bit.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.1875" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./ -n 4 -v --junitxml=reports/tests-with-cov.xml", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.1875" } }
 [tool.pixi.feature.type-checking.dependencies]
 # The env ty analyzes against (`[tool.ty] environment.python`); the ty binary
 # itself is managed by the `ty` pre-commit hook (`prek run ty --all-files`).

@@ -336,6 +336,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         msg = (
             "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
             "compiler can report peak workspace."
+            f"{resolved_execution.device_memory_cap_note()}"
         )
         raise ExecutionPlanningError(msg)
 
@@ -543,6 +544,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         else None
     )
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
+        # Planning and compilation leave a large, long-lived object graph behind
+        # (programs, frontiers, executables). Freezing it after one collection
+        # keeps the per-period collection in `_release_rolled_continuations`
+        # from walking it every period; what the loop rolls off is created
+        # after the freeze and is still collected.
+        gc.collect()
+        gc.freeze()
         try:
             for period in reversed(range(ages.n_periods)):
                 period_start = time.monotonic()
@@ -1138,6 +1146,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             input_liveness.assert_solve_complete()
 
         finally:
+            gc.unfreeze()
             if pending_work is not None:
                 pending_work.close()
 
@@ -3472,6 +3481,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             msg = (
                 "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
                 "compiler can report peak workspace."
+                f"{execution.device_memory_cap_note()}"
             )
             raise ExecutionPlanningError(msg)
         # The eager route resolves no residency, compiles no wave and plans no
@@ -3954,6 +3964,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         labels=labels,
                         memory_by_lowering_key=memory_by_lowering_key,
                         resident_inventory=resident_inventory,
+                        budget_note=execution.device_memory_cap_note(),
                     ),
                     logger=logger,
                 )
@@ -4234,6 +4245,7 @@ def _lower_and_compile_candidate(
     labels: dict[Hashable, str],
     memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation],
     resident_inventory: Mapping[_CoreTriple, ResidentInventory],
+    budget_note: str,
 ) -> tuple[jax.stages.Compiled, bool]:
     """Compile one bound candidate and its donation-free variant outside the waves.
 
@@ -4292,6 +4304,7 @@ def _lower_and_compile_candidate(
                 f" of {_describe_candidate(candidate=candidate)} needs {reservation} "
                 f"reservation bytes beside {resident} resident bytes, exceeding the "
                 f"{budget_bytes}-byte budget."
+                f"{budget_note}"
             )
             raise ExecutionPlanningError(msg)
     return compiled[lowering_keys[candidate]], missed
@@ -4783,11 +4796,12 @@ class CompilationWave:
     The first error is raised on the caller as soon as the caller sees it, with a
     note naming the program:
     - a lowering error at once, noted `while lowering <label>`;
-    - a compile error before the next lowering starts, or when the wave closes,
-      noted `while compiling <label>`.
+    - a compile error before the next lowering starts, on `lower(wait=True)`, or
+      when the wave closes, noted `while compiling <label>`.
 
-    Either way, compiles not yet started are cancelled and running ones finish in
-    the background with their results discarded.
+    Either way no further program is lowered, compiles not yet started are
+    cancelled, running ones finish in the background with their results
+    discarded, and nothing from the wave is published.
     """
 
     def __init__(
@@ -4906,6 +4920,7 @@ class CompilationWave:
         if exc is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             return
+        executables: dict[Hashable, jax.stages.Compiled] = {}
         for future in as_completed(self._futures):
             try:
                 lowering_key, executable = future.result()
@@ -4913,8 +4928,9 @@ class CompilationWave:
                 error.add_note(f"while compiling {self._futures[future]}")
                 self._pool.shutdown(wait=False, cancel_futures=True)
                 raise
-            self._compiled[lowering_key] = executable
+            executables[lowering_key] = executable
         self._pool.shutdown()
+        self._compiled.update(executables)
         for lowering_key, publish in self._publishers.items():
             if publish is not None:
                 publish(executable=self._compiled[lowering_key])
@@ -5106,39 +5122,35 @@ def _resolve_candidate_donations(
 
 def _checked_producer_records(
     *,
-    candidates: Sequence[ResolvedCoreProgram],
+    top: ResolvedProducer,
+    candidate: ResolvedCoreProgram,
     templates: Mapping[str, object],
-) -> MappingProxyType[Hashable, ResolvedProducer]:
-    """Publish one producer record per width candidate, invariance established.
+) -> None:
+    """Hold one newly bound producer candidate against its top-ranked record.
 
     A consumer is lowered against the record of the producer's top-ranked
-    candidate, before the budget selects which width runs, so every candidate of
-    the frontier has to publish the same subtree per label — the same shape, the
-    same dtype and the same weak typing. That is a property of the program, not
-    of the plan, so it is established over the whole ranked frontier rather than
-    over the candidates admission happens to reach.
+    candidate, before the budget selects which width runs, so every candidate
+    that is bound has to publish the same subtree per label — the same shape,
+    the same dtype and the same weak typing. The candidate is traced here, when
+    a refusal or a width search binds it, so invariance is proven for every
+    candidate that can run rather than traced over the whole ranked frontier.
 
     Args:
-        candidates: The core's resolved width candidates, ranked widest first.
+        top: The record of the top-ranked candidate the consumers were lowered
+            against.
+        candidate: The newly bound width candidate.
         templates: The internal-input templates the core was resolved with.
 
-    Returns:
-        The records, keyed by width and ordered as the frontier ranks them, so
-        that the first is the top-ranked candidate the consumers are lowered
-        against.
-
     Raises:
-        ExecutionPlanningError: Two candidates publish different subtrees.
+        ExecutionPlanningError: The candidate publishes a different subtree.
 
     """
-    records: dict[Hashable, ResolvedProducer] = {
-        _width_key(widths=candidate.tile_widths): resolve_producer(
-            program=candidate, templates=templates
-        )
-        for candidate in candidates
-    }
-    assert_width_invariant_internal_outputs(candidates=records)
-    return MappingProxyType(records)
+    assert_width_invariant_internal_outputs(
+        candidates={
+            "top-ranked": top,
+            "bound": resolve_producer(program=candidate, templates=templates),
+        }
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -5157,15 +5169,24 @@ class _CoreFrontier:
     templates: Mapping[str, object]
     widths: tuple[Mapping[str, object] | None, ...]
     consumed: bool
-    prebound: tuple[ResolvedCoreProgram, ...] | None
-    """Every candidate already resolved abstractly, for a consumed producer.
+    top_record: ResolvedProducer | None
+    """The top-ranked candidate's producer record, for a consumed producer.
 
-    A consumed producer's whole frontier is resolved before any width is
-    selected, so that its published internal outputs can be held against one
-    another; binding a later candidate then reads the resolution off this tuple
-    instead of repeating it. `None` for a core no consumer reads, whose
-    candidates are resolved one refusal at a time.
+    Consumers are lowered against it, so a later candidate is held against it
+    when bound. `None` for a core no consumer reads.
     """
+
+
+def _check_against_top_record(
+    *, frontier: _CoreFrontier, resolved: ResolvedCoreProgram
+) -> None:
+    """Hold a consumed producer's newly bound candidate against its top record."""
+    if frontier.top_record is not None:
+        _checked_producer_records(
+            top=frontier.top_record,
+            candidate=resolved,
+            templates=frontier.templates,
+        )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -5239,20 +5260,13 @@ class _LazyCandidateFrontier:
         """Bind one core's next-ranked candidate and everything derived from it."""
         frontier = self.frontiers[triple]
         position = len(self.candidates_by_triple[triple])
-        # A consumed producer was resolved at every width before any consumer
-        # of it was lowered, so that the subtrees it publishes could be held
-        # against one another over the whole frontier; this reads that
-        # resolution rather than repeating it.
-        resolved = (
-            frontier.prebound[position]
-            if frontier.prebound is not None
-            else resolve_core_program_candidates(
-                program=frontier.program,
-                tile_widths=frontier.widths[position : position + 1],
-                input_transfer_plan=frontier.transfer_plan,
-                abstract_inputs=True,
-            )[0]
-        )
+        resolved = resolve_core_program_candidates(
+            program=frontier.program,
+            tile_widths=frontier.widths[position : position + 1],
+            input_transfer_plan=frontier.transfer_plan,
+            abstract_inputs=True,
+        )[0]
+        _check_against_top_record(frontier=frontier, resolved=resolved)
         self._bind_resolved(triple=triple, resolved=resolved)
 
     def bind_widths(
@@ -5264,9 +5278,9 @@ class _LazyCandidateFrontier:
         the mapping handed here is resolved through the same
         `resolve_core_program_candidates` call a ranked candidate is resolved
         through, with the same abstract inputs and the same transfer plan. A
-        consumed producer's new candidate is then held against every candidate
-        already resolved for it, so the width-invariance of the subtrees it
-        publishes is established for the proposed width too.
+        consumed producer's new candidate is then held against the top-ranked
+        record its consumers were lowered against, so the width-invariance of
+        the subtrees it publishes is established for the proposed width too.
 
         Args:
             triple: The regime, period and core the width belongs to.
@@ -5300,11 +5314,7 @@ class _LazyCandidateFrontier:
             input_transfer_plan=frontier.transfer_plan,
             abstract_inputs=True,
         )[0]
-        if frontier.prebound is not None:
-            _checked_producer_records(
-                candidates=(*frontier.prebound, resolved),
-                templates=frontier.templates,
-            )
+        _check_against_top_record(frontier=frontier, resolved=resolved)
         return self._bind_resolved(triple=triple, resolved=resolved)
 
     def _bind_resolved(
@@ -5412,17 +5422,15 @@ def _resolve_output_layouts_and_lowering_keys(
     frontier, so both the candidates offered to admission and the order they are
     offered in are the ones the whole-frontier binding produced.
 
-    A core some consumer reads is the exception: every candidate of its frontier
-    is resolved abstractly here, before any consumer of it is traced. Each
-    producer is traced with everything it is lowered with — its dynamic
-    arguments, the templates of the internal inputs it reads itself, and its
-    planner-owned static widths — and its candidates must publish one subtree per
-    label, since a consumer is lowered against the top-ranked subtree before the
-    producer's width is selected. That is a property of the program rather than
-    of the plan, so it is established over the whole ranked frontier and not only
-    over the candidates admission happens to reach. Only what a candidate costs
-    to *lower* — its compilation key and its donation decision — waits for the
-    refusal that binds it, and the resolution it waits with is this one.
+    A core some consumer reads is traced here at its top-ranked candidate only,
+    with everything it is lowered with — its dynamic arguments, the templates of
+    the internal inputs it reads itself, and its planner-owned static widths —
+    and its consumers are lowered against that record. Every later candidate is
+    traced when a refusal or a width search binds it and must publish the same
+    subtree per label, so invariance is proven for every candidate that is bound
+    rather than traced over the whole ranked frontier: a frontier is a Cartesian
+    product of per-axis ladders, and tracing all of it in every period dominated
+    a budgeted solve.
 
     Each candidate's lowering key opens with the program's durable identity —
     the model, the regime, the core, and both groupings of its period — so a
@@ -5509,19 +5517,20 @@ def _resolve_output_layouts_and_lowering_keys(
             if name not in regime.fold_state_names
         )
         consumed = core_key in consumed_names
-        # Width invariance of a published internal output is a property of the
-        # program, not of the plan: a consumer is lowered against the producer's
-        # top-ranked subtree, so a candidate whose published shape, dtype or weak
-        # typing follows the width is a defect however the budget later selects.
-        # Every candidate of a consumed producer is therefore resolved
-        # abstractly here, before any consumer of it is lowered, while the parts
-        # that cost a lowering — the compilation key and the donation decision —
-        # stay with the lazy frontier and bind one refusal at a time.
+        # A consumer is lowered against the producer's top-ranked subtree, so a
+        # later candidate whose published shape, dtype or weak typing follows the
+        # width is refused when it is bound (`_check_against_top_record`).
         eager = resolve_core_program_candidates(
             program=materialized,
-            tile_widths=width_candidates if consumed else width_candidates[:1],
+            tile_widths=width_candidates[:1],
             input_transfer_plan=transfer_plan,
             abstract_inputs=True,
+        )
+        resolved = eager[0]
+        top_record = (
+            resolve_producer(program=resolved, templates=templates)
+            if consumed
+            else None
         )
         # A core whose cell axis may be halved after compilation keeps its
         # frontier even at one ranked width, so the narrower width can be bound.
@@ -5539,9 +5548,8 @@ def _resolve_output_layouts_and_lowering_keys(
                 templates=templates,
                 widths=width_candidates,
                 consumed=consumed,
-                prebound=tuple(eager) if consumed else None,
+                top_record=top_record,
             )
-        resolved = eager[0]
         layouts[triple] = resolve_output_layout(
             core_key=core_key,
             value_template=next_regime_to_V_arr[regime_name],
@@ -5553,10 +5561,8 @@ def _resolve_output_layouts_and_lowering_keys(
         internal_templates[candidate] = templates
         candidates_by_triple[triple] = [candidate]
         frontier_lengths[triple] = len(width_candidates)
-        if consumed:
-            producers[core_key] = _checked_producer_records(
-                candidates=eager, templates=templates
-            )
+        if top_record is not None:
+            producers[core_key] = MappingProxyType({candidate[1]: top_record})
     transfer_consumers = _transfer_consumer_counts(resolved_programs=resolved_programs)
     resolved_programs.update(
         _apply_transfer_marks(programs=resolved_programs, consumers=transfer_consumers)

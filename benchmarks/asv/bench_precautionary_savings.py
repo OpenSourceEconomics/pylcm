@@ -16,12 +16,20 @@ _WARM_SAMPLES = 3
 def _make_model(*, wealth_grid_type="lin", wealth_n_points=10, consumption_n_points=10):
     from lcm_examples import precautionary_savings
 
-    model = precautionary_savings.get_model(
+    execution = _gpu_mem.default_budget_execution_kwargs()
+    # Historical revisions the paired harness builds have only `get_model`.
+    build = (
+        precautionary_savings.create_model
+        if execution
+        else precautionary_savings.get_model
+    )
+    model = build(
         n_periods=5,
         shock_type="rouwenhorst",
         wealth_grid_type=wealth_grid_type,
         wealth_n_points=wealth_n_points,
         consumption_n_points=consumption_n_points,
+        **execution,
     )
     params = precautionary_savings.get_params(
         shock_type="rouwenhorst",

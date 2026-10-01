@@ -52,20 +52,38 @@ model = Model(
 Its fields:
 
 - `device_memory_bytes` declares a per-device ceiling for compiler peak plus accounted
-  live residency. `None` (the default) omits memory-budget admission. It may be the
-  device's whole allocator pool limit: the model admits against that limit less
-  `device_memory_headroom_fraction` of it, whichever is smaller.
+  live residency.
+  - `"device"` (the default) derives the ceiling from the selected devices: the smallest
+    reported allocator pool limit less `device_memory_headroom_fraction`. Where no
+    selected device reports a limit, as on CPU, the model is unbudgeted. Routes that
+    cannot be budgeted refuse it exactly as they refuse an integer. With a pool limit it
+    also requires a preallocated pool, which is JAX's default: with
+    `XLA_PYTHON_CLIENT_PREALLOCATE=false` the BFC allocator grows the pool in separate
+    regions, so the limit does not promise one contiguous block, and resolution refuses
+    the default unless `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Pass an integer
+    or `None` to run on an on-demand pool. `XLA_PYTHON_CLIENT_MEM_FRACTION` sets the
+    pool, and with it the default budget, for each process sharing a GPU.
+  - `None` omits memory-budget admission; every omitted width takes its bootstrap width.
+  - A positive integer is a ceiling every route must honour, and a route that cannot be
+    budgeted refuses it. It may be the device's whole allocator pool limit: the model
+    admits against that limit less `device_memory_headroom_fraction` of it, whichever is
+    smaller.
 - `device_memory_headroom_fraction` (default `0.15`) is the share of each selected
   device's allocator pool kept out of the ceiling, an operational margin for storage
   outside the represented accounting — collective buffers, library workspaces, the
   driver context, fragmentation. It is a policy, not a measured requirement; `0.0`
-  admits against the whole pool. Resolving a positive budget logs one line naming the
-  request, the fraction, each selected device's pool limit with the bytes the fraction
-  keeps free, the effective ceiling, and whether the devices capped the request. The
-  line is a warning when they did and an informational line when they did not, so a cap
-  is visible from `log_level="warning"` up and an uncapped resolution from `"progress"`.
-  Every admission refusal under a capped budget repeats the effective bytes, the
-  requested bytes, and the fraction that separates them.
+  admits against the whole pool. Resolving a budget logs one line naming the request or
+  the device default, the fraction, each selected device's pool limit with the bytes the
+  fraction keeps free, the effective ceiling, and whether the devices capped an explicit
+  request. The line is a warning when they did and an informational line otherwise, so a
+  cap is visible from `log_level="warning"` up and any other resolution from
+  `"progress"`. Every admission refusal names the effective ceiling and its source ---
+  the request, the request capped by the headroom (with the requested bytes and the
+  fraction that separates them), or the device default --- followed by the remedies:
+  raise `device_memory_bytes` or lower the fraction, cap widths with
+  `axis_width_ceilings` or `axis_widths`, shard over more devices with `sharded_states`
+  or `devices`, or pass `device_memory_bytes=None` to disable admission at bootstrap
+  widths.
 - `sharded_states` names supported model-level states whose grid axes are spread over
   the devices their regimes are placed on. Sharding is resolved per regime: a regime
   whose DAG reads the state carries its axis and runs on the mesh that axis defines,
@@ -81,10 +99,10 @@ Its fields:
   be an axis some core program declares.
 - `devices` names the device ids the model may use, ascending; `None` (the default)
   means every device JAX reports. Every id must be one JAX reports.
-- A positive `device_memory_bytes` budget selects the top-first outer-cohort planner for
-  simulation regardless of whether `axis_widths["subject"]` is pinned; without a pin the
-  planner resolves its own starting anchor. It changes simulation planning only and does
-  not enter the economic fingerprint.
+- A device-memory budget, derived or explicit, selects the top-first outer-cohort
+  planner for simulation regardless of whether `axis_widths["subject"]` is pinned;
+  without a pin the planner resolves its own starting anchor. It changes simulation
+  planning only and does not enter the economic fingerprint.
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
 
@@ -113,25 +131,25 @@ An unknown state, an unknown axis name, or an invisible device id raises
 
 ### Compiler workspace budgets
 
-Without a budget (the default), every streamed axis is lowered at its bootstrap width —
-the largest power of two below the axis extent, capped at 64 for a reduced axis (whose
-block is purely temporary) and at up to 1024 for a tiled output axis (whose tiles
-concatenate into a full-size resident result) — or at the width
-`ExecutionConfig(axis_widths={...})` fixes for that axis name, and compiler memory
-reports are not consulted. The whole axis is lowered only when a budget shows it fits or
-a fixed width asks for it. With a budget, the planner enumerates a deterministic width
-frontier for each streamed axis (one, the powers of two below the extent, and the full
-extent; a fixed width is the only candidate) and walks it widest-first — descending
-width product, ties broken toward the lexicographically largest width tuple in axis
-declaration order. A position whose resident bytes alone already reach the budget is
-refused before any candidate compiles, since no width could serve it. Otherwise each
-candidate is lowered and compiled, its complete compiler memory report is read, and the
-first candidate whose reservation plus resident bytes fits is dispatched. Solve
-residency includes retained values and continuation inputs, fixed model arrays,
-concurrent outputs and planned copies on their actual devices. Compiler-kept input
-metadata identifies which overlapping buffer spans are already represented in compiler
-allocation accounting. Eliminated inputs stay charged as external residency.
-Conservative reservations may count some storage twice.
+Without a budget (`device_memory_bytes=None`, or the default on a device reporting no
+pool limit), every streamed axis is lowered at its bootstrap width — the largest power
+of two below the axis extent, capped at 64 for a reduced axis (whose block is purely
+temporary) and at up to 1024 for a tiled output axis (whose tiles concatenate into a
+full-size resident result) — or at the width `ExecutionConfig(axis_widths={...})` fixes
+for that axis name, and compiler memory reports are not consulted. The whole axis is
+lowered only when a budget shows it fits or a fixed width asks for it. With a budget,
+the planner enumerates a deterministic width frontier for each streamed axis (one, the
+powers of two below the extent, and the full extent; a fixed width is the only
+candidate) and walks it widest-first — descending width product, ties broken toward the
+lexicographically largest width tuple in axis declaration order. A position whose
+resident bytes alone already reach the budget is refused before any candidate compiles,
+since no width could serve it. Otherwise each candidate is lowered and compiled, its
+complete compiler memory report is read, and the first candidate whose reservation plus
+resident bytes fits is dispatched. Solve residency includes retained values and
+continuation inputs, fixed model arrays, concurrent outputs and planned copies on their
+actual devices. Compiler-kept input metadata identifies which overlapping buffer spans
+are already represented in compiler allocation accounting. Eliminated inputs stay
+charged as external residency. Conservative reservations may count some storage twice.
 
 When simulation solves automatically, its original and normalized inputs remain in the
 solve's fixed inventory. Shared input and model buffers count once by physical storage;
@@ -162,11 +180,12 @@ Candidate measurement uses compilation, and admission fails closed:
 - a budget that no candidate meets raises `ExecutionPlanningError` before backward
   induction starts, naming the regime, period, core, resident bytes, and budget — the
   smallest reservation and its raw peak too, once a width has actually been compiled;
-- a budget requires JIT compilation. Supplied solutions are supported; forward programs
-  and profiled host operations recheck their reservations against the current retained
-  solution, inputs and growing outputs before dispatch;
+- a budget, explicit or the device default, requires JIT compilation. Supplied solutions
+  are supported; forward programs and profiled host operations recheck their
+  reservations against the current retained solution, inputs and growing outputs before
+  dispatch;
 - a forward program without a profiled compiled implementation, including a host-driven
-  route, is refused under a budget;
+  route, is refused under any budget;
 - the selected widths are execution choices: they enter neither the model nor the
   parameter fingerprint, and a period capture records them so `replay_period` lowers the
   same executable without planning again. The capture also records each array's sharding
@@ -490,10 +509,10 @@ independently of those chunk boundaries. A collective model may require an addre
 dissolution replay artifact and `own_stakeholder`; see
 [Collective regimes](collective_regimes.md).
 
-With a positive `device_memory_bytes` budget, the top-first outer-cohort planner
-profiles the whole-population candidate first and descends only on refusal, using either
-the pinned subject width or an automatically resolved one as its starting anchor.
-Existing live storage and transfer checks remain active on every call. See
+Under a device-memory budget, the top-first outer-cohort planner profiles the
+whole-population candidate first and descends only on refusal, using either the pinned
+subject width or an automatically resolved one as its starting anchor. Existing live
+storage and transfer checks remain active on every call. See
 [Batch forward simulation](../user_guide/tuning.md#batch-forward-simulation) for the
 search limits and memory scope.
 
@@ -526,9 +545,10 @@ is available programmatically as `SimulationResult.plan_summary`.
 
 pylcm enables a persistent JAX compilation cache by default. Set
 `JAX_COMPILATION_CACHE_DIR` to choose the full directory or `LCM_COMPILATION_CACHE_NAME`
-to choose the project-specific leaf. Set `XLA_PYTHON_CLIENT_PREALLOCATE=true` before
-importing pylcm to restore JAX's device preallocation; pylcm otherwise requests
-on-demand allocation.
+to choose the project-specific leaf. pylcm leaves device allocation to JAX, which
+preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
+`device_memory_bytes` or `None`, since the `"device"` default is refused there (see
+`device_memory_bytes` above).
 
 (api-policy-lookup)=
 

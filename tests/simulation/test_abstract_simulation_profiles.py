@@ -45,8 +45,9 @@ def test_an_actual_decision_compiles_from_abstract_arguments_without_allocation(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        # The unbudgeted dispatch is the reference the abstract compile reproduces.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3, "action_product": 2}
+            axis_widths={"subject": 3, "action_product": 2}, device_memory_bytes=None
         ),
     )
     params = get_params(n_periods=2)

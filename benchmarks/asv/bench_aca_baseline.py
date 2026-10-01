@@ -112,6 +112,7 @@ def _build() -> tuple[object, object, object]:
 
     model = create_benchmark_model(
         pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
+        **_gpu_mem.default_budget_execution_kwargs(),
     )
     edge_periods = model.reachability.solution.periods_for_edge(
         source="retiree_oamc_forced_forcedout",

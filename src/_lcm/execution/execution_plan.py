@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import math
 import operator
+import os
 from collections.abc import Collection, Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
@@ -22,6 +23,15 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import AxisWidth, ExecutionConfig, WidthSearchPolicy
 
 logger = logging.getLogger(__name__)
+
+_BUDGET_REMEDIES = (
+    "To fit, lower `ExecutionConfig.device_memory_headroom_fraction` or raise "
+    "`ExecutionConfig.device_memory_bytes`, cap widths with `axis_width_ceilings` "
+    "or `axis_widths`, or shard over more devices with `sharded_states` or "
+    "`devices`. `device_memory_bytes=None` disables admission: every axis then "
+    "compiles at its bootstrap width, which is slower and may exhaust device "
+    "memory."
+)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -58,8 +68,19 @@ class ResolvedExecution:
     requested_device_memory_bytes: int | None = None
     """Budget the configuration asked for, before the device headroom.
 
-    `None` on a resolution built without a request, so an unbudgeted model and
-    one whose request was never recorded read alike.
+    The smallest selected pool limit when the budget is derived from the
+    devices. `None` on a resolution built without a request, so an unbudgeted
+    model and one whose request was never recorded read alike.
+    """
+
+    budget_source: Literal["explicit", "device", "none"] = "none"
+    """Where the effective budget came from.
+
+    - `"explicit"`: the configuration passed an integer; routes that cannot be
+      budgeted refuse it.
+    - `"device"`: the default, derived from the selected devices' pool limits;
+      routes that cannot be budgeted refuse it, as they refuse an explicit one.
+    - `"none"`: no budget applies.
     """
 
     device_memory_headroom_fraction: float = 0.15
@@ -68,8 +89,8 @@ class ResolvedExecution:
     device_pool_limit_bytes: MappingProxyType[int, int | None] = MappingProxyType({})
     """Allocator pool limit of each selected device, `None` where unreported.
 
-    Empty on an unbudgeted model: the resolver keeps no limit when no budget is
-    set, although construction still reads the visible pool statistics once.
+    Empty on an unbudgeted model: the resolver keeps no limit when no budget
+    applies, although construction still reads the visible pool statistics once.
     """
 
     simulation_sharding: Literal["legacy", "subjects"] = "legacy"
@@ -107,9 +128,10 @@ class ResolvedExecution:
     def device_memory_budget_summary(self) -> str:
         """Return one line stating how the effective budget was arrived at.
 
-        Names the requested budget, the headroom fraction, each selected
-        device's pool limit with the bytes that fraction keeps free, the
-        effective budget, and whether the devices capped the request.
+        Names where the budget came from — the request, or the device default —
+        the headroom fraction, each selected device's pool limit with the bytes
+        that fraction keeps free, the effective budget, and whether the devices
+        capped an explicit request.
         """
         if self.device_memory_bytes is None:
             return "Device-memory budget: none requested; admission is unbudgeted."
@@ -125,32 +147,52 @@ class ResolvedExecution:
             )
             for device_id, limit in self.device_pool_limit_bytes.items()
         )
-        verdict = (
-            "capped by device headroom"
-            if self._device_headroom_capped_the_request()
-            else "no cap applied"
-        )
+        if self.budget_source == "device":
+            origin = "derived from the device pool limit (default)"
+            verdict = ""
+        else:
+            origin = (
+                f"requested "
+                f"{self.device_memory_bytes if requested is None else requested} bytes"
+            )
+            verdict = (
+                "; capped by device headroom"
+                if self._device_headroom_capped_the_request()
+                else "; no cap applied"
+            )
         return (
-            f"Device-memory budget: requested "
-            f"{self.device_memory_bytes if requested is None else requested} bytes; "
-            f"headroom fraction {fraction}; per-device pool limits: "
-            f"{limits or 'none consulted'}; "
-            f"effective {self.device_memory_bytes} bytes; {verdict}."
+            f"Device-memory budget: {origin}; headroom fraction {fraction}; "
+            f"per-device pool limits: {limits or 'none consulted'}; "
+            f"effective {self.device_memory_bytes} bytes{verdict}."
         )
 
     def device_memory_cap_note(self) -> str:
-        """Return a clause for a diagnostic, empty unless the devices capped.
+        """Return the clause a budget refusal appends: the ceiling and the remedies.
 
-        Leading space included, so a caller appends it to a sentence.
+        Names the effective budget and where it came from — the request, the
+        request capped by the device headroom, or the device default — and then
+        what a caller can change to fit. Empty without a budget. Leading space
+        included, so a caller appends it to a sentence.
         """
-        if not self._device_headroom_capped_the_request():
+        if self.device_memory_bytes is None:
             return ""
-        return (
-            f" The effective budget is {self.device_memory_bytes} bytes of the "
-            f"requested {self.requested_device_memory_bytes} bytes after a "
-            "device-memory headroom fraction of "
-            f"{self.device_memory_headroom_fraction}."
-        )
+        fraction = self.device_memory_headroom_fraction
+        if self.budget_source == "device":
+            origin = (
+                f"The budget is {self.device_memory_bytes} bytes, derived from the "
+                "device pool limit (default): the smallest selected pool, "
+                f"{self.requested_device_memory_bytes} bytes, less a device-memory "
+                f"headroom fraction of {fraction}."
+            )
+        elif self._device_headroom_capped_the_request():
+            origin = (
+                f"The effective budget is {self.device_memory_bytes} bytes of the "
+                f"requested {self.requested_device_memory_bytes} bytes after a "
+                f"device-memory headroom fraction of {fraction}."
+            )
+        else:
+            origin = f"The budget is the requested {self.device_memory_bytes} bytes."
+        return f" {origin} {_BUDGET_REMEDIES}"
 
     def _device_headroom_capped_the_request(self) -> bool:
         """Report whether the selected devices reduced the requested budget."""
@@ -223,7 +265,8 @@ def resolve_execution_config(
         what the selected devices' pools leave once their headroom is free.
 
     Raises:
-        ExecutionPlanningError: A state, regime or device the model cannot serve.
+        ExecutionPlanningError: A state, regime or device the model cannot serve,
+            or a device default over a pool that is not preallocated.
 
     """
     for name in config.sharded_states:
@@ -258,6 +301,13 @@ def resolve_execution_config(
             }
         )
     )
+    requested_bytes, budget_source = _requested_budget(
+        requested=config.device_memory_bytes, pool_limits=selected_limits
+    )
+    if budget_source == "device":
+        _fail_if_the_pool_grows_in_regions()
+    if requested_bytes is None:
+        selected_limits = MappingProxyType({})
     resolved = ResolvedExecution(
         device_ids=selected_ids,
         sharded_states=frozenset(config.sharded_states),
@@ -266,11 +316,12 @@ def resolve_execution_config(
         axis_width_ceilings=MappingProxyType(dict(config.axis_width_ceilings)),
         covered_axes=frozenset(config.covered_axes),
         device_memory_bytes=_effective_device_memory_bytes(
-            requested_bytes=config.device_memory_bytes,
+            requested_bytes=requested_bytes,
             headroom_fraction=config.device_memory_headroom_fraction,
             pool_limits=selected_limits,
         ),
-        requested_device_memory_bytes=config.device_memory_bytes,
+        requested_device_memory_bytes=requested_bytes,
+        budget_source=budget_source,
         device_memory_headroom_fraction=config.device_memory_headroom_fraction,
         device_pool_limit_bytes=selected_limits,
         donate_buffers=config.donate_buffers,
@@ -278,13 +329,64 @@ def resolve_execution_config(
         width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
     )
-    if config.device_memory_bytes is not None:
+    if requested_bytes is not None:
         summary = resolved.device_memory_budget_summary()
-        if resolved.device_memory_bytes != config.device_memory_bytes:
+        if (
+            budget_source == "explicit"
+            and resolved.device_memory_bytes != requested_bytes
+        ):
             logger.warning("%s", summary)
         else:
             logger.info("%s", summary)
     return resolved
+
+
+def _requested_budget(
+    *,
+    requested: int | Literal["device"] | None,
+    pool_limits: Mapping[int, int | None],
+) -> tuple[int | None, Literal["explicit", "device", "none"]]:
+    """Return the budget request before the headroom, and where it came from.
+
+    The device default requests the smallest reported pool limit, so the
+    headroom applied afterwards is the only reduction; with no reported limit
+    there is nothing to derive a budget from and the model runs unbudgeted.
+    """
+    if requested is None:
+        return None, "none"
+    if requested != "device":
+        return requested, "explicit"
+    reported = [limit for limit in pool_limits.values() if limit is not None]
+    if not reported:
+        return None, "none"
+    return min(reported), "device"
+
+
+def _fail_if_the_pool_grows_in_regions() -> None:
+    """Refuse the device default when the allocator pool is not preallocated.
+
+    Without preallocation the BFC allocator grows its pool in separate regions,
+    so free bytes below the pool limit need not form one contiguous block and a
+    single buffer the budget admits can still fail to allocate. The async
+    allocator, selected with `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`, does not
+    grow that way; JAX does not read `TF_GPU_ALLOCATOR`.
+    """
+    preallocate = os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE", "true").lower()
+    if preallocate not in {"false", "0"}:
+        return
+    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "").lower() == "cuda_async":
+        return
+    msg = (
+        "ExecutionConfig.device_memory_bytes='device' derives the budget from the "
+        "device pool limit, but XLA_PYTHON_CLIENT_PREALLOCATE is "
+        f"{os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']!r}: the allocator then "
+        "grows its pool in separate regions, so the limit does not promise one "
+        "contiguous block. Set XLA_PYTHON_CLIENT_PREALLOCATE=true or "
+        "XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async before JAX initialises, or pass an "
+        "explicit ExecutionConfig(device_memory_bytes=...) (or "
+        "device_memory_bytes=None to disable admission)."
+    )
+    raise ExecutionPlanningError(msg)
 
 
 def _effective_device_memory_bytes(
@@ -452,7 +554,8 @@ def visible_device_pool_limits(
     """Return each device's allocator pool limit in bytes, by device id.
 
     The query is tolerant because reporting is backend-specific: a device whose
-    backend returns no counters, omits `bytes_limit`, or fails the query
+    backend returns no counters, omits `bytes_limit`, reports a limit of 0 (an
+    on-demand pool such as the async allocator's), or fails the query
     contributes `None`, which places no cap on a requested budget.
 
     Args:
@@ -477,7 +580,7 @@ def _pool_limit_bytes(*, device: SupportsMemoryStats) -> int | None:
     if stats is None:
         return None
     limit = stats.get("bytes_limit")
-    return limit if isinstance(limit, int) else None
+    return limit if isinstance(limit, int) and limit > 0 else None
 
 
 def execution_over_visible_devices() -> ResolvedExecution:
@@ -487,7 +590,7 @@ def execution_over_visible_devices() -> ResolvedExecution:
     a test, or a tool inspecting one regime — runs under.
     """
     return resolve_execution_config(
-        config=ExecutionConfig(),
+        config=ExecutionConfig(device_memory_bytes=None),
         visible_device_ids=visible_device_ids(),
         state_names=frozenset(),
         device_pool_limit_bytes=visible_device_pool_limits(),

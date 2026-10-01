@@ -26,6 +26,7 @@ import pytest
 from _lcm.regime_building import processing
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     MarkovTransition,
     Model,
     NormalIIDProcess,
@@ -92,6 +93,7 @@ def _build_model() -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

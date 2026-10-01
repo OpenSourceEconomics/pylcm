@@ -19,6 +19,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     ByAge,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -164,6 +165,7 @@ def _make_model(
         regime_id_class=RegimeId,
         initial_regimes={(0, 1): "working"} if earlier_root else {1: "working"},
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         fixed_params={"spending_scale": spending_scale} if fixed else {},
         regimes={
             "working": Regime(

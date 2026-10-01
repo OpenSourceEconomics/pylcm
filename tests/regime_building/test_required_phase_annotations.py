@@ -16,6 +16,7 @@ from lcm import (
     AgeGrid,
     ByAge,
     Choose,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
@@ -92,6 +93,7 @@ def _demand_model(
         regime_id_class=DemandId,
         initial_regimes=roots,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "source": _wealth_regime(
                 law=ByAge(

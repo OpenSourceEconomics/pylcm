@@ -141,7 +141,7 @@ def declaration_view(transition: object) -> object:
     """
     if isinstance(transition, ByAge):
         return _union_law(laws=transition.laws, code_by_name=None, mask=None)
-    if isinstance(transition, Phased) and not isinstance(transition.solve, ByAge):
+    if isinstance(transition, Phased):
         return Phased(
             solve=_plain_law(law=transition.solve, code_by_name=None),
             simulate=_plain_law(law=transition.simulate, code_by_name=None),

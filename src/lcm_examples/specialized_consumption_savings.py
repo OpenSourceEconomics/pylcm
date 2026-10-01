@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, ExecutionConfig, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -159,8 +159,17 @@ TAX_MARGIN = LiquidMargin(
 )
 
 
-def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
-    """Build the smallest NBEGM model with a continuous tax-bracket kink."""
+def build_kinked_tax_model(
+    *,
+    enable_jit: bool = True,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
+    """Build the smallest NBEGM model with a continuous tax-bracket kink.
+
+    An eager build (`enable_jit=False`) on a GPU passes
+    `ExecutionConfig(device_memory_bytes=None)`: no compiler reports the workspace
+    a budget would admit.
+    """
     working = ConsumptionSavingsRegime(
         regime_transitions=Choose(func=next_regime, targets=("dead",)),
         states={"liquid": WEALTH_GRID},
@@ -193,6 +202,7 @@ def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
         initial_regimes={0: "working"},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
+        execution_config=execution_config,
     )
 
 

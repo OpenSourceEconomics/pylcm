@@ -23,6 +23,7 @@ from lcm import (
     ByAge,
     Choose,
     CollectiveUtility,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -104,6 +105,7 @@ def _demand_model(
         roots[2] = "end"
     return Model(
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_DemandId,
         initial_regimes=roots,
@@ -516,6 +518,7 @@ def _age_grid_model(
     roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
     return Model(
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_ProbabilityId,
         initial_regimes=roots,
@@ -590,6 +593,7 @@ def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
     """The solve law is (1/2, 1/2); the realized law reads the carried share."""
     return Model(
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_ProbabilityId,
         initial_regimes={0: "working"},
@@ -715,6 +719,7 @@ def _feasibility_model(
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
     return Model(
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_ProbabilityId,
         initial_regimes={0: "working"},

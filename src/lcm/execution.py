@@ -149,23 +149,34 @@ def _validated_hint_widths(
 class ExecutionConfig:
     """Hardware-local controls for solving and simulation.
 
-    None of these values enters a model's durable fingerprint. Without a
-    device-memory budget, omitted widths use conservative bootstrap choices.
-    An axis width fixes the execution block of every program declaring that name;
-    a sharded state spreads its grid axis over its regime's assigned devices.
+    None of these values enters a model's durable fingerprint. By default a
+    model plans against a device-memory budget derived from the devices that
+    report an allocator pool limit (GPU, TPU); without a budget, omitted widths
+    use conservative bootstrap choices. An axis width fixes the execution block
+    of every program declaring that name; a sharded state spreads its grid axis
+    over its regime's assigned devices.
     """
 
-    device_memory_bytes: int | None = None
+    device_memory_bytes: int | Literal["device"] | None = "device"
     """Per-device ceiling for represented compiler reservation plus residency.
 
     The reservation enforces the raw peak and represented argument, output,
     alias, and temporary allocations. Runtime storage omitted by the compiler
     remains outside this accounting scope. `None` disables budget admission.
 
-    A caller may pass the device's whole allocator pool limit here: the model
-    resolves the ceiling it plans against by taking
-    `device_memory_headroom_fraction` off every selected device's pool limit
-    and keeping the smaller of that and this request.
+    - `"device"` (the default) derives the budget from the selected devices:
+      the smallest reported pool limit less `device_memory_headroom_fraction`.
+      Where no selected device reports a limit, as on CPU, the model runs
+      unbudgeted. Routes that cannot be budgeted — `enable_jit=False`, and
+      simulation through host gated or replay adapters — refuse it, naming the
+      remedies.
+    - `None` disables budget admission: every omitted width takes its bootstrap
+      choice.
+    - An integer is a budget every route must honour; a route that cannot be
+      budgeted refuses it. A caller may pass the device's whole allocator pool
+      limit here: the model resolves the ceiling it plans against by taking
+      `device_memory_headroom_fraction` off every selected device's pool limit
+      and keeping the smaller of that and this request.
     """
 
     device_memory_headroom_fraction: float = 0.15
@@ -352,12 +363,17 @@ class ExecutionConfig:
             object.__setattr__(self, "devices", devices)
 
 
-def _fail_if_budget_invalid(*, device_memory_bytes: int | None) -> None:
-    """Require a positive exact-integer byte ceiling when one is supplied."""
-    if device_memory_bytes is None:
+def _fail_if_budget_invalid(
+    *, device_memory_bytes: int | Literal["device"] | None
+) -> None:
+    """Require `"device"`, `None` or a positive exact-integer byte ceiling."""
+    if device_memory_bytes is None or device_memory_bytes == "device":
         return
     if type(device_memory_bytes) is not int:
-        raise TypeError("ExecutionConfig.device_memory_bytes must be an exact int.")
+        raise TypeError(
+            "ExecutionConfig.device_memory_bytes must be an exact int, "
+            '"device" or None.'
+        )
     if device_memory_bytes <= 0:
         raise ValueError("ExecutionConfig.device_memory_bytes must be positive.")
 

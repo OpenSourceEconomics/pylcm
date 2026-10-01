@@ -14,12 +14,14 @@ from _lcm.dtypes import canonical_float_dtype
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import (
+    _InitialCohorts,
     _pack_initial_summary,
     _preflight_memory,
     _read_initial_cohorts,
     validate_simulation_inputs,
 )
 from _lcm.simulation.residency import DeviceBufferFootprint, resident_bytes_by_device
+from _lcm.transition_checks import _SerialValidationRequired
 from _lcm.typing import FlatParams, InitialConditions
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, Model
@@ -77,32 +79,35 @@ def test_metadata_words_preserve_exact_ages_and_filter_codes_by_cohort(
     )
 
 
-def test_fractional_age_lookup_preserves_existing_exactness() -> None:
-    """Working-format membership cannot replace AgeGrid's exact host lookup."""
+def _read_fractional_age_cohorts(*, age: float) -> _InitialCohorts:
+    """Read cohorts for one subject at `age` on a grid with a fractional age."""
     model, _, initial = _case()
-    ages = AgeGrid(exact_values=(0, Fraction(1, 3), 1))
-    initial = {
-        **initial,
-        "age": jnp.array([float(Fraction(1, 3))], dtype=canonical_float_dtype()),
-    }
-    if np.dtype(canonical_float_dtype()).itemsize == 4:
-        with pytest.raises(ValueError, match="not a valid grid point"):
-            _read_initial_cohorts(
-                initial_conditions=initial,
-                regimes=model._regimes,
-                regime_names_to_ids=model.regime_names_to_ids,
-                ages=ages,
-                memory=None,
-            )
-    else:
-        metadata = _read_initial_cohorts(
-            initial_conditions=initial,
-            regimes=model._regimes,
-            regime_names_to_ids=model.regime_names_to_ids,
-            ages=ages,
-            memory=None,
-        )
-        assert metadata.periods == (1,)
+    return _read_initial_cohorts(
+        initial_conditions={
+            **initial,
+            "age": jnp.array([age], dtype=canonical_float_dtype()),
+        },
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        ages=AgeGrid(exact_values=(0, Fraction(1, 3), 1)),
+        memory=None,
+    )
+
+
+def test_read_initial_cohorts_resolves_fractional_grid_age_in_active_precision() -> (
+    None
+):
+    """A fractional grid age resolves to its period in either float precision."""
+    metadata = _read_fractional_age_cohorts(age=float(Fraction(1, 3)))
+    assert metadata.periods == (1,)
+
+
+def test_read_initial_cohorts_defers_off_grid_fractional_age_to_serial_validation() -> (
+    None
+):
+    """An off-grid fractional age resolves to no period and is left to serial checks."""
+    with pytest.raises(_SerialValidationRequired):
+        _read_fractional_age_cohorts(age=0.3)
 
 
 @pytest.mark.parametrize(

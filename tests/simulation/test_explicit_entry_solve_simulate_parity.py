@@ -11,6 +11,7 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -86,6 +87,7 @@ def _build_model() -> Model:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

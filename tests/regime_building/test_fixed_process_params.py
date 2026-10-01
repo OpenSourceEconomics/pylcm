@@ -16,6 +16,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     MarkovTransition,
     Model,
     NormalIIDProcess,
@@ -84,6 +85,7 @@ def _entered_process_model(*, at_construction: bool) -> Model:
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -153,6 +155,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
             regime_id_class=RegimeId,
             fixed_params=fixed_params,
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes={20: "source"},
         )
 
@@ -198,6 +201,7 @@ def _model_with_law_value(value: Any) -> Model:
             "UserParams", {"target": {"shock": _PROCESS_LAW | {"mu": value}}}
         ),
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
