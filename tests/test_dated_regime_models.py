@@ -1,5 +1,6 @@
 """Models built from dated regime declarations: coverage, support and values."""
 
+from fractions import Fraction
 from typing import Any
 
 import jax.numpy as jnp
@@ -558,3 +559,80 @@ def test_a_vector_law_shorter_than_the_regime_ids_is_refused() -> None:
         InvalidRegimeTransitionProbabilitiesError, match=r"1 entries.*2 regime"
     ):
         model.solve(params={"alive": {"discount_factor": 0.9}}, log_level="off")
+
+
+MONTHLY_AGES = AgeGrid(start=0, stop=Fraction(1, 4), step="M")
+
+
+@categorical(ordered=False)
+class _MonthlyRegimeId:
+    end: ScalarInt
+
+
+def _monthly_model(initial_regimes: dict) -> Model:
+    return Model(
+        ages=MONTHLY_AGES,
+        regime_id_class=_MonthlyRegimeId,
+        initial_regimes=initial_regimes,
+        regimes={
+            "end": Regime(regime_transitions=None, functions={"utility": _zero_utility})
+        },
+    )
+
+
+def _monthly_start(*, age: FloatND, log_level: LogLevel, initial_regimes: dict) -> Any:
+    return _monthly_model(initial_regimes).simulate(
+        params={},
+        initial_conditions={
+            "age": age,
+            "regime_id": jnp.array([_MonthlyRegimeId.end]),
+        },
+        seed=0,
+        log_level=log_level,
+    )
+
+
+def _first_month(age_source: str) -> FloatND:
+    """The age one month in, read off the grid or written as a Python float."""
+    return MONTHLY_AGES.values[1:2] if age_source == "grid" else jnp.array([1 / 12])
+
+
+@pytest.mark.parametrize("age_source", ["grid", "literal"])
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_undeclared_monthly_start_raises_at_every_log_level(
+    *, age_source: str, log_level: LogLevel
+) -> None:
+    """A start one month in is refused when only age 0 is an admissible entry."""
+    with pytest.raises(InvalidInitialConditionsError, match=r"\(1/12, 'end'\)"):
+        _monthly_start(
+            age=_first_month(age_source),
+            log_level=log_level,
+            initial_regimes={0: "end"},
+        )
+
+
+@pytest.mark.parametrize("age_source", ["grid", "literal"])
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_declared_monthly_start_simulates_from_its_period(
+    *, age_source: str, log_level: LogLevel
+) -> None:
+    """A subject admitted one month in to a terminal regime is recorded at period 1."""
+    result = _monthly_start(
+        age=_first_month(age_source),
+        log_level=log_level,
+        initial_regimes={0: "end", Fraction(1, 12): "end"},
+    )
+    assert result.to_dataframe()["period"].tolist() == [1]
+
+
+@pytest.mark.parametrize("log_level", ["off", "warning"])
+def test_off_grid_monthly_start_raises_at_every_log_level(
+    *, log_level: LogLevel
+) -> None:
+    """An age between two grid months is reported as off the age grid."""
+    with pytest.raises(ValueError, match="not valid age grid points"):
+        _monthly_start(
+            age=jnp.array([0.05]),
+            log_level=log_level,
+            initial_regimes={0: "end", Fraction(1, 12): "end"},
+        )
