@@ -1,4 +1,4 @@
-"""Actual pending producer outputs are completed before conflicting budgeted cores."""
+"""Producer outputs are completed before conflicting budgeted cores."""
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -38,7 +38,6 @@ from lcm.solvers import (
 )
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
-from tests.execution.test_pending_solve_work import _is_ready
 from tests.solution import test_donation_solve as counter_fixture
 from tests.test_solver_api_out_of_tree import _WEALTH
 from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
@@ -221,9 +220,28 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     work = jnp.asarray(host_work).block_until_ready()
     original_call = jax.stages.Compiled.__call__
     original_bind = backward_induction._cores_with_transfer_cache
+    array_type = type(work)
+    original_complete = array_type.block_until_ready
+    original_complete_tree = jax.block_until_ready
     names: dict[int, str] = {}
     returned: list[jax.Array] = []
-    observations: list[tuple[str, tuple[bool, ...]]] = []
+    events: list[str] = []
+
+    def record_completion(leaves: list[object]) -> None:
+        events.extend(
+            f"complete:{index}"
+            for leaf in leaves
+            for index, array in enumerate(returned)
+            if leaf is array
+        )
+
+    def complete(array: jax.Array) -> jax.Array:
+        record_completion([array])
+        return original_complete(array)
+
+    def complete_tree(tree: object) -> object:
+        record_completion(jax.tree.leaves(tree))
+        return original_complete_tree(tree)
 
     def bind(**kwargs: Any) -> Any:
         cores = original_bind(**kwargs)
@@ -235,19 +253,17 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
     ) -> object:
         name = names.get(id(compiled))
         if name == "consumer":
-            observations.append(
-                ("consumer_entry", tuple(_is_ready(array=array) for array in returned))
-            )
+            events.append("consumer_entry")
         output = original_call(compiled, *args, **kwargs)
         if name == "producer":
             returned.extend(jax.tree.leaves(output))
-            observations.append(
-                ("producer_return", tuple(_is_ready(array=array) for array in returned))
-            )
+            events.append("producer_return")
         return output
 
     monkeypatch.setattr(backward_induction, "_cores_with_transfer_cache", bind)
     monkeypatch.setattr(jax.stages.Compiled, "__call__", observe)
+    monkeypatch.setattr(array_type, "block_until_ready", complete)
+    monkeypatch.setattr(jax, "block_until_ready", complete_tree)
     try:
         solution = model.solve(
             params={"discount_factor": 0.0, "work": work},
@@ -255,15 +271,17 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
             log_level="off",
         )
     finally:
-        jax.block_until_ready(returned)
+        original_complete_tree(returned)
     assert len(returned) == 2
     assert all(array.devices() == {jax.devices()[0]} for array in returned)
-    assert observations[0][0] == "producer_return", observations
-    assert observations[0][1][1] is False, (
-        "No actual pending producer matrix was observed."
-    )
-    assert observations[1][0] == "consumer_entry", observations
-    assert observations[1][1][1] is (budget is not None), observations
+    # Completion is observed as a request, never as a readiness reading taken
+    # while the producer may or may not have finished on its own.
+    assert events.index("producer_return") < events.index("consumer_entry"), events
+    between = events[
+        events.index("producer_return") + 1 : events.index("consumer_entry")
+    ]
+    expected_completed = {"complete:0", "complete:1"} if budget is not None else set()
+    assert set(between) == expected_completed, events
     expected = np.array([1.0, 2.0]) + np.sum(left) * np.sum(right) * np.dot(
         right, left
     ) / (_SIZE * _SIZE)
