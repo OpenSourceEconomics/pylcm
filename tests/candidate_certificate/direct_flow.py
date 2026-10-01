@@ -4166,6 +4166,7 @@ _COMBINED_INPUT_CONTRACTS = {
             "canonical_roles": "4542061502177865523b5c1d0c5346c2aa2ff46286c5b81d3df65a0e7e29fb12",
             "role_mismatch": "faba46dd0931feb531692c4b87d8cce2991dcf2d7a6f6c14de8f9b24d6a4feb2",
             "starting_periods": "211a8bcd2a68fa7bf617cb176c7e1321af79a5b4fa4858d5dbab5283b0546672",
+            "match_starting_periods": "0d27c548f2a58283b23dc3ae92cfe86fc12cde81286479eeb6dea43ba2dbcf12",
         },
     ),
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
