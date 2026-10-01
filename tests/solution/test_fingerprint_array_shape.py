@@ -34,6 +34,7 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _DTYPES = [np.float32, np.float64]
 
@@ -148,7 +149,7 @@ def _rank_model(reference: np.ndarray) -> Model:
     """Two-period GridSearch model whose terminal payoff depends on the closure rank."""
     final_age_alive = START_AGE
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -164,9 +165,9 @@ def _rank_model(reference: np.ndarray) -> Model:
                 functions={"utility": _rank_signed_terminal_utility(reference)}
             ),
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

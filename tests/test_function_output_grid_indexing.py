@@ -15,9 +15,11 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
@@ -36,6 +38,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -95,18 +98,22 @@ def _make_clashing_model() -> Model:
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -142,18 +149,22 @@ def test_safe_pattern_does_not_raise():
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    Model(
+    with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -178,18 +189,22 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    Model(
+    with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -240,7 +255,9 @@ def test_function_output_indexed_by_derived_categorical_raises():
             derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
             regime_transitions=until_exit(
                 2,
-                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                law=_SupportedDeterministicTransition(
+                    func=_next_regime, targets=("dead", "alive")
+                ),
                 exits=("dead",),
             ),
         )
@@ -284,7 +301,9 @@ def test_function_output_indexed_by_discrete_action_raises():
             },
             regime_transitions=until_exit(
                 2,
-                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                law=_SupportedDeterministicTransition(
+                    func=_next_regime, targets=("dead", "alive")
+                ),
                 exits=("dead",),
             ),
         )
@@ -318,7 +337,9 @@ def test_constraint_indexing_function_output_by_state_raises():
             constraints={"feasibility": _constraint_indexing_function_output},
             regime_transitions=until_exit(
                 2,
-                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                law=_SupportedDeterministicTransition(
+                    func=_next_regime, targets=("dead", "alive")
+                ),
                 exits=("dead",),
             ),
         )
@@ -350,18 +371,22 @@ def test_phased_function_in_functions_does_not_crash_validation():
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    Model(
+    with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -395,7 +420,9 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             regime_transitions=until_exit(
                 2,
-                law=Choose(func=_next_regime, targets=("dead", "alive")),
+                law=_SupportedDeterministicTransition(
+                    func=_next_regime, targets=("dead", "alive")
+                ),
                 exits=("dead",),
             ),
         )

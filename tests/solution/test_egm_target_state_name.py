@@ -26,8 +26,7 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -40,6 +39,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
@@ -134,8 +134,8 @@ def _model(*, solver, n_consumption=14):
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "alive": MarkovTransition(func=prob_survive),
-                "gone": MarkovTransition(func=prob_gone),
+                "alive": StochasticTransition(func=prob_survive),
+                "gone": StochasticTransition(func=prob_gone),
             },
             exits=("gone",),
             stays=("alive",),
@@ -161,11 +161,11 @@ def _model(*, solver, n_consumption=14):
         functions={"utility": bequest},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "gone": gone},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

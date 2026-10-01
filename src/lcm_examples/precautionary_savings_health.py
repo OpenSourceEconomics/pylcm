@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -111,8 +111,8 @@ def working_life_transitions(*, retirement_age: int) -> ByAge:
     """Work until the age before `retirement_age`, then retire."""
     return ByAge.until(
         stop_age_exclusive=retirement_age,
-        law=Choose(func=next_regime, targets=("working_life", "retirement")),
-        then=Choose(func=next_regime, targets=("retirement",)),
+        law=DeterministicTransition(func=next_regime),
+        then=DeterministicTransition(func=next_regime),
     )
 
 
@@ -173,13 +173,23 @@ def get_model(retirement_age: int = 24) -> Model:
     )
 
     return Model(
+        edges={
+            "working_life": {
+                "retirement": tuple(range(18, retirement_age)),
+                **(
+                    {"working_life": tuple(range(18, retirement_age - 1))}
+                    if tuple(range(18, retirement_age - 1))
+                    else {}
+                ),
+            },
+        },
         regimes={
             "working_life": wl,
             "retirement": retirement,
         },
-        ages=AgeGrid(start=18, stop=retirement_age, step="Y"),
+        ages=AgeGrid(start=18, inclusive_stop=retirement_age, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

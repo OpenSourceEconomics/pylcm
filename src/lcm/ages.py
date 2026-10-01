@@ -20,8 +20,8 @@ class AgeGrid:
 
     Construct an `AgeGrid` in one of two mutually exclusive ways:
 
-    - **Range** — pass `start`, `stop`, and `step`. Ages run from `start` to
-      `stop` inclusive in increments of `step`; `step` must divide the range
+    - **Range** — pass `start`, `inclusive_stop`, and `step`. Ages run from `start` to
+      `inclusive_stop` inclusive in increments of `step`; `step` must divide the range
       evenly. `step` is a string matching `(\d+)?[YQM]`: an optional
       positive-integer multiplier followed by a unit — `Y` (year), `Q`
       (quarter), `M` (month). Examples: `"Y"`, `"2Y"`, `"2Q"`, `"6M"`. This
@@ -42,7 +42,7 @@ class AgeGrid:
         self,
         *,
         start: UserAge,
-        stop: UserAge,
+        inclusive_stop: UserAge,
         step: AgeStep,
     ) -> None: ...
 
@@ -58,16 +58,21 @@ class AgeGrid:
         self,
         *,
         start: UserAge | None = None,
-        stop: UserAge | None = None,
+        inclusive_stop: UserAge | None = None,
         step: AgeStep | None = None,
         exact_values: Iterable[UserAge] | None = None,
     ) -> None:
-        _validate_age_grid(start=start, stop=stop, step=step, exact_values=exact_values)
+        _validate_age_grid(
+            start=start,
+            inclusive_stop=inclusive_stop,
+            step=step,
+            exact_values=exact_values,
+        )
 
-        if start is not None and stop is not None and step is not None:
+        if start is not None and inclusive_stop is not None and step is not None:
             self._exact_step_size = _parse_step(step)
             self._step_size = float(self._exact_step_size)
-            n_steps = int((stop - start) // self._exact_step_size) + 1
+            n_steps = int((inclusive_stop - start) // self._exact_step_size) + 1
             self._exact_values = tuple(
                 start + i * self._exact_step_size for i in range(n_steps)
             )
@@ -76,7 +81,7 @@ class AgeGrid:
             self._step_size = None
             self._exact_step_size = None
         else:
-            msg = "Must specify 'start/stop/step' or 'exact_values'."
+            msg = "Must specify 'start/inclusive_stop/step' or 'exact_values'."
             raise GridInitializationError(msg)
 
         self._is_integer = all(_is_integer_valued(v) for v in self._exact_values)

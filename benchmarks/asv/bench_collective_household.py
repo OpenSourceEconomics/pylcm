@@ -390,9 +390,13 @@ def _make_reference_chain(*, depth):
     return (
         Model(
             regimes=regimes,
-            ages=AgeGrid(start=0, stop=1, step="Y"),
+            edges={
+                name: {terminal_name: (0,)}
+                for name, terminal_name in zip(link_names, terminal_names, strict=True)
+            },
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=regime_id_class,
-            initial_regimes={0: tuple(link_names)},
+            initial_nodes={0: tuple(link_names)},
             **_gpu_mem.default_budget_execution_kwargs(),
         ),
         params,
@@ -402,14 +406,14 @@ def _make_reference_chain(*, depth):
 def _chain_link(*, terminal_name, reference_regime):
     """Build one collective link of the reference chain."""
     from lcm import CollectiveUtility, Regime
-    from lcm.transition import MarkovTransition
+    from lcm.transition import StochasticTransition
 
     kernels = _chain_kernels()
     return Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    terminal_name: MarkovTransition(func=kernels["to_terminal"])
+                AgeRange(exclusive_stop=1): {
+                    terminal_name: StochasticTransition(func=kernels["to_terminal"])
                 }
             }
         ),

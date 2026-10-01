@@ -1,14 +1,29 @@
 import ast
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 
+import jax.numpy as jnp
+import pandas as pd
 import pytest
+from dags import with_signature
 
 from _lcm.reachability import (
     EdgeStatus,
     build_model_reachability,
     build_phase_reachability,
 )
+from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Phased,
+    Regime,
+    StochasticTransition,
+    categorical,
+)
+from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 def test_an_edge_is_the_declared_support_at_its_period() -> None:
@@ -321,3 +336,283 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
     ]
 
     assert hits == []
+
+
+@pytest.mark.parametrize(
+    "fixed_params",
+    [{"probability": 0.0}, {"source": {"high": {"next_regime": {"probability": 0.0}}}}],
+)
+def test_fixed_zero_probability_removes_target_problem(fixed_params: dict) -> None:
+    """A fixed zero cell creates neither a physical visit nor a value problem."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        source: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+
+    def probability(probability: float) -> ScalarFloat:
+
+        return jnp.asarray(probability)
+
+    def one() -> ScalarFloat:
+
+        return jnp.asarray(1.0)
+
+    model = with_fixture_graph(
+        regimes={
+            "source": Regime(
+                regime_transitions={
+                    "low": StochasticTransition(func=one),
+                    "high": StochasticTransition(func=probability),
+                },
+                functions={"utility": lambda: 0.0},
+                state_transitions={
+                    "wealth": {"high": lambda unused_entry_param: unused_entry_param}
+                },
+            ),
+            "low": Regime(regime_transitions=None, functions={"utility": lambda: 1.0}),
+            "high": Regime(
+                regime_transitions=None,
+                states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+                functions={"utility": lambda wealth: wealth},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "source"},
+        fixed_params=fixed_params,
+        enable_jit=False,
+    )
+    assert model.reachability.solution.targets(period=0, source="source") == ("low",)
+    assert model.reachability.simulation.targets(period=0, source="source") == ("low",)
+    assert (1, "high") not in model.reachability.nodes
+    assert (1, "high") not in model.reachability.visited_nodes
+    assert "high" not in model.get_params_template()["source"]
+
+
+@pytest.mark.parametrize(
+    ("probability_value", "removes_edge"), [(0.0, True), (-0.0, True), (1e-20, False)]
+)
+def test_fixed_probability_support_uses_exact_zero(
+    *, probability_value: float, removes_edge: bool
+) -> None:
+    """Signed zero removes an edge, while a representable positive mass retains it."""
+
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
+            "high": StochasticTransition(func=lambda probability: probability),
+        },
+        functions={"utility": lambda: 0.0},
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime}, fixed_params={"probability": probability_value}
+    )
+    transition = reduced.user_regimes["source"].regime_transitions
+    assert isinstance(transition, Mapping)
+    assert set(transition) == ({"low"} if removes_edge else {"low", "high"})
+    assert reduced.consumed_param_keys == (
+        frozenset({"probability"}) if removes_edge else frozenset()
+    )
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "state",
+        "action",
+        "age",
+        "period",
+        "free",
+        "state_ancestor",
+        "age_ancestor",
+        "free_ancestor",
+    ],
+)
+def test_fixed_probability_retains_runtime_dependencies_without_evaluating(
+    dependency: str,
+) -> None:
+    """A runtime input anywhere in the dependency graph prevents zero pruning."""
+
+    evaluated: list[str] = []
+
+    def forbidden_probability(**_kwargs: object) -> ScalarFloat:
+        evaluated.append("probability")
+        raise AssertionError("A runtime-dependent cell must not be evaluated.")
+
+    arg_name = {
+        "state": "wealth",
+        "action": "choice",
+        "age": "age",
+        "period": "period",
+        "free": "free_parameter",
+    }.get(dependency, "helper")
+    probability = with_signature(
+        args={arg_name: "float", "probability": "float"}, return_annotation="float"
+    )(forbidden_probability)
+    helpers = {}
+    if dependency.endswith("_ancestor"):
+        ancestor_name = {
+            "state_ancestor": "wealth",
+            "age_ancestor": "age",
+            "free_ancestor": "free_parameter",
+        }[dependency]
+        helpers["helper"] = with_signature(
+            args={ancestor_name: "float"}, return_annotation="float"
+        )(forbidden_probability)
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
+            "high": StochasticTransition(func=probability),
+        },
+        states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        actions={"choice": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        functions={"utility": lambda wealth: wealth, **helpers},
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+    )
+    transition = reduced.user_regimes["source"].regime_transitions
+    assert isinstance(transition, Mapping)
+    assert set(transition) == {"low", "high"}
+    assert reduced.consumed_param_keys == frozenset()
+    assert evaluated == []
+
+
+def test_fixed_probability_can_follow_constant_function_ancestors() -> None:
+    """A constant helper DAG proves zero with its own fixed-parameter namespace."""
+
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
+            "high": StochasticTransition(func=lambda helper: helper),
+        },
+        functions={"utility": lambda: 0.0, "helper": lambda probability: probability},
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime},
+        fixed_params={"source": {"helper": {"probability": 0.0}}},
+    )
+    transition = reduced.user_regimes["source"].regime_transitions
+    assert isinstance(transition, Mapping)
+    assert set(transition) == {"low"}
+    assert reduced.consumed_param_keys == frozenset({"source__helper__probability"})
+
+
+def test_fixed_series_probability_retains_coordinate_dependent_support() -> None:
+    """A fixed Series remains conditional because its entries depend on coordinates."""
+
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
+            "high": StochasticTransition(func=lambda probability: probability),
+        },
+        functions={"utility": lambda: 0.0},
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime},
+        fixed_params={
+            "probability": pd.Series([0.0, 1.0], index=pd.Index([0, 1], name="age"))
+        },
+    )
+    transition = reduced.user_regimes["source"].regime_transitions
+    assert isinstance(transition, Mapping)
+    assert set(transition) == {"low", "high"}
+    assert reduced.consumed_param_keys == frozenset()
+
+
+def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> None:
+    """Each phase drops only its zero destination and that destination's handoff."""
+
+    regime = Regime(
+        regime_transitions=Phased(
+            solve={
+                "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
+                "high": StochasticTransition(
+                    func=lambda perceived_probability: perceived_probability
+                ),
+            },
+            simulate={
+                "low": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                "high": StochasticTransition(
+                    func=lambda realized_probability: realized_probability
+                ),
+            },
+        ),
+        functions={"utility": lambda: 0.0},
+        state_transitions={
+            "wealth": {
+                "low": lambda low_entry: low_entry,
+                "high": lambda high_entry: high_entry,
+            }
+        },
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime},
+        fixed_params={
+            "perceived_probability": 0.0,
+            "realized_probability": 1.0,
+            "low_entry": 2.0,
+            "high_entry": 3.0,
+        },
+    )
+    source = reduced.user_regimes["source"]
+    transition = source.regime_transitions
+    state_law = source.state_transitions["wealth"]
+    assert isinstance(transition, Phased)
+    assert isinstance(state_law, Phased)
+    assert set(transition.solve) == {"low"}
+    assert set(transition.simulate) == {"high"}
+    assert set(state_law.solve) == {"low"}
+    assert set(state_law.simulate) == {"high"}
+    assert reduced.consumed_param_keys == frozenset(
+        {"perceived_probability", "low_entry", "high_entry"}
+    )
+
+
+def test_fixed_zero_mass_row_stays_available_to_probability_validation() -> None:
+    """An invalid all-zero distribution keeps its cells and nonterminal status."""
+
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+            "high": StochasticTransition(func=lambda probability: probability),
+        },
+        functions={"utility": lambda: 0.0},
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+    )
+    source = reduced.user_regimes["source"]
+    assert not source.terminal
+    transition = source.regime_transitions
+    assert isinstance(transition, Mapping)
+    assert set(transition) == {"low", "high"}
+    assert reduced.consumed_param_keys == frozenset()
+
+
+def test_shared_probability_cell_follows_each_phases_helper_dag() -> None:
+    """One shared law retains different targets when its helper differs by phase."""
+    regime = Regime(
+        regime_transitions={
+            "low": StochasticTransition(func=lambda helper: 1.0 - helper),
+            "high": StochasticTransition(func=lambda helper: helper),
+        },
+        functions={
+            "utility": lambda: 0.0,
+            "helper": Phased(
+                solve=lambda probability: probability,
+                simulate=lambda probability: 1.0 - probability,
+            ),
+        },
+    )
+    reduced = prune_fixed_regime_support(
+        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+    )
+    transition = reduced.user_regimes["source"].regime_transitions
+    assert isinstance(transition, Phased)
+    assert set(transition.solve) == {"low"}
+    assert set(transition.simulate) == {"high"}
+    assert reduced.consumed_param_keys == frozenset({"probability"})

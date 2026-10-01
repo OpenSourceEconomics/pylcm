@@ -8,7 +8,16 @@ the mapping form must too.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, Choose, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import (
     BoolND,
@@ -18,6 +27,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -55,12 +65,14 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 1, _RegimeId.alive, _RegimeId.dead)
 
 
-_MODEL = Model(
+_MODEL = with_fixture_graph(
     regimes={
         "alive": Regime(
             regime_transitions=until_exit(
                 2,
-                law=Choose(func=_next_regime, targets=("alive", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=_next_regime, targets=("alive", "dead")
+                ),
                 exits=("dead",),
             ),
             states={
@@ -74,9 +86,9 @@ _MODEL = Model(
         ),
         "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
     },
-    ages=AgeGrid(start=0, stop=3, step="Y"),
+    ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
     regime_id_class=_RegimeId,
-    initial_regimes={0: "alive"},
+    initial_nodes={0: "alive"},
 )
 _PARAMS = {"discount_factor": 0.95}
 

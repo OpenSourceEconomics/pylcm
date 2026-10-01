@@ -39,6 +39,9 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import ResolvedStakeholderRoute
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
@@ -49,7 +52,6 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinearAggregator,
@@ -64,7 +66,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_regimes,
@@ -221,9 +223,9 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -285,7 +287,7 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
     construction raises `ModelInitializationError` naming the shared fallback
     regime.
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_shared_fallback_regimes()
     with pytest.raises(ModelInitializationError, match="single_shared"):
         _solve_and_process(
@@ -298,7 +300,7 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     DISTINCT fallback regimes) is exactly the EKL-shaped topology and must
     keep constructing without the new guard firing.
     """
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     married_edge = regimes_dict["married"].gated_edges["married_ir"]
     fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
@@ -427,7 +429,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=lambda: jnp.int32(1), targets=("couple_terminal",)
                 )
             }
@@ -451,7 +453,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
 
 
 def _solve_all_collective():
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_all_collective_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -551,7 +553,7 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     be broadcast to the subject axis: `V_arr` is `(n_subjects, n_stakeholders)`
     and every subject's own values/actions round-trip correctly.
     """
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     regimes_dict = _make_stateless_collective_regime()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)

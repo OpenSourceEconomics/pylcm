@@ -50,11 +50,12 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
-_AGES = AgeGrid(start=0, stop=3, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 _CAREER = LinSpacedGrid(start=0.0, stop=10.0, n_points=3)
 _GATE_THRESHOLD = 1.5
@@ -225,7 +226,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
             1,
             law={
                 "src_exit": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_one),
+                    probability=StochasticTransition(func=_prob_one),
                     gate=_wage_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -257,11 +258,11 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         },
         functions={"utility": _utility_annuity},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"src": src, "src_exit": src_exit, "annuity": annuity},
         ages=_AGES,
         regime_id_class=AgeSpecializedRegimeId,
-        initial_regimes={0: "src"},
+        initial_nodes={0: "src"},
     )
 
 
@@ -289,9 +290,9 @@ def _build_model(
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "src_exit": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -322,8 +323,8 @@ def _build_model(
     fallback = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "fallback_exit": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "fallback_exit": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -340,7 +341,7 @@ def _build_model(
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "src": src,
             "src_exit": src_exit,
@@ -349,7 +350,7 @@ def _build_model(
         },
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "src"},
+        initial_nodes={0: "src"},
     )
 
 

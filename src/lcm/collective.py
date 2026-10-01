@@ -20,7 +20,7 @@ from _lcm.typing import RegimeName, StateName
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import UserFunction
 
 
@@ -321,12 +321,12 @@ class ValueDependentTransition:
     rejected.
     """
 
-    probability: UserFunction | MarkovTransition
+    probability: UserFunction | StochasticTransition
     """Probability of attempting this target edge.
 
-    A `MarkovTransition` passes through unchanged. A bare callable is a
+    A `StochasticTransition` passes through unchanged. A bare callable is a
     convenience of `ValueDependentTransition` and is wrapped in
-    `MarkovTransition` in the regime's `decomposed_transition` view. Ordinary
+    `StochasticTransition` in the regime's `decomposed_transition` view. Ordinary
     per-target transition cells still require the wrapper explicitly.
     """
 

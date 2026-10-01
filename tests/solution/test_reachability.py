@@ -1,8 +1,9 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
+from lcm import AgeGrid, ExecutionConfig, Regime, StochasticTransition, categorical
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -34,12 +35,12 @@ def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
 
 def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     """Free probabilities change values without changing graph membership."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions={
-                    "low": MarkovTransition(func=_probability_low),
-                    "high": MarkovTransition(func=_probability_high),
+                    "low": StochasticTransition(func=_probability_low),
+                    "high": StochasticTransition(func=_probability_high),
                 },
                 functions={"utility": _zero_utility},
             ),
@@ -52,11 +53,11 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
                 functions={"utility": _high_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
     graph_targets = model.reachability.solution.targets(period=0, source="source")
 

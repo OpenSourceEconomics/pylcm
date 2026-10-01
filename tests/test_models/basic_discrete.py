@@ -1,8 +1,10 @@
 """Basic model with discrete + continuous states, no stochastic transitions."""
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -31,7 +33,9 @@ def _next_regime() -> ScalarInt:
 
 
 working_life = UserRegime(
-    regime_transitions=Choose(func=_next_regime, targets=("dead",)),
+    regime_transitions=_SupportedDeterministicTransition(
+        func=_next_regime, targets=("dead",)
+    ),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -44,7 +48,9 @@ working_life = UserRegime(
 )
 
 retirement = UserRegime(
-    regime_transitions=Choose(func=_next_regime, targets=("dead",)),
+    regime_transitions=_SupportedDeterministicTransition(
+        func=_next_regime, targets=("dead",)
+    ),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -65,12 +71,16 @@ dead = UserRegime(
 def get_model() -> Model:
     """Create a minimal model with discrete + continuous states and two regimes."""
     return Model(
+        edges={
+            "working_life": {"dead": (25, 35, 45, 55, 65)},
+            "retirement": {"dead": (25, 35, 45, 55, 65)},
+        },
         regimes={
             "working_life": working_life,
             "retirement": retirement,
             "dead": dead,
         },
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={25: "working_life"},
+        initial_nodes={25: "working_life"},
     )

@@ -42,7 +42,7 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 def _run_with_membership_guard(
@@ -327,6 +327,7 @@ def _assert_public_membership_inventory(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
+        edges=base.graph.edges,
         regimes={
             name: dataclasses.replace(
                 regime,
@@ -354,7 +355,7 @@ def _assert_public_membership_inventory(
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     initial = {

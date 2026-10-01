@@ -25,7 +25,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -46,7 +46,7 @@ from lcm.typing import (
 N_WEALTH_POINTS = 11
 
 # Three working ages and one terminal age.
-AGES = AgeGrid(start=0, stop=3, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 DISCOUNT_FACTOR = 0.9
 
@@ -121,8 +121,8 @@ def get_model() -> Model:
     working = UserRegime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(func=next_regime, targets=("working",)),
-            then=Choose(func=lambda: RegimeId.terminal, targets=("terminal",)),
+            law=DeterministicTransition(func=next_regime),
+            then="terminal",
         ),
         states={"wealth": _WEALTH, "pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={
@@ -142,7 +142,13 @@ def get_model() -> Model:
         regimes={"working": working, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
-        initial_regimes={AGES.exact_values[0]: "working"},
+        initial_nodes=((AGES.exact_values[0], "working"),),
+        edges={
+            "working": {
+                "working": AGES.exact_values[:-2],
+                "terminal": AGES.exact_values[-2],
+            },
+        },
         description="Cake eating with a fixed preference type.",
     )
 

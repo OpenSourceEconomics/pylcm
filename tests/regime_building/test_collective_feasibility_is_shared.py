@@ -42,9 +42,11 @@ Non-terminal regime, constraint $u^f \\ge 25$ alone:
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -54,6 +56,7 @@ from lcm import (
 )
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -115,7 +118,9 @@ def _make_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={"wage": _WAGE_GRID},
@@ -135,11 +140,11 @@ def _make_model() -> Model:
         },
         constraints={"participation_f": _participation_f, "viable_wage": _viable_wage},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 

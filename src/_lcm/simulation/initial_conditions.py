@@ -1359,7 +1359,7 @@ def _collect_structural_errors(
     errors: list[str] = []
 
     if regime_id_arr.size == 0:
-        errors.append("initial_regimes must not be empty.")
+        errors.append("initial_nodes must not be empty.")
 
     valid_regime_names = set(regimes.keys())
 

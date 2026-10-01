@@ -73,7 +73,7 @@ def _wave_kwargs(
         },
         "internal_templates": {candidate: {} for candidate in candidates.values()},
         "donations": dict.fromkeys(candidates.values(), ()),
-        "ages": AgeGrid(start=0, stop=1, step="Y"),
+        "ages": AgeGrid(start=0, inclusive_stop=1, step="Y"),
         "n_triples_per_lowering": dict.fromkeys(keys, 1),
         "log_kernel_memory": False,
         "n_workers": n_workers,

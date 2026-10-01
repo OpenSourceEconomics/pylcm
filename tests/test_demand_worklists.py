@@ -13,16 +13,19 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.reachability import candidate_targets_from_transition
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -33,6 +36,7 @@ from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.regime_building.test_same_period_ref_period_axes import (
     _make_model as _make_outside_option_model,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -66,7 +70,7 @@ class LifeId:
     dead: ScalarInt
 
 
-_LIFE_AGES = AgeGrid(start=25, stop=75, step="10Y")
+_LIFE_AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 
 
 def _stay() -> FloatND:
@@ -77,27 +81,27 @@ def _die() -> FloatND:
     return jnp.asarray(0.1)
 
 
-def _life_model(initial_regimes: Any) -> Model:
-    return Model(
+def _life_model(initial_nodes: Any) -> Model:
+    return with_fixture_graph(
         regimes={
             "working": _nonterminal(
                 ByAge.until(
                     stop_age_exclusive=65,
                     law={
-                        "working": MarkovTransition(func=_stay),
-                        "dead": MarkovTransition(func=_die),
+                        "working": StochasticTransition(func=_stay),
+                        "dead": StochasticTransition(func=_die),
                     },
                     then="retirement",
                 )
             ),
             "retirement": _nonterminal(
-                ByAge(cases={AgeRange(start=65, stop=75): "dead"})
+                ByAge(cases={AgeRange(start=65, exclusive_stop=75): "dead"})
             ),
             "dead": _terminal(),
         },
         ages=_LIFE_AGES,
         regime_id_class=LifeId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -109,7 +113,7 @@ _WORKING_LIFE = frozenset(
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "expected"),
+    ("initial_nodes", "expected"),
     [
         ({25: "working"}, _WORKING_LIFE),
         (
@@ -119,31 +123,35 @@ _WORKING_LIFE = frozenset(
         ({65: "retirement"}, frozenset({(65, "retirement"), (75, "dead")})),
         ({45: "dead"}, frozenset({(45, "dead")})),
         (
-            {25: "working", 65: "retirement", AgeRange(start=25, stop=26): "dead"},
+            {
+                25: "working",
+                65: "retirement",
+                AgeRange(start=25, exclusive_stop=26): "dead",
+            },
             _WORKING_LIFE | {(25, "dead")},
         ),
     ],
     ids=["first-age", "late-root", "zero-node-regime", "terminal-only", "islands"],
 )
 def test_reachability_nodes_are_the_closure_of_the_starts(
-    *, initial_regimes: Any, expected: frozenset
+    *, initial_nodes: Any, expected: frozenset
 ) -> None:
     """Solved pairs are exactly those a start can reach; no other age is solved."""
-    assert _life_model(initial_regimes).reachability.nodes == expected
+    assert _life_model(initial_nodes).reachability.nodes == expected
 
 
 @pytest.mark.parametrize(
-    "initial_regimes",
+    "initial_nodes",
     [{25: "working"}, {55: "working"}, {65: "retirement"}, {45: "dead"}],
     ids=["first-age", "late-root", "zero-node-regime", "terminal-only"],
 )
 def test_solve_returns_values_exactly_at_the_demanded_pairs(
-    initial_regimes: Any,
+    initial_nodes: Any,
 ) -> None:
     """Every demanded pair has a value array, and no other pair has one."""
-    model = _life_model(initial_regimes)
+    model = _life_model(initial_nodes)
     # A model whose starts reach no nonterminal regime reads no parameter.
-    params = {} if initial_regimes == {45: "dead"} else _PARAMS
+    params = {} if initial_nodes == {45: "dead"} else _PARAMS
     values = model.solve(params=params, log_level="off").values
     solved = frozenset(
         (model.ages.exact_values[period], name)
@@ -169,16 +177,16 @@ def test_coverage_of_an_unreached_regime_is_empty() -> None:
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "match"),
+    ("initial_nodes", "match"),
     [({75: "retirement"}, "75"), ({45: "retirement"}, "45")],
     ids=["nonterminal-at-last-age", "no-law-at-root-age"],
 )
 def test_a_start_without_an_available_problem_fails(
-    *, initial_regimes: Any, match: str
+    *, initial_nodes: Any, match: str
 ) -> None:
     """A start needs a local law and, if nonterminal, a next age."""
     with pytest.raises(ModelInitializationError, match=match):
-        _life_model(initial_regimes)
+        _life_model(initial_nodes)
 
 
 def test_a_required_target_without_a_law_names_the_source() -> None:
@@ -186,37 +194,37 @@ def test_a_required_target_without_a_law_names_the_source() -> None:
     with pytest.raises(
         ModelInitializationError, match=r"\(55, 'working'\).*'retirement' at age 65"
     ):
-        Model(
+        with_fixture_graph(
             regimes={
                 "working": _nonterminal(
                     ByAge.until(stop_age_exclusive=65, law="working", then="retirement")
                 ),
                 "retirement": _nonterminal(
-                    ByAge(cases={AgeRange(start=45, stop=55): "dead"})
+                    ByAge(cases={AgeRange(start=45, exclusive_stop=55): "dead"})
                 ),
                 "dead": _terminal(),
             },
             ages=_LIFE_AGES,
             regime_id_class=LifeId,
-            initial_regimes={25: "working"},
+            initial_nodes={25: "working"},
         )
 
 
 def test_an_unrequired_broken_target_does_not_fail() -> None:
     """The same broken exit is harmless when no start requires it."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "working": _nonterminal(
                 ByAge.until(stop_age_exclusive=65, law="working", then="retirement")
             ),
             "retirement": _nonterminal(
-                ByAge(cases={AgeRange(start=45, stop=55): "dead"})
+                ByAge(cases={AgeRange(start=45, exclusive_stop=55): "dead"})
             ),
             "dead": _terminal(),
         },
         ages=_LIFE_AGES,
         regime_id_class=LifeId,
-        initial_regimes={45: "retirement"},
+        initial_nodes={45: "retirement"},
     )
     assert model.reachability.nodes == frozenset({(45, "retirement"), (55, "dead")})
 
@@ -231,11 +239,11 @@ class PhasedId:
     realized_end: ScalarInt
 
 
-_PHASED_AGES = AgeGrid(start=0, stop=3, step="Y")
+_PHASED_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
-def _phased_model(initial_regimes: Any) -> Model:
-    return Model(
+def _phased_model(initial_nodes: Any) -> Model:
+    return with_fixture_graph(
         regimes={
             "source": _nonterminal(
                 ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
@@ -250,7 +258,7 @@ def _phased_model(initial_regimes: Any) -> Model:
         },
         ages=_PHASED_AGES,
         regime_id_class=PhasedId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -299,7 +307,7 @@ class GatedId:
     fallback: ScalarInt
 
 
-_GATED_AGES = AgeGrid(start=40, stop=50, step="5Y")
+_GATED_AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 
 
 def _prob_one(age: FloatND) -> FloatND:
@@ -327,14 +335,14 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         if phased_fallback
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": _nonterminal(
                 ByAge(
                     cases={
                         40: {
                             "target": ValueDependentTransition(
-                                probability=MarkovTransition(func=_prob_one),
+                                probability=StochasticTransition(func=_prob_one),
                                 gate=_gate,
                                 routes={"only": StakeholderRoute(fallback=fallback)},
                                 gate_references={
@@ -355,7 +363,7 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         },
         ages=_GATED_AGES,
         regime_id_class=GatedId,
-        initial_regimes={40: "source"},
+        initial_nodes={40: "source"},
     )
 
 
@@ -390,7 +398,7 @@ def test_a_phased_fallback_prices_one_regime_and_lands_in_another() -> None:
 def test_a_local_outside_option_demands_its_island_by_value_only() -> None:
     """A same-period reference and its own continuation are solved, not visited."""
     reachability = _make_outside_option_model(
-        later_ceiling=10.0, initial_regimes={0: "couple"}
+        later_ceiling=10.0, initial_nodes={0: "couple"}
     ).reachability
     assert (reachability.nodes, reachability.visited_nodes) == (
         frozenset(
@@ -430,7 +438,7 @@ def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:
 def test_an_unreached_regime_with_an_age_specialized_grid_builds_and_solves() -> None:
     """An age-varying grid of a regime solved at no age needs no age to resolve."""
     model = _make_outside_option_model(
-        later_ceiling=10.0, initial_regimes={2: "single_f_terminal"}
+        later_ceiling=10.0, initial_nodes={2: "single_f_terminal"}
     )
     # Only the terminal root is demanded, so no regime reads a parameter.
     values = model.solve(params={}, log_level="off").values
@@ -445,9 +453,9 @@ def _probabilities() -> FloatND:
 
 
 def test_candidate_targets_of_a_vector_law_are_its_declared_targets() -> None:
-    """A vector `MarkovTransition` names its candidates by `targets`, not by the
+    """A vector `StochasticTransition` names its candidates by `targets`, not by the
     whole regime vocabulary."""
-    law = MarkovTransition(func=_probabilities, targets=("retirement",))
+    law = _SupportedStochasticTransition(func=_probabilities, targets=("retirement",))
     assert candidate_targets_from_transition(
         transition=law, all_regime_names=("working", "retirement", "dead")
     ) == ("retirement",)

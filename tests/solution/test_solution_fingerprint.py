@@ -1669,7 +1669,7 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
     solver = SimpleNamespace(identity=("test-solver", 1))
     user_regimes = {"alive": SimpleNamespace(solver=solver)}
     flat_params = cast("FlatParams", MappingProxyType({"alive": MappingProxyType({})}))
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
 
     baseline = _fingerprint_model_for_test(
         ages=ages,
@@ -1711,7 +1711,7 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
     regime_names_to_ids = cast(
         "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
     )
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
 
     forward = _fingerprint_model_for_test(
         ages=ages,
@@ -1771,7 +1771,7 @@ def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
         "FlatParams",
         MappingProxyType({name: MappingProxyType({}) for name in ("alive", "dead")}),
     )
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
 
     baseline = _fingerprint_model_for_test(
         ages=ages,

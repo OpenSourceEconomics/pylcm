@@ -7,9 +7,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
@@ -22,6 +24,7 @@ from lcm import (
 from lcm.regime import Regime
 from lcm.solvers import NBEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.slow
@@ -81,7 +84,9 @@ def _model(*, hand_written: bool = False) -> Model:
         constraints={"borrowing_limit": borrowing_limit},
         regime_transitions=until_exit(
             2,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
             stays=("alive",),
         ),
@@ -100,11 +105,11 @@ def _model(*, hand_written: bool = False) -> Model:
         states={"liquid": _ACTION_GRID},
         functions={"utility": terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

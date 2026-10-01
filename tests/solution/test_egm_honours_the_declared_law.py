@@ -16,7 +16,7 @@ two solvers are handed the identical `Regime` and must agree.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model
+from lcm import AgeGrid, LinSpacedGrid, StochasticTransition
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -37,6 +37,7 @@ from tests.solution.test_egm_solver import (
     terminal_utility,
     utility,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _FIXED_COST = 0.5
@@ -68,8 +69,8 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         regime_transitions=until_exit(
             last_age,
             law={
-                "saving": MarkovTransition(func=prob_continue),
-                "done": MarkovTransition(func=prob_stop),
+                "saving": StochasticTransition(func=prob_continue),
+                "done": StochasticTransition(func=prob_stop),
             },
             exits=("done",),
             stays=("saving",),
@@ -95,11 +96,11 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"saving": saving, "done": done},
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "saving"},
+        initial_nodes={0: "saving"},
     )
 
 

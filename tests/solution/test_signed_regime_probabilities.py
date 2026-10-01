@@ -16,14 +16,15 @@ from lcm import (
     AgeRange,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
@@ -66,14 +67,14 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     def _to_b() -> ScalarFloat:
         return jnp.float32(probability_b)
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
                     law={
-                        "a": MarkovTransition(func=_to_a),
-                        "b": MarkovTransition(func=_to_b),
+                        "a": StochasticTransition(func=_to_a),
+                        "b": StochasticTransition(func=_to_b),
                     },
                     exits=("a", "b"),
                 ),
@@ -93,9 +94,9 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
                 functions={"utility": _pays_ten_times},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -168,15 +169,19 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
             functions={"utility": _pays_wealth},
         )
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(stop=21): {
-                            "live": MarkovTransition(func=_all_mass_to_live),
-                            "gone_a": MarkovTransition(func=_positive_on_a_dead_target),
-                            "gone_b": MarkovTransition(func=_negative_on_a_dead_target),
+                        AgeRange(exclusive_stop=21): {
+                            "live": StochasticTransition(func=_all_mass_to_live),
+                            "gone_a": StochasticTransition(
+                                func=_positive_on_a_dead_target
+                            ),
+                            "gone_b": StochasticTransition(
+                                func=_negative_on_a_dead_target
+                            ),
                         }
                     }
                 ),
@@ -188,9 +193,9 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
             "gone_a": _terminal(),
             "gone_b": _terminal(),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeIdWithSignedTargets,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     with pytest.raises(

@@ -16,7 +16,7 @@ from _lcm.solution.continuation_arguments import (
 from lcm import ExecutionConfig, Model
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.nbegm_common import RegimeId
 
 
@@ -29,13 +29,14 @@ def test_retention_and_eager_execution_protect_all_output_owners(
     )
     if mode == "eager":
         model = Model(
+            edges=model.graph.edges,
             regimes=model.user_regimes,
             ages=model.ages,
             regime_id_class=RegimeId,
             fixed_params=dict(model.fixed_params),
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes=initial_regimes_of(model=model),
+            initial_nodes=initial_nodes_of(model=model),
         )
     retention = (
         ResultRetention.ALL_PERSISTABLE_ARTIFACTS

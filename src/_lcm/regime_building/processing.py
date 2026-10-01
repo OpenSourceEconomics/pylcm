@@ -285,7 +285,7 @@ from lcm.solvers import (
     Solver,
     UniformObservedFixedCost,
 )
-from lcm.transition import JointTransition, MarkovTransition
+from lcm.transition import JointTransition, StochasticTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
@@ -5319,7 +5319,7 @@ def _process_regime_core(
         )
         wrapped = (
             getattr(func.func, "__wrapped__", None)
-            if isinstance(func, MarkovTransition)
+            if isinstance(func, StochasticTransition)
             else None
         )
         if inspect.ismethod(wrapped) and isinstance(
@@ -5926,7 +5926,7 @@ def _process_next_regime_cells(
     - `_CoarseTransitionCell` cells ⇒ the shared underlying transition is
       processed once under the `next_regime` template key, so the engine
       evaluates it once and indexes per target
-    - `MarkovTransition` cells (user per-target dict) ⇒ each cell is
+    - `StochasticTransition` cells (user per-target dict) ⇒ each cell is
       processed under its nested `template[target]["next_regime"]` branch
 
     Args:
@@ -6067,9 +6067,9 @@ def _get_stochastic_transition_names(
     """
     markov_state_names: set[StateName] = set()
     for name, raw in state_transitions.items():
-        if isinstance(raw, MarkovTransition) or (
+        if isinstance(raw, StochasticTransition) or (
             isinstance(raw, Mapping)
-            and any(isinstance(v, MarkovTransition) for v in raw.values())
+            and any(isinstance(v, StochasticTransition) for v in raw.values())
         ):
             markov_state_names.add(name)
     return frozenset(
@@ -6336,9 +6336,9 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     state_transitions: Mapping[StateName, object],
     source_regime_name: RegimeName,
 ) -> None:
-    """Reject a `MarkovTransition` law written for a state with a continuous grid.
+    """Reject a `StochasticTransition` law written for a state with a continuous grid.
 
-    `MarkovTransition` declares a probability vector over a discrete outcome space,
+    `StochasticTransition` declares a probability vector over a discrete outcome space,
     which only exists for a `DiscreteGrid`. A continuous stochastic process carries
     its own transition mechanism and needs no law at all; an entry into one is a
     deterministic function of the source's variables. Both mistakes reach the same
@@ -6356,7 +6356,7 @@ def _fail_if_a_markov_law_names_a_continuous_state(
         source_regime_name: Regime whose law is being checked, named in the message.
 
     Raises:
-        ModelInitializationError: If the law is a `MarkovTransition` and the state's
+        ModelInitializationError: If the law is a `StochasticTransition` and the state's
             grid is not a `DiscreteGrid`.
 
     """
@@ -6367,17 +6367,17 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     target = tree_path[0] if len(tree_path) > 1 else None
     state_name = tree_path[-1].replace("next_", "")
     raw = state_transitions.get(state_name)
-    if isinstance(raw, MarkovTransition):
+    if isinstance(raw, StochasticTransition):
         written_for = "every target it reaches"
-    elif isinstance(raw, Mapping) and isinstance(raw.get(target), MarkovTransition):
+    elif isinstance(raw, Mapping) and isinstance(raw.get(target), StochasticTransition):
         written_for = f"target '{target}'"
     else:
         return
 
     msg = (
         f"The law for state '{state_name}' of regime '{source_regime_name}' toward "
-        f"{written_for} is wrapped in `MarkovTransition`, but '{state_name}' has a "
-        f"{type(grid).__name__}, not a DiscreteGrid. `MarkovTransition` declares a "
+        f"{written_for} is wrapped in `StochasticTransition`, but '{state_name}' has a "
+        f"{type(grid).__name__}, not a DiscreteGrid. `StochasticTransition` declares a "
         f"probability vector over a discrete outcome space, which a continuous grid "
         f"does not have. A continuous stochastic process already carries its own "
         f"transition mechanism and needs no law; write the law as a plain function "
@@ -7168,7 +7168,7 @@ def _get_simple_transition_discrete_grid(
             return None
         raw = variants[0]
     # Per-target dicts handle category differences explicitly
-    if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
+    if isinstance(raw, Mapping) and not isinstance(raw, StochasticTransition):
         return None
     # An identity law (fixed state) only maps within its own regime
     if isinstance(raw, _IdentityTransition):

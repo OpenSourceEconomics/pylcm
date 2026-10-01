@@ -3,8 +3,8 @@
 from lcm import Model
 
 
-def initial_regimes_of(*, model: Model) -> dict[object, tuple[str, ...]]:
-    """Return the `initial_regimes` mapping admitting exactly `model`'s starts."""
+def initial_nodes_of(*, model: Model) -> dict[object, tuple[str, ...]]:
+    """Return the `initial_nodes` mapping admitting exactly `model`'s starts."""
     names_by_age: dict[object, list[str]] = {}
     for age, name in sorted(model.initial_nodes, key=repr):
         names_by_age.setdefault(age, []).append(name)

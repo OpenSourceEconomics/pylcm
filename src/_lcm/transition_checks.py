@@ -11,7 +11,7 @@ runs. Two families:
   The construction-time graph supplies the allowed target set; state-law
   coverage of retained targets is validated at model build.
 - **State transition probability check** keyed on
-  `validate_state_transitions_all_periods`. Sweeps every `MarkovTransition`
+  `validate_state_transitions_all_periods`. Sweeps every `StochasticTransition`
   state transition (incl. per-target dict entries), evaluates the user
   function on the Cartesian product of the function's accepted grid
   variables, and verifies outcome-axis size, [0, 1] range, and sum-to-1.
@@ -400,7 +400,7 @@ def _params_callable_for_state_transition(
     - coarse laws      ⇒ one entry per reachable carrying target, all
       sharing the same leaf — any target's binding yields the law's params
 
-    The `MarkovTransition`'s user function is called with the raw
+    The `StochasticTransition`'s user function is called with the raw
     parameter names from its signature, so the validator must strip
     the same qualifier before lookup. Without the strip, every
     transition-function parameter that isn't a grid axis falls through
@@ -1091,11 +1091,11 @@ def validate_state_transitions_all_periods(  # noqa: C901
     process_grid_resolver: ProcessGridResolver | None = None,
     memory: SimulationMemory | None = None,
 ) -> None:
-    """Validate every `MarkovTransition` state transition before solve.
+    """Validate every `StochasticTransition` state transition before solve.
 
     For each non-terminal active period of each active regime, iterate the
     regime's `stochastic_state_transitions` and evaluate each
-    `MarkovTransition` function on the Cartesian product of its accepted
+    `StochasticTransition` function on the Cartesian product of its accepted
     grid variables. Check:
 
     - The output's last-axis size matches the state's outcome count.
@@ -1103,7 +1103,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
     - Rows along the last axis sum to 1.
 
     Fast-exits when no regime in the model has any stochastic state
-    transitions, so models without `MarkovTransition` states pay no cost.
+    transitions, so models without `StochasticTransition` states pay no cost.
 
     Args:
         regimes: Immutable mapping of regime names to canonical regimes.
@@ -1115,7 +1115,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
             continue; `"debug"` raises on the first failure.
 
     Raises:
-        InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`
+        InvalidStateTransitionProbabilitiesError: If a `StochasticTransition`
             function returns the wrong outcome-axis size, values outside
             [0, 1], or rows that don't sum to 1, and the logger implies raise
             mode.
@@ -1761,7 +1761,7 @@ def _validate_state_transition_single(
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
 ) -> None:
-    """Evaluate one MarkovTransition on its grid args and validate the output.
+    """Evaluate one StochasticTransition on its grid args and validate the output.
 
     A restricted fixed-component law is validated as its declared law over the
     original codes: the full outcome axis, every original source code, and zero
@@ -1822,7 +1822,7 @@ def _validate_state_transition_single(
                 f" ({transition.phase} phase)" if transition.phase is not None else ""
             )
             logger.warning(
-                "MarkovTransition for state '%s' in regime '%s'%s not numerically "
+                "StochasticTransition for state '%s' in regime '%s'%s not numerically "
                 "validated: parameter '%s' is not a recognized grid or model "
                 "parameter.",
                 transition.state_name,
@@ -2179,13 +2179,13 @@ def _check_state_probs(
     outside_bounds, invalid_mass, *leaks = np.asarray(flags).tolist()
     if outside_bounds:
         raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"StochasticTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned values outside [0, 1]."
         )
 
     if invalid_mass:
         raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"StochasticTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned rows that do not sum to 1 along the "
             f"outcome axis."
         )
@@ -2197,7 +2197,7 @@ def _check_state_probs(
         groups = np.asarray(fixed_of_code)
         source = int(np.asarray(source_codes)[point])
         raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"StochasticTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} moves mass from code {source} (group {groups[source]}) "
             f"to code {target} (group {groups[target]}); its fixed_component "
             f"requires zero mass outside the source code's group."
@@ -2228,7 +2228,7 @@ def _check_state_outcome_axis(
         if summary is not None:
             raise _SerialValidationRequired
         raise InvalidStateTransitionProbabilitiesError(
-            f"MarkovTransition for {state_label} in regime '{regime_name}' "
+            f"StochasticTransition for {state_label} in regime '{regime_name}' "
             f"at age {age} returned an outcome axis of size "
             f"{shape[-1]}; expected {transition.n_outcomes} from the "
             f"state's DiscreteGrid."

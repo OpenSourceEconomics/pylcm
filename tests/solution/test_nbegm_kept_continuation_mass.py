@@ -24,11 +24,11 @@ from lcm import (
     CESAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -39,6 +39,7 @@ from lcm.exceptions import (
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _FIRST_AGE = 20
@@ -125,8 +126,8 @@ def _build_model(
         regime_transitions=until_exit(
             _LAST_LIVING_AGE + 5,
             law={
-                "alive": MarkovTransition(func=_prob_alive),
-                "dead": MarkovTransition(func=_prob_dead),
+                "alive": StochasticTransition(func=_prob_alive),
+                "dead": StochasticTransition(func=_prob_dead),
             },
             exits=("dead",),
         ),
@@ -157,14 +158,14 @@ def _build_model(
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=_FIRST_AGE, stop=_LAST_LIVING_AGE + 5, step="5Y"),
+        ages=AgeGrid(start=_FIRST_AGE, inclusive_stop=_LAST_LIVING_AGE + 5, step="5Y"),
         fixed_params={
             "final_age_alive": float(_LAST_LIVING_AGE + (5 if lost_mass else 0))
         },
-        initial_regimes={_FIRST_AGE: "alive"},
+        initial_nodes={_FIRST_AGE: "alive"},
     )
 
 
@@ -222,7 +223,7 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
         states={"liquid": _LIQUID_GRID},
         state_transitions={"liquid": {"dead": _next_liquid_certain}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions={"dead": MarkovTransition(func=_certain_death)},
+        regime_transitions={"dead": StochasticTransition(func=_certain_death)},
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -244,11 +245,11 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
         functions={"utility": _bequest},
     )
     with pytest.raises(RegimeInitializationError, match="LinearAggregator"):
-        Model(
+        with_fixture_graph(
             regimes={"alive": alive, "dead": dead},
             regime_id_class=_RegimeId,
-            ages=AgeGrid(start=_FIRST_AGE, stop=_LAST_LIVING_AGE, step="5Y"),
-            initial_regimes={_FIRST_AGE: "alive"},
+            ages=AgeGrid(start=_FIRST_AGE, inclusive_stop=_LAST_LIVING_AGE, step="5Y"),
+            initial_nodes={_FIRST_AGE: "alive"},
         )
 
 

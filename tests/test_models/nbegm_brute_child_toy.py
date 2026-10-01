@@ -20,8 +20,8 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     LiquidMargin,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.regime import Regime
@@ -134,7 +134,7 @@ def build_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     kind_grid = DiscreteGrid(category_class=ConsumerKind)
@@ -160,8 +160,8 @@ def build_model(
     young_transition = ByAge(
         cases={
             0: {
-                "old": MarkovTransition(func=prob_to_old),
-                "dead": MarkovTransition(func=prob_young_dead),
+                "old": StochasticTransition(func=prob_to_old),
+                "dead": StochasticTransition(func=prob_young_dead),
             }
         }
     )
@@ -207,7 +207,7 @@ def build_model(
         },
         constraints={"feasible": feasible},
         regime_transitions=ByAge(
-            cases={1: {"dead": MarkovTransition(func=lambda: jnp.array(1.0))}}
+            cases={1: {"dead": StochasticTransition(func=lambda: jnp.array(1.0))}}
         ),
         functions=old_functions,
         solver=GridSearch(),
@@ -219,10 +219,11 @@ def build_model(
         solver=GridSearch(),
     )
     return Model(
+        edges={"young": {"old": 0, "dead": 0}, "old": {"dead": 1}},
         regimes={"young": young, "old": old, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "young"},
+        initial_nodes={ages.exact_values[0]: "young"},
     )
 
 

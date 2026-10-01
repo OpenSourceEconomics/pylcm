@@ -9,17 +9,20 @@ mathematically expected next-period values in solve and simulate.
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -56,7 +59,11 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 _active = UserRegime(
     regime_transitions=until_exit(
-        2, law=Choose(func=_next_regime, targets=("active", "dead")), exits=("dead",)
+        2,
+        law=_SupportedDeterministicTransition(
+            func=_next_regime, targets=("active", "dead")
+        ),
+        exits=("dead",),
     ),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
@@ -80,11 +87,11 @@ _dead = UserRegime(
 
 
 def _build_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={"active": _active, "dead": _dead},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "active"},
+        initial_nodes={0: "active"},
     )
 
 
@@ -206,7 +213,9 @@ def _f2_build_model() -> Model:
     live = UserRegime(
         regime_transitions=until_exit(
             27,
-            law=Choose(func=_f2_next_regime, targets=("live", "last")),
+            law=_SupportedDeterministicTransition(
+                func=_f2_next_regime, targets=("live", "last")
+            ),
             exits=("last",),
         ),
         states={
@@ -215,7 +224,7 @@ def _f2_build_model() -> Model:
         },
         actions={"move": DiscreteGrid(category_class=_Move)},
         state_transitions={
-            "good": MarkovTransition(func=_f2_good_probs),
+            "good": StochasticTransition(func=_f2_good_probs),
             "capital": _f2_next_capital,
         },
         functions={"utility": _f2_utility},
@@ -224,11 +233,11 @@ def _f2_build_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.array(0.0)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"live": live, "last": last},
-        ages=AgeGrid(start=25, stop=27, step="1Y"),
+        ages=AgeGrid(start=25, inclusive_stop=27, step="1Y"),
         regime_id_class=_RegimeIdF2,
-        initial_regimes={25: "live"},
+        initial_nodes={25: "live"},
     )
 
 

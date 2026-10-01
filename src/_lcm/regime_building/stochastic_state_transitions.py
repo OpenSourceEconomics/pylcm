@@ -1,7 +1,7 @@
-"""Collect validation metadata for `MarkovTransition` state transitions.
+"""Collect validation metadata for `StochasticTransition` state transitions.
 
 `collect_stochastic_state_transitions` walks a regime's `state_transitions`
-and yields one `_StochasticStateTransition` entry per `MarkovTransition`: a
+and yields one `_StochasticStateTransition` entry per `StochasticTransition`: a
 process-time AST subscript-order check plus `n_outcomes` derivation, cached on
 the canonical `Regime` and consumed by the pre-solve state-transition
 validator.
@@ -23,7 +23,7 @@ from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 
 
 def collect_stochastic_state_transitions(
@@ -31,10 +31,10 @@ def collect_stochastic_state_transitions(
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> MappingProxyType[TransitionFunctionName, _StochasticStateTransition]:
-    """Collect validation metadata for every `MarkovTransition` state transition.
+    """Collect validation metadata for every `StochasticTransition` state transition.
 
     Walks `user_regime.state_transitions` and yields one entry per
-    `MarkovTransition`. Per-target dict entries are flattened into
+    `StochasticTransition`. Per-target dict entries are flattened into
     `next_{state}__{target}` keys, mirroring the qname pattern used by
     `collect_state_transitions`; each variant of a `Phased` law is further
     suffixed with `@{phase}`. Returns an empty mapping for regimes with
@@ -57,7 +57,7 @@ def collect_stochastic_state_transitions(
         metadata.
 
     Raises:
-        InvalidStateTransitionProbabilitiesError: If a `MarkovTransition`'s
+        InvalidStateTransitionProbabilitiesError: If a `StochasticTransition`'s
             `probs_array` subscript order does not match the function's
             signature parameter order. Permissively skipped when the
             function does not use the `probs_array[...]` pattern.
@@ -69,7 +69,7 @@ def collect_stochastic_state_transitions(
         # Each variant gets its own key: a malformed perceived law is as fatal as a
         # malformed realized one, and one shared key would keep only the last.
         for raw, phase in _phase_variants(entry):
-            if isinstance(raw, MarkovTransition):
+            if isinstance(raw, StochasticTransition):
                 _add_stochastic_entry(
                     entries=entries,
                     key=_phase_key(base=f"next_{state_name}", phase=phase),
@@ -82,7 +82,7 @@ def collect_stochastic_state_transitions(
                 )
             elif isinstance(raw, Mapping):
                 for raw_target_regime_name, law in raw.items():
-                    if not isinstance(law, MarkovTransition):
+                    if not isinstance(law, StochasticTransition):
                         continue
                     target_regime_name: RegimeName = cast(
                         "RegimeName", raw_target_regime_name
@@ -131,14 +131,14 @@ def _add_stochastic_entry(
     *,
     entries: dict[TransitionFunctionName, _StochasticStateTransition],
     key: TransitionFunctionName,
-    markov: MarkovTransition,
+    markov: StochasticTransition,
     state_name: str,
     target_regime_name: RegimeName | None,
     phase: Literal["solve", "simulate"] | None,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> None:
-    """Static-check one MarkovTransition and append its metadata."""
+    """Static-check one StochasticTransition and append its metadata."""
     func = markov.func
 
     state_grid = _find_state_grid(
@@ -148,7 +148,7 @@ def _add_stochastic_entry(
         user_regimes=user_regimes,
     )
     if not isinstance(state_grid, DiscreteGrid):
-        # `MarkovTransition` on a continuous state is not a supported
+        # `StochasticTransition` on a continuous state is not a supported
         # pattern for the automatic validator. Static phase tolerates
         # the omission; the runtime phase skips it by absence from the
         # metadata. The subscript-order check is skipped too — it applies
@@ -184,13 +184,13 @@ def _find_state_grid(
     """Look up the state's grid for outcome-axis sizing.
 
     For a per-target dict entry the **target** regime's grid is authoritative:
-    the `MarkovTransition` returns a distribution over the target's state
+    the `StochasticTransition` returns a distribution over the target's state
     space, which may differ in size from the source's (cross-grid
     transitions). The source grid is never substituted in that case — if the
     target regime does not declare the state, `None` is returned so the
     caller skips metadata creation rather than sizing off a wrong grid.
 
-    A plain `MarkovTransition` (no per-target dict) sizes off the source
+    A plain `StochasticTransition` (no per-target dict) sizes off the source
     regime's grid.
 
     Returns `None` when no authoritative grid is found.
@@ -226,7 +226,7 @@ def _check_subscript_order(
     if indexing_params != sig_order:
         func_name = getattr(func, "__name__", "<unknown>")
         msg = (
-            f"In MarkovTransition for state '{state_name}', function "
+            f"In StochasticTransition for state '{state_name}', function "
             f"'{func_name}' indexes `probs_array` as "
             f"`probs_array[{', '.join(indexing_params)}]` but the signature "
             f"order is `probs_array[{', '.join(sig_order)}]`. Swap the "

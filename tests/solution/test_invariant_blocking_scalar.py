@@ -10,7 +10,7 @@ import pytest
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
 from lcm import (
     AgeGrid,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -56,13 +56,14 @@ def _to_terminal() -> ScalarInt:
 def _model(*, blocked: bool) -> Model:
     grid = DiscreteGrid(category_class=_Types)
     return Model(
+        edges={"working": {"terminal": 0}},
         regimes={
             "working": Regime(
                 states={"pref_type": grid},
                 state_transitions={"pref_type": fixed_transition("pref_type")},
                 actions={"choice": DiscreteGrid(category_class=_OneAction)},
                 functions={"utility": _flow},
-                regime_transitions=Choose(func=_to_terminal, targets=("terminal",)),
+                regime_transitions=DeterministicTransition(func=_to_terminal),
             ),
             "terminal": Regime(
                 states={"pref_type": grid},
@@ -70,9 +71,9 @@ def _model(*, blocked: bool) -> Model:
                 regime_transitions=None,
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         execution_config=ExecutionConfig(
             devices=(0,),
             device_memory_bytes=2**30,

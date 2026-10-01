@@ -28,23 +28,26 @@ import pytest
 from scipy.stats import norm
 
 from _lcm.grids import Grid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     NormalMixtureIIDProcess,
     Regime,
+    StochasticTransition,
     UniformIIDProcess,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -117,11 +120,11 @@ def _build_model(
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
     transition = (
-        Choose(func=_target_id, targets=("target",))
+        _SupportedDeterministicTransition(func=_target_id, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(func=_one_probability)}
+        else {"target": StochasticTransition(func=_one_probability)}
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -133,11 +136,11 @@ def _build_model(
                 functions={"utility": target_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -359,18 +362,20 @@ def test_the_entry_law_decides_the_action() -> None:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
     source = Regime(
-        regime_transitions=Choose(func=_choose, targets=("stay", "enter")),
+        regime_transitions=_SupportedDeterministicTransition(
+            func=_choose, targets=("stay", "enter")
+        ),
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
         functions={"utility": _zero_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"source": source, "stay": stay, "enter": enter},
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     got = _source_value(
         model=model,
@@ -454,10 +459,12 @@ def _build_explicit_entry_model(
     def _enter_at() -> ScalarFloat:
         return jnp.asarray(entry_value)
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),
@@ -475,11 +482,11 @@ def _build_explicit_entry_model(
                 functions={"utility": _squared_shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

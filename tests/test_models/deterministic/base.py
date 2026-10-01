@@ -61,8 +61,9 @@ def get_model(n_periods: int) -> Model:
     """Return the example model with working life and retirement as first-age starts."""
     example = get_example_model(n_periods=n_periods)
     return Model(
+        edges=example.graph.edges,
         regimes=example.user_regimes,
         ages=example.ages,
         regime_id_class=RegimeId,
-        initial_regimes={example.ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes={example.ages.exact_values[0]: ("working_life", "retirement")},
     )

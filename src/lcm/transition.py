@@ -1,6 +1,6 @@
-"""User-facing transition vocabulary: `fixed_transition`, `MarkovTransition`,
-`Choose`, `ByAge`, `AgeRange`, `JointTransition`, `AgeSpecializedFunction`, and
-`AgeSpecializedGrid`.
+"""User-facing transition vocabulary: `fixed_transition`, `StochasticTransition`,
+`DeterministicTransition`, `ByAge`, `AgeRange`, `JointTransition`,
+`AgeSpecializedFunction`, and `AgeSpecializedGrid`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
 regime-building code. Keeping the vocabulary here lets the user-facing
@@ -11,7 +11,7 @@ all import it without an import cycle.
 
 import dataclasses
 import math
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
@@ -48,35 +48,51 @@ def fixed_transition(state_name: StateName) -> UserFunction:
     return _IdentityTransition(state_name=state_name)
 
 
+@dataclass(frozen=True, kw_only=True)
+class AgeRange:
+    """The existing grid ages in `[start, exclusive_stop)`.
+
+    Either bound may be omitted. The bounds need not be grid points; the
+    selection is always a subset of the model's ages.
+    """
+
+    start: UserAge | float | None = None
+    """Inclusive lower bound, or `None` for the first age."""
+
+    exclusive_stop: UserAge | float | None = None
+    """Exclusive upper bound, or `None` for beyond the last age."""
+
+
+type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
+
+
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class MarkovTransition:
+class StochasticTransition:
     """Wrapper marking a transition function as stochastic (Markov).
 
-    Wrap a transition function in `MarkovTransition` to indicate that it returns
+    Wrap a transition function in `StochasticTransition` to indicate that it returns
     a probability distribution over next states (for state transitions) or over
     next regimes (for regime transitions), rather than a deterministic next value.
 
     Use at both the state and regime level:
 
         # Stochastic state transition (in Regime.state_transitions)
-        state_transitions={"health": MarkovTransition(func=health_probs)}
+        state_transitions={"health": StochasticTransition(func=health_probs)}
 
         # Stochastic regime transition over the full regime-ID vector
         Regime(
-            regime_transitions=MarkovTransition(
-                func=regime_probs, targets=("work", "retired")
+            regime_transitions=StochasticTransition(
+                func=regime_probs
             ),
             ...,
         )
 
     A bare callable (without the wrapper) is a deterministic state law.
 
-    At the regime level, `targets` is required and names the support: every
-    named target needs a valid state handoff, and every other entry of the
-    returned vector must be exactly zero. A runtime-zero probability for a
-    named target does not narrow the support. A per-target mapping on
-    `Regime.regime_transitions` declares its support by its keys instead.
+    At the regime level, `Model.edges` declares structural support separately.
+    Every returned vector entry outside the current graph support must be zero.
+    A probability that is zero at runtime does not narrow the graph.
 
     """
 
@@ -94,22 +110,7 @@ class MarkovTransition:
     group only. Every group must have the same number of codes.
     """
 
-    targets: Sequence[str] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """For a regime transition returning the full regime-ID vector: its support.
-
-    Names the regimes the vector may assign positive probability to. Every other
-    entry of the returned vector must be exactly zero. State laws declare none.
-    """
-
     def __post_init__(self) -> None:
-        if self.targets is not None:
-            object.__setattr__(
-                self,
-                "targets",
-                _declared_targets(targets=self.targets, owner="MarkovTransition"),
-            )
         # Copy __wrapped__ and __annotations__ from the wrapped function so
         # that inspect.signature and dags see the original signature. We use
         # object.__setattr__ because the dataclass is frozen.
@@ -124,32 +125,28 @@ class MarkovTransition:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class Choose:
-    """A deterministic regime transition with declared support.
+class DeterministicTransition:
+    """Mark a deterministic state or regime transition.
 
-    `func` returns an existing global regime code — the same integer a bare
-    deterministic transition returns — and `targets` names every regime it may
-    select. It is evaluated on the deterministic route and adds no random draw.
+    A state law returns its next value, just like a plain state function.
+    A regime selector returns an existing global regime code. `Model.edges`
+    declares every regime it may select. Evaluation adds no random draw.
 
         Regime(
-            regime_transitions=Choose(func=next_regime, targets=("work", "retired")),
+            regime_transitions=DeterministicTransition(
+                func=next_regime
+            ),
             ...,
         )
 
-    Returning a code outside `targets` is an error; a target that is never
-    selected at runtime remains a declared edge.
+    Returning a code outside the model graph is an error; an edge remains
+    declared even when its target is never selected at runtime.
     """
 
     func: Callable[..., Any]
     """The selector returning a global regime code."""
 
-    targets: Sequence[str]
-    """The regimes `func` may select."""
-
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "targets", _declared_targets(targets=self.targets, owner="Choose")
-        )
         object.__setattr__(self, "__wrapped__", self.func)
         object.__setattr__(
             self, "__annotations__", getattr(self.func, "__annotations__", {})
@@ -157,6 +154,36 @@ class Choose:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         return self.func(*args, **kwargs)
+
+
+@beartype(conf=REGIME_CONF)
+def deterministic_transition() -> Callable[[UserFunction], DeterministicTransition]:
+    """Create a deterministic-law decorator preserving the DAG signature."""
+
+    def decorate(func: UserFunction) -> DeterministicTransition:
+        return DeterministicTransition(func=func)
+
+    return decorate
+
+
+@beartype(conf=REGIME_CONF)
+def stochastic_transition(
+    *,
+    fixed_component: tuple[int, ...] | None = None,
+) -> Callable[[Callable[..., FloatND]], StochasticTransition]:
+    """Create a stochastic-law decorator preserving the DAG signature.
+
+    Args:
+        fixed_component: Fixed categorical groups of a stochastic state law.
+
+    Returns:
+        A decorator preserving the probability function's DAG signature.
+    """
+
+    def decorate(func: Callable[..., FloatND]) -> StochasticTransition:
+        return StochasticTransition(func=func, fixed_component=fixed_component)
+
+    return decorate
 
 
 def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
@@ -366,7 +393,7 @@ class AgeSpecializedFunction(_AgeSpecialized):
     `AgeSpecializedFunction` state-transition value, a specialized regime
     `regime_transitions`, a regime transition whose dependency graph reads an
     `AgeSpecializedFunction`, a
-    `MarkovTransition(func=AgeSpecializedFunction(...))`, and
+    `StochasticTransition(func=AgeSpecializedFunction(...))`, and
     any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`
     construction. Every concrete function returned by `build` must expose the same
     call signature — only the constants it closes over may differ across ages.
@@ -452,33 +479,17 @@ class AgeSpecializedGrid(_AgeSpecialized):
     against the resolved nodes at build time."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class AgeRange:
-    """The existing grid ages in the half-open interval `[start, stop)`.
-
-    Either bound may be omitted. The bounds need not be grid points; the
-    selection is always a subset of the model's ages.
-    """
-
-    start: UserAge | float | None = None
-    """Inclusive lower bound, or `None` for the first age."""
-
-    stop: UserAge | float | None = None
-    """Exclusive upper bound, or `None` for beyond the last age."""
-
-
 _MISSING = object()
-
-type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
 
 
 class ByAge:
     """A nonterminal regime transition that depends on the source age.
 
     Each case maps an age selector to a nonterminal law: a regime name, a
-    `Choose`, a vector `MarkovTransition` with `targets`, a per-target mapping,
-    or a `Phased` of those. The selected ages are where a law is available; a
-    schedule selects behavior and does not by itself create a solved problem.
+    `DeterministicTransition`, a vector `StochasticTransition`,
+    a per-target mapping, or a `Phased` of those. The selected ages are where a law
+    is available; a schedule selects behavior and does not itself create a
+    solved problem.
     `default` is a fallback law for every otherwise unmatched age, including the
     last.
 
@@ -486,7 +497,7 @@ class ByAge:
 
     - a scalar or a tuple of scalars selects those ages;
     - a `range` selects its integers;
-    - an `AgeRange` selects every grid age in `[start, stop)`.
+    - an `AgeRange` selects every grid age in `[start, exclusive_stop)`.
 
     Cases may not overlap. A law available at the last age is legal while no
     nonterminal problem is required there.
@@ -665,18 +676,6 @@ class _Until:
     """The first source age with a law, or `None` for the first grid age."""
 
 
-def _declared_targets(*, targets: Sequence[str], owner: str) -> tuple[str, ...]:
-    """Validate and freeze a declared regime support."""
-    frozen = tuple(targets)
-    if not frozen:
-        raise RegimeInitializationError(f"`{owner}.targets` must name a regime.")
-    if len(set(frozen)) != len(frozen):
-        raise RegimeInitializationError(
-            f"`{owner}.targets` names a regime more than once: {list(frozen)}."
-        )
-    return frozen
-
-
 _NESTED_SCHEDULE = (
     "`ByAge` cannot be nested inside `ByAge` or `Phased`. Put one `Phased` "
     "inside each `ByAge` case instead."
@@ -729,7 +728,9 @@ def _fail_if_invalid_age_selector(selector: object) -> None:
     """Reject selectors whose values can never be grid ages."""
     values = selector if isinstance(selector, tuple | range) else (selector,)
     if isinstance(selector, AgeRange):
-        values = tuple(v for v in (selector.start, selector.stop) if v is not None)
+        values = tuple(
+            v for v in (selector.start, selector.exclusive_stop) if v is not None
+        )
     for value in values:
         if isinstance(value, bool) or not isinstance(value, int | float | Fraction):
             raise RegimeInitializationError(
@@ -742,11 +743,12 @@ def _fail_if_invalid_age_selector(selector: object) -> None:
     if (
         isinstance(selector, AgeRange)
         and selector.start is not None
-        and selector.stop is not None
-        and selector.start >= selector.stop
+        and selector.exclusive_stop is not None
+        and selector.start >= selector.exclusive_stop
     ):
         raise RegimeInitializationError(
-            f"`AgeRange` start {selector.start} must be below stop {selector.stop}."
+            f"`AgeRange` start {selector.start} must be below exclusive_stop "
+            f"{selector.exclusive_stop}."
         )
 
 
@@ -759,7 +761,7 @@ def _select_periods(
             period
             for period, age in enumerate(ages.exact_values)
             if (selector.start is None or age >= selector.start)
-            and (selector.stop is None or age < selector.stop)
+            and (selector.exclusive_stop is None or age < selector.exclusive_stop)
         )
     values = selector if isinstance(selector, tuple | range) else (selector,)
     periods = set()

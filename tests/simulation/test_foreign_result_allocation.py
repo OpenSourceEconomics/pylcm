@@ -55,7 +55,7 @@ from tests.test_external_solver_conformance import (
 from tests.test_external_solver_conformance import (
     _solve as _solve_conformance,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 class _UnadmittedForeignCopyError(AssertionError):
@@ -479,11 +479,12 @@ def test_artifact_route_refuses_before_the_foreign_snapshot(
         regime.solution.artifact_authorities for regime in source._regimes.values()
     )
     model = Model(
+        edges=source.graph.edges,
         regimes=dict(source.user_regimes),
         ages=source.ages,
         regime_id_class=_ConformanceRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**28),
-        initial_regimes=initial_regimes_of(model=source),
+        initial_nodes=initial_nodes_of(model=source),
     )
     foreign = replace(_solve_conformance(model=source))
     assert foreign.replay_artifacts

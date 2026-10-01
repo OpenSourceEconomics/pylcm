@@ -15,8 +15,7 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -36,6 +35,7 @@ from tests.solution.test_egm_solver import (
     savings,
     terminal_utility,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _LAST_AGE = float(_N_PERIODS - 1)
@@ -67,8 +67,8 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "saving": MarkovTransition(func=prob_continue),
-                "done": MarkovTransition(func=prob_stop),
+                "saving": StochasticTransition(func=prob_continue),
+                "done": StochasticTransition(func=prob_stop),
             },
             exits=("done",),
         ),
@@ -88,9 +88,9 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         solver=GridSearch(),
     )
     with pytest.raises(ModelInitializationError, match="effort"):
-        Model(
+        with_fixture_graph(
             regimes={"saving": saving, "done": done},
-            ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+            ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
             regime_id_class=RegimeId,
-            initial_regimes={0: "saving"},
+            initial_nodes={0: "saving"},
         )

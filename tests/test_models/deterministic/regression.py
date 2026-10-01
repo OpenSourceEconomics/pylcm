@@ -7,10 +7,12 @@ configurable grid types for testing various grid classes.
 import jax.numpy as jnp
 
 from _lcm.grids import UniformContinuousGrid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -37,6 +39,7 @@ from lcm_examples.mortality import (
 from lcm_examples.mortality import (
     utility_working as utility,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -69,7 +72,9 @@ def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work until the age before `last_age`, then die."""
     return until_exit(
         last_age,
-        law=Choose(func=next_regime, targets=("working_life", "dead")),
+        law=_SupportedDeterministicTransition(
+            func=next_regime, targets=("working_life", "dead")
+        ),
         exits=("dead",),
     )
 
@@ -116,7 +121,7 @@ def get_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -130,10 +135,10 @@ def get_model(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 
