@@ -43,7 +43,9 @@ def abstract_program_inputs(
     described = replace(program, arguments=arguments)
     replacements: dict[int, jax.ShapeDtypeStruct] = {}
     for transfer in transfers:
-        read = ValueRead(target=transfer.target, source=transfer.source)
+        read = ValueRead(
+            target=transfer.target, source=transfer.source, view=transfer.view
+        )
         _validate_transfer_argument_metadata(
             program=program, read=read, transfer=transfer
         )
@@ -53,9 +55,13 @@ def abstract_program_inputs(
                 f"Duplicate abstract transfer locator: {transfer.source!r}."
             )
         replacements[id(occurrence)] = jax.ShapeDtypeStruct(
-            occurrence.shape,
+            transfer.consumer_shape,
             occurrence.dtype,
-            weak_type=getattr(occurrence, "weak_type", False),
+            weak_type=(
+                getattr(occurrence, "weak_type", False)
+                if transfer.view is None
+                else transfer.view.weak_type
+            ),
             sharding=transfer.source_sharding,
         )
     required: Mapping[str, object] = jax.tree.map(
