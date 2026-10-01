@@ -340,7 +340,7 @@ _SOURCE_SEALS = {
     SUPPORT_FINGERPRINT_SOURCE: "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677",
     UNIFORM_PROCESS_GRID_SOURCE: "03d7ac9a101a1c39c19b44df40d7bbc59203d361ca313b8b8812b1db392dcf96",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
-    NATIVE_VALUES_SOURCE: "8c6282f7f7c9361a97fcc314eb25a4a9cf966c3ef1987531b22a998070f8b6d1",
+    NATIVE_VALUES_SOURCE: "d366edb8c22dee4d09b6c5a32241ee5934a81d6116a0bb2d890bd252b38a5a1b",
     NATIVE_ARCHIVE_SOURCE: "87b71c4494f96a111f890220c633491887f1111930398377c780ff863e604827",
     SOLVE_PENDING_WORK_SOURCE: "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb",
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
@@ -4016,10 +4016,10 @@ _COMBINED_INPUT_CONTRACTS = {
     # Trusted single-array native values only. Artifact codec reconstruction
     # remains outside this claim; module surfaces pin imports and cache schemas.
     NATIVE_VALUES_SOURCE: (
-        "ca8218aa8a0056de894817393badcc26ec0f3b7f76e068de65aa7e10613234e6",
+        "ead19a09c1081b92dcd62ddce7a8a049b15b7430f5b3724073767fd4c3c0606d",
         {
             "NativeValueMaterializer.require_entry": "1e16de95d530e58382d789be1a135a8f9e759b2c6d00b03113205f665ad24c94",
-            "NativeValueMaterializer.__call__": "956262229fad7bece59b3b9c90008baa17f286df447e20d62eedc05bd0953a7f",
+            "NativeValueMaterializer.__call__": "9f60197dcab0e0ae12e0f2474b76a5c6dc70785f5c2360b6ba3f95dc3aeebf05",
         },
     ),
     NATIVE_ARCHIVE_SOURCE: (

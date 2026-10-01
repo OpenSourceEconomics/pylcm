@@ -378,7 +378,7 @@
           },
           {
             "path": "src/_lcm/solution/native_values.py",
-            "sha256": "8c6282f7f7c9361a97fcc314eb25a4a9cf966c3ef1987531b22a998070f8b6d1"
+            "sha256": "d366edb8c22dee4d09b6c5a32241ee5934a81d6116a0bb2d890bd252b38a5a1b"
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "aaba7c729f7723f63ac4d0a444dc99876b0c1978cd8b04af228b5c36cb0f7c64"
+        "source_inventory_sha256": "b18052670921f03a860340cac1a8c852424242bf1244a0836eaf1546e4829175"
       },
       "fast": {
         "candidate_sources": [
@@ -848,7 +848,7 @@
           },
           {
             "path": "src/_lcm/solution/native_values.py",
-            "sha256": "8c6282f7f7c9361a97fcc314eb25a4a9cf966c3ef1987531b22a998070f8b6d1"
+            "sha256": "d366edb8c22dee4d09b6c5a32241ee5934a81d6116a0bb2d890bd252b38a5a1b"
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "aaba7c729f7723f63ac4d0a444dc99876b0c1978cd8b04af228b5c36cb0f7c64"
+        "source_inventory_sha256": "b18052670921f03a860340cac1a8c852424242bf1244a0836eaf1546e4829175"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "aaba7c729f7723f63ac4d0a444dc99876b0c1978cd8b04af228b5c36cb0f7c64",
+  "source_inventory_sha256": "b18052670921f03a860340cac1a8c852424242bf1244a0836eaf1546e4829175",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1322,7 +1322,7 @@
     },
     {
       "path": "src/_lcm/solution/native_values.py",
-      "sha256": "8c6282f7f7c9361a97fcc314eb25a4a9cf966c3ef1987531b22a998070f8b6d1"
+      "sha256": "d366edb8c22dee4d09b6c5a32241ee5934a81d6116a0bb2d890bd252b38a5a1b"
     },
     {
       "path": "src/_lcm/solution/nbegm.py",

@@ -43,10 +43,28 @@ class NativeValueMaterializer:
                 "are not profiled."
             )
 
-    def __call__(self, *, entry: object) -> object:
-        """Verify/upload one cache bank, then return an admitted detached copy."""
-        self.require_entry(entry=entry)
-        return self._materialize_native(entry=entry, template_snapshot=None)
+    def __call__(
+        self,
+        *,
+        entry: object,
+        template_snapshot: _CanonicalArtifactTemplate | None = None,
+    ) -> object:
+        """Verify/upload one cache bank, then return an admitted detached copy.
+
+        Without `template_snapshot` the entry must be a single-array value; with it,
+        an archive artifact PyTree is rebuilt in that model-authoritative layout.
+        """
+        from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415
+
+        if template_snapshot is None:
+            self.require_entry(entry=entry)
+        native = cast("_LazyHdf5Entry", entry)
+        return native._materialize(  # noqa: SLF001 — trusted native engine boundary
+            template=None,
+            template_snapshot=template_snapshot,
+            array_writer=self.array_writer,
+            array_copier=self.array_copier,
+        )
 
     def materialize_artifact(
         self, *, entry: object, template_snapshot: object
@@ -62,9 +80,7 @@ class NativeValueMaterializer:
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Admitted artifact materialization requires a snapshot.")
         if type(entry) is _LazyHdf5Entry:
-            return self._materialize_native(
-                entry=entry, template_snapshot=template_snapshot
-            )
+            return self(entry=entry, template_snapshot=template_snapshot)
         if type(entry) is _CanonicalArtifactEntry:
             return entry.materialize_from_template_snapshot(
                 template_snapshot=template_snapshot, array_copier=self.array_copier
@@ -73,21 +89,4 @@ class NativeValueMaterializer:
             "Budgeted artifact materialization requires a built-in archive entry or "
             "an engine-owned payload; raw payloads and arbitrary decoders are not "
             "profiled."
-        )
-
-    def _materialize_native(
-        self,
-        *,
-        entry: object,
-        template_snapshot: _CanonicalArtifactTemplate | None,
-    ) -> object:
-        """Read one exact archive entry through the admitted writer and copier."""
-        from _lcm.persistence.solution import _LazyHdf5Entry  # noqa: PLC0415
-
-        native = cast("_LazyHdf5Entry", entry)
-        return native._materialize(  # noqa: SLF001 — trusted native engine boundary
-            template=None,
-            template_snapshot=template_snapshot,
-            array_writer=self.array_writer,
-            array_copier=self.array_copier,
         )
