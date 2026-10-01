@@ -40,10 +40,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   preallocation off: `XLA_PYTHON_CLIENT_MEM_FRACTION` is 0.75 for the serial policy
   launcher (`pixi run test`, `gpu32`, `gpu64`) and 0.1875 for the four-worker `tests`
   tasks, so each worker's default budget comes from its own slice.
-- Routes that cannot be budgeted --- `enable_jit=False`, forward simulation through host
-  gated or replay adapters, and a supplied foreign result with replay payloads --- refuse
-  the default budget as they refuse an explicit one; pass `device_memory_bytes=None` to
-  run them unbudgeted.
+- Routes that cannot be budgeted --- `enable_jit=False` and forward simulation through
+  host gated or replay adapters, which include adaptive outer-mesh NB-EGM replay and
+  external replay routes --- refuse the default budget as they refuse an explicit one;
+  pass `device_memory_bytes=None` to run them unbudgeted. A supplied result for such a
+  route is refused before any of it is read or copied.
+- A supplied foreign result, for example one restored by `load_solution` into a fresh
+  model, simulates under a budget, the GPU default included, wherever the route itself
+  can be budgeted, such as finite NB-EGM replay. Each archive leaf is verified on the
+  host and uploaded through budget admission; every private copy of values, simulation
+  policies and dissolution flags is admitted, and the replay is bitwise equal to the
+  unbudgeted one. A result whose values and policies cannot fit the remaining headroom
+  is refused, with the remedies, before anything is decoded or copied. Raw artifact
+  payloads in a hand-built result and arbitrary lazy decoders stay refused under a
+  budget. Known limitation, shared with the budgeted solve: validating against the
+  model's artifact authority still makes short-lived copies of its template arrays
+  outside admission.
 - Budgeted simulation of finite NB-EGM replay on GPU no longer charges the policy copy's
   host-side scratch to the device ceiling, which refused every such simulation with
   "names an unbudgeted device", and a warm budgeted call no longer retraces its process

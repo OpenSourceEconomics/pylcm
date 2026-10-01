@@ -290,11 +290,16 @@ allocator. It takes one of three values:
 - A positive integer: a budget you resolved for the hardware you will run on. The
   population count is not a memory budget.
 
-A few routes cannot be budgeted: `enable_jit=False`, forward simulation through host
-gated or replay adapters, and simulating from a supplied foreign result that carries
-replay payloads. They refuse any budget, the default included, with an error that names
-the budget's source and the remedies. Pass `device_memory_bytes=None` to run them
+A few routes cannot be budgeted: `enable_jit=False` and forward simulation through host
+gated or replay adapters, such as adaptive outer-mesh NB-EGM replay or an external
+solver's replay route. They refuse any budget, the default included, with an error that
+names the budget's source and the remedies. Pass `device_memory_bytes=None` to run them
 unbudgeted.
+
+A result this model did not solve, such as one restored by `load_solution`, simulates
+under a budget wherever its route can: every upload and private copy of its values,
+policies and flags is admitted. A result that cannot fit the remaining headroom is
+refused before any of it is read.
 
 You may pass a device's whole allocator pool limit. The model does not plan against all
 of it: `device_memory_headroom_fraction` (default `0.15`) is the share of each selected

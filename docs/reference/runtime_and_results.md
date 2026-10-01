@@ -183,7 +183,11 @@ Candidate measurement uses compilation, and admission fails closed:
 - a budget, explicit or the device default, requires JIT compilation. Supplied solutions
   are supported; forward programs and profiled host operations recheck their
   reservations against the current retained solution, inputs and growing outputs before
-  dispatch;
+  dispatch. A result this model did not solve, such as a restored archive, is copied
+  through admission: archive leaves are verified on the host before an admitted upload,
+  and every private copy of its values, simulation policies and dissolution flags is
+  admitted. One that cannot fit the remaining headroom is refused, with the remedies,
+  before anything is read;
 - a forward program without a profiled compiled implementation, including a host-driven
   route, is refused under any budget;
 - the selected widths are execution choices: they enter neither the model nor the

@@ -625,9 +625,20 @@ peek/publication lock. Admission snapshots never hold a cache lock across loadin
 allocation, so simultaneous entry loads can inspect the complete cached bank. These
 locks protect entry memoization; they do not coordinate budgets across concurrent
 mutations of an entire result. Loader callbacks remain call-local and do not enter the
-archive cache or consumed-view memo. Budgeted foreign artifact authorities, native
-artifact payloads and arbitrary lazy decoders remain unprofiled and are refused before
-their copying or upload callbacks. Their unbudgeted behavior is unchanged.
+archive cache or consumed-view memo.
+
+Budgeted foreign replay artifacts take the same route. Before the first copy, the bytes
+of one private copy of every value and simulation policy, read from engine-owned arrays
+or archive manifests, are checked against the remaining headroom; a result that cannot
+fit is refused before anything is decoded. Artifact stores are then validated against
+model authority around their own buffers, allocating nothing, and only the consumed
+policies and dissolution flags are materialized: an archive entry verifies each host
+leaf and uploads it through the admitted writer into its cache, an engine-owned entry is
+copied through the admitted copier, and canonicalization validates those copies in
+place. Raw artifact payloads and arbitrary lazy decoders are refused. A model whose
+forward route budgeted simulation cannot profile, such as a host replay route, refuses a
+supplied result before its snapshot. The authority's own template arrays are still
+copied outside admission while a result is validated, as in a budgeted solve.
 
 ## Forward simulation: subjects, gates and the prepared route
 
