@@ -9,7 +9,7 @@ interleavings.
 import logging
 import threading
 from collections.abc import Callable, Hashable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, ClassVar
 
 import jax
@@ -345,10 +345,18 @@ def test_lower_and_compile_wave_lowering_error_stops_the_wave_at_once(
 def _run_failing_second_compile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
-    """Raise a distinct error from the second program's compile worker."""
+    """Raise a distinct error from the second program's compile worker.
+
+    Two compile workers. The first compile is held until the third has finished,
+    and the third program is lowered only after the second compile has failed, so
+    the error is already known while the first compile still runs and the third
+    has yet to be lowered.
+    """
     kwargs, _ = _wave_kwargs(n=1, n_workers=2)
     original_compile = backward_induction._compile_and_log
+    original_fanout = backward_induction.log_module_fanout
     compile_error = ValueError("distinct second-compilation error")
+    release_first = threading.Event()
     completed: set[str] = set()
     lock = threading.Lock()
 
@@ -356,20 +364,41 @@ def _run_failing_second_compile(
         key = arguments["lowering_key"]
         if key == "second":
             raise compile_error
+        if key == "first":
+            release_first.wait(_WAIT_SECONDS)
         result = original_compile(**arguments)
         with lock:
             completed.add(key)
+        if key == "third":
+            release_first.set()
         return result
 
+    def fanout_after_second_failed(**arguments: Any) -> None:
+        (pool,) = _RecordingExecutor.instances
+        if len(pool.futures) == 2:
+            wait(pool.futures[1:], timeout=_WAIT_SECONDS)
+        original_fanout(**arguments)
+
+    _RecordingExecutor.instances = []
+    monkeypatch.setattr(backward_induction, "ThreadPoolExecutor", _RecordingExecutor)
     monkeypatch.setattr(backward_induction, "_compile_and_log", fail_second)
+    monkeypatch.setattr(
+        backward_induction, "log_module_fanout", fanout_after_second_failed
+    )
     raised: BaseException | None = None
     try:
         backward_induction._lower_and_compile_wave(**kwargs)
     except Exception as exc:  # noqa: BLE001
         raised = exc
+    with lock:
+        completed_on_return = set(completed)
+    release_first.set()
+    (pool,) = _RecordingExecutor.instances
+    for thread in tuple(pool._threads):
+        thread.join(_WAIT_SECONDS)
     return {
         "raised_is_compile_error": raised is compile_error,
-        "others_completed": completed == {"first", "third"},
+        "others_completed": completed_on_return == {"first", "third"},
     }
 
 
@@ -379,7 +408,8 @@ def test_lower_and_compile_wave_worker_exception_propagates(
 ) -> None:
     """A compile worker's exception propagates as the same object.
 
-    The wave still waits for every other submitted compile to finish.
+    The wave still lowers every program and waits for every other compile to
+    finish before raising, so no compile keeps running after the error.
     """
     assert _run_failing_second_compile(monkeypatch)[observation]
 
