@@ -347,16 +347,16 @@ def _run_failing_second_compile(
 ) -> dict[str, Any]:
     """Fail the second of five compiles while the first compile is still running.
 
-    Two compile workers. The first and third compiles are held until released,
-    and the second compile fails only once the third and fourth programs are
-    submitted. Its worker then takes the third compile, so the fourth is queued
-    but not started when the failure is seen before the fifth lowering.
+    Two compile workers. The first and third compiles are held until released.
+    Submitting the fourth compile releases the second, which fails, and returns
+    only once that failure is recorded. The second's worker then takes the third
+    compile, so the fourth is queued but not started when the wave next checks
+    for compile errors, before the fifth lowering.
     """
     keys = ("first", "second", "third", "fourth", "fifth")
     kwargs, _ = _wave_kwargs(n=1, n_workers=2, keys=keys)
     original_compile = backward_induction._compile_and_log
     original_roles = backward_induction._assert_lowered_output_roles
-    original_fanout = backward_induction.log_module_fanout
     compile_error = ValueError("distinct second-compilation error")
     release_held = threading.Event()
     release_second = threading.Event()
@@ -383,21 +383,21 @@ def _run_failing_second_compile(
         lowered.append(arguments["label"])
         original_roles(**arguments)
 
-    def fanout_after_second_failed(**arguments: Any) -> None:
-        (pool,) = _RecordingExecutor.instances
-        if len(pool.futures) == 4:
-            release_second.set()
-            wait(pool.futures[1:2], timeout=_WAIT_SECONDS)
-        original_fanout(**arguments)
+    class FailSecondOnFourthSubmit(_RecordingExecutor):
+        def submit(self, *args: Any, **kwargs: Any) -> Future:
+            future = super().submit(*args, **kwargs)
+            if len(self.futures) == 4:
+                release_second.set()
+                wait(self.futures[1:2], timeout=_WAIT_SECONDS)
+            return future
 
     _RecordingExecutor.instances = []
-    monkeypatch.setattr(backward_induction, "ThreadPoolExecutor", _RecordingExecutor)
+    monkeypatch.setattr(
+        backward_induction, "ThreadPoolExecutor", FailSecondOnFourthSubmit
+    )
     monkeypatch.setattr(backward_induction, "_compile_and_log", held_or_failing_compile)
     monkeypatch.setattr(
         backward_induction, "_assert_lowered_output_roles", record_lowering
-    )
-    monkeypatch.setattr(
-        backward_induction, "log_module_fanout", fanout_after_second_failed
     )
     raised: BaseException | None = None
     try:
