@@ -73,8 +73,8 @@ def _build(
 ) -> Model:
     """Build the NB-EGM toy, unbudgeted unless a config is given.
 
-    A budget refuses simulation from a foreign NB-EGM solution and adaptive replay
-    (pylcm#481), so the round trips here run unbudgeted on every backend.
+    A budget refuses simulation from a foreign NB-EGM solution and adaptive replay,
+    so the round trips here run unbudgeted on every backend.
     """
     return toy.build_model(
         variant="n_nbegm",

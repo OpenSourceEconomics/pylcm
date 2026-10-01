@@ -279,10 +279,10 @@ allocator. It takes one of three values:
   without preallocation the allocator grows its pool in separate regions and the limit
   does not promise one contiguous block. If you set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` (to share a GPU on demand, say), pass an integer
-  or `None`; the default is refused there unless `TF_GPU_ALLOCATOR=cuda_malloc_async` is
-  set. Processes sharing a GPU can instead each keep preallocation and set
-  `XLA_PYTHON_CLIENT_MEM_FRACTION` to their share; each one's default budget is derived
-  from its own slice.
+  or `None`; the default is refused there unless
+  `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Processes sharing a GPU can instead
+  each keep preallocation and set `XLA_PYTHON_CLIENT_MEM_FRACTION` to their share; each
+  one's default budget is derived from its own slice.
 - `None`: no admission. Every axis you leave out compiles at its conservative bootstrap
   width, at most 64 for a reduced axis such as `action_product` and 1,024 for a tiled
   axis such as `cell`. That is slower, and it can still exhaust device memory, because

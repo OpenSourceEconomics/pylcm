@@ -59,8 +59,8 @@ _REFUSING_INITIAL = {
 
 
 def _build(route: str) -> Model:
-    # Adaptive replay cannot run under a device-memory budget yet (pylcm#481), so
-    # that route is built unbudgeted on every backend.
+    # Adaptive replay cannot run under a device-memory budget, so that route is
+    # built unbudgeted on every backend.
     return toy.build_model(
         variant="n_nbegm",
         n_periods=_N_PERIODS,

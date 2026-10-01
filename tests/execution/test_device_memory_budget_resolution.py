@@ -36,6 +36,7 @@ _POOL_LIMIT = 48_000_000_000
 def _preallocated_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Model a preallocated device pool, whatever the test environment sets."""
     monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "true")
+    monkeypatch.delenv("XLA_PYTHON_CLIENT_ALLOCATOR", raising=False)
     monkeypatch.delenv("TF_GPU_ALLOCATOR", raising=False)
 
 
@@ -521,6 +522,13 @@ def test_visible_device_pool_limits_tolerates_a_missing_counter() -> None:
     assert dict(visible_device_pool_limits(devices=devices)) == {0: None}
 
 
+def test_visible_device_pool_limits_reads_a_zero_limit_as_unreported() -> None:
+    """An on-demand pool, such as the async allocator's, reports a limit of 0."""
+    devices = (_FakeMemoryStatsDevice(device_id=0, bytes_limit=0),)
+
+    assert dict(visible_device_pool_limits(devices=devices)) == {0: None}
+
+
 def test_visible_device_pool_limits_reads_every_visible_device_by_default() -> None:
     """Called with no argument the helper reads what JAX reports."""
     limits = visible_device_pool_limits()
@@ -694,7 +702,7 @@ def test_the_default_budget_refuses_a_pool_without_preallocation(
 
     message = str(refusal.value)
     assert "XLA_PYTHON_CLIENT_PREALLOCATE=true" in message
-    assert "TF_GPU_ALLOCATOR=cuda_malloc_async" in message
+    assert "XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async" in message
     assert "ExecutionConfig(device_memory_bytes=...)" in message
     assert "device_memory_bytes=None" in message
 
@@ -704,9 +712,20 @@ def test_the_default_budget_admits_the_async_allocator_without_preallocation(
 ) -> None:
     """The async allocator does not grow the pool in separate BFC regions."""
     monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-    monkeypatch.setenv("TF_GPU_ALLOCATOR", "cuda_malloc_async")
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_ALLOCATOR", "cuda_async")
 
     assert _default_budget_on_one_pool().budget_source == "device"
+
+
+def test_the_default_budget_refuses_tf_gpu_allocator_without_preallocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JAX ignores `TF_GPU_ALLOCATOR`, so the pool is still a growing BFC pool."""
+    monkeypatch.setenv("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    monkeypatch.setenv("TF_GPU_ALLOCATOR", "cuda_malloc_async")
+
+    with pytest.raises(ExecutionPlanningError):
+        _default_budget_on_one_pool()
 
 
 def test_an_explicit_budget_is_admitted_without_preallocation(

@@ -60,9 +60,9 @@ Its fields:
     also requires a preallocated pool, which is JAX's default: with
     `XLA_PYTHON_CLIENT_PREALLOCATE=false` the BFC allocator grows the pool in separate
     regions, so the limit does not promise one contiguous block, and resolution refuses
-    the default unless `TF_GPU_ALLOCATOR=cuda_malloc_async` is set. Pass an integer or
-    `None` to run on an on-demand pool. `XLA_PYTHON_CLIENT_MEM_FRACTION` sets the pool,
-    and with it the default budget, for each process sharing a GPU.
+    the default unless `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Pass an integer
+    or `None` to run on an on-demand pool. `XLA_PYTHON_CLIENT_MEM_FRACTION` sets the
+    pool, and with it the default budget, for each process sharing a GPU.
   - `None` omits memory-budget admission; every omitted width takes its bootstrap width.
   - A positive integer is a ceiling every route must honour, and a route that cannot be
     budgeted refuses it. It may be the device's whole allocator pool limit: the model

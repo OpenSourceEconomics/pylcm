@@ -368,12 +368,13 @@ def _fail_if_the_pool_grows_in_regions() -> None:
     Without preallocation the BFC allocator grows its pool in separate regions,
     so free bytes below the pool limit need not form one contiguous block and a
     single buffer the budget admits can still fail to allocate. The async
-    allocator does not grow that way.
+    allocator, selected with `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async`, does not
+    grow that way; JAX does not read `TF_GPU_ALLOCATOR`.
     """
     preallocate = os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE", "true").lower()
     if preallocate not in {"false", "0"}:
         return
-    if os.environ.get("TF_GPU_ALLOCATOR") == "cuda_malloc_async":
+    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "").lower() == "cuda_async":
         return
     msg = (
         "ExecutionConfig.device_memory_bytes='device' derives the budget from the "
@@ -381,7 +382,7 @@ def _fail_if_the_pool_grows_in_regions() -> None:
         f"{os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']!r}: the allocator then "
         "grows its pool in separate regions, so the limit does not promise one "
         "contiguous block. Set XLA_PYTHON_CLIENT_PREALLOCATE=true or "
-        "TF_GPU_ALLOCATOR=cuda_malloc_async before JAX initialises, or pass an "
+        "XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async before JAX initialises, or pass an "
         "explicit ExecutionConfig(device_memory_bytes=...) (or "
         "device_memory_bytes=None to disable admission)."
     )
@@ -553,7 +554,8 @@ def visible_device_pool_limits(
     """Return each device's allocator pool limit in bytes, by device id.
 
     The query is tolerant because reporting is backend-specific: a device whose
-    backend returns no counters, omits `bytes_limit`, or fails the query
+    backend returns no counters, omits `bytes_limit`, reports a limit of 0 (an
+    on-demand pool such as the async allocator's), or fails the query
     contributes `None`, which places no cap on a requested budget.
 
     Args:
@@ -578,7 +580,7 @@ def _pool_limit_bytes(*, device: SupportsMemoryStats) -> int | None:
     if stats is None:
         return None
     limit = stats.get("bytes_limit")
-    return limit if isinstance(limit, int) else None
+    return limit if isinstance(limit, int) and limit > 0 else None
 
 
 def execution_over_visible_devices() -> ResolvedExecution:
