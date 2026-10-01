@@ -33,7 +33,7 @@ from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     JointTransition,
-    MarkovTransition,
+    StochasticTransition,
 )
 
 if TYPE_CHECKING:
@@ -351,7 +351,7 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
 
     Checks the properties knowable without the other
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
-    gate — a `MarkovTransition` — is not implemented); every declared edge
+    gate — a `StochasticTransition` — is not implemented); every declared edge
     targets one of the regime's reachable transition targets; the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
     per stakeholder for a collective source). Cross-regime properties — the
@@ -374,10 +374,10 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
 
     for target_name, edge in regime.gated_edges.items():
         prefix = f"the value-dependent transition into {target_name!r}: "
-        if isinstance(edge.gate, MarkovTransition):
+        if isinstance(edge.gate, StochasticTransition):
             error_messages.append(
                 f"{prefix}the gate must be a plain boolean function. A "
-                "`MarkovTransition` (stochastic / probabilistic gate) is not "
+                "`StochasticTransition` (stochastic / probabilistic gate) is not "
                 "implemented — a gated edge routes on a boolean gate."
             )
         elif not callable(edge.gate):
@@ -429,7 +429,7 @@ def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
 def _regime_transition_target_names(transition: object) -> set[str] | None:
     """Return the reachable target regime names of a regime transition, if known.
 
-    A per-target dict names them directly; a bare callable or `MarkovTransition`
+    A per-target dict names them directly; a bare callable or `StochasticTransition`
     resolves its target only at runtime, so returns `None` (skip the membership
     check). `Phased` uses its solve variant.
     """
@@ -562,11 +562,12 @@ def _state_transition_marker_errors(
     error_messages: list[str] = []
     for name, value in state_transitions.items():
         for node in _iter_transition_nodes(value):
-            if isinstance(node, MarkovTransition) and isinstance(
+            if isinstance(node, StochasticTransition) and isinstance(
                 node.func, AgeSpecializedFunction
             ):
                 error_messages.append(
-                    f"state_transitions['{name}']: a `MarkovTransition` wrapping an "
+                    f"state_transitions['{name}']: a `StochasticTransition` "
+                    "wrapping an "
                     f"`AgeSpecializedFunction` (a policy-specialized stochastic "
                     f"transition) is not supported.",
                 )
@@ -590,7 +591,7 @@ def _first_age_specialized_ancestor_of_transition(
 
     Walks the regime transition's parameter names transitively through plain
     entries of `functions` and `constraints` (unwrapping `Phased` sides, per-target
-    dicts, and `MarkovTransition` wrappers along the way) — both are documented,
+    dicts, and `StochasticTransition` wrappers along the way) — both are documented,
     equally legal homes for an `AgeSpecializedFunction`. Returns the first
     specialized function name reached, or `None` when the transition's dependency
     graph is policy-free.
@@ -625,7 +626,7 @@ def _transition_node_arg_names(value: object) -> list[str]:
     """List the parameter names of every callable node inside a transition value."""
     names: list[str] = []
     for node in _iter_transition_nodes(value):
-        func = node.func if isinstance(node, MarkovTransition) else node
+        func = node.func if isinstance(node, StochasticTransition) else node
         if callable(func):
             try:
                 names.extend(inspect.signature(func).parameters)
@@ -650,7 +651,7 @@ def _age_specialized_scope_errors(
 
     - a `regime_transitions` declaration that is (or contains) an
       `AgeSpecializedFunction` — a policy-specialized *regime* transition;
-    - a `MarkovTransition` wrapping an `AgeSpecializedFunction` in a state
+    - a `StochasticTransition` wrapping an `AgeSpecializedFunction` in a state
       transition — a policy-specialized *stochastic* transition;
     - an `AgeSpecializedFunction` directly as a state-transition value — express the
       policy-dependent law of motion as a plain transition reading an
@@ -667,14 +668,14 @@ def _age_specialized_scope_errors(
     if any(
         isinstance(node, AgeSpecializedFunction)
         or (
-            isinstance(node, MarkovTransition)
+            isinstance(node, StochasticTransition)
             and isinstance(node.func, AgeSpecializedFunction)
         )
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
             "`regime_transitions` cannot be an `AgeSpecializedFunction`, bare or "
-            "wrapped in `MarkovTransition`: age-specialized regime transitions are "
+            "wrapped in `StochasticTransition`: age-specialized regime transitions are "
             "not supported. Specialize `functions` or `constraints` instead.",
         )
 
@@ -713,8 +714,8 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
     """Validate the vocabulary of a regime's `regime_transitions`.
 
     A `Phased` container's sides are each held to the bare vocabulary
-    (callable, `MarkovTransition`, or a per-target dict); per-target cells
-    must be `MarkovTransition`-wrapped probability functions.
+    (callable, `StochasticTransition`, or a per-target dict); per-target cells
+    must be `StochasticTransition`-wrapped probability functions.
     """
     error_messages: list[str] = []
     sides = (
@@ -746,12 +747,12 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
                     f"`Phased` is outermost-only: wrap the whole entry, e.g. "
                     f"`Phased(solve={{...}}, simulate={{...}})`.",
                 )
-            elif not isinstance(cell, MarkovTransition):
+            elif not isinstance(cell, StochasticTransition):
                 error_messages.append(
                     f"transition{label}['{target_regime_name}'] must be a "
-                    f"`MarkovTransition`-wrapped probability function — "
+                    f"`StochasticTransition`-wrapped probability function — "
                     f"deterministic per-target regime transitions are not yet "
-                    f"supported (use the coarse form, or `MarkovTransition` "
+                    f"supported (use the coarse form, or `StochasticTransition` "
                     f"with indicator probabilities).",
                 )
     return error_messages
@@ -1323,7 +1324,7 @@ def _phased_per_target_shape_mismatch(
     Accepted:
 
     - **Both bare** — one coarse law per phase, sharing a single parameter leaf.
-    - **Both per-target over the same targets** — paired cell by cell.
+    - **Both per-target** — each phase declares its own target laws.
     - **Per-target on one side, a parameter-free bare law on the other** — the bare
       law broadcasts over the other side's targets, exactly as a bare state law does
       outside `Phased`. Carrying no parameter, it contributes no template leaf, so
@@ -1331,8 +1332,6 @@ def _phased_per_target_shape_mismatch(
 
     Rejected:
 
-    - **Two per-target dicts over different targets** — a target would carry a law
-      in one phase and none in the other, with no authoritative key set.
     - **A parameterized bare law opposite a per-target dict** — the params template
       would show one leaf per target while the law binds a single node, so all but
       one leaf is dead and setting them differently is silently ignored. Spell it
@@ -1342,18 +1341,6 @@ def _phased_per_target_shape_mismatch(
     solve_per_target = isinstance(value.solve, Mapping)
     simulate_per_target = isinstance(value.simulate, Mapping)
     if solve_per_target and simulate_per_target:
-        solve_targets = set(cast("Mapping[RegimeName, object]", value.solve))
-        simulate_targets = set(cast("Mapping[RegimeName, object]", value.simulate))
-        if solve_targets != simulate_targets:
-            return [
-                (
-                    f"state_transitions['{name}']: the per-target dicts inside "
-                    f"`Phased` declare different targets — solve has "
-                    f"{sorted(solve_targets)}, simulate has "
-                    f"{sorted(simulate_targets)}. Both phases must cover the same "
-                    f"targets."
-                ),
-            ]
         return []
     if solve_per_target == simulate_per_target:
         # Both bare: one coarse node (parameterized or not) — nothing to reject.
@@ -1410,7 +1397,7 @@ def _state_transition_value_errors(
     """Validate one `state_transitions` entry against the value vocabulary.
 
     Each variant of a `Phased` entry is held to the vocabulary of a bare value —
-    callable, `MarkovTransition`, or a per-target Mapping. A stochastic variant is
+    callable, `StochasticTransition`, or a per-target Mapping. A stochastic variant is
     allowed: the solve variant is the perceived law that prices the continuation,
     the simulate variant the true law the next state is drawn from.
 
@@ -1455,7 +1442,7 @@ def _state_transition_value_errors(
         else:
             error_messages.append(
                 f"state_transitions['{name}']{label} must be callable, "
-                f"MarkovTransition, `fixed_transition(...)`, or a per-target "
+                f"StochasticTransition, `fixed_transition(...)`, or a per-target "
                 f"Mapping, got {type(variant).__name__}.",
             )
     return error_messages
@@ -1502,9 +1489,9 @@ def _is_folded(grid: object) -> bool:
 def _flatten_transition_callables(value: object) -> list[Callable]:
     """Return every callable reachable from a state or regime transition entry.
 
-    Unwraps `Phased` (both variants) and per-target `Mapping`s; `MarkovTransition`
+    Unwraps `Phased` (both variants) and per-target `Mapping`s; `StochasticTransition`
     and `_IdentityTransition` are themselves callables with an introspectable
-    signature (`MarkovTransition` sets `__wrapped__`; `_IdentityTransition` sets
+    signature (`StochasticTransition` sets `__wrapped__`; `_IdentityTransition` sets
     `__signature__`), so `inspect.signature` resolves them correctly downstream.
     """
     if value is None:
@@ -1743,20 +1730,18 @@ def _reachable_regime_targets(
 ) -> frozenset[RegimeName]:
     """The regimes this one's transition can structurally reach.
 
-    A per-target dict declares its own key set. A ``Phased`` transition is
-    classified through either already-validated variant, whose form and target
-    keys agree by the phase grammar. Every remaining form is coarse and reaches
-    every regime in the model.
+    A per-target dict declares its own key set. A `Phased` transition contributes
+    the union of its two variants for checks that apply to the entire regime.
+    Every remaining form is coarse and reaches every regime in the model.
     """
     transition = regime.regime_transitions
     if transition is None:
         return frozenset()
     if isinstance(transition, Phased):
-        # The phase grammar requires both variants to have the same form and,
-        # for per-target mappings, the same target keys. Resolve either side
-        # before classifying the transition; treating the outer marker as a
-        # coarse callable would falsely connect this source to every regime.
-        transition = transition.solve
+        sides = (transition.solve, transition.simulate)
+        if all(isinstance(side, Mapping) for side in sides):
+            return frozenset(target for side in sides for target in side)
+        return frozenset(user_regimes)
     if isinstance(transition, Mapping):
         return frozenset(transition)
     return frozenset(user_regimes)
@@ -1990,7 +1975,7 @@ def _validate_per_target_dict(
                 f"be `Phased` — `Phased` is outermost-only: wrap the whole "
                 f"entry, e.g. `Phased(solve={{...}}, simulate={{...}})`.",
             )
-        elif isinstance(law, MarkovTransition):
+        elif isinstance(law, StochasticTransition):
             markov_count += 1
         elif isinstance(law, _IdentityTransition):
             error_messages.extend(
@@ -2003,14 +1988,14 @@ def _validate_per_target_dict(
         elif not callable(law):
             error_messages.append(
                 f"state_transitions['{state_name}']['{target_regime_name}'] must be "
-                f"callable or MarkovTransition, got "
+                f"callable or StochasticTransition, got "
                 f"{type(law).__name__}.",
             )
     if 0 < markov_count < len(targets):
         error_messages.append(
             f"state_transitions['{state_name}'] per-target dict must be "
             f"consistently stochastic: either all values are "
-            f"MarkovTransition or none are.",
+            f"StochasticTransition or none are.",
         )
     return error_messages
 

@@ -24,9 +24,8 @@ import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation, PowerMean, QuasiArithmeticMean
 from _lcm.power_mean import weighted_power_mean, weighted_power_mean_of_pair
-from _lcm.probability import is_negative
+from _lcm.probability import is_negative, regime_mass_is_a_distribution
 from _lcm.regime_building.Q_and_F import (
-    _regime_mass_is_a_distribution,
     _values_without_impossible_nodes,
 )
 
@@ -111,7 +110,7 @@ def test_a_negative_subnormal_fails_the_regime_distribution_guard() -> None:
     mass = jnp.asarray(1.0, dtype=dtype) + negative
 
     assert not bool(
-        _regime_mass_is_a_distribution(
+        regime_mass_is_a_distribution(
             probability_mass=mass, has_negative_probability=is_negative(negative)
         )
     )
@@ -124,7 +123,7 @@ def test_a_lottery_of_valid_probabilities_passes_the_guard() -> None:
     mass = jnp.asarray(1.0, dtype=dtype) + rare
 
     assert bool(
-        _regime_mass_is_a_distribution(
+        regime_mass_is_a_distribution(
             probability_mass=mass, has_negative_probability=is_negative(rare)
         )
     )

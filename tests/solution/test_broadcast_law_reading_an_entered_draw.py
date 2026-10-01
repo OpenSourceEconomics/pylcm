@@ -19,13 +19,14 @@ import numpy as np
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 # `sigma=0.5, n_std=2` at three points puts symmetric nodes on `mu + (-1, 0, 1)`, so
 # each draw has mean `mu` whatever weights the discretization assigns its nodes.
@@ -67,11 +68,11 @@ def _next_wealth_from_draw(next_shock: ContinuousState) -> ScalarFloat:
 
 def _build(state_transitions) -> Model:
     """Two targets whose processes are centred three units apart."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions={
-                    t: MarkovTransition(func=_half) for t in ("a", "b")
+                    t: StochasticTransition(func=_half) for t in ("a", "b")
                 },
                 state_transitions=state_transitions,
                 functions={"utility": _no_utility},
@@ -87,9 +88,9 @@ def _build(state_transitions) -> Model:
                 functions={"utility": _wealth_plus_shock},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

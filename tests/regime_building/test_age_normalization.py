@@ -38,7 +38,7 @@ from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 
 def _ages() -> AgeGrid:
     # Ages 20..24 -> periods 0..4.
-    return AgeGrid(start=20, stop=24, step="Y")
+    return AgeGrid(start=20, inclusive_stop=24, step="Y")
 
 
 def _utility(*, consumption: float, extra: float) -> float:

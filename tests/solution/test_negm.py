@@ -30,7 +30,6 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     LiquidMargin,
-    Model,
     NestedConsumptionSavingsRegime,
     NormalIIDProcess,
     OuterContinuousMargin,
@@ -45,6 +44,7 @@ from lcm.solvers import (
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
+from tests.test_models.graph import with_fixture_graph
 
 _INNER = DCEGM(
     savings_grid=LinSpacedGrid(start=0.0, stop=30.0, n_points=40),
@@ -182,17 +182,17 @@ def test_negm_configuration_does_not_change_reachability() -> None:
     )
     ages = AgeGrid(
         start=20,
-        stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5,
+        inclusive_stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5,
         step="5Y",
     )
-    negm_model = Model(
+    negm_model = with_fixture_graph(
         regimes={"alive": alive, "dead": negm_kinked_toy.build_dead_regime()},
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
-    grid_search_model = Model(
+    grid_search_model = with_fixture_graph(
         regimes={
             "alive": alive.replace(solver=GridSearch()),
             "dead": negm_kinked_toy.build_dead_regime(),
@@ -200,7 +200,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=ages,
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
     assert negm_model.reachability == grid_search_model.reachability

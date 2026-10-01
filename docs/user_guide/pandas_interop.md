@@ -130,7 +130,7 @@ Fix this by declaring the grid on the `Regime` that uses it:
 
 ```python
 working = Regime(
-    # ... other fields ...
+    # Other regime fields are omitted in this fragment.
     derived_categoricals={
         "employment_type": DiscreteGrid(category_class=EmploymentType)
     },
@@ -142,13 +142,13 @@ own grid:
 
 ```python
 working = Regime(
-    # ... other fields ...
+    # Other regime fields are omitted in this fragment.
     derived_categoricals={
         "employment_type": DiscreteGrid(category_class=FullEmploymentType)
     },
 )
 retired = Regime(
-    # ... other fields ...
+    # Other regime fields are omitted in this fragment.
     derived_categoricals={
         "employment_type": DiscreteGrid(category_class=RetiredEmploymentType)
     },
@@ -163,7 +163,10 @@ Model(
     derived_categoricals={
         "employment_type": DiscreteGrid(category_class=EmploymentType)
     },
-    # ... other fields ...
+    ages=ages,
+    regime_id_class=RegimeId,
+    edges=edges,
+    initial_nodes=initial_nodes,
 )
 ```
 
@@ -208,4 +211,4 @@ call them directly.
   API
 - [Parameters](parameters.md) — where transition probability arrays go in the params
   dict
-- [Regimes](regimes.ipynb) — defining `MarkovTransition` state transitions
+- [Regimes](regimes.ipynb) — defining `StochasticTransition` state transitions

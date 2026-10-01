@@ -13,7 +13,7 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
@@ -21,6 +21,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
@@ -29,7 +30,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
             axis_widths={"subject": 2},
             device_memory_bytes=2**32,
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")

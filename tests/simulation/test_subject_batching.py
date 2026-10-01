@@ -3,7 +3,7 @@
 The ExecutionConfig subject width controls how many subjects enter the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
 identical whether subjects run in a single pass (`0`) or in chunks (`> 0`). The model
-used here has both a categorical `MarkovTransition` (health) and a continuous shock
+used here has both a categorical `StochasticTransition` (health) and a continuous shock
 process (income), so the per-subject RNG feeds both `jax.random.choice` and
 `draw_shock` — the case that would silently diverge if a subject's draws depended on
 the chunk it lands in.
@@ -17,7 +17,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import ExecutionConfig, Model
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -41,6 +41,7 @@ def _simulate_df(
 ) -> pd.DataFrame:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
@@ -50,7 +51,7 @@ def _simulate_df(
             if subject_batch_size == 0
             else {"subject": subject_batch_size}
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     result = model.simulate(
@@ -140,6 +141,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     """
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
@@ -148,7 +150,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=None
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     result = model.simulate(

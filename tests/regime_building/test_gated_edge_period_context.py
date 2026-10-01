@@ -17,7 +17,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -27,10 +27,11 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _BETA = 0.5
-_AGES = AgeGrid(start=40, stop=50, step="5Y")
+_AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
 _N_SUBJECTS = 2
 
@@ -144,14 +145,14 @@ def _make_model(
         if gate_open
         else _context_gate_closed
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     45,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(func=_prob_one),
+                            probability=StochasticTransition(func=_prob_one),
                             gate=gate,
                             routes={
                                 "only": StakeholderRoute(
@@ -224,7 +225,7 @@ def _make_model(
         },
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={40: "source"},
+        initial_nodes={40: "source"},
     )
 
 

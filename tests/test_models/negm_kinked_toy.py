@@ -22,9 +22,11 @@ The outer search runs over `new_durable` with the no-adjustment candidate
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -45,6 +47,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 N_X = 12
@@ -184,7 +187,9 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
         },
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -229,14 +234,14 @@ def build_model(
 ) -> Model:
     """Build the kinked-toy NEGM model (the G1 parity target)."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": build_alive_regime(),
             "dead": build_dead_regime(),
         },
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )

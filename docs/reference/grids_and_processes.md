@@ -11,8 +11,8 @@ an outcome grid and its transition mechanism.
 
 ## Lifecycle and categorical grids
 
-- `AgeGrid(start, stop, step=...)` defines the lifecycle. `exact_values=...` can declare
-  irregular ages.
+- `AgeGrid(start=..., inclusive_stop=..., step=...)` defines the lifecycle.
+  `exact_values=...` can declare irregular ages.
 - `@categorical(ordered=True|False)` creates a categorical code class. Every annotated
   field uses `ScalarInt` and receives a consecutive `jnp.int32` code.
 - `DiscreteGrid(category_class=Category)` turns that category class into a state or

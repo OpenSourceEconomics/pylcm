@@ -19,9 +19,9 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -29,6 +29,7 @@ from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -57,17 +58,17 @@ def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _work_transition() -> dict[str, MarkovTransition]:
+def _work_transition() -> dict[str, StochasticTransition]:
     return {
-        "retired": MarkovTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
+        "retired": StochasticTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
+        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
     }
 
 
-def _retired_transition() -> dict[str, MarkovTransition]:
+def _retired_transition() -> dict[str, StochasticTransition]:
     return {
-        "retired": MarkovTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
+        "retired": StochasticTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
+        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
     }
 
 
@@ -106,11 +107,11 @@ def _build_model(**model_slots: Any) -> Model:
             ),
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
         **model_slots,
     )
 

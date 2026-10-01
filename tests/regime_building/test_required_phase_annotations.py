@@ -12,10 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -26,6 +28,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt, UserFunction
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -80,7 +83,10 @@ def _demand_model(
     perceived = ByAge(
         cases={
             age: Phased(
-                solve="end", simulate=Choose(func=choice, targets=("end", "other_end"))
+                solve="end",
+                simulate=_SupportedDeterministicTransition(
+                    func=choice, targets=("end", "other_end")
+                ),
             )
             for age, choice in choices
         }
@@ -88,10 +94,10 @@ def _demand_model(
     roots: dict[object, str] = {(0, 1): "source"}
     if promote:
         roots[promote] = "perceived"
-    return Model(
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DemandId,
-        initial_regimes=roots,
+        initial_nodes=roots,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={

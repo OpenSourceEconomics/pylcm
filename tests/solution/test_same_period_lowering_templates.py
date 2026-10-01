@@ -28,11 +28,11 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -40,6 +40,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
@@ -119,7 +120,7 @@ def test_program_builder_templates_the_same_period_slot_with_the_reference_V() -
                 {"couple": MappingProxyType({}), "single": MappingProxyType({})}
             ),
             period=0,
-            ages=AgeGrid(start=0, stop=2, step="Y"),
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             edge_regime_to_V_arr=MappingProxyType({"single": jnp.zeros((3, 2))}),
         )
     )
@@ -170,7 +171,7 @@ def _build_model() -> Model:
             1,
             law={
                 "single": ValueDependentTransition(
-                    probability=MarkovTransition(func=_probability_of_separating),
+                    probability=StochasticTransition(func=_probability_of_separating),
                     gate=_wage_clears_the_floor,
                     routes={
                         "f": StakeholderRoute(
@@ -222,16 +223,16 @@ def _build_model() -> Model:
         states={"wage": _WAGE},
         functions={"utility": _outside_m_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "couple": couple,
             "single": single,
             "outside_f": outside_f,
             "outside_m": outside_m,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 

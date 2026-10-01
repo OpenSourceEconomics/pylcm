@@ -42,7 +42,7 @@ def _conf(exc: type[Exception]) -> BeartypeConf:
     )
 
 
-# Used on `Regime` and `MarkovTransition`.
+# Used on `Regime` and `StochasticTransition`.
 REGIME_CONF = _conf(RegimeInitializationError)
 
 # Used on `Model`.

@@ -12,13 +12,14 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
@@ -59,14 +60,14 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 @pytest.fixture
 def model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
                     law={
-                        "target": MarkovTransition(func=_p_target),
-                        "other": MarkovTransition(func=_p_other),
+                        "target": StochasticTransition(func=_p_target),
+                        "other": StochasticTransition(func=_p_other),
                     },
                     exits=("target", "other"),
                 ),
@@ -92,9 +93,9 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

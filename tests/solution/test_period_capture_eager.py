@@ -14,7 +14,7 @@ import pytest
 from _lcm.solution import period_capture, period_replay
 from lcm import ExecutionConfig, Model
 from tests.test_models import nbegm_ride_along_toy as toy
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.nbegm_common import RegimeId
 
 
@@ -27,13 +27,14 @@ def eager_capture(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         variant="brute", n_periods=4, n_liquid=8, n_consumption=6, n_savings=8
     )
     eager = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=RegimeId,
         fixed_params=dict(base.fixed_params),
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     eager.solve(params=toy.build_params(), log_level="off")
     return tmp_path / "alive@1"

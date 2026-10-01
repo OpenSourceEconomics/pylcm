@@ -59,7 +59,7 @@ lcm/
 ├── solver_api.py        ← versioned solver, artifact, replay, and solution contracts
 ├── solvers.py           ← built-in solvers plus the out-of-tree re-export façade
 ├── taste_shocks.py      ← ExtremeValueTasteShocks
-├── transition.py        ← fixed_transition, MarkovTransition, JointTransition
+├── transition.py        ← fixed_transition, StochasticTransition, JointTransition
 ├── typing.py            ← user-facing type aliases, string labels, UserFunction
 ├── exceptions.py        ← every project-specific exception class
 ├── _compilation_cache.py ← this project's slice of the persistent JIT cache
@@ -143,7 +143,7 @@ The mapping of public names to files:
 | `exceptions.py`                                                       | Every project-specific exception class.                                                                                                                                                                                                                    |
 | `execution.py`                                                        | `ExecutionConfig` — devices, sharded states, planner-owned axis widths, the device-memory budget and its headroom fraction.                                                                                                                                |
 | `phased.py`                                                           | `Phased`, the container for phase-specific variants of a regime-slot value.                                                                                                                                                                                |
-| `transition.py`                                                       | `fixed_transition`, `MarkovTransition`, `JointTransition`.                                                                                                                                                                                                 |
+| `transition.py`                                                       | `fixed_transition`, `StochasticTransition`, `JointTransition`.                                                                                                                                                                                             |
 | `collective.py`                                                       | `ValueDependentTransition`, `StakeholderRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                |
 | `koopmans_aggregation.py`                                             | `KoopmansAggregator`, `LinearAggregator`, `CESAggregator`.                                                                                                                                                                                                 |
 | `certainty_equivalent.py`, `branch_aggregation.py`, `outer_search.py` | Re-export façades for classes whose definitions live in `_lcm/`.                                                                                                                                                                                           |
@@ -390,27 +390,25 @@ The numerical checks fired at solve / simulate time live outside `regime_buildin
 
 ## Reachability: `_lcm/reachability.py`
 
-`build_model_reachability` builds the model's static solve and simulate graphs once, at
-model construction, from the demanded coverage and the declared per-period support.
-`regime_building.schedules.resolve_regime_schedules` reads each regime's available laws
-and their declared targets; `resolve_demand` expands the declared `initial_regimes` into
-the pairs a subject can visit and the pairs whose values those problems read, and that
-coverage is the `active_periods_by_regime` mapping every later stage reads. There is no
-runtime topology pass — the graph never changes after construction, and no runtime
-probability value narrows or widens it.
+`_lcm/model_graph.py` resolves the mandatory `Model.edges` declarations into immutable
+source–destination support at exact source ages, then binds that support to the
+numerical regime laws. `regime_building.schedules.resolve_regime_schedules` resolves
+available laws by period. `resolve_demand` expands the required `initial_nodes` into
+physically visited pairs and the additional perceived values their decisions read. Every
+visited node is valued, while a value-only node does not create realized visits.
 
-Every retained edge is `EdgeStatus.CONDITIONAL`; there is no `TRUE` status, because no
-declaration form (not even a per-target dict with one key) proves unconditional positive
-probability independently of state, action, and free runtime parameters. Each edge is a
-target the source's law declares at that period — a regime name, a `Choose` or vector
-`MarkovTransition`'s `targets`, or a per-target dict's keys — and every such edge's
-state handoff is checked at model build: a carried state, a deterministic/stochastic
-law, or an explicit target-local/entry law must supply each target state's next-period
-value.
+`build_model_reachability` builds the effective solve and simulate graphs once at model
+construction. Ordinary scalar per-target probabilities whose entire dependency DAG is
+construction-fixed and exactly zero can remove effective edges; runtime probability
+values never change topology. Retained edges are `EdgeStatus.CONDITIONAL`, and each
+edge's state handoff is checked at construction.
 
-The solve and simulate phases build independent graphs (`ModelReachability.solution` /
-`.simulation`), because a regime transition's `Phased` sides can differ between them —
-so the two graphs may retain different edges for the same source period.
+The read-only `model.graph` retains declared `.edges.solve` and `.edges.simulate`, with
+selectors resolved to exact source ages. `.solution` and `.simulation` expose the
+independent effective period-indexed graphs. `.nodes` and `.visited_nodes` distinguish
+valued and realized pairs. `.pruned_edges` records phase-specific
+`(source_age, source, target)` keys with `"fixed_zero_probability"` reasons. This graph
+is an inspection result; users declare `Model(edges=...)` rather than constructing it.
 
 Solver and simulation runtime code (`_lcm/solution/`, `_lcm/simulation/`) consume this
 graph — `PhaseReachability.targets`, `.union_targets`, `.edge_status`, ... — but never

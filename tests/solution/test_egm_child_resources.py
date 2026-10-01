@@ -19,9 +19,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -41,6 +43,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -202,7 +205,7 @@ def _get_model(variant: str) -> Model:
       passive skill state.
     - `"brute_bonus_pension"`: dense-grid brute force, equivalent spec.
     """
-    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
     actions = {
@@ -213,7 +216,9 @@ def _get_model(variant: str) -> Model:
         working = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
                 exits=("dead",),
             ),
             actions=actions,
@@ -239,7 +244,9 @@ def _get_model(variant: str) -> Model:
         working = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
                 exits=("dead",),
             ),
             actions=actions,
@@ -256,7 +263,9 @@ def _get_model(variant: str) -> Model:
         working = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
                 exits=("dead",),
             ),
             actions=actions,
@@ -285,7 +294,9 @@ def _get_model(variant: str) -> Model:
         working = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(func=next_regime, targets=("working_life", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
                 exits=("dead",),
             ),
             actions=actions,
@@ -301,11 +312,11 @@ def _get_model(variant: str) -> Model:
                 "is_working": is_working,
             },
         )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=ages,
         regime_id_class=BonusRegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
 

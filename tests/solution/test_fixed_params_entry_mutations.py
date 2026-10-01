@@ -14,18 +14,21 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LogNormalIIDProcess,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -101,11 +104,11 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     weighted expectation rather than an unweighted node average.
     """
     transition = (
-        Choose(func=target_id, targets=("target",))
+        _SupportedDeterministicTransition(func=target_id, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(func=one_probability)}
+        else {"target": StochasticTransition(func=one_probability)}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -117,12 +120,12 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
                 functions={"utility": utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"target": {"shock": {"mu": 0.0, "sigma": 1.0}}},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     np.testing.assert_allclose(
         source_value(model=model, params={"discount_factor": 1.0}),

@@ -51,17 +51,19 @@ from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     workspace_width_candidates,
 )
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution import backward_induction, grid_search
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.execution import WidthSearch, WidthSearchPolicy
@@ -85,6 +87,7 @@ from tests.solution.test_covered_axis_parity import (
     _shapes_and_dtypes,
     _ulp_excess,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
@@ -213,25 +216,27 @@ def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
             "wealth": LinSpacedGrid(start=1, stop=60, n_points=_N_WEALTH),
         },
         state_transitions={
-            "health": MarkovTransition(func=_next_health),
+            "health": StochasticTransition(func=_next_health),
             "habit": _next_habit,
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 1,
-            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": _utility},
     )
     dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=_FINAL_AGE_ALIVE + 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

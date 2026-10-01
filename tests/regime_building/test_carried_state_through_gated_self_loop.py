@@ -56,7 +56,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -129,7 +129,7 @@ def _make_regimes() -> dict[str, Regime]:
             2,
             law={
                 "src": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_stay),
+                    probability=StochasticTransition(func=_prob_stay),
                     gate=_repeat_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -140,7 +140,7 @@ def _make_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": MarkovTransition(func=_prob_exit_boundary),
+                "src_exit": StochasticTransition(func=_prob_exit_boundary),
             },
             exits=("src_exit",),
         ),
@@ -176,7 +176,7 @@ def _make_regimes() -> dict[str, Regime]:
 
 
 def _solve_and_simulate():
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_regimes()
     regime_names = list(regimes_dict)
     regime_names_to_ids = MappingProxyType(

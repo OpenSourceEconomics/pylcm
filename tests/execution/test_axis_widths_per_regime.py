@@ -16,7 +16,7 @@ from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import assert_agrees_to_ulp
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -34,12 +34,13 @@ def _base_model() -> Model:
 def _model_with(config: ExecutionConfig) -> Model:
     base = _base_model()
     return Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=config,
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
 
 

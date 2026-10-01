@@ -7,7 +7,15 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, AgeRange, ByAge, Choose, MarkovTransition, Phased
+import lcm
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    DeterministicTransition,
+    Phased,
+    StochasticTransition,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 
@@ -20,8 +28,14 @@ def _code() -> int:
     return 1
 
 
-ANNUAL = AgeGrid(start=60, stop=65, step="Y")
-QUARTERLY = AgeGrid(start=61, stop=63, step="Q")
+ANNUAL = AgeGrid(start=60, inclusive_stop=65, step="Y")
+QUARTERLY = AgeGrid(start=61, inclusive_stop=63, step="Q")
+
+
+def test_age_range_exclusive_stop_excludes_the_boundary_age() -> None:
+    """The exclusive endpoint is excluded from a selected age interval."""
+    schedule = ByAge(cases={AgeRange(start=60, exclusive_stop=62): "a"}).resolve(ANNUAL)
+    assert schedule.covered_ages == (60, 61)
 
 
 @pytest.mark.parametrize(
@@ -30,9 +44,9 @@ QUARTERLY = AgeGrid(start=61, stop=63, step="Q")
         (61, (61,)),
         ((60, 62, 62), (60, 62)),
         (range(61, 63), (61, 62)),
-        (AgeRange(start=62, stop=65), (62, 63, 64)),
-        (AgeRange(stop=62), (60, 61)),
-        (AgeRange(start=60.5, stop=63), (61, 62)),
+        (AgeRange(start=62, exclusive_stop=65), (62, 63, 64)),
+        (AgeRange(exclusive_stop=62), (60, 61)),
+        (AgeRange(start=60.5, exclusive_stop=63), (61, 62)),
     ],
 )
 def test_by_age_selects_exact_grid_coordinates(*, selector, expected) -> None:
@@ -49,9 +63,9 @@ def test_range_selects_integers_not_intervening_quarters() -> None:
 
 def test_age_range_selects_quarterly_points_in_half_open_interval() -> None:
     """An interval selects every existing grid point in `[start, stop)`."""
-    schedule = ByAge(cases={AgeRange(start=62, stop=Fraction(125, 2)): "b"}).resolve(
-        QUARTERLY
-    )
+    schedule = ByAge(
+        cases={AgeRange(start=62, exclusive_stop=Fraction(125, 2)): "b"}
+    ).resolve(QUARTERLY)
     assert schedule.covered_ages == (62, Fraction(249, 4))
 
 
@@ -112,10 +126,16 @@ def test_resolved_schedule_rejects_an_uncovered_age() -> None:
         ({(61, 61.25): "a"}, r"Age 61\.25 in selector .* is not an age"),
         ({True: "a"}, "must name numeric ages, not True"),
         ({float("nan"): "a"}, "contains a nonfinite age"),
-        ({AgeRange(start=63, stop=62): "a"}, "start 63 must be below stop 62"),
-        ({AgeRange(start=60.1, stop=60.9): "a"}, "selects no age of the model"),
         (
-            {AgeRange(stop=62): "a", 61: "b"},
+            {AgeRange(start=63, exclusive_stop=62): "a"},
+            "start 63 must be below exclusive_stop 62",
+        ),
+        (
+            {AgeRange(start=60.1, exclusive_stop=60.9): "a"},
+            "selects no age of the model",
+        ),
+        (
+            {AgeRange(exclusive_stop=62): "a", 61: "b"},
             r"overlaps another case at age\(s\) \[61\]",
         ),
     ],
@@ -168,13 +188,11 @@ def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
 
 _LAWS = {
     "regime_name": lambda: "retired",
-    "choose": lambda: Choose(func=_code, targets=("working", "retired")),
-    "markov_transition": lambda: MarkovTransition(
-        func=_probs, targets=("working", "retired")
-    ),
+    "choose": lambda: DeterministicTransition(func=_code),
+    "markov_transition": lambda: StochasticTransition(func=_probs),
     "per_target_dict": lambda: {
-        "working": MarkovTransition(func=_probs),
-        "retired": MarkovTransition(func=_probs),
+        "working": StochasticTransition(func=_probs),
+        "retired": StochasticTransition(func=_probs),
     },
 }
 
@@ -228,38 +246,20 @@ def test_until_rejects_an_off_grid_stop_age() -> None:
         ByAge.until(stop_age_exclusive=61.5, law="a", then="b").resolve(ANNUAL)
 
 
-def test_markov_transition_records_declared_targets() -> None:
-    """A vector regime law carries its declared support as a tuple of names."""
-    law = MarkovTransition(func=_probs, targets=["a", "b"])
-    assert law.targets == ("a", "b")
+@pytest.mark.parametrize("wrapper", [DeterministicTransition, StochasticTransition])
+@pytest.mark.parametrize("targets", [("a", "b"), (), ("a", "a")])
+def test_transition_kernels_reject_topology_metadata(*, wrapper, targets) -> None:
+    """The model graph is the sole public owner of regime support."""
+    with pytest.raises(TypeError):
+        wrapper(
+            func=_code if wrapper is DeterministicTransition else _probs,
+            targets=targets,
+        )
 
 
-@pytest.mark.parametrize(
-    ("targets", "match"),
-    [((), "must name a regime"), (("a", "a"), "names a regime more than once")],
-)
-def test_markov_transition_rejects_empty_or_duplicate_targets(
-    *, targets, match: str
-) -> None:
-    """Declared support is nonempty and names each target once."""
-    with pytest.raises(RegimeInitializationError, match=match):
-        MarkovTransition(func=_probs, targets=targets)
-
-
-def test_markov_transition_without_targets_keeps_state_law_semantics() -> None:
-    """A state law declares no regime support."""
-    assert MarkovTransition(func=_probs).targets is None
-
-
-def test_choose_records_declared_targets() -> None:
-    """A deterministic selector names its support."""
-    assert Choose(func=_code, targets=("a", "b")).targets == ("a", "b")
-
-
-def test_choose_rejects_empty_targets() -> None:
-    """A deterministic selector must name at least one target."""
-    with pytest.raises(RegimeInitializationError, match="must name a regime"):
-        Choose(func=_code, targets=())
+def test_stochastic_kernel_has_no_topology_field() -> None:
+    """State and regime probability kernels expose the same targetless API."""
+    assert not hasattr(StochasticTransition(func=_probs), "targets")
 
 
 def test_choose_exposes_the_wrapped_signature() -> None:
@@ -268,12 +268,76 @@ def test_choose_exposes_the_wrapped_signature() -> None:
     def select(work: int) -> int:
         return work
 
-    assert Choose(func=select, targets=("a",)).__wrapped__ is select  # ty: ignore[unresolved-attribute]
+    assert DeterministicTransition(func=select).__wrapped__ is select  # ty: ignore[unresolved-attribute]
 
 
 def test_by_age_constructor_takes_only_cases_and_default() -> None:
     """The public constructor exposes `cases` and `default`, nothing private."""
     assert tuple(inspect.signature(ByAge).parameters) == ("cases", "default")
+
+
+@pytest.mark.parametrize("wrapper", [DeterministicTransition, StochasticTransition])
+@pytest.mark.parametrize("restriction", [AgeRange(exclusive_stop=64), True])
+def test_transition_rejects_embedded_age_restrictions(*, wrapper, restriction) -> None:
+    """Source-age support belongs to Model.edges, including invalid metadata."""
+    with pytest.raises(TypeError):
+        wrapper(
+            func=_code if wrapper is DeterministicTransition else _probs,
+            targets={"working": restriction},
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "wrapper"),
+    [
+        ("deterministic_transition", DeterministicTransition),
+        ("stochastic_transition", StochasticTransition),
+    ],
+)
+def test_transition_decorator_preserves_function_contract(
+    *, name: str, wrapper
+) -> None:
+    """A public decorator preserves its targetless DAG signature."""
+    decorator = getattr(lcm, name, None)
+    assert decorator is not None, f"The public {name} decorator must be available."
+
+    def transition(state: int) -> jnp.ndarray:
+        return jnp.asarray(float(state))
+
+    law = decorator()(transition)
+    assert isinstance(law, wrapper)
+    assert law.__wrapped__ is transition
+    assert inspect.signature(law) == inspect.signature(transition)
+    assert int(law(state=2)) == 2
+    assert not hasattr(law, "targets")
+
+
+def test_stochastic_state_decorator_keeps_fixed_component() -> None:
+    """A stochastic state decorator retains its fixed categorical groups."""
+    decorator = getattr(lcm, "stochastic_transition", None)
+    assert decorator is not None, "The public stochastic decorator must be available."
+    law = decorator(fixed_component=(0, 0))(_probs)
+    assert isinstance(law, StochasticTransition)
+    assert not hasattr(law, "targets")
+    assert law.fixed_component == (0, 0)
+
+
+def test_deterministic_state_decorator_declares_no_regime_targets() -> None:
+    """Explicit deterministic state laws need no regime support declaration."""
+    decorator = getattr(lcm, "deterministic_transition", None)
+    assert decorator is not None, (
+        "The public deterministic decorator must be available."
+    )
+    law = decorator()(_code)
+    assert isinstance(law, DeterministicTransition)
+    assert not hasattr(law, "targets")
+    assert law() == 1
+
+
+def test_deterministic_state_wrapper_declares_no_regime_targets() -> None:
+    """A deterministic wrapper can mark a state law without regime targets."""
+    law = DeterministicTransition(func=_code)
+    assert not hasattr(law, "targets")
 
 
 def test_until_schedule_resolves_like_its_declaration() -> None:
@@ -309,7 +373,7 @@ def test_resolved_schedule_at_matches_exact_ages(
     *, grid: AgeGrid, age: Any, expected: str | None
 ) -> None:
     """`at` finds a law at an age equal to a grid age and raises for any other."""
-    schedule = ByAge(cases={AgeRange(start=61, stop=62): "a"}).resolve(grid)
+    schedule = ByAge(cases={AgeRange(start=61, exclusive_stop=62): "a"}).resolve(grid)
     if expected is None:
         with pytest.raises(KeyError):
             schedule.at(age)

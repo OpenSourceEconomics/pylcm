@@ -29,7 +29,7 @@ from tests.solution.test_grid_search_cell_axis import (
     _params,
     _RegimeId,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 _KINDS = ("singleton", "ev1", "collective")
 _BUDGET = 10**8
@@ -41,6 +41,7 @@ def _model(*, kind: str, enabled: bool, budget: int | None) -> Model:
     """The two-state fixture without its cell-width pin, which would bypass halving."""
     base = _fixture_model(kind=kind, width=6)
     return Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=_RegimeId,
@@ -48,7 +49,7 @@ def _model(*, kind: str, enabled: bool, budget: int | None) -> Model:
         execution_config=ExecutionConfig(
             halve_on_materialised_gather=enabled, device_memory_bytes=budget
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
 
 

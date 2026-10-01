@@ -24,11 +24,12 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import PyLCMError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
-_AGES = AgeGrid(start=40, stop=50, step="5Y")
+_AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
 
 
@@ -75,14 +76,14 @@ def _boolean_gate(x: ContinuousState) -> BoolND:
 
 
 def _make_model(*, gate) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     45,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(func=_prob_one),
+                            probability=StochasticTransition(func=_prob_one),
                             gate=gate,
                             routes={
                                 "only": StakeholderRoute(
@@ -114,7 +115,7 @@ def _make_model(*, gate) -> Model:
         },
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={40: "source"},
+        initial_nodes={40: "source"},
     )
 
 

@@ -23,7 +23,7 @@ and its keys are the regime's stakeholders in the order written:
 
 ```python
 couple = Regime(
-    regime_transitions=Choose(func=to_couple_terminal, targets=("couple_terminal",)),
+    regime_transitions=DeterministicTransition(func=to_couple_terminal),
     states={"wage": LinSpacedGrid(start=8.0, stop=40.0, n_points=2)},
     state_transitions={"wage": next_wage},
     actions={"work": DiscreteGrid(category_class=Work)},
@@ -121,7 +121,7 @@ fall back to when the gate shuts:
 ```python
 transition = {
     "married_with_participation": ValueDependentTransition(
-        probability=MarkovTransition(func=probability_one),
+        probability=StochasticTransition(func=probability_one),
         gate=lambda D_target: ~D_target,
         routes={
             "f": StakeholderRoute(

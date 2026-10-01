@@ -42,7 +42,7 @@ from lcm import (
     ValueDependentTransition,
     categorical,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -106,7 +106,7 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(func=probability["stays_married"]),
+                    probability=StochasticTransition(func=probability["stays_married"]),
                     gate=_no_dissolution,
                     routes={
                         "f": StakeholderRoute(
@@ -125,7 +125,7 @@ def get_model(
                         ),
                     },
                 ),
-                "couple_terminal": MarkovTransition(
+                "couple_terminal": StochasticTransition(
                     func=probability["reaches_last_age"]
                 ),
             },
@@ -180,7 +180,9 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(func=probability["meets_a_partner"]),
+                    probability=StochasticTransition(
+                        func=probability["meets_a_partner"]
+                    ),
                     gate=_mutual_consent,
                     routes={
                         "her": StakeholderRoute(
@@ -202,8 +204,8 @@ def get_model(
                         ),
                     },
                 ),
-                "single_f": MarkovTransition(func=probability["meets_nobody"]),
-                "single_f_terminal": MarkovTransition(
+                "single_f": StochasticTransition(func=probability["meets_nobody"]),
+                "single_f_terminal": StochasticTransition(
                     func=probability["reaches_last_age"]
                 ),
             },
@@ -237,7 +239,9 @@ def get_model(
         regime_transitions=_until_last_age(
             {
                 "couple": ValueDependentTransition(
-                    probability=MarkovTransition(func=probability["meets_a_partner"]),
+                    probability=StochasticTransition(
+                        func=probability["meets_a_partner"]
+                    ),
                     gate=_mutual_consent,
                     routes={
                         "his": StakeholderRoute(
@@ -259,8 +263,8 @@ def get_model(
                         ),
                     },
                 ),
-                "single_m": MarkovTransition(func=probability["meets_nobody"]),
-                "single_m_terminal": MarkovTransition(
+                "single_m": StochasticTransition(func=probability["meets_nobody"]),
+                "single_m_terminal": StochasticTransition(
                     func=probability["reaches_last_age"]
                 ),
             },
@@ -280,6 +284,41 @@ def get_model(
         constraints={"affordable": _consumption_within_single_wealth},
     )
     return Model(
+        edges={
+            "couple": {
+                "couple_terminal": tuple(range(last_age)),
+                **(
+                    {
+                        target: tuple(range(last_age - 1))
+                        for target in ("couple", "single_f", "single_m")
+                    }
+                    if tuple(range(last_age - 1))
+                    else {}
+                ),
+            },
+            "single_f": {
+                "single_f_terminal": tuple(range(last_age)),
+                **(
+                    {
+                        target: tuple(range(last_age - 1))
+                        for target in ("couple", "single_f")
+                    }
+                    if tuple(range(last_age - 1))
+                    else {}
+                ),
+            },
+            "single_m": {
+                "single_m_terminal": tuple(range(last_age)),
+                **(
+                    {
+                        target: tuple(range(last_age - 1))
+                        for target in ("couple", "single_m")
+                    }
+                    if tuple(range(last_age - 1))
+                    else {}
+                ),
+            },
+        },
         regimes={
             "couple": couple,
             "couple_terminal": couple_terminal,
@@ -290,9 +329,9 @@ def get_model(
                 wealth=wealth, consumption=consumption
             ),
         },
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: ("couple", "single_f", "single_m")},
+        initial_nodes={0: ("couple", "single_f", "single_m")},
         execution_config=(
             ExecutionConfig() if execution_config is None else execution_config
         ),

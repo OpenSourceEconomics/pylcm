@@ -19,17 +19,18 @@ from lcm import (
     AgeSpecializedFunction,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
@@ -58,7 +59,7 @@ def _late_die(late_rate: float) -> FloatND:
     return 1 - jnp.asarray(late_rate)
 
 
-_RETIREMENT_EXIT = ByAge(cases={AgeRange(start=55, stop=75): "dead"})
+_RETIREMENT_EXIT = ByAge(cases={AgeRange(start=55, exclusive_stop=75): "dead"})
 
 
 @categorical(ordered=False)
@@ -70,22 +71,22 @@ class LifeId:
 
 def _model(
     *,
-    initial_regimes: Any,
+    initial_nodes: Any,
     retirement_transitions: Any = _RETIREMENT_EXIT,
 ) -> Model:
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=25, stop=45): {
-                            "working": MarkovTransition(func=_early_stay),
-                            "dead": MarkovTransition(func=_early_die),
+                        AgeRange(start=25, exclusive_stop=45): {
+                            "working": StochasticTransition(func=_early_stay),
+                            "dead": StochasticTransition(func=_early_die),
                         },
-                        AgeRange(start=45, stop=65): {
-                            "working": MarkovTransition(func=_late_stay),
-                            "dead": MarkovTransition(func=_late_die),
+                        AgeRange(start=45, exclusive_stop=65): {
+                            "working": StochasticTransition(func=_late_stay),
+                            "dead": StochasticTransition(func=_late_die),
                         },
                     },
                     default="dead",
@@ -106,9 +107,9 @@ def _model(
                 functions={"utility": _utility},
             ),
         },
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=LifeId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -131,7 +132,7 @@ def _param_names(*, model: Model, regime: str) -> frozenset[str]:
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "regime", "expected"),
+    ("initial_nodes", "regime", "expected"),
     [
         ({25: "working"}, "working", {"discount_factor", "early_rate", "late_rate"}),
         ({55: "working"}, "working", {"discount_factor", "late_rate"}),
@@ -142,22 +143,22 @@ def _param_names(*, model: Model, regime: str) -> frozenset[str]:
     ids=["both-cases", "late-case-only", "zero-node", "terminal-root", "late-root"],
 )
 def test_params_template_holds_only_the_parameters_demand_reads(
-    *, initial_regimes: Any, regime: str, expected: set[str]
+    *, initial_nodes: Any, regime: str, expected: set[str]
 ) -> None:
     """A regime's template lists exactly the parameters its demanded laws read."""
     assert (
-        _param_names(model=_model(initial_regimes=initial_regimes), regime=regime)
+        _param_names(model=_model(initial_nodes=initial_nodes), regime=regime)
         == expected
     )
 
 
 def test_late_root_values_equal_the_first_age_root_values_at_shared_pairs() -> None:
     """Dropping an undemanded case leaves the demanded values bit-identical."""
-    full = _model(initial_regimes={25: "working"}).solve(
+    full = _model(initial_nodes={25: "working"}).solve(
         params={"discount_factor": 0.9, "early_rate": 0.7, "late_rate": 0.8},
         log_level="off",
     )
-    late = _model(initial_regimes={55: "working"}).solve(
+    late = _model(initial_nodes={55: "working"}).solve(
         params={"discount_factor": 0.9, "late_rate": 0.8}, log_level="off"
     )
     for period in (3, 4):
@@ -170,7 +171,7 @@ def test_late_root_values_equal_the_first_age_root_values_at_shared_pairs() -> N
 def test_simulate_runs_on_a_late_root_with_only_the_demanded_parameters() -> None:
     """A late start simulates with the late case's parameter alone."""
     params = {"discount_factor": 0.9, "late_rate": 0.8}
-    model = _model(initial_regimes={55: "working"})
+    model = _model(initial_nodes={55: "working"})
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -187,7 +188,7 @@ def test_simulate_runs_on_a_late_root_with_only_the_demanded_parameters() -> Non
 
 def test_zero_node_regime_builds_no_transition_programs() -> None:
     """A regime no start demands gets no kernel and no transition program."""
-    model = _model(initial_regimes={45: "dead"})
+    model = _model(initial_nodes={45: "dead"})
     working = model._regimes["working"]
     assert (
         working.solution.compute_regime_transition_probs,
@@ -201,25 +202,27 @@ def test_zero_node_regime_builds_no_transition_programs() -> None:
 def test_zero_node_regime_keeps_a_declared_law_without_period_dispatch() -> None:
     """An undemanded schedule is not lowered into a period-dispatched union."""
     law = (
-        _model(initial_regimes={45: "dead"})
+        _model(initial_nodes={45: "dead"})
         ._engine_user_regimes["working"]
         .regime_transitions
     )
     assert isinstance(law, Mapping)
     cell = law["working"]
-    assert isinstance(cell, MarkovTransition)
+    assert isinstance(cell, StochasticTransition)
     assert cell.func is _early_stay
 
 
-def _age_specialized_model(*, built_ages: list[float], initial_regimes: Any) -> Model:
+def _age_specialized_model(*, built_ages: list[float], initial_nodes: Any) -> Model:
     def build_utility(age: float) -> Any:
         built_ages.append(float(age))
         return _utility
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge(cases={AgeRange(start=25, stop=65): "dead"}),
+                regime_transitions=ByAge(
+                    cases={AgeRange(start=25, exclusive_stop=65): "dead"}
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={
@@ -229,7 +232,9 @@ def _age_specialized_model(*, built_ages: list[float], initial_regimes: Any) -> 
                 },
             ),
             "retirement": Regime(
-                regime_transitions=ByAge(cases={AgeRange(start=55, stop=75): "dead"}),
+                regime_transitions=ByAge(
+                    cases={AgeRange(start=55, exclusive_stop=75): "dead"}
+                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _utility},
@@ -240,23 +245,23 @@ def _age_specialized_model(*, built_ages: list[float], initial_regimes: Any) -> 
                 functions={"utility": _utility},
             ),
         },
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=LifeId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
 def test_age_specialized_factory_is_built_only_at_demanded_ages() -> None:
     """A per-age factory is called at the regime's solved ages and no other."""
     built_ages: list[float] = []
-    _age_specialized_model(built_ages=built_ages, initial_regimes={55: "working"})
+    _age_specialized_model(built_ages=built_ages, initial_nodes={55: "working"})
     assert set(built_ages) == {55.0}
 
 
 def test_age_specialized_factory_of_a_zero_node_regime_is_never_built() -> None:
     """A regime no start demands never calls its per-age factory."""
     built_ages: list[float] = []
-    _age_specialized_model(built_ages=built_ages, initial_regimes={55: "retirement"})
+    _age_specialized_model(built_ages=built_ages, initial_nodes={55: "retirement"})
     assert built_ages == []
 
 
@@ -268,19 +273,19 @@ def _health_die(*, health: ContinuousState, early_rate: float) -> FloatND:
     return 1 - jnp.asarray(early_rate) + 0 * health
 
 
-def _broadcast_health_model(initial_regimes: Any) -> Model:
-    return Model(
+def _broadcast_health_model(initial_nodes: Any) -> Model:
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=25, stop=45): {
-                            "working": MarkovTransition(func=_health_stay),
-                            "dead": MarkovTransition(func=_health_die),
+                        AgeRange(start=25, exclusive_stop=45): {
+                            "working": StochasticTransition(func=_health_stay),
+                            "dead": StochasticTransition(func=_health_die),
                         },
-                        AgeRange(start=45, stop=65): {
-                            "working": MarkovTransition(func=_late_stay),
-                            "dead": MarkovTransition(func=_late_die),
+                        AgeRange(start=45, exclusive_stop=65): {
+                            "working": StochasticTransition(func=_late_stay),
+                            "dead": StochasticTransition(func=_late_die),
                         },
                     },
                     default="dead",
@@ -297,9 +302,9 @@ def _broadcast_health_model(initial_regimes: Any) -> Model:
         },
         states={"health": _WEALTH},
         state_transitions={"health": fixed_transition("health")},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=_WorkingDeadId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -310,27 +315,27 @@ class _WorkingDeadId:
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "expected"),
+    ("initial_nodes", "expected"),
     [({25: "working"}, False), ({55: "working"}, True)],
     ids=["early-case-demanded", "early-case-undemanded"],
 )
 def test_a_state_read_only_by_an_undemanded_case_is_not_live(
-    *, initial_regimes: Any, expected: bool
+    *, initial_nodes: Any, expected: bool
 ) -> None:
     """Liveness counts only the laws of demanded cases."""
-    model = _broadcast_health_model(initial_regimes)
+    model = _broadcast_health_model(initial_nodes)
     assert ("health" in model.pruned_variables["working"]) is expected
 
 
 def _gated_fold_model(
     *,
-    initial_regimes: Any,
+    initial_nodes: Any,
     later_source_law: object | None = None,
 ) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {
         "target": ValueDependentTransition(
-            probability=MarkovTransition(func=_prob_one),
+            probability=StochasticTransition(func=_prob_one),
             gate=_gate,
             routes={"only": StakeholderRoute(fallback=fallback)},
             gate_references={
@@ -345,7 +350,7 @@ def _gated_fold_model(
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(
@@ -362,9 +367,9 @@ def _gated_fold_model(
             "reference": terminal,
             "fallback": terminal,
         },
-        ages=AgeGrid(start=40, stop=50, step="5Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="5Y"),
         regime_id_class=_GatedId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -390,7 +395,7 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     """A target solved at a later age for another start gets no fold there."""
-    model = _gated_fold_model(initial_regimes={40: "source", 50: "target"})
+    model = _gated_fold_model(initial_nodes={40: "source", 50: "target"})
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
 
@@ -399,7 +404,7 @@ def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
     """A source solved at a later age whose case there declares no gate adds no
     fold and requires no gate reference at the next age."""
     model = _gated_fold_model(
-        initial_regimes={40: "source", 45: "source", 50: "target"},
+        initial_nodes={40: "source", 45: "source", 50: "target"},
         later_source_law="fallback",
     )
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
@@ -409,7 +414,7 @@ def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
 def test_a_gated_target_solved_where_its_source_never_stands_solves() -> None:
     """A target solved for another start is not folded for this source there."""
     model = _gated_fold_model(
-        initial_regimes={
+        initial_nodes={
             40: ("source", "target", "reference", "fallback"),
             50: "target",
         }
@@ -437,7 +442,7 @@ def test_an_undemanded_case_is_never_lowered(monkeypatch: pytest.MonkeyPatch) ->
         return original(**kwargs)
 
     monkeypatch.setattr(schedules_module, "_lower_side", recording_lower_side)
-    model = _model(initial_regimes={55: "working"})
+    model = _model(initial_nodes={55: "working"})
     early = model.user_regimes["working"].regime_transitions.laws[0]  # ty: ignore[unresolved-attribute]
     assert all(law is not early for law in lowered)
 
@@ -445,7 +450,7 @@ def test_an_undemanded_case_is_never_lowered(monkeypatch: pytest.MonkeyPatch) ->
 def test_a_regime_whose_laws_cover_no_available_age_builds_while_unrequired() -> None:
     """A law declared only at the last age is unused, not an error."""
     model = _model(
-        initial_regimes={25: "working"},
+        initial_nodes={25: "working"},
         retirement_transitions=ByAge(cases={75: "dead"}),
     )
     assert model.reachability.nodes.isdisjoint(
@@ -459,6 +464,6 @@ def test_requiring_a_regime_whose_laws_cover_no_available_age_fails() -> None:
         ModelInitializationError, match="requires 'retirement' at age 55"
     ):
         _model(
-            initial_regimes={55: "retirement"},
+            initial_nodes={55: "retirement"},
             retirement_transitions=ByAge(cases={75: "dead"}),
         )

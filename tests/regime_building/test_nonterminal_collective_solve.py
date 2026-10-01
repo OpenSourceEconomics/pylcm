@@ -39,16 +39,17 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -56,7 +57,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -65,6 +66,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=True)
@@ -110,7 +112,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("couple_terminal",)
                 )
             }
@@ -135,7 +137,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
 
 def test_nonterminal_collective_regime_solves_with_continuation():
     """Kernel-level: finalize -> process -> backward induction, two periods."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -203,12 +205,12 @@ def test_nonterminal_collective_regime_solves_with_continuation():
 
 def test_nonterminal_collective_full_model_solve_matches_kernel_level():
     """Model-level: the same two regimes through public Model(...) + solve()."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    model = with_fixture_graph(
         regimes=_make_couple_regimes(),
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "couple"},
+        initial_nodes={ages.exact_values[0]: "couple"},
     )
 
     solution = model.solve(params={"discount_factor": 0.95}, log_level="off").values
@@ -260,14 +262,14 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("couple_terminal",)
                 )
             }
         ),
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         state_transitions={
-            "mood": MarkovTransition(func=_next_mood),
+            "mood": StochasticTransition(func=_next_mood),
             "wage": _next_wage,
         },
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -287,7 +289,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
             )
         },
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -367,12 +369,12 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
     with no gated edges (so `period_to_regime_to_V_arr`/dissolution flags need no
     special threading).
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    model = with_fixture_graph(
         regimes=_make_couple_regimes(),
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "couple"},
+        initial_nodes={ages.exact_values[0]: "couple"},
     )
     result = model.simulate(
         params={"discount_factor": 0.95},
@@ -399,7 +401,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("single_terminal",)
                 )
             }
@@ -416,7 +418,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_single},
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
     with pytest.raises(NotImplementedError, match="identical `stakeholders`"):
         process_regimes(

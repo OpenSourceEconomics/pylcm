@@ -18,11 +18,12 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 def _toy_model(*, execution: ExecutionConfig) -> Model:
     final_age_alive = START_AGE + 1
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -37,10 +38,10 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

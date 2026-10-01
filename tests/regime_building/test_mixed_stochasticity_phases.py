@@ -3,7 +3,7 @@
 The two phases need not agree on whether a state's law is stochastic: a deterministic
 law is a degenerate kernel, not a different kind of state. An agent may perceive risk
 where there is none, or believe a transition certain that in fact is not. Both
-directions — `Phased(solve=MarkovTransition(...), simulate=<deterministic>)` and its
+directions — `Phased(solve=StochasticTransition(...), simulate=<deterministic>)` and its
 reverse — build, solve, and simulate with the belief/truth split intact: Q is priced
 under the belief, the draw follows the truth.
 """
@@ -13,17 +13,19 @@ from typing import Any
 import jax.numpy as jnp
 import pandas as pd
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
-    MarkovTransition,
-    Model,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -89,18 +91,22 @@ def _simulate(law: Any) -> pd.DataFrame:
     }
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("live", "last")
+            ),
+            exits=("last",),
         ),
         state_transitions={"good": law},
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = Model(
+    model = with_fixture_graph(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="mixed stochasticity probe",
-        initial_regimes={0: "live"},
+        initial_nodes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return (
@@ -120,7 +126,8 @@ def test_stochastic_solve_deterministic_simulate():
     """Perceived law is a kernel; the world realizes a point value."""
     df = _simulate(
         Phased(
-            solve=MarkovTransition(func=markov_belief), simulate=deterministic_actual
+            solve=StochasticTransition(func=markov_belief),
+            simulate=deterministic_actual,
         )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"
@@ -131,7 +138,8 @@ def test_deterministic_solve_stochastic_simulate():
     """Perceived law is a point value; the world realizes from a kernel."""
     df = _simulate(
         Phased(
-            solve=deterministic_belief, simulate=MarkovTransition(func=markov_actual)
+            solve=deterministic_belief,
+            simulate=StochasticTransition(func=markov_actual),
         )
     )
     assert (df[df["period"] == 0]["move"] == "stay").all(), "Q must price under BELIEF"

@@ -60,13 +60,10 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
-from _lcm.probability import is_negative, scaled_by_power_of_two
+from _lcm.probability import probabilities_form_distribution, scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
-from _lcm.regime_building.Q_and_F import (
-    _regime_mass_is_a_distribution,
-    partition_continuation_targets,
-)
+from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
@@ -536,15 +533,12 @@ class _BoundContinuation:
         since a negative weight too small for the dtype to hold as a normal
         number arrives at an arithmetic sign test as `-0` and passes it.
         """
-        probability_mass = jnp.asarray(0.0, dtype=self.dtype)
-        has_negative_probability = jnp.zeros((), dtype=bool)
-        for target in (*self.plan.stateful_targets, *self.plan.scalar_targets):
-            prob = self.regime_transition_probs[target]
-            probability_mass = probability_mass + prob
-            has_negative_probability = has_negative_probability | is_negative(prob)
-        return _regime_mass_is_a_distribution(
-            probability_mass=probability_mass,
-            has_negative_probability=has_negative_probability,
+        return probabilities_form_distribution(
+            probabilities=(
+                self.regime_transition_probs[target]
+                for target in (*self.plan.stateful_targets, *self.plan.scalar_targets)
+            ),
+            dtype=self.dtype,
         )
 
 

@@ -13,7 +13,7 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    MarkovTransition,
+    StochasticTransition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
@@ -47,7 +47,7 @@ def _specs(
     state_transitions: dict[str, object] | None = None,
 ) -> MappingProxyType[str, PhasedRegimeSpec]:
     source = Regime(
-        regime_transitions={"target": MarkovTransition(func=_probability)},
+        regime_transitions={"target": StochasticTransition(func=_probability)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         state_transitions=state_transitions or {},  # ty: ignore[invalid-argument-type]
         joint_transitions=joint_transitions,

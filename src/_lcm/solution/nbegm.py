@@ -2604,7 +2604,7 @@ def _state_laws(
     targets. The regime transition and the stochastic weight laws carry no
     state coordinate, so neither is yielded.
     """
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     for target_laws in transitions.values():
         for law_name, candidate in target_laws.items():
@@ -2614,7 +2614,9 @@ def _state_laws(
             if state_name == "regime":
                 continue
             func = (
-                candidate.func if isinstance(candidate, MarkovTransition) else candidate
+                candidate.func
+                if isinstance(candidate, StochasticTransition)
+                else candidate
             )
             if callable(func):
                 yield state_name, func
