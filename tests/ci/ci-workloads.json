@@ -936,7 +936,6 @@
     "tests/simulation/test_simulation_preparation_reuse.py",
     "tests/simulation/test_state_transition_entry_admission.py",
     "tests/simulation/test_subject_chunk_planning.py",
-    "tests/simulation/test_subject_tile_remainder.py",
     "tests/simulation/test_supplied_V_shape_validation.py",
     "tests/simulation/test_timing_receipts.py",
     "tests/simulation/test_unbudgeted_subject_width.py",
@@ -1769,7 +1768,6 @@
     "tests/simulation/test_simulation_value_reads.py",
     "tests/simulation/test_state_transition_entry_admission.py",
     "tests/simulation/test_subject_batching.py",
-    "tests/simulation/test_subject_tile_remainder.py",
     "tests/simulation/test_supplied_V_shape_validation.py",
     "tests/simulation/test_taste_stream.py",
     "tests/simulation/test_timing_receipts.py",
@@ -2118,7 +2116,6 @@
     "tests/simulation/test_simulation_population.py",
     "tests/simulation/test_stateless_collective_validation.py",
     "tests/simulation/test_subject_chunk_planning.py",
-    "tests/simulation/test_subject_tile_remainder.py",
     "tests/simulation/test_supplied_V_shape_validation.py",
     "tests/simulation/test_update_states.py",
     "tests/test_canonical_params.py",
@@ -4657,7 +4654,6 @@
     "tests/solution/test_solve_releases_executables.py",
     "tests/solution/test_solver_period_groups.py",
     "tests/solution/test_solver_subclass_binding.py",
-    "tests/solution/test_width_selection_across_periods.py",
     "tests/solution/test_workspace_budget_solve.py"
    ],
    "predicted_payload_minutes": 20.73
@@ -5249,7 +5245,6 @@
     "tests/solution/test_target_only_iid_nonuniform_public.py",
     "tests/solution/test_transition_reading_an_entered_draw.py",
     "tests/solution/test_wide_live_nonfinite_entry.py",
-    "tests/solution/test_width_selection_across_periods.py",
     "tests/solution/test_zero_mass_node.py"
    ],
    "predicted_payload_minutes": 13.06
