@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "8ef2aae4aa488eeccdd10808854116dd44d111d399cd5131740f1ad23136a86d",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "f8741f1a272b10361a8cdf428e479683e49f100503a6873e76c15a0faae89e1a",
+    BACKWARD_INDUCTION_SOURCE: "34cdae3194dbecbf511ff950baf26f37d8c186736e8b98239c7ac7ca057ab806",
     PERIOD_REPLAY_SOURCE: "5e9c0af42643c8aa52c22d9bd46484e58b76e64ac4fb2cc5d2fd910b5310f57c",
     INITIAL_CONDITIONS_SOURCE: "a42b0c4378b612a1de00ced91fb078534b8d8a18f69c09d3d72a217baf3c8a61",
     RESULT_SOURCE: "e2a479c105ce73500df3b8a804880dd0106b421aa2d18b17d7ebef57e5cc2d2a",
@@ -3894,7 +3894,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "c0ccfb5d7ac8c74ddc30ee677743acea9ed929c94ef25808cb4e9b26cab3a54e",
+        "5491f3ec76d65fe9ff7acb128ed387fb990f5f5dcb182083ff16bfef7653c90d",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -3978,7 +3978,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "c0ccfb5d7ac8c74ddc30ee677743acea9ed929c94ef25808cb4e9b26cab3a54e",
+        "5491f3ec76d65fe9ff7acb128ed387fb990f5f5dcb182083ff16bfef7653c90d",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4249,7 +4249,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "c0ccfb5d7ac8c74ddc30ee677743acea9ed929c94ef25808cb4e9b26cab3a54e",
+        "5491f3ec76d65fe9ff7acb128ed387fb990f5f5dcb182083ff16bfef7653c90d",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4446,7 +4446,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
-            "_lower_and_compile_wave": "3072205b370d88472bbdc54bd61392d90da1e7415707b8324baddb166d65c7d6",
+            "_lower_and_compile_wave": "01a18c8ae6cda5a8cc31fc1cb4a7c57c9071533faed7ba483305a8b842937bc6",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
@@ -4482,7 +4482,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "c0ccfb5d7ac8c74ddc30ee677743acea9ed929c94ef25808cb4e9b26cab3a54e"
+        != "5491f3ec76d65fe9ff7acb128ed387fb990f5f5dcb182083ff16bfef7653c90d"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6342,7 +6342,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "c0ccfb5d7ac8c74ddc30ee677743acea9ed929c94ef25808cb4e9b26cab3a54e",
+        "5491f3ec76d65fe9ff7acb128ed387fb990f5f5dcb182083ff16bfef7653c90d",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
