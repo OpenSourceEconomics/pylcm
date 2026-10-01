@@ -30,6 +30,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.execution import ExecutionConfig
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -205,7 +206,10 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def get_dissolution_model() -> Model:
+def get_dissolution_model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
@@ -321,4 +325,5 @@ def get_dissolution_model() -> Model:
         regime_id_class=DissolutionRegimeId,
         initial_regimes={0: "married"},
         description="Participation constraints and a gated dissolution edge.",
+        execution_config=execution_config,
     )

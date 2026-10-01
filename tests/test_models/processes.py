@@ -13,6 +13,7 @@ from lcm import (
     UniformIIDProcess,
 )
 from lcm.ages import AgeGrid
+from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -167,6 +168,22 @@ def get_multi_regime_model(
     Triggers cross-regime shock transitions (work → retire), which is the
     scenario that fails when shock stubs leak across regime boundaries.
     """
+    return build_multi_regime_model(
+        n_periods=n_periods,
+        distribution_type=distribution_type,
+        execution_config=ExecutionConfig(),
+    )
+
+
+def build_multi_regime_model(
+    *,
+    n_periods: int,
+    distribution_type: Literal[
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+    ],
+    execution_config: ExecutionConfig,
+) -> Model:
+    """Build the model of `get_multi_regime_model` under `execution_config`."""
     work_final_age = n_periods // 2 - 1
     retire_final_age = n_periods - 2
 
@@ -233,6 +250,7 @@ def get_multi_regime_model(
             "retire_final_age": retire_final_age,
         },
         initial_regimes={0: "work"},
+        execution_config=execution_config,
     )
 
 
