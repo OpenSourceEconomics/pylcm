@@ -9,7 +9,7 @@ or simulation refuses to run when one of those bindings has since been rebound
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, Choose, ExecutionConfig, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelSealError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
@@ -59,6 +59,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         ages=AgeGrid(start=18, stop=20, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={18: "working"},
     )
 

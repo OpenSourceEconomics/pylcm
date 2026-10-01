@@ -2143,7 +2143,6 @@ jobs:
             shard: 7
             shards: 7
     env:
-      XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
       PYLCM_CI_PRECISION: ${{ matrix.precision }}
       PYLCM_CI_SHARD: ${{ matrix.shard }}
       PYLCM_CI_SHARDS: ${{ matrix.shards }}

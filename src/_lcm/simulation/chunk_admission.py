@@ -56,6 +56,8 @@ class PreparedSimulationChunks:
     plan: SimulationChunkPlan
     call_inputs: SimulationCallInputs
     admitted_inputs: DeviceBufferFootprint
+    budget_note: str = ""
+    """Clause naming the budget and the remedies, appended to a chunk refusal."""
 
     def require_chunk(
         self,
@@ -110,6 +112,7 @@ class PreparedSimulationChunks:
         if any(value > memory.budget_bytes for value in required.values()):
             raise ExecutionPlanningError(
                 "The reserved simulation chunk no longer fits current retained storage."
+                f"{self.budget_note}"
             )
 
 
@@ -149,6 +152,7 @@ def prepare_simulation_chunks(
         raise ExecutionPlanningError(
             "Budgeted chunk admission requires compiled decision programs; "
             "host replay routes need complete stage profiles."
+            f"{runtime.execution.device_memory_cap_note()}"
         )
     inputs = union_buffer_footprints(
         footprints=(
@@ -211,7 +215,10 @@ def prepare_simulation_chunks(
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
-        plan=plan, call_inputs=call_inputs, admitted_inputs=memory.inputs
+        plan=plan,
+        call_inputs=call_inputs,
+        admitted_inputs=memory.inputs,
+        budget_note=runtime.execution.device_memory_cap_note(),
     )
 
 

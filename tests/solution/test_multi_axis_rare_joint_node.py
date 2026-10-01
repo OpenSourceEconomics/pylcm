@@ -21,6 +21,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     MarkovTransition,
     Model,
     PowerMean,
@@ -198,6 +199,7 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId if with_a_safe_alternative else LotteryOnlyRegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

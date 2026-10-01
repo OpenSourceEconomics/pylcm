@@ -53,7 +53,11 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
-        execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        # Unbudgeted: `record` mirrors the plain dispatch signature; budgeted units
+        # dispatch with a residency context.
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 1}, device_memory_bytes=None
+        ),
     )
     result = model.simulate(
         params={"discount_factor": 0.95},

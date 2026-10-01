@@ -39,6 +39,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     ByAge,
+    ExecutionConfig,
     LinearAggregator,
     LinSpacedGrid,
     MarkovTransition,
@@ -400,6 +401,7 @@ def get_model(
         regime_id_class=RegimeId,
         koopmans_aggregator=koopmans_aggregator,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={ages.exact_values[0]: "working"},
     )
 

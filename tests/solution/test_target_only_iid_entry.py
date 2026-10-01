@@ -31,6 +31,7 @@ from _lcm.grids import Grid
 from lcm import (
     AgeGrid,
     Choose,
+    ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
     MarkovTransition,
@@ -135,6 +136,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 
@@ -367,6 +369,7 @@ def test_the_entry_law_decides_the_action() -> None:
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     got = _source_value(
@@ -475,6 +478,7 @@ def _build_explicit_entry_model(
         ages=AgeGrid(start=20, stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

@@ -9,8 +9,8 @@ function object, so the beartype claw would decorate/memoize a fresh wrapper
 for the nested cases, and the inspection would repeat needlessly for the
 other, on every single dispatch.
 
-This module asserts, on a small CPU model, for both the unbudgeted default
-`ExecutionConfig()` and a budgeted config:
+This module asserts, on a small CPU model, for both an unbudgeted
+`ExecutionConfig(device_memory_bytes=None)` and a budgeted config:
 
 1. A cold `simulate` call does nontrivial `builtins.compile` work (positional
    control), while five warm calls after it create no *additional* wrapper
@@ -128,13 +128,13 @@ def _run_simulate(*, model, params, initial_conditions, log_level: LogLevel):
 @pytest.mark.parametrize(
     "execution_config",
     [
-        None,
+        ExecutionConfig(device_memory_bytes=None),
         ExecutionConfig(
             device_memory_bytes=2 * 1024**3,
             axis_widths={"subject": _N_SUBJECTS},
         ),
     ],
-    ids=["unbudgeted_default", "budgeted"],
+    ids=["unbudgeted", "budgeted"],
 )
 def test_warm_simulate_creates_no_new_migrated_wrappers(execution_config) -> None:
     model, params = _model(execution_config=execution_config)
@@ -181,13 +181,13 @@ def test_warm_simulate_creates_no_new_migrated_wrappers(execution_config) -> Non
 @pytest.mark.parametrize(
     "execution_config",
     [
-        None,
+        ExecutionConfig(device_memory_bytes=None),
         ExecutionConfig(
             device_memory_bytes=2 * 1024**3,
             axis_widths={"subject": _N_SUBJECTS},
         ),
     ],
-    ids=["unbudgeted_default", "budgeted"],
+    ids=["unbudgeted", "budgeted"],
 )
 def test_warm_simulate_hits_zero_backend_compiles(execution_config) -> None:
     model, params = _model(execution_config=execution_config)

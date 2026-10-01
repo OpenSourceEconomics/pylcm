@@ -23,7 +23,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_artifact_template_declaration,
     snapshot_solution_metadata,
 )
-from lcm import LinSpacedGrid, Model
+from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import (
     IncompatibleSolutionError,
     InvalidSimulationInputError,
@@ -1462,10 +1462,13 @@ def test_value_materialization_isolates_cross_entry_lazy_deletion() -> None:
 
 
 def test_simulate_normalizes_mapping_failure_before_lazy_load() -> None:
+    # Unbudgeted: a budget refuses the test's own lazy entry type as unsupported
+    # retained storage before the mapping is ever traversed.
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")

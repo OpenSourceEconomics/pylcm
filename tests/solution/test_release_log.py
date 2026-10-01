@@ -30,6 +30,7 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     Choose,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     categorical,
@@ -224,6 +225,7 @@ def _pass_through_model(
         regime_id_class=_PassThroughRegimeId,
         ages=AgeGrid(start=0, stop=1, step="Y"),
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "working"},
     )
 

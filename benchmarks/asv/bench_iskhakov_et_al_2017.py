@@ -239,6 +239,7 @@ def _make_model_and_params(
         ages=ages,
         regime_id_class=RegimeId,
         initial_regimes={40: "working_life"},
+        **_gpu_mem.default_budget_execution_kwargs(),
     )
 
     params = {

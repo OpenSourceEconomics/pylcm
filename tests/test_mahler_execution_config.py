@@ -22,15 +22,20 @@ def test_create_model_applies_explicit_execution_configuration() -> None:
 
 
 def test_create_model_preserves_default_execution_configuration() -> None:
-    """Omitted controls keep unbudgeted planning and automatic width selection."""
+    """Omitted controls keep the device-derived budget and automatic widths."""
     model = mahler_yum_2024.create_model()
 
     assert (
         dict(model._execution.axis_widths),
-        model._execution.device_memory_bytes,
+        model._execution.budget_source != "explicit",
         model._execution.donate_buffers,
         model.execution_devices,
-    ) == ({}, None, True, mahler_yum_2024.MAHLER_YUM_MODEL.execution_devices)
+    ) == (
+        {},
+        True,
+        True,
+        mahler_yum_2024.MAHLER_YUM_MODEL.execution_devices,
+    )
 
 
 def test_create_model_execution_configuration_preserves_economic_identity() -> None:

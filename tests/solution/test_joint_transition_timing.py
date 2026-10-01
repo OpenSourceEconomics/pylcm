@@ -9,6 +9,7 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     JointTransition,
     MarkovTransition,
@@ -81,6 +82,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     params: UserParams = {

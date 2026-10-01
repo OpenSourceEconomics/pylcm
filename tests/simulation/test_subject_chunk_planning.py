@@ -28,7 +28,10 @@ def test_a_fixed_subject_width_bounds_complete_dispatched_chunks(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
-        execution_config=ExecutionConfig(axis_widths={"subject": 3}),
+        # A budget treats the pin as the search anchor only; it bounds chunks here.
+        execution_config=ExecutionConfig(
+            axis_widths={"subject": 3}, device_memory_bytes=None
+        ),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")

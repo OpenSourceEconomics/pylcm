@@ -486,6 +486,11 @@ def get_streaming_max_Q_over_a(
             pareto_weights=pareto_weights,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
+            whole_product_Q_and_F=productmap(
+                func=Q_and_F,
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+            ),
         ),
         args=[
             "next_regime_to_V_arr",
@@ -595,6 +600,9 @@ class _StreamedMaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
+    whole_product_Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """`Q_and_F` mapped over the named action grids, for a block covering them."""
+
     def __call__(
         self,
         *,
@@ -628,6 +636,35 @@ class _StreamedMaxQOverA:
             return ev1_result.smoothed_value
 
         if self.stakeholders is None:
+            n_actions = math.prod(
+                jnp.shape(states_actions_params[name])[0] for name in self.action_names
+            )
+            if action_block_width >= n_actions:
+                # One block covers the product: map the named grids, as the dense
+                # route does, instead of decoding a flat index into each of them.
+                # The streamed reduction's value contract is stated explicitly: a
+                # feasible NaN publishes NaN. XLA:CPU's vectorized maximum drops NaN
+                # once a mapped reduction spans a few thousand elements.
+                Q_arr, F_arr = self.whole_product_Q_and_F(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    **q_and_f_params,
+                )
+                # One variadic reduce yields the maximum and the NaN flag, so the
+                # backend fuses Q into a single pass instead of materialising it
+                # for two consumers.
+                best, any_feasible_nan = jax.lax.reduce(
+                    (
+                        jnp.where(F_arr, Q_arr, -jnp.inf),
+                        F_arr & jnp.isnan(Q_arr),
+                    ),
+                    (jnp.asarray(-jnp.inf, Q_arr.dtype), jnp.zeros((), dtype=bool)),
+                    lambda left, right: (
+                        jax.lax.max(left[0], right[0]),
+                        jax.lax.bitwise_or(left[1], right[1]),
+                    ),
+                    tuple(range(jnp.ndim(Q_arr))),
+                )
+                return jnp.where(any_feasible_nan, jnp.nan, best)
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=self.Q_and_F,
                 action_names=self.action_names,

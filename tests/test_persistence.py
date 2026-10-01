@@ -15,6 +15,7 @@ from _lcm.persistence.io import _get_platform
 from lcm import (
     AgeGrid,
     Choose,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
     SimulateSnapshot,
@@ -88,6 +89,7 @@ def _build_tiny_model(*, enable_jit: bool):
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         # The simulation starts at age zero; an empty later period is intentional.
         initial_regimes={0: "working"},
     )

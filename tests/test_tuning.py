@@ -43,9 +43,13 @@ from tests.test_models.deterministic.regression import (
 
 _N_PERIODS = 2
 _N_WEALTH = 8
-_BASELINE = ExecutionConfig()
-_CEILING_ABOVE_EVERY_CELL_COUNT = ExecutionConfig(axis_width_ceilings={"cell": 1000})
-_NARROWER_CELLS = ExecutionConfig(axis_width_ceilings={"cell": 2})
+_BASELINE = ExecutionConfig(device_memory_bytes=None)
+_CEILING_ABOVE_EVERY_CELL_COUNT = ExecutionConfig(
+    device_memory_bytes=None, axis_width_ceilings={"cell": 1000}
+)
+_NARROWER_CELLS = ExecutionConfig(
+    device_memory_bytes=None, axis_width_ceilings={"cell": 2}
+)
 _PERTURBED_CONSUMPTION_STOP = 3.001
 _WIDE_ALLOWANCE = 10**18
 

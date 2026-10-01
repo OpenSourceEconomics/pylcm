@@ -35,7 +35,9 @@ are all outside it, yet they occupy the same allocator pool. A budget set to the
 pool therefore admits plans the pool cannot host.
 
 `ExecutionConfig.device_memory_bytes` is consequently a request, not the ceiling. The
-ceiling is resolved once, where a model binds its devices, as
+default `"device"` requests `B_requested = min over selected devices d of L_d` and
+resolves unbudgeted when no selected device reports a limit. The ceiling is resolved
+once, where a model binds its devices, as
 
 `B_effective = min(B_requested, min over selected devices d of (L_d - ceil(f * L_d)))`
 

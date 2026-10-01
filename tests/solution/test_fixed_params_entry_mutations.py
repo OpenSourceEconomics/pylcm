@@ -17,6 +17,7 @@ import pytest
 from lcm import (
     AgeGrid,
     Choose,
+    ExecutionConfig,
     LogNormalIIDProcess,
     MarkovTransition,
     Model,
@@ -120,6 +121,7 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
         regime_id_class=RegimeId,
         fixed_params={"target": {"shock": {"mu": 0.0, "sigma": 1.0}}},
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
     np.testing.assert_allclose(

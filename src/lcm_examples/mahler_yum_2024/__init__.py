@@ -84,6 +84,7 @@ and reading the columnwise spread.
 """
 
 import dataclasses
+import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import make_dataclass
 from pathlib import Path
@@ -746,7 +747,18 @@ def create_model(
     )
 
 
-MAHLER_YUM_MODEL = create_model()
+@functools.cache
+def _default_model() -> Model:
+    return create_model()
+
+
+def __getattr__(name: str) -> Model:
+    # Built on first use, not at import: a module-level `Model` resolves its
+    # execution config at import, which a device-default budget may refuse.
+    if name == "MAHLER_YUM_MODEL":
+        return _default_model()
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 START_PARAMS = {
