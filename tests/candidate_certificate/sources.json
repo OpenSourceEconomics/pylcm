@@ -230,7 +230,7 @@
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
-            "sha256": "7ecc72e92580ed575a6ed2cd8f0f0bdfbe9e51058b9e4b48a8d08a5460800b4b"
+            "sha256": "d5612ad9403a62a32033aa058c84fa5bdf162aaca884740bb7cb3b163b8d0f30"
           },
           {
             "path": "src/_lcm/simulation/membership.py",
@@ -258,7 +258,7 @@
           },
           {
             "path": "src/_lcm/simulation/population_operations.py",
-            "sha256": "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32"
+            "sha256": "23ab5604c13bfc18772b08df996c42a15a07407c01b3f05f88660918e5dad2a5"
           },
           {
             "path": "src/_lcm/simulation/process_grids.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "ae42ad42b8db794b1e597b7a5a3b4b9fa5014d3643ea160733273bf6b5afa7bf"
+        "source_inventory_sha256": "d04f45eec39493e25f234c8315271f7a62acfa3b476f6aaa5648a94e11aa42c5"
       },
       "fast": {
         "candidate_sources": [
@@ -700,7 +700,7 @@
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
-            "sha256": "7ecc72e92580ed575a6ed2cd8f0f0bdfbe9e51058b9e4b48a8d08a5460800b4b"
+            "sha256": "d5612ad9403a62a32033aa058c84fa5bdf162aaca884740bb7cb3b163b8d0f30"
           },
           {
             "path": "src/_lcm/simulation/membership.py",
@@ -728,7 +728,7 @@
           },
           {
             "path": "src/_lcm/simulation/population_operations.py",
-            "sha256": "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32"
+            "sha256": "23ab5604c13bfc18772b08df996c42a15a07407c01b3f05f88660918e5dad2a5"
           },
           {
             "path": "src/_lcm/simulation/process_grids.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "ae42ad42b8db794b1e597b7a5a3b4b9fa5014d3643ea160733273bf6b5afa7bf"
+        "source_inventory_sha256": "d04f45eec39493e25f234c8315271f7a62acfa3b476f6aaa5648a94e11aa42c5"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "ae42ad42b8db794b1e597b7a5a3b4b9fa5014d3643ea160733273bf6b5afa7bf",
+  "source_inventory_sha256": "d04f45eec39493e25f234c8315271f7a62acfa3b476f6aaa5648a94e11aa42c5",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1174,7 +1174,7 @@
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
-      "sha256": "7ecc72e92580ed575a6ed2cd8f0f0bdfbe9e51058b9e4b48a8d08a5460800b4b"
+      "sha256": "d5612ad9403a62a32033aa058c84fa5bdf162aaca884740bb7cb3b163b8d0f30"
     },
     {
       "path": "src/_lcm/simulation/membership.py",
@@ -1202,7 +1202,7 @@
     },
     {
       "path": "src/_lcm/simulation/population_operations.py",
-      "sha256": "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32"
+      "sha256": "23ab5604c13bfc18772b08df996c42a15a07407c01b3f05f88660918e5dad2a5"
     },
     {
       "path": "src/_lcm/simulation/process_grids.py",

@@ -419,10 +419,11 @@ def resolve_initial_periods(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve each initial age to the period the simulation starts it in.
 
-    Uses the simulation's own starting-period rule: every age is matched against
-    `ages.values` in the active floating-point precision. A grid age therefore
-    resolves to its period whatever float conversion produced it, and admission,
-    validation and simulation agree on each subject's starting period.
+    Evaluates the simulation's own starting-period rule on the host with NumPy:
+    ages and `ages.values` are cast to the canonical float dtype the simulation
+    compares them in, so a grid age resolves to its period whatever float
+    conversion produced it, and admission, validation and simulation agree on
+    each subject's starting period. No device operation runs.
 
     Args:
         ages: AgeGrid for the model.
@@ -433,8 +434,11 @@ def resolve_initial_periods(
         grid point. The period of an off-grid age is meaningless.
 
     """
+    dtype = canonical_float_dtype()
     periods, on_grid, _ = population_operations.starting_periods(
-        initial_ages=jnp.asarray(initial_ages), age_values=ages.values
+        initial_ages=np.asarray(initial_ages, dtype=dtype),
+        age_values=np.asarray(ages.values, dtype=dtype),
+        xp=np,
     )
     return np.asarray(periods), np.asarray(on_grid)
 

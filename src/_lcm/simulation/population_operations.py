@@ -1,7 +1,10 @@
 """Pure population setup bodies shared by profiling and concrete execution."""
 
+from types import ModuleType
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.regime_building.collective import NO_ROLE
 
@@ -38,13 +41,26 @@ def role_mismatch(
     return jnp.any(starts_here & ~jnp.isin(roles, declared_here))
 
 
-def starting_periods(
-    *, initial_ages: jax.Array, age_values: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Preserve searchsorted and the existing isclose age-validity predicate."""
-    age_values = jnp.asarray(age_values)
-    periods = jnp.searchsorted(age_values, initial_ages)
-    safe_idx = jnp.clip(periods, 0, len(age_values) - 1)
+def starting_periods[ArrayT: (jax.Array, np.ndarray)](
+    *, initial_ages: ArrayT, age_values: ArrayT, xp: ModuleType = jnp
+) -> tuple[ArrayT, ArrayT, ArrayT | np.bool_]:
+    """Match each initial age to its period with searchsorted and isclose.
+
+    Args:
+        initial_ages: One initial age per subject.
+        age_values: The age grid's values.
+        xp: Array namespace evaluating the rule: `jax.numpy` inside the
+            simulation's profiled operations, `numpy` for host-side admission on
+            arrays already cast to the simulation's precision.
+
+    Returns:
+        Each subject's period index, whether its age is a grid point, and
+        whether every age is a grid point.
+
+    """
+    age_values = xp.asarray(age_values)
+    periods = xp.searchsorted(age_values, initial_ages)
+    safe_idx = xp.clip(periods, 0, len(age_values) - 1)
     in_bounds = periods < len(age_values)
-    valid = in_bounds & jnp.isclose(age_values[safe_idx], initial_ages)
-    return periods, valid, jnp.all(valid)
+    valid = in_bounds & xp.isclose(age_values[safe_idx], initial_ages)
+    return periods, valid, xp.all(valid)

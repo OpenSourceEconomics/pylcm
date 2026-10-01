@@ -356,7 +356,7 @@ _SOURCE_SEALS = {
     COMBINED_CHUNK_PROFILES_SOURCE: "a74efbc04481fba68176a690be6ee8ed1e32ec67bd26c9f85f1d783961306bc6",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
     COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "23934b73014746e61ac5a9f43675dc1300b25179179ea128fa7569e8601cc124",
-    COMBINED_POPULATION_OPERATIONS_SOURCE: "1fe3735a75a36e6603b2fcd5fd9dec9854bba08833e695b5aff40217f6f32c32",
+    COMBINED_POPULATION_OPERATIONS_SOURCE: "23ab5604c13bfc18772b08df996c42a15a07407c01b3f05f88660918e5dad2a5",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "0d9da227a909d35e4acc267493532c64c78c61f1d0d66cbbc4a04b488835a7b5",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
     COMBINED_RESULT_SNAPSHOT_SOURCE: "e70c908f3550e1a38ce5064d4ddd676f9929e711b17b72baf36f3569d6e673b5",
@@ -423,7 +423,7 @@ _SOURCE_SEALS = {
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "c0500a2a55d4db4a6b65b2def66456ba4b3be54613eef56294b4bfc6e4f8f10c",
     PERIOD_REPLAY_SOURCE: "5e32d5ad1932472525766a85b4402e5a75289a35891682f679773a758a0b4562",
-    INITIAL_CONDITIONS_SOURCE: "7ecc72e92580ed575a6ed2cd8f0f0bdfbe9e51058b9e4b48a8d08a5460800b4b",
+    INITIAL_CONDITIONS_SOURCE: "d5612ad9403a62a32033aa058c84fa5bdf162aaca884740bb7cb3b163b8d0f30",
     RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
@@ -4159,13 +4159,13 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     COMBINED_POPULATION_OPERATIONS_SOURCE: (
-        "a42062f4ab1662095f72ba4ca56a49fb03bbb2f05ac84d3a6208c8e838471ed7",
+        "c16289c6c0031bec83869c47170eee3663d4d5aa4e6366d7df5652bc5ebb21d5",
         {
             "default_roles": "88afa3c0d2bc242098f72d9ab7232308a7a26ba97fdcf02620b70c0cb1929a13",
             "regime_is_occupied": "8e2e9ccdf0821653598ae983149767955a446b506bb532065f681e785addc62e",
             "canonical_roles": "4542061502177865523b5c1d0c5346c2aa2ff46286c5b81d3df65a0e7e29fb12",
             "role_mismatch": "faba46dd0931feb531692c4b87d8cce2991dcf2d7a6f6c14de8f9b24d6a4feb2",
-            "starting_periods": "16199c82e3e6d3d5cab5daa483c9a96122dfccb558203068b6da674eb4e35226",
+            "starting_periods": "8dad813abd3913715292f1c5d79cf5b9c4f0194e0a0ee083aa9325631f94ce78",
         },
     ),
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
@@ -6074,8 +6074,8 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
     ),
     "population_operations:entry_period_shifted": (
         "src/_lcm/simulation/population_operations.py",
-        "return periods, valid, jnp.all(valid)",
-        "return periods + 1, valid, jnp.all(valid)",
+        "return periods, valid, xp.all(valid)",
+        "return periods + 1, valid, xp.all(valid)",
     ),
     "program_arguments:continuous_actions_omitted": (
         "src/_lcm/simulation/program_arguments.py",
