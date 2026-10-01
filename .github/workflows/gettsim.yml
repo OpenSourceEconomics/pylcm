@@ -1,0 +1,53 @@
+---
+name: gettsim-integration
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+jobs:
+  gettsim:
+    name: Run supported GETTSIM integration at fp${{ matrix.precision }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - '32'
+          - '64'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.80.0
+          cache: true
+          environments: tests-gettsim
+          activate-environment: true
+          frozen: true
+      - name: Exercise durable identity and replay
+        run: |
+          mkdir -p reports
+          pixi run -e tests-gettsim pytest tests/solution/test_gettsim_fingerprint.py \
+            --precision=${{ matrix.precision }} -v \
+            --junitxml=reports/gettsim-integration.xml
+      - name: Require the integration module to run
+        run: |
+          pixi run -e tests-gettsim python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("reports/gettsim-integration.xml").getroot()
+          suites = list(root.iter("testsuite"))
+          tests = sum(int(suite.get("tests", "0")) for suite in suites)
+          skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
+          assert tests > 0 and skipped == 0, (
+              f"GETTSIM integration: {tests} tests, {skipped} skipped"
+          )
+          PY
+      - name: Upload integration results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gettsim-integration-fp${{ matrix.precision }}
+          path: reports/gettsim-integration.xml
+          if-no-files-found: error

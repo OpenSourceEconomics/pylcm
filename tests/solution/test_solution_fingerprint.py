@@ -1,6 +1,7 @@
 """Collision-focused tests for durable solution fingerprints."""
 
 import dataclasses
+import functools
 import inspect
 from abc import ABCMeta
 from collections.abc import Callable, Mapping
@@ -12,6 +13,7 @@ from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import dags.exceptions as dags_exceptions
+import dags.tree as dt
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -55,7 +57,9 @@ from lcm.solvers import (
     Solver,
     SolverBuildContext,
 )
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt
+from tests.solution import test_age_specialized_solve as age_specialized_models
 from tests.test_models.taste_shocks_toy import (
     get_model as get_toy_model,
 )
@@ -2045,6 +2049,93 @@ def test_a_shipped_class_used_directly_is_fingerprinted_by_identity() -> None:
     )
 
 
+@pytest.mark.parametrize("function", [np.sum, np.asarray, np.issubdtype])
+def test_numpy_public_numerical_functions_have_durable_identity(
+    function: Callable,
+) -> None:
+    """NumPy public numerical implementations bind the installed runtime."""
+    first = fingerprints._semantic_fingerprint(_dependency_closure(function))
+    second = fingerprints._semantic_fingerprint(_dependency_closure(function))
+    assert first == second
+
+
+@pytest.mark.parametrize("function", [np.load, np.loadtxt, np.save])
+def test_numpy_file_operations_have_no_durable_identity(function: Callable) -> None:
+    """File inputs must be captured before model construction."""
+    with pytest.raises(TypeError, match="durably fingerprint"):
+        fingerprints._semantic_fingerprint(_dependency_closure(function))
+
+
+def test_entire_jax_backend_is_not_a_general_terminal_value() -> None:
+    """A whole backend module requires a supported wrapper interpretation."""
+    with pytest.raises(TypeError, match="durably fingerprint"):
+        fingerprints._semantic_fingerprint(_dependency_closure(jnp))
+
+
+def test_generated_dag_can_flatten_nested_input_mappings() -> None:
+    """DAG input flattening binds its mapping protocol dependency."""
+
+    def function(tree: Mapping) -> object:
+        return dt.flatten_to_qnames(tree)
+
+    assert function({"a": {"b": 2}}) == {"a__b": 2}
+    assert fingerprints._semantic_fingerprint(
+        function
+    ) == fingerprints._semantic_fingerprint(function)
+
+
+@pytest.mark.parametrize(
+    "schema", [{}, {"income": float}, {"income": {"gross": float, "net": int}}]
+)
+def test_generated_output_schemas_have_stable_structural_identity(schema: dict) -> None:
+    """Empty, singleton and nested output declarations carry deterministic identity."""
+    first = _output_schema_function(schema)
+    second = _output_schema_function(dict(reversed(tuple(schema.items()))))
+    assert fingerprints._semantic_fingerprint(
+        first
+    ) == fingerprints._semantic_fingerprint(second)
+
+
+def test_generated_output_schema_binds_nested_types() -> None:
+    """A changed output type remains visible inside a nested schema."""
+    first = _output_schema_function({"income": {"net": int}})
+    changed = _output_schema_function({"income": {"net": float}})
+    assert fingerprints._semantic_fingerprint(
+        first
+    ) != fingerprints._semantic_fingerprint(changed)
+
+
+def test_cyclic_output_schema_is_rejected() -> None:
+    """A recursive output declaration has no finite schema contract."""
+    schema = {}
+    schema["income"] = schema
+    with pytest.raises(TypeError, match="annotation"):
+        fingerprints._semantic_fingerprint(_output_schema_function(schema))
+
+
+def _output_schema_function(schema: dict) -> Callable:
+    def function(value: float) -> float:
+        return value
+
+    function.__annotations__["return"] = schema
+    return function
+
+
+def test_numpy_abstract_scalar_families_retain_distinct_identities() -> None:
+    """Abstract dtype families retain their type identity without conversion."""
+    assert fingerprints._semantic_fingerprint(_dependency_closure(np.integer)) != (
+        fingerprints._semantic_fingerprint(_dependency_closure(np.floating))
+    )
+
+
+def test_output_schema_rejects_opaque_leaves() -> None:
+    """A generated output schema must contain inspectable type metadata."""
+    with pytest.raises(TypeError, match="annotation"):
+        fingerprints._semantic_fingerprint(
+            _output_schema_function({"income": object()})
+        )
+
+
 def _masked_survival(age: float) -> float:
     return 1.0 - age / 100.0
 
@@ -2074,3 +2165,170 @@ def test_a_function_closing_over_a_lowered_law_is_fingerprinted_by_its_fields(
         for periods in (left, right)
     ]
     assert (digests[0] == digests[1]) is (left == right)
+
+
+def _signature_dispatcher(template: Callable) -> Callable:
+    signature = inspect.signature(template)
+
+    def dispatcher(*args: float, **kwargs: float) -> float:
+        bound = signature.bind(*args, **kwargs)
+        return sum(bound.arguments.values())
+
+    return dispatcher
+
+
+def _wealth_and_income(*, wealth: float, income: float) -> float:
+    return wealth + income
+
+
+def _wealth_and_labor_income(*, wealth: float, labor_income: float) -> float:
+    return wealth + labor_income
+
+
+@pytest.mark.parametrize(
+    ("template", "expected_equal"),
+    [
+        pytest.param(_wealth_and_income, True, id="same-signature"),
+        pytest.param(_wealth_and_labor_income, False, id="renamed-parameter"),
+    ],
+)
+def test_signature_bind_in_closure_binds_the_signature(
+    *, template: Callable, expected_equal: bool
+) -> None:
+    """Binding against a closed-over signature is identified by that signature."""
+    baseline = fingerprints._semantic_fingerprint(
+        _signature_dispatcher(_wealth_and_income)
+    )
+    other = fingerprints._semantic_fingerprint(_signature_dispatcher(template))
+    assert (baseline == other) is expected_equal
+
+
+class _WalksEveryPath(dict):
+    """A completed-visit store that never keeps a visit."""
+
+    # keyword-only-exempt: library-callback=dict.__setitem__
+    def __setitem__(self, key: object, value: object) -> None:
+        pass
+
+
+def _shared_helper(wealth: float) -> float:
+    return 2.0 * wealth
+
+
+def _reads_shared_helper_twice(wealth: float) -> float:
+    return _shared_helper(wealth) + _shared_helper(wealth)
+
+
+def _recursive_helper(wealth: float) -> float:
+    return wealth if wealth < 1.0 else _recursive_helper(wealth / 2.0)
+
+
+def _diamond(*, depth: int) -> tuple[object, ...]:
+    level: tuple[object, ...] = (_shared_helper,)
+    for _ in range(depth):
+        level = (level, level)
+    return level
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(
+            (_shared_helper, _reads_shared_helper_twice, _shared_helper), id="shared"
+        ),
+        pytest.param(
+            (_recursive_helper, _recursive_helper, _reads_shared_helper_twice),
+            id="cyclic",
+        ),
+        pytest.param(_diamond(depth=8), id="diamond"),
+    ],
+)
+def test_reused_visits_feed_the_digest_the_bytes_of_a_full_walk(
+    *, value: object
+) -> None:
+    """Replaying a completed visit leaves the digest of every-path walking."""
+    replayed = fingerprints._SemanticHasher()
+    replayed.visit(value=value)
+    walked = fingerprints._SemanticHasher()
+    walked._completed = _WalksEveryPath()
+    walked.visit(value=value)
+    assert replayed.hexdigest() == walked.hexdigest()
+
+
+def test_shared_objects_are_walked_once(*, monkeypatch) -> None:
+    """A diamond with 2**16 paths walks each object it reaches once."""
+    walked: list[int] = []
+    visit_active = fingerprints._SemanticHasher._visit_active
+
+    def counting(self: fingerprints._SemanticHasher, **kwargs: Any) -> None:
+        walked.append(id(kwargs["value"]))
+        visit_active(self, **kwargs)
+
+    monkeypatch.setattr(fingerprints._SemanticHasher, "_visit_active", counting)
+    fingerprints._semantic_fingerprint(_diamond(depth=16))
+    assert len(walked) == len(set(walked))
+
+
+# keyword-only-exempt: library-callback=functools.partial
+def _bonus_through_cached_factory(
+    factory: Callable[[float], Callable[[], float]], age: float
+) -> Callable[[], float]:
+    return factory(age)
+
+
+def _structure_digest(policy_bonus: object) -> str:
+    model = age_specialized_models._make_model(cast("Any", policy_bonus))
+    return model._model_structure_fingerprint
+
+
+def _age_bonus(
+    *, build: Callable, signature: Callable = float
+) -> AgeSpecializedFunction:
+    return AgeSpecializedFunction(build=build, signature=signature)
+
+
+def _bonus_frozen_at_45(age: float) -> Callable[[], float]:
+    return age_specialized_models._bonus_of_age(45.0 if age == 55.0 else age)
+
+
+def _bonus_of_group_start(age: float) -> Callable[[], float]:
+    return age_specialized_models._bonus_of_age(25.0 if age < 50.0 else 55.0)
+
+
+def _is_young(age: float) -> bool:
+    return age < 50.0
+
+
+@pytest.mark.parametrize(
+    ("other", "expected_equal"),
+    [
+        pytest.param(
+            _age_bonus(
+                build=partial(
+                    _bonus_through_cached_factory,
+                    functools.cache(age_specialized_models._bonus_of_age),
+                )
+            ),
+            True,
+            id="cached-factory-same-functions",
+        ),
+        pytest.param(
+            _age_bonus(build=_bonus_frozen_at_45), False, id="one-period-differs"
+        ),
+    ],
+)
+def test_age_specialized_function_is_identified_by_what_each_period_runs(
+    *, other: AgeSpecializedFunction, expected_equal: bool
+) -> None:
+    """The factory is a recipe; the per-period functions it builds are the model."""
+    baseline = _structure_digest(_age_bonus(build=age_specialized_models._bonus_of_age))
+    assert (baseline == _structure_digest(other)) is expected_equal
+
+
+def test_periods_sharing_a_signature_run_the_first_periods_function() -> None:
+    """Periods with one signature are identified by the first period's function."""
+    grouped = _age_bonus(
+        build=age_specialized_models._bonus_of_age, signature=_is_young
+    )
+    explicit = _age_bonus(build=_bonus_of_group_start, signature=_is_young)
+    assert _structure_digest(grouped) == _structure_digest(explicit)
