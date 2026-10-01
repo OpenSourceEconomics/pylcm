@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "c78cf8830f01f72c972b570b71a748096c0348ce8f5af65f245f6bdbbf7f2d08",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "e9e21d1e94ec8a5ba1ac61f52ccc25e8842e20038805a996a2b32e0ee39cd06d",
+    BACKWARD_INDUCTION_SOURCE: "574126ebbe6a0ee2fcd30d87e13b8862c373db4619338cbc7bb8dfdb52e5fa6e",
     PERIOD_REPLAY_SOURCE: "5e32d5ad1932472525766a85b4402e5a75289a35891682f679773a758a0b4562",
     INITIAL_CONDITIONS_SOURCE: "985b984bb97834d05e511d55cd9ee77c06daae3086603f5c3942f2ef4cce20fb",
     RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
@@ -3903,7 +3903,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a11fc512ad90c84330602a2a167873a93ca267221ccd3ec3e13cb22e1fea6868",
+        "7d898a3a7185341daab9a9033e81ac6794f4e260b52a0c40458a6f78bd9c5a0e",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -3987,7 +3987,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a11fc512ad90c84330602a2a167873a93ca267221ccd3ec3e13cb22e1fea6868",
+        "7d898a3a7185341daab9a9033e81ac6794f4e260b52a0c40458a6f78bd9c5a0e",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4258,7 +4258,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a11fc512ad90c84330602a2a167873a93ca267221ccd3ec3e13cb22e1fea6868",
+        "7d898a3a7185341daab9a9033e81ac6794f4e260b52a0c40458a6f78bd9c5a0e",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4460,10 +4460,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
             "_lower_and_compile_wave": "7068bda7502d1136c7412667a0921c9c86178800ecc57253f0f84fc98fdf8295",
             "_lower_resolved_candidate": "af793de4c8caec255772e0fe0336b6f33f520c5baa65eee69572dbaa4ba061d4",
-            "CompilationWave.lower": "fbcda242fd0cfa00e931b752a12877d921c405a287458898e21af07e558eba77",
-            "CompilationWave._submit": "28252293262e2c6ad173aa56610a8e5a3be0a81e8fb0f798729f0f16c7e96cea",
-            "CompilationWave.__exit__": "e5a9f7e1f2e8eea156ca800202f55b4d0c30d8a49e54022dc7b6ad61ad877441",
-            "CompilationWave._raise_first_compile_error": "787b7683440a2b26449c59bab1bd7986ff983e5210d3bff3d07be5135f5bc527",
+            "CompilationWave.lower": "78cb14088a1f5a34ff27a48d4b0923ff81e371b15bb78c9a23f8641fb588596d",
+            "CompilationWave._submit": "ef02b7c4983f2ad94f1b59e37573240afbbd683da7e0a0c614dd78a8f16d2598",
+            "CompilationWave.__exit__": "50ca77ceb98dc0c432b886d4e53051dc6a9056c3ac4e357bfce1227383091e2c",
             "_compile_and_log": "6c2e773eaf54f547353e2734fefa2429d266a05279d94e99c8f8e596b916f74d",
             "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
@@ -4500,7 +4499,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "a11fc512ad90c84330602a2a167873a93ca267221ccd3ec3e13cb22e1fea6868"
+        != "7d898a3a7185341daab9a9033e81ac6794f4e260b52a0c40458a6f78bd9c5a0e"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6360,7 +6359,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a11fc512ad90c84330602a2a167873a93ca267221ccd3ec3e13cb22e1fea6868",
+        "7d898a3a7185341daab9a9033e81ac6794f4e260b52a0c40458a6f78bd9c5a0e",
         {
             "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",

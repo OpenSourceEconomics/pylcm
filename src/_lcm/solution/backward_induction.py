@@ -26,7 +26,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Self, cast
 
@@ -4780,14 +4780,15 @@ class CompilationWave:
     declares; outputs whose placement the compiler chooses carry none. A caller
     whose next program needs those shardings asks `lower` to wait for the compile.
 
-    The first error is raised on the caller as soon as the caller sees it, with a
-    note naming the program:
-    - a lowering error at once, noted `while lowering <label>`;
-    - a compile error before the next lowering starts, or when the wave closes,
-      noted `while compiling <label>`.
-
-    Either way, compiles not yet started are cancelled and running ones finish in
-    the background with their results discarded.
+    Errors are raised on the caller with a note naming the program:
+    - a lowering error at once, noted `while lowering <label>`; compiles not yet
+      started are cancelled and running ones finish in the background with their
+      results discarded;
+    - a compile error once every submitted compile has finished, noted
+      `while compiling <label>`: when the wave closes, the first failed compile in
+      submission order; on `lower(wait=True)`, the awaited compile's error. No
+      compile keeps running after a compile error is raised, and none is
+      published.
     """
 
     def __init__(
@@ -4860,6 +4861,7 @@ class CompilationWave:
         try:
             _, executable = future.result()
         except BaseException as error:
+            self._pool.shutdown()
             error.add_note(f"while compiling {label}")
             raise
         return executable.out_info
@@ -4873,7 +4875,6 @@ class CompilationWave:
         publish: Callable[..., object] | None,
     ) -> None:
         """Lower one program on the calling thread and hand its compile to the pool."""
-        self._raise_first_compile_error()
         self._logger.info("  lowering %s ...", label)
         start = time.monotonic()
         try:
@@ -4906,27 +4907,18 @@ class CompilationWave:
         if exc is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
             return
-        for future in as_completed(self._futures):
-            try:
-                lowering_key, executable = future.result()
-            except BaseException as error:
-                error.add_note(f"while compiling {self._futures[future]}")
-                self._pool.shutdown(wait=False, cancel_futures=True)
-                raise
-            self._compiled[lowering_key] = executable
         self._pool.shutdown()
+        for future, label in self._futures.items():
+            error = future.exception()
+            if error is not None:
+                error.add_note(f"while compiling {label}")
+                raise error
+        for future in self._futures:
+            lowering_key, executable = future.result()
+            self._compiled[lowering_key] = executable
         for lowering_key, publish in self._publishers.items():
             if publish is not None:
                 publish(executable=self._compiled[lowering_key])
-
-    def _raise_first_compile_error(self) -> None:
-        """Raise the error of a compile that has already failed, if any."""
-        for future, label in self._futures.items():
-            if future.done() and not future.cancelled():
-                error = future.exception()
-                if error is not None:
-                    error.add_note(f"while compiling {label}")
-                    raise error
 
 
 def _compile_and_log(
