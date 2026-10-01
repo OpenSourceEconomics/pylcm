@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import GridBreakpoint, JointTransition
+from lcm import ExecutionConfig, GridBreakpoint, JointTransition
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     NestedConsumptionSavingsRegime,
@@ -76,7 +76,9 @@ def test_kinked_tax_example_runs_nbegm_on_both_sides_of_the_bracket() -> None:
     """The small NBEGM example solves and exposes both sides of its tax kink."""
     examples = importlib.import_module("lcm_examples.specialized_consumption_savings")
 
-    model = examples.build_kinked_tax_model(enable_jit=False)
+    model = examples.build_kinked_tax_model(
+        enable_jit=False, execution_config=ExecutionConfig(device_memory_bytes=None)
+    )
     regime = model.user_regimes["working"]
     params = examples.kinked_tax_params()
     solution = model.solve(params=params, log_level="debug")

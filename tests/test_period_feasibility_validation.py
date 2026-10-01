@@ -17,6 +17,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     ByAge,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -140,6 +141,7 @@ def _feasibility_model(
         regime_id_class=ProbabilityId,
         initial_regimes={(0, 1): "working"} if earlier_root else {1: "working"},
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(cases={0: "left", 1: late_law}),

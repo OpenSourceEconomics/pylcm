@@ -84,7 +84,7 @@ def test_capacity_policy_uses_uuid_matched_limiting_headroom(
     )
 
     assert config.devices == (42, 3)
-    assert dict(config.axis_widths) == {"action_product": 64, "cell": 4096}
+    assert dict(config.axis_widths) == {}
     assert config.device_memory_bytes == (5 * _MIB + 3) // 2
     assert ordinals == [1, 0]
     receipt = json.loads(report.read_text())
@@ -205,5 +205,9 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
     assert len(model.calls) == 4
     assert {call["seed"] for call in model.calls} == {0}
     assert model.calls[-1]["solution"] is loaded_solution
-    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == "4"
-    assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == "3"
+    assert bench_mahler_yum.MahlerYumBudgetedGpu.version == (
+        f"4-{_mahler_execution.POLICY_LABEL}"
+    )
+    assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == (
+        f"3-{_mahler_execution.POLICY_LABEL}"
+    )

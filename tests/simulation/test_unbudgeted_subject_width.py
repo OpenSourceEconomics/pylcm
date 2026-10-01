@@ -206,9 +206,11 @@ def test_results_are_identical_across_the_old_and_the_derived_width(
             shock_type="rouwenhorst",
             wealth_n_points=10,
             consumption_n_points=10,
-            execution_config=ExecutionConfig()
+            execution_config=ExecutionConfig(device_memory_bytes=None)
             if width is None
-            else ExecutionConfig(axis_widths={"subject": width}),
+            else ExecutionConfig(
+                device_memory_bytes=None, axis_widths={"subject": width}
+            ),
         )
         solution = model.solve(params=params, log_level="off")
         frames.append(

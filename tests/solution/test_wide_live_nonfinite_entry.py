@@ -20,6 +20,7 @@ from lcm import (
     AgeGrid,
     CertaintyEquivalent,
     DiscreteGrid,
+    ExecutionConfig,
     LinearExpectation,
     MarkovTransition,
     Model,
@@ -223,6 +224,7 @@ def _build_model(
         ages=AgeGrid(start=20, stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={20: "source"},
     )
 

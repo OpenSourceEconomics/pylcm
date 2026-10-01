@@ -1125,7 +1125,7 @@ def _validate_resident_bytes(*, resident_bytes: int) -> int:
 
 
 def bootstrap_width(*, extent: int, cap: int = BOOTSTRAP_WIDTH_CAP) -> int:
-    """Return the width an axis streams at when no device-memory budget is declared.
+    """Return the width an axis streams at when no device-memory budget applies.
 
     The width is the largest power of two strictly below the extent, capped at
     `cap` — `BOOTSTRAP_WIDTH_CAP` for a reduced axis, so an unbudgeted solve never

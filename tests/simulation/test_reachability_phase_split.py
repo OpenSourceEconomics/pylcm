@@ -14,7 +14,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, MarkovTransition, Model, Regime, categorical
+from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarFloat, ScalarInt
 
@@ -68,6 +68,7 @@ def _build_model() -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "source"},
     )
 

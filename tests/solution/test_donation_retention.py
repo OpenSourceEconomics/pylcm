@@ -13,7 +13,7 @@ from _lcm.solution.continuation_arguments import (
     MARGINAL_ARGUMENT,
     MarginalLeafArguments,
 )
-from lcm import Model
+from lcm import ExecutionConfig, Model
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
 from tests.test_models.initial_regimes import initial_regimes_of
@@ -34,6 +34,7 @@ def test_retention_and_eager_execution_protect_all_output_owners(
             regime_id_class=RegimeId,
             fixed_params=dict(model.fixed_params),
             enable_jit=False,
+            execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_regimes=initial_regimes_of(model=model),
         )
     retention = (

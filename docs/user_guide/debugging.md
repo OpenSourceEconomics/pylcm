@@ -24,7 +24,10 @@ model = Model(
 ```
 
 This does not affect correctness --- the same functions run, just without compilation.
-Re-enable JIT once the issue is resolved.
+Without compilation no compiler reports a workspace, so the solve refuses a
+device-memory budget, including the default one GPUs and TPUs derive from their pool
+limit. Pass `ExecutionConfig(device_memory_bytes=None)` alongside `enable_jit=False`
+there. Re-enable JIT once the issue is resolved.
 
 ## Log levels
 
@@ -415,10 +418,10 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 
 - **`ExecutionPlanningError`**: The requested execution policy cannot produce a valid
   plan. This covers every device-memory budget, axis-width, device-selection and
-  sharding refusal, so it is the exception a tuning run meets most often. When the
-  selected devices capped the requested budget, the message names both the requested and
-  the effective bytes together with the headroom fraction that separates them; see
-  [Performance and memory tuning](tuning.md#set-a-device-memory-budget).
+  sharding refusal, so it is the exception a tuning run meets most often. A budget
+  refusal names the effective budget and where it came from --- the request, the request
+  capped by the device headroom, or the device default --- and lists what to change to
+  fit; see [Performance and memory tuning](tuning.md#set-a-device-memory-budget).
 
 - **`FunctionDispatchError`**: A function cannot be dispatched over the variables it is
   asked to map --- a positional-only parameter, or a requested variable absent from the

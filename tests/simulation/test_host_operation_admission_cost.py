@@ -510,7 +510,9 @@ def test_a_budgeted_placement_still_requires_a_live_inventory() -> None:
 
 def test_a_budgeted_forward_call_returns_the_unbudgeted_results_exactly() -> None:
     """Admitting each helper changes no simulated value and no result structure."""
-    unbudgeted, params, initial = dissolution()
+    unbudgeted, params, initial = dissolution(
+        execution_config=ExecutionConfig(device_memory_bytes=None)
+    )
     expected = unbudgeted.simulate(
         params=params,
         initial_conditions=initial,

@@ -52,10 +52,13 @@ def _measure_combination(*, witness: str, log_level: str) -> dict[str, float]:
     """Build one witness, warm it, and take one measured call at `log_level`."""
     import jax
 
+    from . import _gpu_mem
     from ._compile_counters import count_compile_requests
     from ._simulation_witnesses import WITNESSES
 
-    model, model_params, initial_conditions = WITNESSES[witness]()
+    model, model_params, initial_conditions = WITNESSES[witness](
+        **_gpu_mem.default_budget_execution_kwargs()
+    )
     solution = model.solve(params=model_params, log_level="off")
 
     def _simulate() -> object:

@@ -287,31 +287,55 @@ def _observe_scalar_edge(
     return frontiers
 
 
-def test_a_published_subtree_is_held_at_widths_admission_never_reaches(
+def test_a_width_dependent_publication_is_refused_at_the_width_that_binds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A producer whose published typing follows the width is refused regardless.
+    """A producer whose published typing follows the width is refused when bound.
 
-    What a consumed producer publishes has to be one subtree at every width of
-    its frontier, because the consumer is lowered against the top-ranked one
-    before the budget selects. That is a property of the program, so the solve
-    refuses a width-dependent publication even when the budget admits the widest
-    candidate and no narrower one is ever selected, lowered or dispatched.
+    A consumer is lowered against the producer's top-ranked record, so a
+    narrower candidate must publish the same subtree. It is traced, and held
+    against that record, when a refusal or a width search binds it: a solve whose
+    budget admits the widest candidate never traces the narrower ones, and
+    binding one afterwards raises.
     """
-    admitted = _observe_scalar_edge(monkeypatch=monkeypatch, convention="strong")
+    admitted = _observe_scalar_edge(
+        monkeypatch=monkeypatch, convention="width_dependent"
+    )
     bound = {
         triple: len(candidates)
         for frontier in admitted
         for triple, candidates in frontier.candidates_by_triple.items()
     }
-    lengths = {
-        triple: length
+    consumed = [
+        (frontier, triple)
         for frontier in admitted
-        for triple, length in frontier.frontier_lengths.items()
-    }
+        for triple, core in frontier.frontiers.items()
+        if core.consumed and len(core.widths) > 1
+    ]
 
     assert set(bound.values()) == {1}
-    assert max(lengths.values()) > 1
-
+    assert consumed
+    frontier, triple = consumed[0]
+    # The fixture publishes a weakly typed scalar only at its narrowest width.
+    narrowest = len(frontier.frontiers[triple].widths) - 1
     with pytest.raises(ExecutionPlanningError, match="scalar"):
-        _observe_scalar_edge(monkeypatch=monkeypatch, convention="width_dependent")
+        frontier.candidate(triple=triple, position=narrowest)
+
+
+def test_a_width_invariant_publication_binds_at_every_width(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bind-time check admits a producer that publishes one typing throughout."""
+    admitted = _observe_scalar_edge(monkeypatch=monkeypatch, convention="strong")
+    consumed = [
+        (frontier, triple)
+        for frontier in admitted
+        for triple, core in frontier.frontiers.items()
+        if core.consumed and len(core.widths) > 1
+    ]
+
+    assert consumed
+    frontier, triple = consumed[0]
+    narrowest = len(frontier.frontiers[triple].widths) - 1
+    frontier.candidate(triple=triple, position=narrowest)
+    assert len(frontier.candidates_by_triple[triple]) == narrowest + 1

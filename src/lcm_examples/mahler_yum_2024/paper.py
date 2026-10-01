@@ -45,6 +45,7 @@ import jax.numpy as jnp
 
 from lcm import (
     DiscreteGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -407,6 +408,7 @@ def create_mahler_yum_model(
     implementation: str = "paper",
     outer_search: AdaptiveOuterMesh | None = None,
     enable_jit: bool = True,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the Mahler-Yum model in the requested implementation.
 
@@ -450,6 +452,10 @@ def create_mahler_yum_model(
     kinked-utility (case-piece) Euler action, which the ride-along route
     does not yet compose with. Report results at those states as an
     approximation, or bound their contribution.
+
+    `execution_config` reaches the paper model; an eager build
+    (`enable_jit=False`) on a GPU passes `device_memory_bytes=None`, since no
+    compiler reports the workspace a budget would admit.
     """
     if implementation == "brute":
         from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL  # noqa: PLC0415
@@ -473,6 +479,7 @@ def create_mahler_yum_model(
         regime_id_class=RegimeId,
         initial_regimes={ages.exact_values[0]: "working"},
         enable_jit=enable_jit,
+        execution_config=execution_config,
         fixed_params={
             "productivity_type_multiplier": productivity_type_multiplier,
             "sigma": risk_aversion,

@@ -346,6 +346,7 @@ def simulate(  # noqa: C901, PLR0915
                     "Budgeted simulation currently requires compiled decision "
                     "programs; host gated/replay adapters require their own "
                     "workspace accounting."
+                    f"{runtime.execution.device_memory_cap_note()}"
                 )
             inputs = union_buffer_footprints(
                 footprints=(

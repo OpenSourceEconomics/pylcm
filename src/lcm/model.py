@@ -1479,6 +1479,7 @@ class Model:
                         f"Budgeted foreign solution for regime {regime_name!r} "
                         "requires unprofiled artifact authority or payload copies; "
                         "only canonical eager and admitted native values are supported."
+                        f"{self._execution.device_memory_cap_note()}"
                     )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values

@@ -12,7 +12,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from _lcm.egm import outer_affine_structure, outer_inversion
-from lcm import LinSpacedGrid
+from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import (
     InvalidSimulationInputError,
     UnrepresentableOuterCandidateError,
@@ -105,11 +105,18 @@ def test_separate_solve_and_simulate_matches_the_automatic_route(
     )
 
 
-def test_result_without_replay_policies_is_refused(
-    solved: tuple[Model, SolutionResult],
-) -> None:
-    """Dropping replay artifacts is refused rather than silently re-optimized."""
-    model, solution = solved
+def test_result_without_replay_policies_is_refused(route: str) -> None:
+    """Dropping replay artifacts is refused rather than silently re-optimized.
+
+    Unbudgeted: a budget refuses the edited, foreign result before this check.
+    """
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=_N_PERIODS,
+        outer_search=_ROUTES[route],
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+    solution = model.solve(params=_PARAMS, log_level="debug")
     without_replay = replace(solution, replay_artifacts=ArtifactStore())
     with pytest.raises(
         InvalidSimulationInputError,

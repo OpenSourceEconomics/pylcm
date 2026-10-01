@@ -21,6 +21,46 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   uses `then` at the last source age below `stop_age_exclusive`. See
   [Migrating to age-indexed regimes](docs/user_guide/migrating_dated_regimes.md).
 
+### Device-memory budget on by default
+
+- `ExecutionConfig.device_memory_bytes` defaults to `"device"`: the budget is the
+  smallest selected device's allocator pool limit less `device_memory_headroom_fraction`.
+  On GPUs and TPUs, which report a pool limit, the planner now picks the widest widths
+  that fit instead of compiling every omitted axis at its bootstrap width. CPUs report no
+  limit, so the default stays unbudgeted there. `device_memory_bytes=None` restores the
+  unbudgeted planning explicitly; an integer is unchanged.
+- Importing pylcm no longer sets `XLA_PYTHON_CLIENT_PREALLOCATE=false`: JAX preallocates
+  its default 75% of each GPU again, and the default budget is derived from that pool.
+  To allocate on demand, set `XLA_PYTHON_CLIENT_PREALLOCATE=false` yourself and pass an
+  explicit `device_memory_bytes` or `None`. With a reported pool limit the default
+  refuses an on-demand pool, because the BFC allocator then grows it in separate regions
+  and the limit does not promise one contiguous block; the error names the fixes
+  (preallocation, `TF_GPU_ALLOCATOR=cuda_malloc_async`, an integer budget or `None`).
+- The GPU test tasks and workflows preallocate a per-worker share instead of turning
+  preallocation off: `XLA_PYTHON_CLIENT_MEM_FRACTION` is 0.75 for the serial policy
+  launcher (`pixi run test`, `gpu32`, `gpu64`) and 0.1875 for the four-worker `tests`
+  tasks, so each worker's default budget comes from its own slice.
+- Routes that cannot be budgeted --- `enable_jit=False`, forward simulation through host
+  gated or replay adapters, and a supplied foreign result with replay payloads --- refuse
+  the default budget as they refuse an explicit one; pass `device_memory_bytes=None` to
+  run them unbudgeted.
+- Budgeted simulation of finite NB-EGM replay on GPU no longer charges the policy copy's
+  host-side scratch to the device ceiling, which refused every such simulation with
+  "names an unbudgeted device", and a warm budgeted call no longer retraces its process
+  grids.
+- Every admission refusal names the budget and its source, then lists the remedies:
+  raise `device_memory_bytes` or lower `device_memory_headroom_fraction`, cap or fix
+  widths with `axis_width_ceilings` / `axis_widths`, shard over more devices with
+  `sharded_states` / `devices`, or disable admission with `device_memory_bytes=None`.
+- The benchmarks, which run with preallocation off, pass the default budget as an
+  explicit one wherever they built a model without a budget (`bench_aca_baseline`,
+  `bench_collective_household`, `bench_iskhakov_et_al_2017`, `bench_mahler_yum`,
+  `bench_precautionary_savings`, `bench_simulation_dispatch` and the paired GridSearch
+  scenarios), so they plan under it and their widths and timings change.
+  `lcm_examples.collective_household.get_model` takes an `execution_config`, and
+  `lcm_examples.mahler_yum_2024.MAHLER_YUM_MODEL` is built on first access rather than at
+  import.
+
 ### Initial-condition validation without simulating
 
 - `Model.validate_initial_conditions(initial_conditions=..., params=...)` and

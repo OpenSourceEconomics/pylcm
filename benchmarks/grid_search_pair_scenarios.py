@@ -5,9 +5,11 @@ This module is imported by the external worker before JAX is configured.  Keep J
 precision, and (for the distributed row) CPU topology first.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal
+
+from benchmarks.asv import _gpu_mem
 
 ScenarioName = Literal[
     "singleton-hard-max",
@@ -162,6 +164,7 @@ def _build_aca_baseline(
         model = aca_benchmark.create_benchmark_model(
             n_subjects=1,
             pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
+            **_gpu_mem.default_budget_execution_kwargs(),
         )
     finally:
         aca_benchmark.BENCHMARK_GRID_CONFIG = original_grid
@@ -240,8 +243,10 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     execution_kwargs: dict[str, Any] = {}
     type_grid_kwargs: dict[str, Any] = {"category_class": PermanentType}
     if hasattr(lcm, "ExecutionConfig"):
-        execution_kwargs["execution_config"] = lcm.ExecutionConfig(
-            sharded_states=("permanent_type",)
+        budgeted = _gpu_mem.default_budget_execution_kwargs()
+        execution_kwargs["execution_config"] = replace(
+            budgeted.get("execution_config", lcm.ExecutionConfig()),
+            sharded_states=("permanent_type",),
         )
     else:
         # The external harness also builds the historical pre-ExecutionConfig base.
@@ -346,5 +351,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
         initial_regimes={0: "working"},
+        **_gpu_mem.default_budget_execution_kwargs(),
     )
     return model, {"discount_factor": 0.95}

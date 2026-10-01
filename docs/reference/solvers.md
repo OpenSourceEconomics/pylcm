@@ -93,10 +93,11 @@ An eligible streamed core declares the reduced axis `action_product`, the flatte
 Cartesian product of the regime's actions. `ExecutionConfig(axis_widths=
 {"action_product": n})` fixes the width every such core is compiled at; a width above
 the product's extent selects the whole product. With no fixed width and no
-device-memory budget, pylcm streams every eligible core at its bootstrap width: the
-largest power of two below the action product, capped at 64. With an
-[`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets) budget, the
-planner instead walks a deterministic width frontier widest-first and dispatches the
+device-memory budget (`device_memory_bytes=None`, or the default on a device that
+reports no pool limit, such as a CPU), pylcm streams every eligible core at its
+bootstrap width: the largest power of two below the action product, capped at 64. Under
+an [`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets) budget ---
+the default on a GPU or TPU --- the planner instead walks a deterministic width frontier widest-first and dispatches the
 first candidate whose compiler reservation plus accounted residency fits. Supplying both makes the fixed width
 the only candidate, which must fit the budget. A route whose action reduction is
 deliberately dense, unsupported, or trivial declares no `action_product` axis.

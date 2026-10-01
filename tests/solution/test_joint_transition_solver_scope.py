@@ -5,6 +5,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     JointTransition,
     LinSpacedGrid,
     MarkovTransition,
@@ -87,6 +88,7 @@ def _model(solver: EGM | GridSearch) -> Model:
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_regimes={0: "source"},
     )
 
