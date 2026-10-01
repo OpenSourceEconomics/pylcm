@@ -22,6 +22,7 @@ from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueConsumerAddress,
+    ValueViewDescriptor,
     apply_value_transfer_plan,
 )
 from _lcm.typing import ActionName, StateName
@@ -56,6 +57,13 @@ class ValueRead:
     source: ValueConsumerAddress
     """Exact core-input leaf the stored artifact enters through."""
 
+    view: ValueViewDescriptor | None = None
+    """Representation the core reads the target in; `None` reads it whole.
+
+    The resolved transfer must carry the identical view: a read is never
+    narrowed to a block, or widened to the whole value, by its plan.
+    """
+
     def __post_init__(self) -> None:
         """Require the shared, already-validated logical address types."""
         if not isinstance(self.target, ValueArtifactAddress):
@@ -64,6 +72,16 @@ class ValueRead:
         if not isinstance(self.source, ValueConsumerAddress):
             msg = "A value read's source must be a ValueConsumerAddress."
             raise TypeError(msg)
+        if self.view is not None:
+            if not isinstance(self.view, ValueViewDescriptor):
+                msg = "A value read's view must be a ValueViewDescriptor."
+                raise TypeError(msg)
+            if self.view.artifact != self.target:
+                msg = (
+                    f"A read of {self.target!r} cannot declare a view that addresses "
+                    f"{self.view.artifact!r}."
+                )
+                raise ValueError(msg)
 
 
 @runtime_checkable
@@ -1388,13 +1406,27 @@ def _validate_transfer_argument_metadata(
     transfer: ResolvedValueTransfer,
     abstract_inputs: bool = False,
 ) -> None:
-    """Reject a correctly addressed transfer resolved from a stale template."""
+    """Reject a correctly addressed transfer resolved from a stale template.
+
+    A concrete argument holds the stored artifact, so it is checked against the
+    stored shape; an abstract one describes what the core receives, so it is
+    checked against the consumer shape, which a selected view makes smaller.
+    """
+    if transfer.view != read.view:
+        msg = (
+            f"Input transfer view mismatch at {read.source!r}: the read declares "
+            f"{read.view!r}, the plan carries {transfer.view!r}."
+        )
+        raise ValueError(msg)
     leaf = _value_read_argument_leaf(program=program, read=read)
     actual_shape = tuple(leaf.shape)
-    if actual_shape != transfer.expected_shape:
+    expected_shape = (
+        transfer.consumer_shape if abstract_inputs else transfer.expected_shape
+    )
+    if actual_shape != expected_shape:
         msg = (
             f"Input transfer shape mismatch at {read.source!r}: "
-            f"argument has {actual_shape}, plan expects {transfer.expected_shape}."
+            f"argument has {actual_shape}, plan expects {expected_shape}."
         )
         raise ValueError(msg)
 

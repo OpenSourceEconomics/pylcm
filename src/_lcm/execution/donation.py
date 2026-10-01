@@ -6,7 +6,7 @@ part of the executable, and it is made from the ledger: an argument is donated
 when every artifact it carries has this dispatch as its sole remaining
 consumer, is neither retained by the result nor pinned by an undeclared reader,
 shares its buffer with no other key, and reaches the program on its stored
-layout rather than as a transferred copy.
+layout rather than as a transferred copy or a selected block of it.
 
 The ledger counts a dispatch once however many of its programs and arguments
 read one artifact, so it answers which dispatch is the last consumer but not
@@ -40,7 +40,6 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueConsumerAddress,
-    ValueTransferKind,
 )
 
 
@@ -152,10 +151,7 @@ def resolve_donations(
             for transfer in program.input_transfer_plan
             if transfer.source.argument == argument and transfer.source.path == ()
         )
-        if any(
-            transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
-            for transfer in transfers
-        ):
+        if any(not transfer.delivers_stored_buffer for transfer in transfers):
             donations.append(
                 ResolvedDonation(
                     argument=argument,

@@ -346,7 +346,7 @@ _SOURCE_SEALS = {
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "7744426281b262014e974e461b966dba3ca0f063ec01d7606caf67676d67aba6",
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
-    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1b4f12b892e8928c42049cb54eb4a20e45f6f0f4f4fb35f905f9178b18b60224",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
     COMBINED_CHUNK_ADMISSION_SOURCE: "9ffe18a412f2d136c2b9893ea4d93a88739325d9ba70bd6ec0e888d353a330aa",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
@@ -387,7 +387,7 @@ _SOURCE_SEALS = {
     SIMULATION_GATED_ROUTING_SOURCE: "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce",
     VALUE_TOPOLOGY_SOURCE: "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343",
     RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
-    SCHEDULER_SOURCE: "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea",
+    SCHEDULER_SOURCE: "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd",
@@ -400,9 +400,9 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
     PROCESSING_SOURCE: "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff",
     GRID_SEARCH_SOURCE: "b5d54bb472953e20d2a3997767c9e5cd024d5aa8261446064f91d5fb82e4d42f",
-    CORE_PROGRAM_SOURCE: "fb62eeac677be64171c0a17e3478afbd09110ff2b6bafe7000edfef4bced4d7e",
+    CORE_PROGRAM_SOURCE: "7a0ac2e0bdc471420d4e30603f403e636355ca9c9039f185a2fff0026319fa99",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
-    VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
+    VALUE_TRANSFER_SOURCE: "c77c12e05e6ca55d9aed95bdd230c3b778b5a3ba215083aee054598f31e74a05",
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
@@ -1997,6 +1997,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
         fields=(
             "target: ValueArtifactAddress",
             "source: ValueConsumerAddress",
+            "view: ValueViewDescriptor | None = None",
         ),
         methods=("__post_init__",),
     )
@@ -2217,7 +2218,7 @@ ARTIFACT = "artifact"
             tree=tree,
             label="core-program provider-to-resolver transport",
             contracts={
-                "ValueRead.__post_init__": "e5281a9a44553519fe08e3a5248cb54b2a107e02de63727145651525fd033843",
+                "ValueRead.__post_init__": "9eb25ccdd2f056a241092952e6b92acef943f1babd2f2063af7b32da935a7190",
                 "ReducedAxis.__post_init__": "030c5cd6aadd91db7c7362241817b7b1734cf27d853824376ba1206bdfae05ef",
                 "ReducedAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
                 "TiledOutputAxis.__post_init__": "dc42959d05c19bee720f1423b60179a0d729b74546bfd278e0928cd2a6b2d3e2",
@@ -2244,7 +2245,7 @@ ARTIFACT = "artifact"
                 "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
                 "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
                 "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
-                "_validate_transfer_argument_metadata": "1b81acb2f30edb626b63b984ae712ad91675d27f9b8d0dd91d1bdb2f9792b6ce",
+                "_validate_transfer_argument_metadata": "2da767cf572598810ce123e021513c3a2e0cae1813e07857a011b9262590c051",
                 "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
                 "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
                 "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
@@ -2722,9 +2723,17 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
                 "expected_shape: tuple[int, ...]",
                 "expected_dtype: object",
                 "reused_by_several_consumers: bool = False",
+                "view: ValueViewDescriptor | None = None",
                 "specialization_key: Hashable = field(init=False)",
             ),
-            methods=("__post_init__", "cost"),
+            methods=(
+                "__post_init__",
+                "consumer_shape",
+                "selects",
+                "delivers_stored_buffer",
+                "stages",
+                "cost",
+            ),
         )
     )
     errors.extend(
@@ -2743,7 +2752,69 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
             methods=(),
         )
     )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value view coordinate selection",
+            class_name="CoordinateSelection",
+            fields=(
+                "state_name: StateName",
+                "start: int",
+                "width: int",
+                "codes: tuple[int, ...]",
+                "keep_axis: bool = False",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value view descriptor",
+            class_name="ValueViewDescriptor",
+            fields=(
+                "artifact: ValueArtifactAddress",
+                "leaf: ValueViewLeaf",
+                "stored_axis_names: tuple[StateName, ...]",
+                "stored_shape: tuple[int, ...]",
+                "dtype: object",
+                "weak_type: bool",
+                "consumer_shape: tuple[int, ...]",
+                "required_sharding: jax.sharding.Sharding",
+                "selections: tuple[CoordinateSelection, ...] = ()",
+            ),
+            methods=(
+                "__post_init__",
+                "selected_axes",
+                "structure_key",
+                "identity_key",
+            ),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value transfer stage",
+            class_name="TransferStage",
+            fields=(
+                "kind: TransferStageKind",
+                "input_shape: tuple[int, ...]",
+                "output_shape: tuple[int, ...]",
+                "input_sharding: jax.sharding.Sharding",
+                "output_sharding: jax.sharding.Sharding",
+                "operator: ValueTransferKind | None",
+                "item_bytes: int",
+            ),
+            methods=("allocates", "output_footprint"),
+        )
+    )
     enum_contracts = {
+        "ValueViewLeaf": """SHARED = "shared"
+SELECTED = "selected"
+""",
+        "TransferStageKind": """SELECT = "select"
+COMMUNICATE = "communicate"
+""",
         "ValueArtifactKind": """REGIME_VALUE = "regime_value"
 GATED_CONTINUATION = "gated_continuation"
 CONTINUATION_LEAF = "continuation_leaf"
@@ -2815,12 +2886,12 @@ COLLECTIVE = "collective"
             contracts={
                 "ValueArtifactAddress.__post_init__": "cafe101592a7a7d2019ac1f2bc57e2e64295da6093a399dbb948bf8c38765e0e",
                 "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
-                "ResolvedValueTransfer.__post_init__": "6fc7223a75c3dc5fbb6072004915bbf08a05c9d1d42711b12ba6aae4306192c8",
-                "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
-                "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+                "ResolvedValueTransfer.__post_init__": "60d77078407d8b253b0654dd03dca371c32a06cf1efb05470ff453c815a7092b",
+                "resolve_value_transfer": "1fb20659b43515507a727b46ad274d5bdc1c67a55ece59d48ed7e48e1e435a95",
+                "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
                 "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
                 "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
-                "ResolvedValueTransfer.cost": "b62e0d903fb8fb628e869b4fa90e089f8e4cc118bbbad34d8e654dfe0386f8e4",
+                "ResolvedValueTransfer.cost": "07d257016bddbec9e6eacefb5e26e26c8c612fd6a0884ea81b40ac667a0c9011",
                 "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
                 "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
                 "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
@@ -2834,6 +2905,24 @@ COLLECTIVE = "collective"
                 "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
                 "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
                 "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
+                "ValueViewDescriptor.__post_init__": "e5e888614d92e690a128d3812b217f8ddfcf6637809a896fe14c2401b6f0ef98",
+                "ValueViewDescriptor.selected_axes": "606104f0b662cf88a37ba1496a05ed142f93858c1646c2794c1aaf6cb34f1476",
+                "ValueViewDescriptor.structure_key": "39bf29f8d65be0bc19a5ee9a4b4fa6dc73a21c641f72f5d499c5367b58e0177a",
+                "ValueViewDescriptor.identity_key": "45ab6d675d4ef8c8350e34a7361dc6b307186a4558c3a420c5347bbec6326ee1",
+                "CoordinateSelection.__post_init__": "45f22f279739118a21c04a97d8fc4ad7108de34ee7fdea60b276afd1f84ddc01",
+                "TransferStage.allocates": "b17555d91ba1e9a31a9ed57148afa064982799c4953d95998b9a6fff344c472c",
+                "TransferStage.output_footprint": "41b4f1136bd24e82268fee82b7064efd7761f69d803ffa224ef434f02153ea99",
+                "ResolvedValueTransfer.consumer_shape": "2f7b722fc9a7cefd9bcc0c675fb33111ce3caff65a317e5d97014c7091b0fb95",
+                "ResolvedValueTransfer.selects": "a70c4976882f86afbd8c12c20334d58d5545540cb75bad2ee46b5fdc5c2f76db",
+                "ResolvedValueTransfer.delivers_stored_buffer": "8134faf2e24194ad2240f72eaf5ba7bdd6e63c81e1c4a84dce8d6ea7294194cf",
+                "ResolvedValueTransfer.stages": "045d5012182682b1ea9d41d56ada26ef6f92f3680eedcd706bc1986a9ddd4078",
+                "transfer_result_key": "9bfd1783f1feb8ea7549037e0505435b47fbdfd0e4b6f5dd37cb4ba762713f6a",
+                "_select_view_blocks": "4abb65fd843394124103a3d16e3147687856a7c752251add8d609b4780bae986",
+                "_selection_operands": "f48adf45518b54efcb2c1841f8832fffe247cb4de4046ed73c3f292f95cf6be4",
+                "_select_stored_block": "b6f1647938496460dca1cf12ca5b26ba285287a01bb00c6cae0f367d391cd454",
+                "_fail_if_view_mismatches_transfer": "c7d588a05f07d1f2ecb8873539cb2ce62a3d28516bbdded5734172f8ba6cefc9",
+                "_fail_if_selections_invalid": "1ccb459a7f6b511bf7a631da7c31b5614a3b2b3a3b06a983d07333b44d6481cb",
+                "_selection_sharding": "ba7789147c8b08c57243e70d3906adc90aa8c9fe57021dc4fd7fcc27432a0e98",
             },
         )
     )
@@ -2843,6 +2932,7 @@ COLLECTIVE = "collective"
             label="value transfer",
             relevant_import_names={
                 "ArtifactKey",
+                "ArtifactFootprint",
                 "ExecutionPlanningError",
                 "Hashable",
                 "Iterable",
@@ -2850,6 +2940,7 @@ COLLECTIVE = "collective"
                 "MappingProxyType",
                 "Protocol",
                 "RegimeName",
+                "StateName",
                 "StrEnum",
                 "dataclass",
                 "field",
@@ -2871,13 +2962,15 @@ COLLECTIVE = "collective"
                 "from typing import Protocol, runtime_checkable",
                 "import jax",
                 "import jax.numpy as jnp",
-                "from _lcm.execution.footprint import layout_footprint, sharding_device_ids",
-                "from _lcm.typing import RegimeName",
+                "from _lcm.execution.footprint import ArtifactFootprint, layout_footprint, sharding_device_ids",
+                "from _lcm.typing import RegimeName, StateName",
                 "from lcm.exceptions import ExecutionPlanningError",
                 "from lcm.solver_api import ArtifactKey",
             ],
             expected_binding_counts={
                 "ArtifactKey": 1,
+                "ArtifactFootprint": 1,
+                "CoordinateSelection": 1,
                 "ExecutionPlanningError": 1,
                 "Hashable": 1,
                 "Iterable": 1,
@@ -2890,6 +2983,22 @@ COLLECTIVE = "collective"
                 "TransferCache": 1,
                 "TransferCost": 1,
                 "TransferOperationClass": 1,
+                "StateName": 1,
+                "TransferStage": 1,
+                "TransferStageKind": 1,
+                "ValueViewDescriptor": 1,
+                "ValueViewLeaf": 1,
+                "_fail_if_selections_invalid": 1,
+                "_fail_if_view_mismatches_transfer": 1,
+                "_select_stored_block": 1,
+                "_select_value_view": 1,
+                "_select_view_blocks": 1,
+                "_selection_operands": 1,
+                "_selection_sharding": 1,
+                "enumerate": 0,
+                "max": 0,
+                "transfer_result_key": 1,
+                "zip": 0,
                 "ValueArtifactAddress": 1,
                 "ValueArtifactKind": 1,
                 "ValueConsumerAddress": 1,
@@ -3573,7 +3682,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SCHEDULER_SOURCE: (
-        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
+        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
         {
             "buffer_identity": "773d4a78840d9f58d52a23420af0b9942d22ce1e7d84af0d6e84fb3f0207716d",
             "shard_identities": "5dcf1a2c1f363f904cd238cebc7607d4a23350cd2ea7e7673c93a4df12334559",
@@ -3592,9 +3701,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_one_delete_per_shared_buffer": "c6824683620084bbb6acbd667b2657a3ba1afdcf425268d7f1d384ee4b308f71",
             "plan_period_waves": "0f2995c211c6472a1f378a69861a15181f6f2e0856db85191883176788017999",
             "replace_leaf_by_identity": "12231a2d73d86bda8fd3611d877f8b2d23bb2006a4abd0134d480c88e7426d50",
-            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
-            "PeriodTransferCache.get": "f16cad2377317e84a219306a4cc2669dd74afc472906974c751452976ae63041",
-            "PeriodTransferCache.put": "28648ac358887b0434396849a8827980e1f7be1249a0b8a0bf43416a0f1ea8d8",
+            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
+            "PeriodTransferCache.get": "2b12aac3bfbcef4e7d2f0da22f5b8ecd429656fa07f72ceceb51d76cc1fb9956",
+            "PeriodTransferCache.put": "292575c03a3509d986086e6428e908b6303e852eb4ada1a3f095cceb226a83d8",
             "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
             "PeriodTransferCache.__len__": "9fb60f4b369c44a05b578b7d992aab8b3f956ffa5c5b465715beceba5fe2728d",
             "_add_declaring_array": "8cc69ee60ad06411506f95155fbef57acea86a11ca7246182e25c62336ade59c",
@@ -3758,10 +3867,8 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     ),
     "simulation_adapter:cached_value_changed": (
         SCHEDULER_SOURCE,
-        "        return self._arrays.get((transfer.target, transfer.source_sharding))",
-        (
-            "        return candidate_filter(self._arrays.get((transfer.target, transfer.source_sharding)))"
-        ),
+        "        return self._arrays.get(key)",
+        "        return candidate_filter(self._arrays.get(key))",
     ),
     "simulation_adapter:live_read_released_early": (
         LIVENESS_SOURCE,
@@ -3898,7 +4005,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/value_transfer.py": (
-        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
+        "cd9d970126c1d6e70bd44cee5e8b4287e4409cdabaabdcfc6ea6d9ba4e4844ec",
         {
             "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
         },
@@ -3969,10 +4076,10 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/value_transfer.py": (
-        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
+        "cd9d970126c1d6e70bd44cee5e8b4287e4409cdabaabdcfc6ea6d9ba4e4844ec",
         {
             "MaterializedTransferObserver.__call__": "3e06bf2091d6a3291e5674060c34313e03f0e7419af22b033de98b2fb2845ca4",
-            "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+            "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
             "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
             "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
             "_transferred_leaf": "b2b9022815cc8459d04c18fd9dda22ecd1fb8dfe969540e5112d279ef0403af1",
@@ -3980,10 +4087,10 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/scheduler.py": (
-        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
+        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
         {
             "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
-            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
+            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
             "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
         },
     ),
@@ -4037,7 +4144,7 @@ _COMBINED_INPUT_CONTRACTS = {
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
         "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
         {
-            "abstract_program_inputs": "b752a7b6a65cdfd3b2d47462e8e2037522127db37cad64283229fc74e96b5139",
+            "abstract_program_inputs": "a0a1e8e4bc32c407704e58c2bf6322dfe068d44cc3a5ed14966ce301699c046e",
             "_OperandDescriptor.__call__": "f5f1dd8803d687c50ba2899e0bab0d5e49e9bef83c0def08582844e9351285b3",
             "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
         },
@@ -4254,7 +4361,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/core_program.py": (
-        "55ae70ce1ade1407dbb22948fb616f727ee33f829b726a47ad565c264f2b2f90",
+        "54775f71f7680ad225472467e57692834ef6c68a8e5d030f57a6b2cf2eb48a4d",
         {
             "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
         },
