@@ -153,8 +153,15 @@ def snapshot_artifact_store(
     *,
     store: _ArtifactStoreBoundary,
     authorities: _AuthoritiesInput | None = None,
+    borrow: bool = False,
 ) -> _ArtifactStoreBoundary:
-    """Copy addresses and detach every authority-backed eager payload."""
+    """Copy addresses and detach every authority-backed eager payload.
+
+    With `borrow` set, each engine-owned entry is validated against its authority
+    around its own buffers, allocating nothing. A budgeted consumer uses it and then
+    makes admitted private copies of only the payloads it reads; a raw payload,
+    whose leaves may still need a device upload, is refused.
+    """
     if type(store) is not ArtifactStore:
         raise TypeError("Artifact stores must be exact ArtifactStore objects.")
     entries = capture_exact_mapping(
@@ -169,14 +176,24 @@ def snapshot_artifact_store(
             if authority is None:
                 continue
             if type(payload) is _CanonicalArtifactEntry:
-                owned_payload = payload.materialize()
+                owned_payload = (
+                    payload._fresh(template_snapshot=payload.plan_snapshot, borrow=True)  # noqa: SLF001
+                    if borrow
+                    else payload.materialize()
+                )
             elif isinstance(payload, _LazyEntry):
                 continue
+            elif borrow:
+                raise ExecutionPlanningError(
+                    f"Budgeted foreign artifact {ref!r} is a raw payload; only "
+                    "archive entries and engine-owned payloads have admitted copies."
+                )
             else:
                 owned_payload = payload
             entries[ref] = _canonical_artifact_entry_from_authority(
                 payload=owned_payload,
                 authority=authority,
+                borrow=borrow,
             )
     return ArtifactStore(entries)
 

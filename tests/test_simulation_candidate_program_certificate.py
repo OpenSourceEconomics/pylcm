@@ -578,17 +578,15 @@ _COMBINED_INPUT_MUTATIONS = {
         "consumed_views[memo_key] = resolved",
         "consumed_views[memo_key] = (resolved, entry_allocations)",
     ),
-    "foreign_model:artifact_route_guard_bypassed": (
+    "foreign_model:host_replay_route_guard_bypassed": (
         "src/lcm/model.py",
         (
-            "if array_copier is not None:\n"
-            "            for regime_name, regime in self._regimes.items"
-            "():"
+            "            if not budgeted_simulation_programs_ready(\n"
+            "                regimes=self._regimes,"
         ),
         (
-            "if False and array_copier is not None:\n"
-            "            for regime_name, regime in self._regimes.items"
-            "():"
+            "            if False and not budgeted_simulation_programs_ready(\n"
+            "                regimes=self._regimes,"
         ),
     ),
     "foreign_model:envelope_copy_dependency_omitted": (

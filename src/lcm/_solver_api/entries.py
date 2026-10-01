@@ -91,8 +91,15 @@ class _CanonicalArtifactEntry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
+        array_copier: _ArrayCopier | None = None,
+        borrow: bool = False,
     ) -> object:
-        """Copy private buffers and reconstruct without a plugin callback."""
+        """Copy private buffers and reconstruct without a plugin callback.
+
+        `array_copier` admits each copy against a device budget. `borrow` skips
+        the copies and reconstructs around the private buffers themselves; a
+        caller uses it only for a graph it validates and discards.
+        """
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
         if template_snapshot.leaf_paths != self.plan_snapshot.leaf_paths:
@@ -110,9 +117,12 @@ class _CanonicalArtifactEntry(_LazyEntry):
             ) != np.dtype(expected.dtype):
                 raise TypeError("Owned artifact leaf differs from model authority.")
             copied.append(
-                _copy_artifact_array_leaf(
+                leaf
+                if borrow
+                else _copy_artifact_array_leaf(
                     leaf=leaf,
                     label=f"Owned artifact leaf {index}",
+                    array_copier=array_copier,
                 )
             )
         return _reconstruct_artifact_from_template_snapshot(
@@ -129,11 +139,14 @@ class _CanonicalArtifactEntry(_LazyEntry):
         self,
         *,
         template_snapshot: object,
+        array_copier: _ArrayCopier | None = None,
     ) -> object:
         """Return a fresh graph through the current model-authoritative plan."""
         if type(template_snapshot) is not _CanonicalArtifactTemplate:
             raise TypeError("Owned artifact reconstruction requires an exact snapshot.")
-        return self._fresh(template_snapshot=template_snapshot)
+        return self._fresh(
+            template_snapshot=template_snapshot, array_copier=array_copier
+        )
 
 
 def _canonical_artifact_entry_from_authority(

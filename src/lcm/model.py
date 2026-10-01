@@ -107,6 +107,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
+from _lcm.simulation.programs import budgeted_simulation_programs_ready
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import (
@@ -115,6 +116,7 @@ from _lcm.simulation.simulate import (
     _require_next_period_values,
     simulate,
 )
+from _lcm.simulation.solution_copies import require_foreign_solution_headroom
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
@@ -238,6 +240,7 @@ from lcm.solver_api import (
     ValueArraySchema,
     ValueStore,
     _canonicalize_artifact_payload,
+    _canonicalize_artifact_payload_snapshot,
     _replay_route_identity,
     _same_exact_artifact_contract,
 )
@@ -382,9 +385,13 @@ def _materialize_artifact_projection(
     key: ArtifactKey,
     authority: SolutionAuthority,
     required_only: bool = False,
-    array_copier: _ArrayCopier | None = None,
+    native_values: NativeValueMaterializer | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, object]]:
-    """Materialize one consumed replay projection into an immutable snapshot."""
+    """Materialize one consumed replay projection into an immutable snapshot.
+
+    Under a device budget `native_values` admits every upload and private copy, and
+    canonicalization validates those copies in place instead of copying them again.
+    """
     projected: dict[int, dict[RegimeName, object]] = {}
     for ref in store:
         if ref.key != key:
@@ -397,11 +404,11 @@ def _materialize_artifact_projection(
         if required_only and not artifact_authority.required:
             continue
         try:
-            materialized = store._materialize_from_template_snapshot(  # noqa: SLF001
-                ref,
-                template_snapshot=snapshot_artifact_template_declaration(
-                    artifact_authority
-                ),
+            materialized = _materialize_consumed_artifact(
+                store=store,
+                ref=ref,
+                authority=artifact_authority,
+                native_values=native_values,
             )
             if key == SIMULATION_POLICY:
                 payload_defect = _built_in_policy_payload_defect(
@@ -413,31 +420,55 @@ def _materialize_artifact_projection(
                     raise InvalidSimulationInputError(
                         f"Artifact {ref!r} mismatched_payload: {payload_defect}"
                     )
-            canonical = _canonicalize_artifact_payload(
+            canonical = _canonicalize_artifact_payload_snapshot(
                 payload=materialized,
                 authority=artifact_authority,
-            )
+                borrow=native_values is not None,
+            ).payload
         except (TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
                 f"Artifact {ref!r} mismatched_payload: cannot be canonicalized: {error}"
             ) from error
         projected.setdefault(ref.period, {})[ref.regime] = canonical
-        if array_copier is not None:
-            label = f"artifact {ref.period}/{ref.regime}/{ref.key.type_id}"
-
-            projected[ref.period][ref.regime] = jax.tree.map(
-                lambda leaf, label=label: (
-                    array_copier(leaf=leaf, label=label)
-                    if isinstance(leaf, jax.Array)
-                    else leaf
-                ),
-                canonical,
-            )
     return MappingProxyType(
         {
             period: MappingProxyType(regime_to_payload)
             for period, regime_to_payload in sorted(projected.items())
         }
+    )
+
+
+def _materialize_consumed_artifact(
+    *,
+    store: _ArtifactStoreBoundary,
+    ref: ArtifactRef,
+    authority: ArtifactAuthority,
+    native_values: NativeValueMaterializer | None,
+) -> object:
+    """Return a fresh graph of one consumed artifact in its authority's layout.
+
+    Without a budget the store's own reader copies it. Under a budget the entry is
+    read through the admitted writer and copier instead.
+    """
+    template_snapshot = snapshot_artifact_template_declaration(authority)
+    if native_values is None:
+        return store._materialize_from_template_snapshot(  # noqa: SLF001
+            ref, template_snapshot=template_snapshot
+        )
+    return native_values.materialize_artifact(
+        entry=store._entries[ref],  # noqa: SLF001
+        template_snapshot=template_snapshot,
+    )
+
+
+def _refuse_budgeted_replay_payload(
+    *, ref: ArtifactRef, authority: ArtifactAuthority
+) -> object:
+    """Refuse an external replay payload, which budgeted simulation cannot consume."""
+    del authority
+    raise ExecutionPlanningError(
+        f"Budgeted simulation cannot consume the external replay payload {ref!r}: "
+        "host replay routes need complete stage profiles."
     )
 
 
@@ -1392,7 +1423,25 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
             )
         else:
+            budget_note = self._execution.device_memory_cap_note()
+            if not budgeted_simulation_programs_ready(
+                regimes=self._regimes,
+                n_periods=self.n_periods,
+                enable_jit=self.enable_jit,
+            ):
+                raise ExecutionPlanningError(
+                    "Budgeted simulation requires compiled decision programs; host "
+                    "replay routes need complete stage profiles, so the supplied "
+                    f"result is refused before any copy.{budget_note}"
+                )
             try:
+                require_foreign_solution_headroom(
+                    solution=solution,
+                    live=entry_allocations.snapshot(),
+                    budget_devices=entry_allocations.devices,
+                    budget_bytes=entry_allocations.budget_bytes,
+                    budget_note=budget_note,
+                )
                 resolved = self._consume_foreign_solution(
                     solution=solution,
                     flat_params=flat_params,
@@ -1408,6 +1457,10 @@ class Model:
                     solution=solution,
                     resolved_inputs=resolved,
                 )
+            except ExecutionPlanningError as error:
+                if budget_note in str(error):
+                    raise
+                raise ExecutionPlanningError(f"{error}{budget_note}") from error
             finally:
                 entry_allocations.release_foreign_copies()
         consumed_views[memo_key] = resolved
@@ -1464,23 +1517,12 @@ class Model:
         native_values: NativeValueMaterializer | None = None,
         process_grid_resolver: ProcessGridResolver | None = None,
     ) -> _ResolvedSolution:
-        """Copy and validate a result from elsewhere against model authority."""
-        if array_copier is not None:
-            for regime_name, regime in self._regimes.items():
-                if (
-                    regime.simulation.replay_route.policy_applicable
-                    or regime.simulation.external_replay_route is not None
-                    or any(
-                        key != DISSOLUTION_FLAG
-                        for key in regime.solution.artifact_authorities
-                    )
-                ):
-                    raise ExecutionPlanningError(
-                        f"Budgeted foreign solution for regime {regime_name!r} "
-                        "requires unprofiled artifact authority or payload copies; "
-                        "only canonical eager and admitted native values are supported."
-                        f"{self._execution.device_memory_cap_note()}"
-                    )
+        """Copy and validate a result from elsewhere against model authority.
+
+        Under a device budget `array_copier` and `native_values` admit every private
+        copy and archive upload of values, simulation policies and dissolution flags.
+        External replay routes cannot run budgeted, so their payloads are refused.
+        """
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -1498,7 +1540,7 @@ class Model:
             solution=solution,
             authority=authority,
             values=values,
-            array_copier=array_copier,
+            native_values=native_values,
         )
 
         replay_store = solution.replay_artifacts
@@ -1520,7 +1562,11 @@ class Model:
             metadata=metadata,
             authority=authority,
             flat_params=flat_params,
-            replay_payload=validated_payload,
+            replay_payload=(
+                validated_payload
+                if native_values is None
+                else _refuse_budgeted_replay_payload
+            ),
             process_grid_resolver=process_grid_resolver,
         )
         return (
@@ -1627,18 +1673,22 @@ class Model:
                 retained_continuations=snapshot_artifact_store(
                     store=solution.retained_continuations,
                     authorities=authority.artifacts,
+                    borrow=native_values is not None,
                 ),
                 replay_artifacts=snapshot_artifact_store(
                     store=solution.replay_artifacts,
                     authorities=authority.artifacts,
+                    borrow=native_values is not None,
                 ),
                 auxiliary_artifacts=snapshot_artifact_store(
                     store=solution.auxiliary_artifacts,
                     authorities=authority.artifacts,
+                    borrow=native_values is not None,
                 ),
                 diagnostics=snapshot_artifact_store(
                     store=solution.diagnostics,
                     authorities=authority.artifacts,
+                    borrow=native_values is not None,
                 ),
                 omissions=solution.omissions,
             )
@@ -2114,7 +2164,7 @@ class Model:
         solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
         values: PeriodToRegimeToVArr,
-        array_copier: _ArrayCopier | None = None,
+        native_values: NativeValueMaterializer | None = None,
     ) -> tuple[
         PeriodToRegimeToSimulationPolicy,
         PeriodToRegimeToDissolutionFlags,
@@ -2124,13 +2174,14 @@ class Model:
             store=solution.replay_artifacts,
             key=SIMULATION_POLICY,
             authority=authority,
+            native_values=native_values,
         )
         dissolution_flags = _materialize_artifact_projection(
             store=solution.replay_artifacts,
             key=DISSOLUTION_FLAG,
             authority=authority,
             required_only=True,
-            array_copier=array_copier,
+            native_values=native_values,
         )
         self._check_solution_result_replay_policies(
             solution=solution,

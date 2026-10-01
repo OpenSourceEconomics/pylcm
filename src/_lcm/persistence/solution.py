@@ -340,10 +340,13 @@ class _LazyHdf5Entry(_LazyEntry):
         entries cannot invert observation locks. Dependencies remain call-local.
         """
         if (
-            array_writer is not None or array_copier is not None
-        ) and self.payload_kind != "array":
+            (array_writer is not None or array_copier is not None)
+            and self.payload_kind != "array"
+            and template_snapshot is None
+        ):
             raise TypeError(
-                "Admitted native materialization only supports value arrays."
+                "Admitted native PyTree materialization requires a model-"
+                "authoritative template snapshot."
             )
         if template is not None and template_snapshot is not None:
             raise TypeError("Supply a template or a template snapshot, not both.")
@@ -436,6 +439,7 @@ class _LazyHdf5Entry(_LazyEntry):
             _copy_artifact_array_leaf(
                 leaf=leaf,
                 label=f"{self.label} leaf {index}",
+                array_copier=array_copier,
             )
             for index, leaf in enumerate(cached.leaves)
         )
