@@ -4698,16 +4698,23 @@ def _lower_and_compile_wave(
     compiles while the next one is being lowered. Executables and their log labels
     land in `compiled` and `labels`, keyed by lowering key.
 
-    A lowering error is raised at once: compiles not yet started are cancelled,
-    running ones are left to finish in the background with their results
-    discarded, and the error carries a note naming the program being lowered.
+    The first error is raised as soon as the caller sees it, with a note naming
+    the program:
+    - a lowering error at once, noted `while lowering <label>`;
+    - a compile error before the next lowering starts, or once the last program is
+      lowered, noted `while compiling <label>`.
+
+    Either way no further program is lowered, compiles not yet started are
+    cancelled, running ones finish in the background with their results
+    discarded, and nothing from the wave lands in `compiled`.
     """
     n_unique = len(new_lowerings)
     pool = ThreadPoolExecutor(max_workers=n_workers)
     futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
     label = "the first program"
-    try:
-        for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
+    for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
+        _raise_first_compile_error(futures=futures, pool=pool)
+        try:
             triple, _ = candidate
             regime_name, period, core_key = triple
             resolved = resolved_programs[candidate]
@@ -4753,18 +4760,40 @@ def _lower_and_compile_wave(
                 logger=logger,
             )
             futures[future] = label
-    except BaseException as exc:
-        exc.add_note(f"while lowering {label}")
-        pool.shutdown(wait=False, cancel_futures=True)
-        raise
-    with pool:
-        for future in as_completed(futures):
-            try:
-                lowering_key, comp = future.result()
-            except Exception as exc:
-                exc.add_note(f"while compiling {futures[future]}")
-                raise
-            compiled[lowering_key] = comp
+        except BaseException as exc:
+            exc.add_note(f"while lowering {label}")
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+    executables: dict[Hashable, jax.stages.Compiled] = {}
+    for future in as_completed(futures):
+        try:
+            lowering_key, comp = future.result()
+        except BaseException as exc:
+            exc.add_note(f"while compiling {futures[future]}")
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        executables[lowering_key] = comp
+    pool.shutdown()
+    compiled.update(executables)
+
+
+def _raise_first_compile_error(
+    *,
+    futures: Mapping[Future[tuple[Hashable, jax.stages.Compiled]], str],
+    pool: ThreadPoolExecutor,
+) -> None:
+    """Raise the error of a compile that has already failed, if any.
+
+    Compiles not yet started are cancelled first; running ones are left to finish
+    in the background.
+    """
+    for future, label in futures.items():
+        if future.done() and not future.cancelled():
+            error = future.exception()
+            if error is not None:
+                error.add_note(f"while compiling {label}")
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise error
 
 
 def _compile_and_log(

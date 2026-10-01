@@ -17,7 +17,8 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-@pytest.mark.parametrize("n_subjects", [1, 13, 16])
+# Seven rows per device at width three exercise full tiles and a padded remainder.
+@pytest.mark.parametrize("n_subjects", [1, 13, 56])
 @pytest.mark.parametrize("budgeted", [False, True])
 def test_public_subject_partition_matches_supplied_solution_reference(
     *, n_subjects: int, budgeted: bool, monkeypatch: pytest.MonkeyPatch
@@ -89,12 +90,8 @@ def test_public_subject_partition_matches_supplied_solution_reference(
     assert actual.n_subjects == n_subjects
     assert births
     assert all(len(sizes) == 8 and len(set(sizes)) == 1 for sizes in births)
-    pd.testing.assert_frame_equal(
-        actual.to_dataframe(),
-        expected.to_dataframe(),
-        check_exact=False,
-        rtol=2e-6,
-        atol=2e-6,
+    _assert_panel_bitwise_equal(
+        actual=actual.to_dataframe(), expected=expected.to_dataframe()
     )
     # Reuse the same published solution and runtime with the same seeded inputs.
     repeated = target.simulate(
@@ -104,7 +101,39 @@ def test_public_subject_partition_matches_supplied_solution_reference(
         seed=17,
         log_level="off",
     )
-    pd.testing.assert_frame_equal(repeated.to_dataframe(), actual.to_dataframe())
+    _assert_panel_bitwise_equal(
+        actual=repeated.to_dataframe(), expected=actual.to_dataframe()
+    )
     for leaf in jax.tree.leaves(initial):
         assert not leaf.is_deleted()
         assert np.asarray(leaf).shape == (n_subjects,)
+
+
+def _assert_panel_bitwise_equal(
+    *, actual: pd.DataFrame, expected: pd.DataFrame
+) -> None:
+    """Check schema and labels exactly, including floating storage bytes."""
+    pd.testing.assert_frame_equal(actual, expected, check_exact=True)
+    for name in actual.columns:
+        left = actual[name].to_numpy()
+        right = expected[name].to_numpy()
+        if left.dtype.kind == "f":
+            assert left.tobytes(order="C") == right.tobytes(order="C"), (
+                f"Floating column {name!r} differs bitwise"
+            )
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("mutation", ["one_ulp", "signed_zero"])
+def test_panel_identity_comparator_rejects_float_bit_changes(
+    *, dtype: type[np.float32 | np.float64], mutation: str
+) -> None:
+    """Panel identity rejects adjacent floats and opposite zero signs."""
+    expected = pd.DataFrame({"value": np.array([0.0, 1.0], dtype=dtype)})
+    actual = expected.copy()
+    if mutation == "one_ulp":
+        actual.loc[1, "value"] = np.nextafter(dtype(1.0), dtype(2.0))
+    else:
+        actual.loc[0, "value"] = dtype(-0.0)
+    with pytest.raises(AssertionError):
+        _assert_panel_bitwise_equal(actual=actual, expected=expected)
