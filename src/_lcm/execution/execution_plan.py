@@ -7,10 +7,12 @@ on.
 """
 
 import dataclasses
+import json
 import logging
 import math
 import operator
 import os
+import re
 from collections.abc import Collection, Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
@@ -18,6 +20,7 @@ from typing import Literal, Protocol, runtime_checkable
 import jax
 
 from _lcm.execution.core_program import CoreProgram
+from _lcm.execution.value_transfer import TransferCost, TransferOperationClass
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import AxisWidth, ExecutionConfig, WidthSearchPolicy
@@ -595,3 +598,233 @@ def execution_over_visible_devices() -> ResolvedExecution:
         state_names=frozenset(),
         device_pool_limit_bytes=visible_device_pool_limits(),
     )
+
+
+type AxisDispatch = Literal["dense", "streamed"]
+
+# Optimized-HLO opcodes that move data between devices, with their asynchronous
+# start halves; the matching `-done` halves are not counted a second time.
+_HLO_COLLECTIVE = re.compile(
+    r"=\s+\S+\s+(?P<opcode>all-gather|all-reduce|all-to-all|reduce-scatter|"
+    r"collective-permute|collective-broadcast)(?:-start)?\("
+)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class CorePlanRecord:
+    """What width selection decided for one solve core, as metadata only.
+
+    Built from planning results that already exist when the widths are chosen:
+    no array is read and no device is synchronized. Byte counts are per device
+    unless named logical. The logical bytes a planned transfer gathers are a
+    planning quantity; the collectives the compiled program contains are what
+    the compiler emitted. Neither is the communication a device performed,
+    which only a profiler observes. An interpolation `gather` inside a kernel is
+    a local read and is not counted as a collective.
+    """
+
+    regime: RegimeName
+    """Regime whose core this is."""
+
+    period: int
+    """Period the core solves."""
+
+    core: str
+    """Name of the core within the regime's period program."""
+
+    state_extents: MappingProxyType[StateName, int]
+    """Extent of each named state axis of the published value, in axis order.
+
+    Empty when the value's leading axes cannot be matched to state names.
+    """
+
+    selected_block: MappingProxyType[StateName, tuple[int, int]] | None
+    """Half-open coordinate interval evaluated per blocked state, or `None` when
+    every state is evaluated over its whole extent."""
+
+    logical_value_shape: tuple[int, ...]
+    """Shape of the whole published value."""
+
+    physical_value_shape: tuple[int, ...]
+    """Shape of the value shard one device holds."""
+
+    device_ids: tuple[int, ...]
+    """Ascending ids of the devices the value is laid out on."""
+
+    axis_extents: MappingProxyType[str, int]
+    """Points in each planner axis: the action product or the state cells."""
+
+    widths: MappingProxyType[str, int]
+    """Selected width of each planner axis."""
+
+    dispatch: MappingProxyType[str, AxisDispatch]
+    """`dense` where the width covers the whole axis, `streamed` otherwise."""
+
+    stored_owner_bytes: MappingProxyType[int, int]
+    """Solve-lifetime concrete owners charged on each device."""
+
+    resident_bytes: int | None
+    """Bytes admission found already resident at this core, or `None` unbudgeted."""
+
+    active_replica_bytes: int
+    """Bytes the core's non-local value transfers place on each device."""
+
+    logical_gathered_bytes: int
+    """Whole-value bytes of the core's collective value transfers."""
+
+    transfer_workspace_bytes: int
+    """Operator scratch the core's value transfers hold on each device."""
+
+    period_transfer_scratch_bytes: MappingProxyType[int, int]
+    """Declared whole-period transfer scratch charged on each endpoint device."""
+
+    compiler_peak_bytes: int | None
+    """Raw compiler peak of the selected executable, or `None` when unreported."""
+
+    compiler_reservation_bytes: int | None
+    """Represented reservation admission used, or `None` without a budget."""
+
+    compiled_collectives: MappingProxyType[str, int]
+    """Collective operations in the selected executable's optimized HLO."""
+
+    def to_json(self) -> str:
+        """Return the record as one compact JSON object."""
+        return json.dumps(
+            {
+                field.name: _jsonable(getattr(self, field.name))
+                for field in dataclasses.fields(self)
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+
+def build_core_plan_record(
+    *,
+    triple: tuple[RegimeName, int, str],
+    state_names: tuple[StateName, ...],
+    value_shape: tuple[int, ...],
+    value_sharding: jax.sharding.Sharding,
+    axis_extents: Mapping[str, int],
+    widths: Mapping[str, int],
+    transfer_costs: Iterable[TransferCost],
+    stored_owner_bytes: Mapping[int, int],
+    resident_bytes: int | None,
+    period_transfer_scratch_bytes: Mapping[int, int],
+    compiler_peak_bytes: int | None,
+    compiler_reservation_bytes: int | None,
+    hlo_text: str | None,
+) -> CorePlanRecord:
+    """Assemble one core's plan record from planning results already in hand.
+
+    Args:
+        triple: The core's regime, period and name.
+        state_names: State names of the published value's leading axes.
+        value_shape: Shape of the whole published value.
+        value_sharding: Layout the value is published on.
+        axis_extents: Points in each planner axis.
+        widths: Selected width of each planner axis.
+        transfer_costs: Costs of the core's planned value transfers.
+        stored_owner_bytes: Solve-lifetime owners charged on each device.
+        resident_bytes: Bytes admission found resident, or `None` unbudgeted.
+        period_transfer_scratch_bytes: Declared period transfer scratch by device.
+        compiler_peak_bytes: Raw compiler peak, or `None` when unreported.
+        compiler_reservation_bytes: Admitted reservation, or `None` unbudgeted.
+        hlo_text: Optimized HLO of the selected executable, or `None`.
+
+    Returns:
+        The record.
+
+    """
+    transfers = summarize_transfer_costs(costs=transfer_costs)
+    named = len(state_names) <= len(value_shape)
+    return CorePlanRecord(
+        regime=triple[0],
+        period=triple[1],
+        core=triple[2],
+        state_extents=MappingProxyType(
+            dict(zip(state_names, value_shape, strict=False)) if named else {}
+        ),
+        selected_block=None,
+        logical_value_shape=tuple(value_shape),
+        physical_value_shape=tuple(value_sharding.shard_shape(tuple(value_shape))),
+        device_ids=tuple(sorted(device.id for device in value_sharding.device_set)),
+        axis_extents=MappingProxyType(dict(axis_extents)),
+        widths=MappingProxyType(dict(widths)),
+        dispatch=MappingProxyType(
+            {
+                name: "dense" if widths.get(name, 1) >= extent else "streamed"
+                for name, extent in axis_extents.items()
+            }
+        ),
+        stored_owner_bytes=MappingProxyType(dict(stored_owner_bytes)),
+        resident_bytes=resident_bytes,
+        active_replica_bytes=transfers["active_replica_bytes"],
+        logical_gathered_bytes=transfers["logical_gathered_bytes"],
+        transfer_workspace_bytes=transfers["transfer_workspace_bytes"],
+        period_transfer_scratch_bytes=MappingProxyType(
+            dict(period_transfer_scratch_bytes)
+        ),
+        compiler_peak_bytes=compiler_peak_bytes,
+        compiler_reservation_bytes=compiler_reservation_bytes,
+        compiled_collectives=count_hlo_collectives(hlo_text=hlo_text),
+    )
+
+
+def summarize_transfer_costs(
+    *, costs: Iterable[TransferCost]
+) -> MappingProxyType[str, int]:
+    """Sum what a core's planned value transfers hold and gather.
+
+    - `active_replica_bytes`: per-device result bytes of every non-local transfer;
+    - `logical_gathered_bytes`: whole-value bytes of every collective transfer;
+    - `transfer_workspace_bytes`: per-device operator scratch of every transfer.
+
+    Args:
+        costs: The costs of one core's planned value transfers.
+
+    Returns:
+        Immutable mapping of the three sums by name.
+
+    """
+    replica = gathered = workspace = 0
+    for cost in costs:
+        workspace += cost.temporary_bytes
+        if cost.operation_class is TransferOperationClass.LOCAL:
+            continue
+        replica += cost.per_device_bytes
+        if cost.operation_class is TransferOperationClass.COLLECTIVE:
+            gathered += cost.logical_bytes
+    return MappingProxyType(
+        {
+            "active_replica_bytes": replica,
+            "logical_gathered_bytes": gathered,
+            "transfer_workspace_bytes": workspace,
+        }
+    )
+
+
+def count_hlo_collectives(*, hlo_text: str | None) -> MappingProxyType[str, int]:
+    """Count the inter-device collective operations in optimized HLO text.
+
+    Args:
+        hlo_text: One optimized module's text, or `None` when unavailable.
+
+    Returns:
+        Immutable mapping of collective opcode to its number of occurrences;
+        empty when the text is unavailable or holds none.
+
+    """
+    counts: dict[str, int] = {}
+    for match in _HLO_COLLECTIVE.finditer(hlo_text or ""):
+        counts[match["opcode"]] = counts.get(match["opcode"], 0) + 1
+    return MappingProxyType(dict(sorted(counts.items())))
+
+
+def _jsonable(value: object) -> object:
+    """Convert a record field into JSON-serializable plain data."""
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    return value

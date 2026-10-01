@@ -40,7 +40,7 @@ from benchmarks.asv._compile_counters import (
     count_compile_requests,
 )
 
-MODEL_NAMES = ("precautionary_savings", "iskhakov", "aca_reduced")
+MODEL_NAMES = ("precautionary_savings", "iskhakov", "aca_reduced", "independent_types")
 
 
 # Verbosity every measured call runs at. The planner's `candidate evaluation`
@@ -235,10 +235,18 @@ def _build_aca_reduced() -> tuple[object, object]:
     return model, get_benchmark_params(model=model)[2]
 
 
+def _build_independent_types() -> tuple[object, object]:
+    """Build the fixed-preference-type cake-eating model and its parameters."""
+    from tests.test_models import independent_types
+
+    return independent_types.get_model(), independent_types.get_params()
+
+
 _BUILDERS = {
     "precautionary_savings": _build_precautionary_savings,
     "iskhakov": _build_iskhakov,
     "aca_reduced": _build_aca_reduced,
+    "independent_types": _build_independent_types,
 }
 
 
@@ -262,6 +270,36 @@ def _collecting_lcm_records() -> Iterator[list[str]]:
     logger.addHandler(handler)
     try:
         yield handler.lines
+    finally:
+        logger.removeHandler(handler)
+
+
+class _PlanRecordWriter(logging.Handler):
+    """Append every core plan record a debug solve emits as one JSON line."""
+
+    def __init__(self, *, path: Path) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.path = path
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Write the record's plan record, when it carries one."""
+        plan_record = getattr(record, "core_plan_record", None)
+        if plan_record is not None:
+            with self.path.open("a") as handle:
+                handle.write(plan_record.to_json() + "\n")
+
+
+@contextlib.contextmanager
+def _writing_plan_records(*, path: Path | None) -> Iterator[None]:
+    """Write the block's core plan records to `path`; do nothing without one."""
+    if path is None:
+        yield
+        return
+    handler = _PlanRecordWriter(path=path)
+    logger = logging.getLogger("lcm")
+    logger.addHandler(handler)
+    try:
+        yield
     finally:
         logger.removeHandler(handler)
 
@@ -387,15 +425,25 @@ def main(*, argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--model", choices=MODEL_NAMES, required=True)
     parser.add_argument("--calls", type=int, default=2)
     parser.add_argument("--release-previous", choices=("yes", "no"), default="yes")
+    parser.add_argument(
+        "--plan-records",
+        type=Path,
+        default=None,
+        help="Solve at debug verbosity and append every core plan record to this "
+        "JSON-lines file. Debug logging adds host work, so its phase times are "
+        "diagnostic, not a timing baseline.",
+    )
     args = parser.parse_args(argv)
 
     model, params = _BUILDERS[args.model]()
-    reports = _run_calls(
-        model=model,
-        params=params,
-        n_calls=args.calls,
-        release_previous=args.release_previous == "yes",
-    )
+    with _writing_plan_records(path=args.plan_records):
+        reports = _run_calls(
+            model=model,
+            params=params,
+            n_calls=args.calls,
+            release_previous=args.release_previous == "yes",
+            log_level=LOG_LEVEL if args.plan_records is None else "debug",
+        )
     _print_report(reports=reports)
     _assert_calibration(reports=reports)
 

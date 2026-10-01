@@ -15,6 +15,7 @@ import functools
 import gc
 import inspect
 import logging
+import math
 import os
 import time
 from collections.abc import (
@@ -42,6 +43,7 @@ from _lcm.engine import (
 )
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_inputs import compiler_input_paths
+from _lcm.execution.compiler_memory import compiler_memory_bytes
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -69,6 +71,7 @@ from _lcm.execution.donation import (
 from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
+    build_core_plan_record,
     execution_over_visible_devices,
 )
 from _lcm.execution.footprint import (
@@ -3993,6 +3996,21 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     compiled=compiled[fallback_keys[selected_candidate]],
                     donated_arguments=(),
                 )
+            if logger.isEnabledFor(logging.DEBUG):
+                _log_core_plan_record(
+                    triple=triple,
+                    regime=regimes[triple[0]],
+                    program=selected,
+                    layout=all_layouts[triple],
+                    widths=plan.widths,
+                    executable=compiled[lowering_keys[selected_candidate]],
+                    memory=memory_by_lowering_key.get(
+                        lowering_keys[selected_candidate]
+                    ),
+                    inventory=resident_inventory.get(triple),
+                    resident_bytes=resident_bytes_by_candidate.get(selected_candidate),
+                    logger=logger,
+                )
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
@@ -6427,6 +6445,66 @@ def _log_kernel_memory(
         stats.argument_size_in_bytes / gib,
         stats.output_size_in_bytes / gib,
         stats.peak_memory_in_bytes / gib,
+    )
+
+
+def _log_core_plan_record(
+    *,
+    triple: _CoreTriple,
+    regime: Regime,
+    program: ResolvedCoreProgram,
+    layout: ResolvedOutputLayout,
+    widths: Mapping[str, int],
+    executable: jax.stages.Compiled,
+    memory: CompilerMemoryReservation | None,
+    inventory: ResidentInventory | None,
+    resident_bytes: int | None,
+    logger: logging.Logger,
+) -> None:
+    """Log one selected core's plan record at debug level.
+
+    Reads only planning metadata and the executable's compile-time reports, so
+    it synchronizes no device and leaves the selected plan untouched.
+    """
+    if memory is None:
+        report = compiler_memory_bytes(compiled=executable)
+        peak_bytes = None if report is None else report.peak_memory_in_bytes
+    else:
+        peak_bytes = memory.peak_bytes
+    try:
+        hlo_text = executable.as_text()
+    except Exception:  # noqa: BLE001 - optimized text is an optional report
+        hlo_text = None
+    record = build_core_plan_record(
+        triple=triple,
+        state_names=tuple(
+            name
+            for name in regime.solution.state_names
+            if name not in regime.fold_state_names
+        ),
+        value_shape=layout.expected_value_shape,
+        value_sharding=layout.expected_leaves[0].sharding,
+        axis_extents={
+            axis.name: (
+                math.prod(axis.coordinate_extents)
+                if isinstance(axis, ReducedAxis)
+                else axis.extent
+            )
+            for axis in program.requirements.axes
+        },
+        widths=widths,
+        transfer_costs=tuple(transfer.cost for transfer in program.input_transfer_plan),
+        stored_owner_bytes={} if inventory is None else inventory.fixed_bytes,
+        resident_bytes=resident_bytes,
+        period_transfer_scratch_bytes=(
+            {} if inventory is None else inventory.transfer_scratch_bytes
+        ),
+        compiler_peak_bytes=peak_bytes,
+        compiler_reservation_bytes=None if memory is None else memory.reservation_bytes,
+        hlo_text=hlo_text,
+    )
+    logger.debug(
+        "core plan record %s", record.to_json(), extra={"core_plan_record": record}
     )
 
 
