@@ -71,13 +71,13 @@ _PYLCM_ROOT = Path(lcm.__file__).resolve().parents[2]
 
 
 @contextlib.contextmanager
-def _halving_off() -> Iterator[None]:
-    """Resolve every execution config with gather halving switched off."""
+def _halving_on() -> Iterator[None]:
+    """Resolve every execution config with gather-width halving switched on."""
     resolve = lcm.model.resolve_execution_config
 
     def patched(*, config: Any, **kwargs: Any) -> Any:
         return resolve(
-            config=dataclasses.replace(config, halve_on_materialised_gather=False),
+            config=dataclasses.replace(config, halve_on_materialised_gather=True),
             **kwargs,
         )
 
@@ -102,7 +102,7 @@ def _broadcast_off() -> Iterator[None]:
 # Arm name -> context manager held around every model build and solve.
 ARM_PATCHES: Mapping[str, Callable[[], contextlib.AbstractContextManager[None]]] = {
     "shipped": contextlib.nullcontext,
-    "halving_off": _halving_off,
+    "halving_on": _halving_on,
     "broadcast_off": _broadcast_off,
 }
 

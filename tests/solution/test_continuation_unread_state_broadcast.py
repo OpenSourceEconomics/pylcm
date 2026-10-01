@@ -12,7 +12,7 @@ So the expected continuation `E[V' | x, a]` is constant along `habit`. GridSearc
 remaining cell and broadcast along `habit`, while utility and the argmax still see
 every `habit` point.
 
-Two properties are tested:
+Three properties are tested:
 
 - **Structure.** With the cell width fixed at the whole state product, the additive
   reductions the lowered `alive` programs perform (the expectation over next-period
@@ -25,19 +25,35 @@ Two properties are tested:
   entries and discrete arrays, with every finite float within 4 ULP in float64 and
   1 ULP in float32. Simulating from either solve with the same initial conditions
   and seed yields the same discrete choices, states and regimes.
+- **Width settings.** The broadcast is used only at cell widths that are whole
+  multiples of `habit`'s extent. A pinned width or a ceiling that is not such a
+  multiple is honoured unchanged and solved in the plain layout, as is a budget
+  under which no window of such a multiple fits; every other solve keeps the
+  broadcast. Values agree with the solve that never broadcasts.
 """
 
+import dataclasses
 import functools
 import re
+import tempfile
+from pathlib import Path
 from typing import Any
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.execution.core_program import TiledOutputAxis
+from _lcm.execution.workspace_planning import (
+    CompilerMemoryReservation,
+    workspace_width_candidates,
+)
 from _lcm.solution import backward_induction, grid_search
+from _lcm.solution.period_capture import _PAYLOAD_NAME
+from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
     Choose,
@@ -48,6 +64,7 @@ from lcm import (
     Model,
     categorical,
 )
+from lcm.execution import WidthSearch, WidthSearchPolicy
 from lcm.regime import Regime
 from lcm.solvers import CELL_AXIS
 from lcm.typing import (
@@ -170,6 +187,21 @@ def _borrowing_constraint(
 
 def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
     """Build the model with `n_habits` habit points and its parameters."""
+    model = _model(
+        n_habits=n_habits,
+        execution_config=ExecutionConfig(
+            axis_widths=(
+                {CELL_AXIS: {"alive": _N_HEALTH * n_habits * _N_WEALTH}}
+                if arm == _WHOLE
+                else {}
+            )
+        ),
+    )
+    return model, _params()
+
+
+def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
+    """Build the model with `n_habits` habit points under `execution_config`."""
     alive = Regime(
         actions={
             "work": DiscreteGrid(category_class=Work),
@@ -194,19 +226,17 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
         functions={"utility": _utility},
     )
     dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    model = Model(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=_FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
-        execution_config=ExecutionConfig(
-            axis_widths=(
-                {CELL_AXIS: {"alive": _N_HEALTH * n_habits * _N_WEALTH}}
-                if arm == _WHOLE
-                else {}
-            )
-        ),
+        execution_config=execution_config,
         initial_regimes={0: "alive"},
     )
+
+
+def _params() -> UserParams:
+    """Return the model's parameters."""
     params: UserParams = {
         "discount_factor": 0.95,
         "alive": {
@@ -215,7 +245,7 @@ def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
         },
         "final_age_alive": _FINAL_AGE_ALIVE,
     }
-    return model, params
+    return params
 
 
 @functools.cache
@@ -408,3 +438,179 @@ def test_broadcast_keeps_simulated_discrete_choices_identical(
     assert finite["work"].nunique() >= 2, "work does not vary among finite rows"
 
     pd.testing.assert_frame_equal(on[columns], off[columns])
+
+
+# The three-habit model broadcasts `habit`, so a window holds whole multiples of
+# its three points.
+_BROADCAST_EXTENT = 3
+_BUDGET = 10**9
+_REFUSED = 2**62
+# Width settings, each named for its test id. A pin or ceiling that is not a
+# multiple of the broadcast extent is incompatible with it; so is a budget under
+# which no window of a multiple of the broadcast extent fits.
+_INCOMPATIBLE = (
+    "ceiling-2",
+    "pin-1",
+    "pin-5",
+    "budget-refuses-broadcast-windows-exhaustive",
+    "budget-refuses-broadcast-windows-bounded",
+)
+_COMPATIBLE = ("pin-6", "unbudgeted", "budget-exhaustive", "budget-bounded")
+_REFUSING_BUDGETS = (
+    "budget-refuses-broadcast-windows-exhaustive",
+    "budget-refuses-broadcast-windows-bounded",
+)
+
+
+def _execution_config(*, setting: str) -> ExecutionConfig:
+    """Return the execution configuration one width setting names."""
+    bounded = WidthSearchPolicy(kind=WidthSearch.BOUNDED)
+    return {
+        "ceiling-2": ExecutionConfig(axis_width_ceilings={CELL_AXIS: 2}),
+        "pin-1": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 1}}),
+        "pin-5": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 5}}),
+        "pin-6": ExecutionConfig(axis_widths={CELL_AXIS: {"alive": 6}}),
+        "unbudgeted": ExecutionConfig(),
+        "budget-exhaustive": ExecutionConfig(device_memory_bytes=_BUDGET),
+        "budget-bounded": ExecutionConfig(
+            device_memory_bytes=_BUDGET, width_search=bounded
+        ),
+        "budget-refuses-broadcast-windows-exhaustive": ExecutionConfig(
+            device_memory_bytes=_BUDGET
+        ),
+        "budget-refuses-broadcast-windows-bounded": ExecutionConfig(
+            device_memory_bytes=_BUDGET, width_search=bounded
+        ),
+    }[setting]
+
+
+@functools.cache
+def _solve_under(
+    *, setting: str, broadcast: bool
+) -> tuple[Any, int, frozenset[tuple[tuple[str, ...], int]]]:
+    """Solve the three-habit model under one width setting.
+
+    Under a `budget-refuses-broadcast-windows-*` setting, every compiled program
+    whose cell width is at least the broadcast extent reports a reservation no
+    budget admits, so only narrower windows fit.
+
+    Return the solution, the cell width the first `alive` period dispatched at,
+    and every traced cell window as its mapped state tuple and its width in
+    cells. Refused budget candidates and later periods are traced too, so a
+    window is attributed to the dispatched program by its width.
+    """
+    windows: list[tuple[tuple[str, ...], int]] = []
+    select = grid_search._continuation_unread_state_names
+    map_window = dispatchers._TiledProductMap.__call__
+    reserve = backward_induction.compiler_memory_reservation
+
+    def observed_map_window(self: Any, **kwargs: Any) -> Any:
+        windows.append((self.variables, kwargs.get(self.width_keyword, 1)))
+        return map_window(self, **kwargs)
+
+    def refusing_reserve(*, compiled: Any, widths: Any) -> Any:
+        memory = reserve(compiled=compiled, widths=widths)
+        if widths.get(CELL_AXIS, 0) < _BROADCAST_EXTENT:
+            return memory
+        return CompilerMemoryReservation(
+            records=(dataclasses.replace(memory.records[0], peak_bytes=_REFUSED),)
+        )
+
+    with (
+        pytest.MonkeyPatch.context() as monkeypatch,
+        tempfile.TemporaryDirectory() as capture_dir,
+    ):
+        monkeypatch.setattr(
+            grid_search,
+            "_continuation_unread_state_names",
+            select if broadcast else lambda **_: (),
+        )
+        monkeypatch.setattr(
+            dispatchers._TiledProductMap, "__call__", observed_map_window
+        )
+        if setting in _REFUSING_BUDGETS:
+            monkeypatch.setattr(
+                backward_induction, "compiler_memory_reservation", refusing_reserve
+            )
+        monkeypatch.setenv("LCM_CAPTURE_PERIOD", "alive@0")
+        monkeypatch.setenv("LCM_CAPTURE_DIR", capture_dir)
+        model = _model(
+            n_habits=_BROADCAST_EXTENT,
+            execution_config=_execution_config(setting=setting),
+        )
+        result = model.solve(params=_params(), log_level="off")
+        with (Path(capture_dir) / "alive@0" / _PAYLOAD_NAME).open("rb") as stream:
+            widths = cloudpickle.load(stream)["core_tile_widths"]["main"]
+    cells = frozenset(window for window in windows if "wealth" in window[0])
+    return result, widths[CELL_AXIS], cells
+
+
+@pytest.mark.parametrize(
+    ("setting", "expected"),
+    [("ceiling-2", 2), ("pin-1", 1), ("pin-5", 5), ("pin-6", 6)],
+)
+def test_user_cell_width_setting_is_dispatched_unchanged(
+    *, setting: str, expected: int
+) -> None:
+    """A pinned cell width is dispatched as pinned, and an unbudgeted solve under a
+    ceiling dispatches at the ceiling, whether or not the width is a multiple of
+    the broadcast extent."""
+    assert _solve_under(setting=setting, broadcast=True)[1] == expected
+
+
+@pytest.mark.parametrize("setting", _REFUSING_BUDGETS)
+def test_budget_refusing_every_broadcast_window_selects_a_narrower_width(
+    *, setting: str
+) -> None:
+    """When no window of whole broadcast-extent multiples fits the budget, the solve
+    dispatches a plain width below the broadcast extent."""
+    assert _solve_under(setting=setting, broadcast=True)[1] < _BROADCAST_EXTENT
+
+
+@pytest.mark.parametrize("setting", _INCOMPATIBLE)
+def test_incompatible_width_setting_maps_every_cell_state_in_the_window(
+    *, setting: str
+) -> None:
+    """A width the broadcast cannot serve runs the plain layout: a cell window of
+    the dispatched width maps `habit` together with the other cell states."""
+    _, width, cells = _solve_under(setting=setting, broadcast=True)
+
+    assert (("health", "habit", "wealth"), width) in cells
+
+
+@pytest.mark.parametrize("setting", _COMPATIBLE)
+def test_compatible_width_setting_broadcasts_habit(*, setting: str) -> None:
+    """A width of whole broadcast-extent multiples keeps `habit` outside the cell
+    window: the window maps the dispatched width's share of the other states."""
+    _, width, cells = _solve_under(setting=setting, broadcast=True)
+
+    assert (("health", "wealth"), width // _BROADCAST_EXTENT) in cells
+
+
+@pytest.mark.parametrize("setting", [*_INCOMPATIBLE, *_COMPATIBLE])
+def test_width_setting_solves_to_the_values_of_the_plain_layout(
+    *, setting: str
+) -> None:
+    """Every finite float the solve publishes agrees with the solve that never
+    broadcasts, to 4 ULP in float64 and 1 ULP in float32."""
+    on = _solve_under(setting=setting, broadcast=True)[0]
+    off = _solve_under(setting=setting, broadcast=False)[0]
+
+    assert _ulp_excess(covered=on, uncovered=off) == {}
+
+
+def test_budgeted_cell_frontier_rounds_widths_at_or_above_the_broadcast_extent() -> (
+    None
+):
+    """The frontier is the plain ladder with every width at or above the broadcast
+    extent rounded down onto its multiples; narrower widths stay as they are."""
+    axis = TiledOutputAxis(
+        name=CELL_AXIS,
+        state_names=("health", "habit", "wealth"),
+        extent=72,
+        width_keyword="_lcm_cell_width",
+        preferred_alignment=_BROADCAST_EXTENT,
+    )
+    candidates = workspace_width_candidates(axes=(axis,), budget_bytes=_BUDGET)
+
+    assert [widths[CELL_AXIS] for widths in candidates] == [72, 63, 30, 15, 6, 3, 2, 1]

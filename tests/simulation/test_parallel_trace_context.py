@@ -1,30 +1,32 @@
-"""Parallel chunk planning honours the caller's scoped JAX trace settings.
+"""Chunk planning traces under the caller's scoped JAX trace settings.
 
 JAX keeps settings such as dtype promotion, matmul precision and x64 in
-thread-local state. A simulation that is valid under the caller's scoped settings
-must simulate the same panel whether chunk planning compiles serially or on the
-compilation worker pool, and no worker may trace under different settings.
+thread-local state. Chunk planning lowers every forward program on the calling
+thread and hands only compilation to the worker pool, so a simulation that is
+valid under the caller's scoped settings simulates the same panel for every
+worker count, and every program is traced under the caller's settings.
 """
 
 import contextvars
+import re
 import threading
-from collections.abc import Callable, Sequence
-from contextlib import ExitStack
+from collections.abc import Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from fractions import Fraction
-from functools import partial
 
 import jax
 import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from _lcm.simulation.chunk_profiles import _compile_forward_units_in_parallel
 from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
 from lcm.execution import ExecutionConfig
+from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
-_THREAD_TIMEOUT_SECONDS = 20
+
+_CALLER_TOKEN = contextvars.ContextVar("caller_token", default="outside")
 
 
 @categorical(ordered=False)
@@ -198,116 +200,208 @@ def test_parallel_planning_under_scoped_promotion_matches_the_exact_reference(
     assert (len(actual), mismatches) == (len(expected), [])
 
 
-def _record_context(
-    *,
-    observed: list[tuple[int, str, object, object, object]],
-    token: contextvars.ContextVar[str],
-) -> None:
-    observed.append(
-        (
-            threading.get_ident(),
-            token.get(),
-            jax.config.jax_numpy_dtype_promotion,
-            jax.config.jax_default_matmul_precision,
-            jax.config.jax_enable_x64,
-        )
-    )
+@contextmanager
+def _scoped_settings(*, setting: str) -> Iterator[tuple[object, object, object]]:
+    """Scope JAX trace settings that differ from the process-wide ones.
 
-
-@pytest.mark.parametrize("setting", ["promotion", "precision", "x64", "combined"])
-def test_no_forward_unit_runs_under_a_different_trace_context(setting: str) -> None:
-    """Every unit that runs sees the caller's contextvars and scoped JAX settings."""
-    token = contextvars.ContextVar("caller_token", default="outside")
-    reset = token.set("caller")
-    observed: list[tuple[int, str, object, object, object]] = []
+    Yields the effective promotion, matmul precision and x64 inside the scope.
+    Process-wide promotion is strict whenever standard promotion is scoped, so the
+    model's utility traces only under the scoped setting.
+    """
     old_promotion = jax.config.jax_numpy_dtype_promotion
     old_precision = jax.config.jax_default_matmul_precision
     old_x64 = jax.config.jax_enable_x64
     try:
-        jax.config.update("jax_numpy_dtype_promotion", "standard")
         jax.config.update("jax_default_matmul_precision", "default")
         with ExitStack() as stack:
             if setting in ("promotion", "combined"):
-                stack.enter_context(jax.numpy_dtype_promotion("strict"))
+                jax.config.update("jax_numpy_dtype_promotion", "strict")
+                stack.enter_context(jax.numpy_dtype_promotion("standard"))
             if setting in ("precision", "combined"):
                 stack.enter_context(jax.default_matmul_precision("highest"))
             if setting in ("x64", "combined"):
                 stack.enter_context(jax.enable_x64(not old_x64))
-            expected = (
+            yield (
                 jax.config.jax_numpy_dtype_promotion,
                 jax.config.jax_default_matmul_precision,
                 jax.config.jax_enable_x64,
             )
-            unit = partial(_record_context, observed=observed, token=token)
-            _compile_forward_units_in_parallel(n_workers=2, units=(unit, unit))
     finally:
         jax.config.update("jax_numpy_dtype_promotion", old_promotion)
         jax.config.update("jax_default_matmul_precision", old_precision)
-        token.reset(reset)
-    assert [row[1:] for row in observed if row[1:] != ("caller", *expected)] == []
 
 
-@pytest.mark.parametrize(("workers", "count"), [(1, 2), (2, 0), (2, 1)])
-def test_serial_and_single_unit_planning_runs_no_unit_on_the_pool(
-    *, workers: int, count: int
+def _simulate_recording_traces(
+    *, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> list[tuple[int, str, object, object, object]]:
+    """Solve serially, then simulate with `workers` compile threads.
+
+    Returns, for every program lowered by the simulation, the lowering thread,
+    the caller's context token and the effective JAX trace settings there. JAX
+    traces a program on the thread that lowers it.
+    """
+    model = _model()
+    solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
+    traces: list[tuple[int, str, object, object, object]] = []
+    lower_body = jax.stages.Traced.lower
+
+    def record_and_lower(
+        self: jax.stages.Traced, *args: object, **kwargs: object
+    ) -> object:
+        traces.append(
+            (
+                threading.get_ident(),
+                _CALLER_TOKEN.get(),
+                jax.config.jax_numpy_dtype_promotion,
+                jax.config.jax_default_matmul_precision,
+                jax.config.jax_enable_x64,
+            )
+        )
+        return lower_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(jax.stages.Traced, "lower", record_and_lower)
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions={
+                "wealth": jnp.asarray([1.0, 2.0, 3.0]),
+                "age": jnp.zeros(3),
+                "regime_id": jnp.full(3, _RegimeId.alive, dtype=jnp.int32),
+            },
+            solution=solution,
+            log_level="off",
+            max_compilation_workers=workers,
+            seed=0,
+        )
+    return traces
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize(
+    "setting", ["process_wide", "promotion", "precision", "x64", "combined"]
+)
+def test_every_simulated_program_traces_on_the_caller_under_its_settings(
+    *, monkeypatch: pytest.MonkeyPatch, setting: str, workers: int
 ) -> None:
-    """One worker, or at most one unit, leaves every unit to the ordered walk."""
-    observed: list[int] = []
-    _compile_forward_units_in_parallel(
-        n_workers=workers,
-        units=tuple(partial(observed.append, 1) for _ in range(count)),
-    )
-    assert observed == []
+    """Each simulated program is traced on the calling thread, under the caller's
+    contextvars and the caller's scoped JAX trace settings."""
+    reset = _CALLER_TOKEN.set("caller")
+    try:
+        with _scoped_settings(setting=setting) as expected:
+            traces = _simulate_recording_traces(
+                monkeypatch=monkeypatch, workers=workers
+            )
+    finally:
+        _CALLER_TOKEN.reset(reset)
+    caller = (threading.get_ident(), "caller", *expected)
+    assert (len(traces) > 0, [row for row in traces if row != caller]) == (True, [])
 
 
-def _run_on_fresh_thread(func: Callable[[], None]) -> None:
-    """Run `func` on a new thread, whose JAX settings are the process-wide ones."""
-    failures: list[BaseException] = []
-
-    def target() -> None:
-        try:
-            func()
-        except BaseException as error:  # noqa: BLE001 - re-raised on the caller
-            failures.append(error)
-
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join(timeout=_THREAD_TIMEOUT_SECONDS)
-    assert not thread.is_alive(), "the pool did not finish its units"
-    if failures:
-        raise failures[0]
+class _CompileFailedError(Exception):
+    """A compile on the worker pool failed."""
 
 
-def test_matching_trace_context_runs_every_unit_off_the_calling_thread() -> None:
-    """Under process-wide settings, both units run on workers with caller context."""
-    observed: list[tuple[int, str, object, object, object]] = []
-    owners: list[int] = []
+def _raise_on_pool_threads(caller: int) -> object:
+    """Return a `Lowered.compile` that fails on every thread but `caller`."""
+    compile_body = jax.stages.Lowered.compile
 
-    def call() -> None:
-        owners.append(threading.get_ident())
-        token = contextvars.ContextVar("caller_token", default="missing")
-        token.set("visible")
-        unit = partial(_record_context, observed=observed, token=token)
-        _compile_forward_units_in_parallel(n_workers=2, units=(unit, unit))
+    def compile_or_fail(
+        self: jax.stages.Lowered, *args: object, **kwargs: object
+    ) -> object:
+        if threading.get_ident() != caller:
+            raise _CompileFailedError("the pool refused to compile")
+        return compile_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
 
-    _run_on_fresh_thread(call)
-    assert sorted((row[0] != owners[0], row[1]) for row in observed) == [
-        (True, "visible"),
-        (True, "visible"),
+    return compile_or_fail
+
+
+_PROGRAM = r"(alive|done) (decision|transition|route|action decoder) \(period \d+\)"
+
+
+def _program_notes(error: BaseException) -> list[str]:
+    """Return the notes naming a program, without JAX's traceback notes."""
+    return [
+        note for note in getattr(error, "__notes__", []) if note.startswith("while ")
     ]
 
 
-def _raise_unit_error() -> None:
-    raise ValueError("unit failed under the caller's settings")
+def _without_widths(note: str) -> str:
+    """Drop the axis widths from a note naming a program."""
+    return re.sub(r", widths=\{[^}]*\}", "", note)
 
 
-def test_matching_trace_context_propagates_unit_errors() -> None:
-    """A unit that fails on a worker raises its own error on the caller."""
+class _LoweringRefusedError(Exception):
+    """Lowering a forward program failed."""
 
-    def call() -> None:
-        _compile_forward_units_in_parallel(
-            n_workers=2, units=(_raise_unit_error, _raise_unit_error)
-        )
 
-    with pytest.raises(ValueError, match="failed under the caller's settings"):
-        _run_on_fresh_thread(call)
+def _refuse_forward_lowerings() -> object:
+    """Return a `Traced.lower` that fails for every forward simulation program.
+
+    Forward programs are traced as the planner's subject-tiled body; host
+    operations keep their own function names and lower normally.
+    """
+    lower_body = jax.stages.Traced.lower
+
+    def lower_or_fail(
+        self: jax.stages.Traced, *args: object, **kwargs: object
+    ) -> object:
+        if self.fun_name == "subject_tiled":
+            raise _LoweringRefusedError("the forward program refused to lower")
+        return lower_body(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    return lower_or_fail
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_a_lowering_error_is_raised_on_the_caller_naming_the_program(
+    *, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    """A forward program that fails to lower raises its own error, noted with the
+    first program of the forward inventory."""
+    model = _model()
+    solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
+    monkeypatch.setattr(jax.stages.Traced, "lower", _refuse_forward_lowerings())
+    with pytest.raises(_LoweringRefusedError) as raised:
+        _simulate_two_subjects(model=model, solution=solution, workers=workers)
+    notes = _program_notes(raised.value)
+    assert list(map(_without_widths, notes)) == [
+        "while lowering alive decision (period 0)"
+    ]
+
+
+def _simulate_two_subjects(
+    *, model: Model, solution: SolutionResult, workers: int
+) -> None:
+    """Simulate two alive subjects with `workers` compile threads."""
+    model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.asarray([1.0, 2.0]),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, _RegimeId.alive, dtype=jnp.int32),
+        },
+        solution=solution,
+        log_level="off",
+        max_compilation_workers=workers,
+        seed=0,
+    )
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_a_compile_error_is_raised_on_the_caller_naming_the_program(
+    *, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    """A forward program that fails to compile on the pool raises its own error,
+    noted with the program being compiled."""
+    model = _model()
+    solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
+    monkeypatch.setattr(
+        jax.stages.Lowered, "compile", _raise_on_pool_threads(threading.get_ident())
+    )
+    with pytest.raises(_CompileFailedError) as raised:
+        _simulate_two_subjects(model=model, solution=solution, workers=workers)
+    notes = _program_notes(raised.value)
+    assert [
+        re.fullmatch(rf"while compiling {_PROGRAM}", _without_widths(note)) is not None
+        for note in notes
+    ] == [True]

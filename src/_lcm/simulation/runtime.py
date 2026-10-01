@@ -5,6 +5,7 @@ import math
 import threading
 from collections.abc import Callable, Hashable, Mapping
 from concurrent.futures import Future
+from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -61,6 +62,7 @@ from _lcm.simulation.subject_parallel import (
     shard_subject_function,
 )
 from _lcm.solution.backward_induction import (
+    CompilationWave,
     _assert_lowered_output_tree,
     _func_dedup_key,
     _lowering_key,
@@ -425,25 +427,68 @@ class SimulationRuntime:
         compiler cache stores code; neither concrete buffers nor a budget verdict
         are captured. Actual execution still requires its live residency context.
         """
-        if not self.enable_jit or (
-            program.disposition is CoreExecutionDisposition.HOST_DRIVEN
-        ):
-            raise ExecutionPlanningError(
-                "Abstract profiling requires a compiled simulation program."
-            )
-        _require_abstract_arguments(arguments=arguments)
-        if not isinstance(program.argument_builder, SubjectArgumentNames):
-            raise TypeError("Simulation argument builders must declare subject names.")
-        materialized = materialize_core_program(
-            program=_with_subject_extent(program=program, n_subjects=n_subjects),
-            context=_build_context(arguments=arguments, period=period),
-        )
-        _require_abstract_arguments(arguments=materialized.arguments)
         return self.compile_candidate(
-            program=materialized,
+            program=_materialize_abstract(
+                runtime=self,
+                program=program,
+                arguments=arguments,
+                period=period,
+                n_subjects=n_subjects,
+            ),
             n_subjects=n_subjects,
             widths=widths,
             abstract_inputs=True,
+        )
+
+    def lower_abstract(
+        self,
+        *,
+        program: CoreProgram,
+        arguments: Mapping[str, object],
+        period: int,
+        n_subjects: int,
+        widths: Mapping[str, int],
+        wave: CompilationWave,
+        label: str,
+        wait: bool = False,
+    ) -> object:
+        """Lower an abstract candidate into `wave` and return its output descriptors.
+
+        The wave compiles it off the calling thread and publishes the executable
+        to the shared compiler cache when it closes. A candidate already in the
+        cache is not lowered again. With `wait`, the descriptors are the compiled
+        executable's, carrying the shardings the compiler chose.
+        """
+        materialized = _materialize_abstract(
+            runtime=self,
+            program=program,
+            arguments=arguments,
+            period=period,
+            n_subjects=n_subjects,
+        )
+        key = _simulation_lowering_key(
+            runtime=self, program=materialized, n_subjects=n_subjects, widths=widths
+        )
+        with self.lock:
+            cached = self.cache.get(key)
+        if cached is not None:
+            return cast("jax.stages.Compiled", cached.executable).out_info
+        compiler = _SimulationCandidateCompiler(
+            program=materialized,
+            enable_jit=self.enable_jit,
+            abstract_inputs=True,
+            subject_devices=self.subject_devices,
+            shard_subjects=self.execution.simulation_sharding == "subjects",
+            subject_width=min(
+                self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects), n_subjects
+            ),
+        )
+        return wave.lower(
+            lowering_key=key,
+            label=label,
+            lower=partial(compiler.lower, widths),
+            publish=partial(self._publish, key=key, widths=widths),
+            wait=wait,
         )
 
     def is_prepared(self, *, program: CoreProgram, period: int) -> bool:
@@ -573,14 +618,7 @@ class SimulationRuntime:
                     compile_candidate(widths), widths=MappingProxyType(dict(widths))
                 )
             if isinstance(compiled.executable, jax.stages.Compiled):
-                # Read the compiler's report exactly once per compiled executable,
-                # not once per `plan_workspace` call that later admits it.
-                compiled = dataclasses.replace(
-                    compiled,
-                    memory=compiler_memory_reservation(
-                        compiled=compiled.executable, widths=compiled.widths
-                    ),
-                )
+                compiled = _with_compiler_memory(compiled=compiled)
         except BaseException as error:
             with self.lock:
                 del self.in_flight[key]
@@ -591,6 +629,24 @@ class SimulationRuntime:
             del self.in_flight[key]
             future.set_result(compiled)
         return compiled
+
+    def _publish(
+        self,
+        *,
+        executable: jax.stages.Compiled,
+        key: Hashable,
+        widths: Mapping[str, int],
+    ) -> None:
+        """Cache an executable compiled by a wave under its lowering key."""
+        compiled = _with_compiler_memory(
+            compiled=CompiledSimulationProgram(
+                executable=executable,
+                static_kwargs=MappingProxyType({}),
+                widths=MappingProxyType(dict(widths)),
+            )
+        )
+        with self.lock:
+            self.cache.setdefault(key, compiled)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -708,6 +764,49 @@ def _simulation_lowering_key(
         layout_key=program.disposition,
         placement_key=runtime.execution.device_ids,
         compiler_options=program.compiler_options,
+    )
+
+
+def _materialize_abstract(
+    *,
+    runtime: SimulationRuntime,
+    program: CoreProgram,
+    arguments: Mapping[str, object],
+    period: int,
+    n_subjects: int,
+) -> MaterializedCoreProgram:
+    """Bind placed shape descriptors to a compiled program at a population extent."""
+    if not runtime.enable_jit or (
+        program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+    ):
+        raise ExecutionPlanningError(
+            "Abstract profiling requires a compiled simulation program."
+        )
+    _require_abstract_arguments(arguments=arguments)
+    if not isinstance(program.argument_builder, SubjectArgumentNames):
+        raise TypeError("Simulation argument builders must declare subject names.")
+    materialized = materialize_core_program(
+        program=_with_subject_extent(program=program, n_subjects=n_subjects),
+        context=_build_context(arguments=arguments, period=period),
+    )
+    _require_abstract_arguments(arguments=materialized.arguments)
+    return materialized
+
+
+def _with_compiler_memory(
+    *, compiled: CompiledSimulationProgram
+) -> CompiledSimulationProgram:
+    """Attach the executable's compiler report, read once per executable.
+
+    Budgeted dispatch then reuses it rather than rereading it on every
+    `plan_workspace` call that admits the executable.
+    """
+    return dataclasses.replace(
+        compiled,
+        memory=compiler_memory_reservation(
+            compiled=cast("jax.stages.Compiled", compiled.executable),
+            widths=compiled.widths,
+        ),
     )
 
 
@@ -934,6 +1033,45 @@ class _SimulationCandidateCompiler:
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         """Return the executable for exactly these proposed static widths."""
+        if not self.enable_jit:
+            function, _, static_kwargs = self._bound(widths)
+            return CompiledSimulationProgram(
+                executable=function, static_kwargs=MappingProxyType(static_kwargs)
+            )
+        return CompiledSimulationProgram(
+            executable=self.lower(widths).compile(), static_kwargs=MappingProxyType({})
+        )
+
+    def lower(self, widths: Mapping[str, int]) -> jax.stages.Lowered:
+        """Trace and lower the program at exactly these proposed static widths.
+
+        Lowering binds the program to a mesh over the subject devices, so its
+        placement belongs to the selected program even if dead-code elimination
+        removes every operand. Auto axes retain the compiler's inferred output
+        partitions.
+        """
+        function, arguments, static_kwargs = self._bound(widths)
+        mesh = jax.make_mesh(
+            (len(self.subject_devices),),
+            ("X",),
+            (jax.sharding.AxisType.Auto,),
+            devices=self.subject_devices,
+        )
+        with jax.set_mesh(mesh):
+            lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
+                **arguments, **static_kwargs
+            )
+        _assert_lowered_output_tree(
+            output_roles=self.program.output_roles,
+            output_info=lowered.out_info,
+            label=self.program.name,
+        )
+        return lowered
+
+    def _bound(
+        self, widths: Mapping[str, int]
+    ) -> tuple[Callable[..., object], Mapping[str, object], dict[str, int]]:
+        """Return the callable, its dynamic arguments and its static keywords."""
         if (
             self.shard_subjects
             and len(self.subject_devices) > 1
@@ -999,31 +1137,7 @@ class _SimulationCandidateCompiler:
                 # The wrapper binds only widths and immutable layout metadata;
                 # caller arrays remain dynamic inputs of the existing executable.
                 static_kwargs = {}
-        if not self.enable_jit:
-            return CompiledSimulationProgram(
-                executable=function, static_kwargs=MappingProxyType(static_kwargs)
-            )
-        mesh = jax.make_mesh(
-            (len(self.subject_devices),),
-            ("X",),
-            (jax.sharding.AxisType.Auto,),
-            devices=self.subject_devices,
-        )
-        # Placement belongs to the selected program even if DCE removes every
-        # operand. Auto axes retain the compiler's inferred output partitions.
-        with jax.set_mesh(mesh):
-            lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
-                **arguments, **static_kwargs
-            )
-            _assert_lowered_output_tree(
-                output_roles=self.program.output_roles,
-                output_info=lowered.out_info,
-                label=self.program.name,
-            )
-            executable = lowered.compile()
-        return CompiledSimulationProgram(
-            executable=executable, static_kwargs=MappingProxyType({})
-        )
+        return function, arguments, static_kwargs
 
 
 def _with_subject_extent(*, program: CoreProgram, n_subjects: int) -> CoreProgram:

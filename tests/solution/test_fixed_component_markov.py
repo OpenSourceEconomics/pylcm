@@ -7,6 +7,7 @@ group axis and a within-group axis instead of one axis over every code.
 """
 
 import importlib
+import logging
 from collections.abc import Callable, Mapping
 from typing import Literal, cast
 
@@ -34,7 +35,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import (
+    InvalidStateTransitionProbabilitiesError,
+    RegimeInitializationError,
+)
 from lcm.params import UserMappingLeaf
 from lcm.typing import (
     BoolND,
@@ -143,6 +147,7 @@ def _model(
     sharded: bool = False,
     law_dependency: Literal["direct", "helper", "chain"] = "direct",
     enable_jit: bool = True,
+    law: Callable[..., FloatND] | None = None,
 ) -> Model:
     model_states: dict[str, DiscreteGrid] = {}
     model_laws = {}
@@ -150,7 +155,8 @@ def _model(
         states = {"kind_health": DiscreteGrid(_KindHealth)}
         laws = {
             "kind_health": MarkovTransition(
-                func={
+                func=law
+                or {
                     "direct": _next_kind_health,
                     "helper": _next_kind_health_via_helper,
                     "chain": _next_kind_health_via_chain,
@@ -1262,3 +1268,63 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
             expected_value = s + second + beta * (4 * (s // 2) + 1)
             np.testing.assert_array_equal(following["y"], next_s)
         np.testing.assert_array_equal(first["value"], expected_value)
+
+
+def _next_kind_health_short_of_unit_mass(kind_health: DiscreteState) -> FloatND:
+    return 0.8 * _next_kind_health(kind_health)
+
+
+def _next_kind_health_leaking_across_groups(kind_health: DiscreteState) -> FloatND:
+    return 0.9 * _next_kind_health(kind_health) + 0.025
+
+
+@pytest.mark.parametrize("fixed_component", [None, (0, 0, 1, 1)])
+def test_fixed_component_law_rows_short_of_unit_mass_raise(
+    *, fixed_component: tuple[int, ...] | None
+) -> None:
+    """A law whose rows sum to 0.8 fails validation with or without the annotation."""
+    model = _model(
+        factored=True,
+        fixed_component=fixed_component,
+        law=_next_kind_health_short_of_unit_mass,
+    )
+    with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
+        model.solve(params={"discount_factor": 0.95}, log_level="debug")
+
+
+def test_fixed_component_law_leaking_mass_across_groups_raises() -> None:
+    """Mass from code 0 (group 0) to code 2 (group 1) violates the annotation."""
+    model = _model(factored=True, law=_next_kind_health_leaking_across_groups)
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'kind_health'.*from code 0 \(group 0\) to code 2 \(group 1\)",
+    ):
+        model.solve(params={"discount_factor": 0.95}, log_level="debug")
+
+
+def test_fixed_component_valid_law_is_numerically_validated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A valid annotated law is evaluated by the validator, not skipped."""
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        _model(factored=True).solve(
+            params={"discount_factor": 0.95}, log_level="warning"
+        )
+    skips = [
+        r.message for r in caplog.records if "not numerically validated" in r.message
+    ]
+    assert skips == []
+
+
+def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation():
+    """Under debug validation the annotation reproduces the unannotated values."""
+    params = {"discount_factor": 0.95}
+    factored = _model(factored=True).solve(params=params, log_level="debug")
+    unannotated = _model(factored=True, fixed_component=None).solve(
+        params=params, log_level="debug"
+    )
+    # Code `2 * group + position` sits at `[group, position]` in the factored layout.
+    np.testing.assert_array_equal(
+        np.asarray(factored.values[0]["alive"]).reshape(4, 5),
+        np.asarray(unannotated.values[0]["alive"]),
+    )
