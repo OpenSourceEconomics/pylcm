@@ -114,7 +114,7 @@
           },
           {
             "path": "src/_lcm/persistence/solution.py",
-            "sha256": "6abc7475b96ecc69763648c56522889df88726fb34fdaf4e33f496683baf307a"
+            "sha256": "853ec77364ddbf6edb902b6d806ecef3efff03c94ebd477bb048ff5c4587f266"
           },
           {
             "path": "src/_lcm/probability.py",
@@ -394,7 +394,7 @@
           },
           {
             "path": "src/_lcm/solution/result_snapshot.py",
-            "sha256": "e70c908f3550e1a38ce5064d4ddd676f9929e711b17b72baf36f3569d6e673b5"
+            "sha256": "4a1cbc1424670597af0aec486a55aeeebd646cb43ea509877126919269b75368"
           },
           {
             "path": "src/_lcm/solution/retained_buffers.py",
@@ -462,15 +462,15 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "3ba8fc010c36c102c72d992a28981d5da314429610e63c1f88947d8f84af6493"
+            "sha256": "4aa6fdb1b8e15185f72b37aa1ef75d35dd5eda5d4774d9bc58334da7043ca3d0"
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
+            "sha256": "7cbe5a4908f24dc91f46dafe16a473086c946a3698622183a7c6385151cf6852"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a1c0e6e6036277785b11a1ef42875b60c7ab4cf642c1e2976a23dfb5315a3d53"
+        "source_inventory_sha256": "1dbff1b4ea021b96c50fcf4a3b5264c543deb965e5e36cc5e9ee5f1cc98d4c9a"
       },
       "fast": {
         "candidate_sources": [
@@ -584,7 +584,7 @@
           },
           {
             "path": "src/_lcm/persistence/solution.py",
-            "sha256": "6abc7475b96ecc69763648c56522889df88726fb34fdaf4e33f496683baf307a"
+            "sha256": "853ec77364ddbf6edb902b6d806ecef3efff03c94ebd477bb048ff5c4587f266"
           },
           {
             "path": "src/_lcm/probability.py",
@@ -864,7 +864,7 @@
           },
           {
             "path": "src/_lcm/solution/result_snapshot.py",
-            "sha256": "e70c908f3550e1a38ce5064d4ddd676f9929e711b17b72baf36f3569d6e673b5"
+            "sha256": "4a1cbc1424670597af0aec486a55aeeebd646cb43ea509877126919269b75368"
           },
           {
             "path": "src/_lcm/solution/retained_buffers.py",
@@ -932,21 +932,21 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "3ba8fc010c36c102c72d992a28981d5da314429610e63c1f88947d8f84af6493"
+            "sha256": "4aa6fdb1b8e15185f72b37aa1ef75d35dd5eda5d4774d9bc58334da7043ca3d0"
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
+            "sha256": "7cbe5a4908f24dc91f46dafe16a473086c946a3698622183a7c6385151cf6852"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a1c0e6e6036277785b11a1ef42875b60c7ab4cf642c1e2976a23dfb5315a3d53"
+        "source_inventory_sha256": "1dbff1b4ea021b96c50fcf4a3b5264c543deb965e5e36cc5e9ee5f1cc98d4c9a"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "a1c0e6e6036277785b11a1ef42875b60c7ab4cf642c1e2976a23dfb5315a3d53",
+  "source_inventory_sha256": "1dbff1b4ea021b96c50fcf4a3b5264c543deb965e5e36cc5e9ee5f1cc98d4c9a",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1058,7 +1058,7 @@
     },
     {
       "path": "src/_lcm/persistence/solution.py",
-      "sha256": "6abc7475b96ecc69763648c56522889df88726fb34fdaf4e33f496683baf307a"
+      "sha256": "853ec77364ddbf6edb902b6d806ecef3efff03c94ebd477bb048ff5c4587f266"
     },
     {
       "path": "src/_lcm/probability.py",
@@ -1338,7 +1338,7 @@
     },
     {
       "path": "src/_lcm/solution/result_snapshot.py",
-      "sha256": "e70c908f3550e1a38ce5064d4ddd676f9929e711b17b72baf36f3569d6e673b5"
+      "sha256": "4a1cbc1424670597af0aec486a55aeeebd646cb43ea509877126919269b75368"
     },
     {
       "path": "src/_lcm/solution/retained_buffers.py",
@@ -1406,11 +1406,11 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "3ba8fc010c36c102c72d992a28981d5da314429610e63c1f88947d8f84af6493"
+      "sha256": "4aa6fdb1b8e15185f72b37aa1ef75d35dd5eda5d4774d9bc58334da7043ca3d0"
     },
     {
       "path": "src/lcm/result.py",
-      "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
+      "sha256": "7cbe5a4908f24dc91f46dafe16a473086c946a3698622183a7c6385151cf6852"
     }
   ]
 }
