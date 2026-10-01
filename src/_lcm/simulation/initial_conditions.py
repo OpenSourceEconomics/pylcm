@@ -435,7 +435,7 @@ def resolve_initial_periods(
 
     """
     dtype = canonical_float_dtype()
-    periods, on_grid, _ = population_operations.starting_periods(
+    periods, on_grid, _ = population_operations.match_starting_periods(
         initial_ages=np.asarray(initial_ages, dtype=dtype),
         age_values=np.asarray(ages.values, dtype=dtype),
         xp=np,

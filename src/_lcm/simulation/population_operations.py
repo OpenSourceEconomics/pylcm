@@ -41,9 +41,18 @@ def role_mismatch(
     return jnp.any(starts_here & ~jnp.isin(roles, declared_here))
 
 
-def starting_periods[ArrayT: (jax.Array, np.ndarray)](
-    *, initial_ages: ArrayT, age_values: ArrayT, xp: ModuleType = jnp
-) -> tuple[ArrayT, ArrayT, ArrayT | np.bool_]:
+def starting_periods(
+    *, initial_ages: jax.Array, age_values: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Match each initial age to its period inside a profiled operation."""
+    return match_starting_periods(
+        initial_ages=initial_ages, age_values=age_values, xp=jnp
+    )
+
+
+def match_starting_periods[ArrayT: (jax.Array, np.ndarray)](
+    *, initial_ages: ArrayT, age_values: ArrayT, xp: ModuleType
+) -> tuple[ArrayT, ArrayT, ArrayT]:
     """Match each initial age to its period with searchsorted and isclose.
 
     Args:
@@ -63,4 +72,4 @@ def starting_periods[ArrayT: (jax.Array, np.ndarray)](
     safe_idx = xp.clip(periods, 0, len(age_values) - 1)
     in_bounds = periods < len(age_values)
     valid = in_bounds & xp.isclose(age_values[safe_idx], initial_ages)
-    return periods, valid, xp.all(valid)
+    return periods, valid, xp.asarray(xp.all(valid))
