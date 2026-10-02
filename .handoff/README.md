@@ -16,18 +16,49 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
-## Stage status (2026-10-02)
+Approved macOS CI change, historical preparation:
+[macos-four-shards-proposal.md](macos-four-shards-proposal.md).
+The user approved four macOS shards and that leg's measured-weight refresh.
+The isolated preparation retains the reviewed source/config/test bytes;
+Its prepared-state receipt remains historical; current cascade status follows.
+
+Receipt fixture source-identity repair:
+[receipt-fixture-identity.md](receipt-fixture-identity.md).
+
+## Current #494 checkpoint (2026-10-03)
+
+- Incoming CI: published #491 `5b898bb554ccca70dd621c01510639453749055b`,
+  carrying #486 `553050fdfa60f2116ee20301a56002670725a80d`. The isolated #494
+  merge preserves production and certificate bytes exactly from its pre-merge
+  head `76228d7b2075cb753591e0a13364869822715361`. Parent publication is pending.
+- Local CI acceptance: maintained manifest generation/check and the 18-case
+  workflow/manifest/parser/source-identity smoke passed, with no failures,
+  errors or skips. Normal all-file hooks passed. Fresh native #494 timing and
+  complete receipt identity remain required; the earlier #486 `bdc19260`
+  macOS result retains its supporting-worker source-identity qualification.
+- The general value-only eight-ULP contract is approved; its tests/documentation
+  are published on #495 at `cc744450d30d4b12cc5b1b9ab6b923226f8ed340`.
+  Structural and same-program byte gates remain exact.
+- Stage 8A has a four-case fp64 CPU receipt on a separate, uncommitted local
+  branch. The updated driver has three binding/plan cases only. These are
+  inherited local receipts, not native three-node execution or a current
+  Stage 8A certificate claim. Actual three nodes × eight full-model GPUs,
+  native correctness/performance/resource gates and authorized owner access
+  remain required. Cluster execution stays with the ACA owner; this CI
+  cascade has no cluster access or Stage 8A acceptance claim.
+
+## Historical stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
-| 5A | implemented; Marvin gates pending | `feat/invariant-type-aware-simulation` (no PR) | 9dc2145a (merged with F1/F2) |
-| Blueprint cache (Pro R3) | green locally; Marvin battery pending | `perf/invariant-structural-blueprint-cache` (no PR) | b7c87690 |
-| 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
+| 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
+| Blueprint cache (Pro R3) | Marvin full suite green at 1d8c306f (28033850 / 28031605) | `perf/invariant-structural-blueprint-cache` (#490, draft) | see its `.handoff/blueprint-cache.md` |
+| 5B | Marvin battery green (timing row cleared by isolated A/B); GPU driver requested | `feat/invariant-block-major-lifetime` (#494, draft, on #491) | 8691e767 |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
-| 7 | in progress (subagent) | `feat/invariant-action-partitions` | based on 9b36adcb |
-| 8A | not started; after 5B | — | — |
+| 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
+| 8A | design starting (after 5B) | — | — |
 | 8B | removed | — | — |
 
 ## Pending HPC jobs (run by the aca session)
@@ -36,7 +67,7 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 |---|---|---|
 | 28028091 / 28028092 | production pair fp32, blocked vs unblocked | 9b36adcb |
 | 28028093 / 28028094 | production pair fp64, blocked vs unblocked | 9b36adcb |
-| 28029942 / 28029943 | 5A battery main, fp64 / fp32, `-n 96` | 9dc2145a |
+| 28031402 / 28031403 | 5A battery main rerun, fp64 / fp32, `-n 96`: green | 12be1db9 |
 | 28029944 | 5A topology set | 9dc2145a |
 | 28029945 | 5A GPU simulate driver, reduced3, A100, fp64 | 9dc2145a |
 | 28030481 / 28030482 | blueprint-cache full suite, fp64 / fp32, `-n 96` | b7c87690 |
@@ -48,9 +79,16 @@ On Marvin:
 
 Don't touch `~/pylcm-prod-inv` while the production pair runs.
 
+## Recorded decisions
+- The user approved the blocked-vs-unblocked ULP contract: see
+  `reports/stage3-ulp.md` (FMA contraction; 8 ULP for values, exact structure).
+  Numerical implementation and native acceptance are separate from this CI change.
+- The authorized endpoint is Stage 8A. This macOS CI preparation makes no
+  Stage 8A implementation or acceptance claim.
+
 ## Next steps
 1. Fold the production-pair numbers into #486.
-2. Once their batteries are green, open PRs for 5A and the cache, stacked on #486.
+2. 5A (#491) and the cache (#490) are open as drafts stacked on #486.
 3. Then 5B, then 8A (8A depends on 5B).
 4. Still to write for the cache: a CPU host-time A B A2 ledger and a reduced3 driver.
 

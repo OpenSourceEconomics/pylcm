@@ -1,0 +1,24 @@
+lcm: /home/user/pylcm-486/src/lcm/__init__.py x64: True jax 0.11.1
+patches ['interp'] model lc_model
+  [td=True] period 4 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 3 work shape (3, 2, 6): 2/36 differ, max ULP 1, max abs 4.441e-16
+     idx (1, 1, 4) blocked np.float64(3.68484012671534) unblocked np.float64(3.6848401267153394) ulp 1
+     idx (1, 1, 5) blocked np.float64(3.9084684299013484) unblocked np.float64(3.908468429901348) ulp 1
+  [td=True] period 3 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 2 work: bitwise equal (36 cells, dtype float64)
+  [td=True] period 2 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 1 work: bitwise equal (36 cells, dtype float64)
+  [td=True] period 1 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 0 work: bitwise equal (36 cells, dtype float64)
+  [td=False] period 4 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 3 work shape (3, 2, 6): 2/36 differ, max ULP 1, max abs 4.441e-16
+     idx (1, 1, 3) blocked np.float64(2.7919403476609963) unblocked np.float64(2.791940347660996) ulp 1
+     idx (1, 1, 5) blocked np.float64(3.1192279841682593) unblocked np.float64(3.119227984168259) ulp 1
+  [td=False] period 3 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 2 work shape (3, 2, 6): 1/36 differ, max ULP 1, max abs 4.441e-16
+     idx (1, 1, 3) blocked np.float64(3.745755006237828) unblocked np.float64(3.7457550062378275) ulp 1
+  [td=False] period 2 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 1 work: bitwise equal (36 cells, dtype float64)
+  [td=False] period 1 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 0 work: bitwise equal (36 cells, dtype float64)
+TOTAL differing cells: 5

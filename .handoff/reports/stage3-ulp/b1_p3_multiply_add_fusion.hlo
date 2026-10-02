@@ -1,0 +1,224 @@
+%fused_computation.3 (param_0.11: f64[6], param_1.25: f64[4], param_2.49: f64[4,2], param_3.67: f64[], param_4.72: s32[4,1], param_5.67: f64[4,1], param_6.69: f64[4,1], param_7.69: f64[4,1], param_8.77: s64[5], param_9.81: s32[], param_10.87: f64[4,1]) -> f64[4,4] {
+  %param_5.67 = f64[4,1]{1,0} parameter(5)
+  %bitcast.53 = f64[4]{0} bitcast(%param_5.67)
+  %mul.249 = f64[4,4]{1,0} broadcast(%bitcast.53), dimensions={0}
+  %param_7.69 = f64[4,1]{1,0} parameter(7)
+  %bitcast.55 = f64[4]{0} bitcast(%param_7.69)
+  %mul.246 = f64[4,4]{1,0} broadcast(%bitcast.55), dimensions={1}
+  %mul.245 = f64[4,4]{1,0} multiply(%mul.249, %mul.246)
+  %param_4.72 = s32[4,1]{1,0} parameter(4)
+  %convert_element_type.432 = f64[4,1]{1,0} convert(%param_4.72)
+  %constant.1535 = f64[] constant(0.2)
+  %broadcast.1087 = f64[4,1]{1,0} broadcast(%constant.1535), dimensions={}
+  %mul.248 = f64[4,1]{1,0} multiply(%convert_element_type.432, %broadcast.1087)
+  %bitcast.52 = f64[4]{0} bitcast(%mul.248)
+  %add.478 = f64[4,4]{1,0} broadcast(%bitcast.52), dimensions={0}
+  %add.477 = f64[4,4]{1,0} add(%mul.245, %add.478)
+  %param_3.67 = f64[] parameter(3)
+  %mul.247 = f64[4,4]{1,0} broadcast(%param_3.67), dimensions={}
+  %param_8.77 = s64[5]{0} parameter(8)
+  %param_9.81 = s32[] parameter(9)
+  %constant.1538 = s32[] constant(0)
+  %lt.434 = pred[] compare(%param_9.81, %constant.1538), direction=LT
+  %constant.1539 = s32[] constant(5)
+  %add.479 = s32[] add(%param_9.81, %constant.1539)
+  %select_n.902 = s32[] select(%lt.434, %add.479, %param_9.81)
+  %dynamic_slice.18 = s64[1]{0} dynamic-slice(%param_8.77, %select_n.902), dynamic_slice_sizes={1}
+  %constant.1534 = s64[1]{0} constant({0})
+  %eq.330 = pred[1]{0} compare(%dynamic_slice.18, %constant.1534), direction=EQ
+  %bitcast.56 = pred[] bitcast(%eq.330)
+  %select_n.901 = pred[4,2]{1,0} broadcast(%bitcast.56), dimensions={}
+  %param_2.49 = f64[4,2]{1,0} parameter(2)
+  %select_n.900 = f64[4,2]{1,0} select(%select_n.901, %param_2.49, %param_2.49)
+  %slice.18 = f64[4,1]{1,0} slice(%select_n.900), slice={[0:4], [1:2]}
+  %bitcast.51 = f64[4]{0} bitcast(%slice.18)
+  %bitcast_convert_type.509 = s64[4]{0} bitcast-convert(%bitcast.51)
+  %constant.1531 = s64[] constant(9223372036854775807)
+  %broadcast.1086 = s64[4]{0} broadcast(%constant.1531), dimensions={}
+  %and.826 = s64[4]{0} and(%bitcast_convert_type.509, %broadcast.1086)
+  %constant.1530 = s64[] constant(0)
+  %broadcast.1085 = s64[4]{0} broadcast(%constant.1530), dimensions={}
+  %eq.329 = pred[4]{0} compare(%and.826, %broadcast.1085), direction=EQ
+  %not.219 = pred[4]{0} not(%eq.329)
+  %constant.1529 = s64[] constant(4503599627370496)
+  %lt.433 = s64[4]{0} broadcast(%constant.1529), dimensions={}
+  %lt.432 = pred[4]{0} compare(%and.826, %lt.433), direction=LT
+  %and.825 = pred[4]{0} and(%not.219, %lt.432)
+  %and.824 = pred[4,4]{1,0} broadcast(%and.825), dimensions={0}
+  %constant.1532 = f64[] constant(1)
+  %broadcast.1084 = f64[4,4]{1,0} broadcast(%constant.1532), dimensions={}
+  %param_6.69 = f64[4,1]{1,0} parameter(6)
+  %bitcast.54 = f64[4]{0} bitcast(%param_6.69)
+  %le.99 = f64[4,4]{1,0} broadcast(%bitcast.54), dimensions={0}
+  %param_10.87 = f64[4,1]{1,0} parameter(10)
+  %bitcast.57 = f64[4]{0} bitcast(%param_10.87)
+  %le.98 = f64[4,4]{1,0} broadcast(%bitcast.57), dimensions={1}
+  %sub.450 = f64[4,4]{1,0} subtract(%le.99, %le.98)
+  %add.476 = f64[4,4]{1,0} add(%sub.450, %broadcast.1084)
+  %constant.1528 = f64[] constant(0.55555555555555558)
+  %broadcast.1083 = f64[4,4]{1,0} broadcast(%constant.1528), dimensions={}
+  %multiply.24 = f64[4,4]{1,0} multiply(%add.476, %broadcast.1083)
+  %constant.1533 = f64[] constant(0)
+  %max.107 = f64[4,4]{1,0} broadcast(%constant.1533), dimensions={}
+  %floor.16 = f64[4,4]{1,0} floor(%multiply.24)
+  %constant.1527 = f64[] constant(4)
+  %min.122 = f64[4,4]{1,0} broadcast(%constant.1527), dimensions={}
+  %clamp.15 = f64[4,4]{1,0} clamp(%max.107, %floor.16, %min.122)
+  %convert_element_type.430 = s32[4,4]{1,0} convert(%clamp.15)
+  %convert_element_type.429 = f64[4,4]{1,0} convert(%convert_element_type.430)
+  %sub.449 = f64[4,4]{1,0} subtract(%multiply.24, %convert_element_type.429)
+  %sub.448 = f64[4,4]{1,0} subtract(%broadcast.1084, %sub.449)
+  %bitcast_convert_type.508 = s64[4,4]{1,0} bitcast-convert(%sub.448)
+  %broadcast.1082 = s64[4,4]{1,0} broadcast(%constant.1531), dimensions={}
+  %and.822 = s64[4,4]{1,0} and(%bitcast_convert_type.508, %broadcast.1082)
+  %broadcast.1081 = s64[4,4]{1,0} broadcast(%constant.1530), dimensions={}
+  %eq.328 = pred[4,4]{1,0} compare(%and.822, %broadcast.1081), direction=EQ
+  %not.218 = pred[4,4]{1,0} not(%eq.328)
+  %lt.431 = s64[4,4]{1,0} broadcast(%constant.1529), dimensions={}
+  %lt.430 = pred[4,4]{1,0} compare(%and.822, %lt.431), direction=LT
+  %and.821 = pred[4,4]{1,0} and(%not.218, %lt.430)
+  %param_0.11 = f64[6]{0} parameter(0)
+  %broadcast.1080 = s32[4,4]{1,0} broadcast(%constant.1538), dimensions={}
+  %lt.429 = pred[4,4]{1,0} compare(%convert_element_type.430, %broadcast.1080), direction=LT
+  %constant.1536 = s32[] constant(6)
+  %broadcast.1079 = s32[4,4]{1,0} broadcast(%constant.1536), dimensions={}
+  %add.475 = s32[4,4]{1,0} add(%convert_element_type.430, %broadcast.1079)
+  %select_n.898 = s32[4,4]{1,0} select(%lt.429, %add.475, %convert_element_type.430)
+  %bitcast.50 = s32[16,1]{0,1} bitcast(%select_n.898)
+  %copy.8 = s32[16,1]{1,0} copy(%bitcast.50)
+  %gather.76 = f64[16,1]{1,0} gather(%param_0.11, %copy.8), offset_dims={1}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+  %bitcast.49 = f64[4,4]{1,0} bitcast(%gather.76)
+  %abs.152 = f64[4,4]{1,0} abs(%bitcast.49)
+  %constant.1526 = f64[] constant(inf)
+  %broadcast.1078 = f64[4,4]{1,0} broadcast(%constant.1526), dimensions={}
+  %eq.327 = pred[4,4]{1,0} compare(%abs.152, %broadcast.1078), direction=EQ
+  %and.820 = pred[4,4]{1,0} and(%and.821, %eq.327)
+  %constant.1525 = s64[] constant(63)
+  %broadcast.1077 = s64[4,4]{1,0} broadcast(%constant.1525), dimensions={}
+  %shift_right_arithmetic.144 = s64[4,4]{1,0} shift-right-arithmetic(%bitcast_convert_type.508, %broadcast.1077)
+  %convert_element_type.428 = pred[4,4]{1,0} compare(%shift_right_arithmetic.144, %broadcast.1081), direction=NE
+  %constant.1524 = f64[] constant(-2.2250738585072014e-308)
+  %broadcast_in_dim.716 = f64[4,4]{1,0} broadcast(%constant.1524), dimensions={}
+  %constant.1523 = f64[] constant(2.2250738585072014e-308)
+  %broadcast_in_dim.715 = f64[4,4]{1,0} broadcast(%constant.1523), dimensions={}
+  %select_n.897 = f64[4,4]{1,0} select(%convert_element_type.428, %broadcast_in_dim.716, %broadcast_in_dim.715)
+  %select_n.896 = f64[4,4]{1,0} select(%and.820, %select_n.897, %sub.448)
+  %is_finite.72 = pred[4,4]{1,0} is-finite(%bitcast.49)
+  %not.217 = pred[4,4]{1,0} not(%is_finite.72)
+  %and.819 = pred[4,4]{1,0} and(%eq.328, %not.217)
+  %select_n.895 = f64[4,4]{1,0} select(%and.819, %max.107, %bitcast.49)
+  %mul.244 = f64[4,4]{1,0} multiply(%select_n.896, %select_n.895)
+  %bitcast_convert_type.507 = s64[4,4]{1,0} bitcast-convert(%sub.449)
+  %and.818 = s64[4,4]{1,0} and(%bitcast_convert_type.507, %broadcast.1082)
+  %eq.326 = pred[4,4]{1,0} compare(%and.818, %broadcast.1081), direction=EQ
+  %not.216 = pred[4,4]{1,0} not(%eq.326)
+  %lt.428 = pred[4,4]{1,0} compare(%and.818, %lt.431), direction=LT
+  %and.817 = pred[4,4]{1,0} and(%not.216, %lt.428)
+  %constant.1537 = s32[] constant(1)
+  %broadcast.1076 = s32[4,4]{1,0} broadcast(%constant.1537), dimensions={}
+  %add.474 = s32[4,4]{1,0} add(%convert_element_type.430, %broadcast.1076)
+  %lt.427 = pred[4,4]{1,0} compare(%add.474, %broadcast.1080), direction=LT
+  %constant.1522 = s32[] constant(7)
+  %broadcast.1075 = s32[4,4]{1,0} broadcast(%constant.1522), dimensions={}
+  %add.473 = s32[4,4]{1,0} add(%convert_element_type.430, %broadcast.1075)
+  %select_n.894 = s32[4,4]{1,0} select(%lt.427, %add.473, %add.474)
+  %bitcast.48 = s32[16,1]{0,1} bitcast(%select_n.894)
+  %copy.7 = s32[16,1]{1,0} copy(%bitcast.48)
+  %gather.75 = f64[16,1]{1,0} gather(%param_0.11, %copy.7), offset_dims={1}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+  %bitcast.47 = f64[4,4]{1,0} bitcast(%gather.75)
+  %abs.151 = f64[4,4]{1,0} abs(%bitcast.47)
+  %eq.325 = pred[4,4]{1,0} compare(%abs.151, %broadcast.1078), direction=EQ
+  %and.816 = pred[4,4]{1,0} and(%and.817, %eq.325)
+  %shift_right_arithmetic.143 = s64[4,4]{1,0} shift-right-arithmetic(%bitcast_convert_type.507, %broadcast.1077)
+  %convert_element_type.427 = pred[4,4]{1,0} compare(%shift_right_arithmetic.143, %broadcast.1081), direction=NE
+  %select_n.893 = f64[4,4]{1,0} select(%convert_element_type.427, %broadcast_in_dim.716, %broadcast_in_dim.715)
+  %select_n.892 = f64[4,4]{1,0} select(%and.816, %select_n.893, %sub.449)
+  %is_finite.71 = pred[4,4]{1,0} is-finite(%bitcast.47)
+  %not.215 = pred[4,4]{1,0} not(%is_finite.71)
+  %and.815 = pred[4,4]{1,0} and(%eq.326, %not.215)
+  %select_n.891 = f64[4,4]{1,0} select(%and.815, %max.107, %bitcast.47)
+  %mul.243 = f64[4,4]{1,0} multiply(%select_n.892, %select_n.891)
+  %add.472 = f64[4,4]{1,0} add(%mul.244, %mul.243)
+  %abs.150 = f64[4,4]{1,0} abs(%add.472)
+  %eq.324 = pred[4,4]{1,0} compare(%abs.150, %broadcast.1078), direction=EQ
+  %and.814 = pred[4,4]{1,0} and(%and.824, %eq.324)
+  %broadcast.1074 = s64[4]{0} broadcast(%constant.1525), dimensions={}
+  %shift_right_arithmetic.145 = s64[4]{0} shift-right-arithmetic(%bitcast_convert_type.509, %broadcast.1074)
+  %convert_element_type.431 = pred[4]{0} compare(%shift_right_arithmetic.145, %broadcast.1085), direction=NE
+  %broadcast_in_dim.714 = f64[4]{0} broadcast(%constant.1524), dimensions={}
+  %broadcast_in_dim.713 = f64[4]{0} broadcast(%constant.1523), dimensions={}
+  %select_n.899 = f64[4]{0} select(%convert_element_type.431, %broadcast_in_dim.714, %broadcast_in_dim.713)
+  %broadcast_in_dim.712 = f64[4,4]{1,0} broadcast(%select_n.899), dimensions={0}
+  %broadcast_in_dim.711 = f64[4,4]{1,0} broadcast(%bitcast.51), dimensions={0}
+  %select_n.890 = f64[4,4]{1,0} select(%and.814, %broadcast_in_dim.712, %broadcast_in_dim.711)
+  %bitcast_convert_type.506 = s64[4,4]{1,0} bitcast-convert(%select_n.890)
+  %and.813 = s64[4,4]{1,0} and(%bitcast_convert_type.506, %broadcast.1082)
+  %eq.323 = pred[4,4]{1,0} compare(%and.813, %broadcast.1081), direction=EQ
+  %is_finite.70 = pred[4,4]{1,0} is-finite(%select_n.890)
+  %not.214 = pred[4,4]{1,0} not(%is_finite.70)
+  %or.75 = pred[4,4]{1,0} or(%eq.323, %not.214)
+  %sub.447 = s64[4,4]{1,0} subtract(%bitcast_convert_type.506, %and.813)
+  %lt.426 = pred[4,4]{1,0} compare(%and.813, %lt.431), direction=LT
+  %not.213 = pred[4,4]{1,0} not(%eq.323)
+  %and.812 = pred[4,4]{1,0} and(%lt.426, %not.213)
+  %and.823 = pred[4,4]{1,0} broadcast(%eq.329), dimensions={0}
+  %is_finite.69 = pred[4,4]{1,0} is-finite(%add.472)
+  %not.212 = pred[4,4]{1,0} not(%is_finite.69)
+  %and.811 = pred[4,4]{1,0} and(%and.823, %not.212)
+  %select_n.889 = f64[4,4]{1,0} select(%and.811, %max.107, %add.472)
+  %is_finite.68 = pred[4,4]{1,0} is-finite(%select_n.889)
+  %bitcast_convert_type.505 = s64[4,4]{1,0} bitcast-convert(%select_n.889)
+  %and.810 = s64[4,4]{1,0} and(%bitcast_convert_type.505, %broadcast.1082)
+  %eq.322 = pred[4,4]{1,0} compare(%and.810, %broadcast.1081), direction=EQ
+  %not.211 = pred[4,4]{1,0} not(%eq.322)
+  %and.809 = pred[4,4]{1,0} and(%is_finite.68, %not.211)
+  %clz.37 = s64[4,4]{1,0} count-leading-zeros(%and.813)
+  %constant.1521 = s64[] constant(-11)
+  %broadcast.1073 = s64[4,4]{1,0} broadcast(%constant.1521), dimensions={}
+  %add.471 = s64[4,4]{1,0} add(%clz.37, %broadcast.1073)
+  %select_n.888 = s64[4,4]{1,0} select(%and.812, %add.471, %broadcast.1081)
+  %lt.425 = pred[4,4]{1,0} compare(%and.810, %lt.431), direction=LT
+  %constant.1520 = s64[] constant(-1011)
+  %broadcast.1072 = s64[4,4]{1,0} broadcast(%constant.1520), dimensions={}
+  %clz.36 = s64[4,4]{1,0} count-leading-zeros(%and.810)
+  %subtract.19 = s64[4,4]{1,0} subtract(%broadcast.1072, %clz.36)
+  %constant.1519 = s64[] constant(52)
+  %broadcast.1071 = s64[4,4]{1,0} broadcast(%constant.1519), dimensions={}
+  %shift_right_arithmetic.142 = s64[4,4]{1,0} shift-right-arithmetic(%and.810, %broadcast.1071)
+  %constant.1518 = s64[] constant(-1023)
+  %broadcast.1070 = s64[4,4]{1,0} broadcast(%constant.1518), dimensions={}
+  %add.470 = s64[4,4]{1,0} add(%shift_right_arithmetic.142, %broadcast.1070)
+  %select_n.887 = s64[4,4]{1,0} select(%lt.425, %subtract.19, %add.470)
+  %convert_element_type.426 = s32[4,4]{1,0} convert(%select_n.887)
+  %constant.1517 = s32[] constant(1022)
+  %broadcast.1069 = s32[4,4]{1,0} broadcast(%constant.1517), dimensions={}
+  %add.469 = s32[4,4]{1,0} add(%convert_element_type.426, %broadcast.1069)
+  %max.106 = s32[4,4]{1,0} maximum(%add.469, %broadcast.1080)
+  %convert_element_type.425 = s64[4,4]{1,0} convert(%max.106)
+  %min.120 = s64[4,4]{1,0} minimum(%select_n.888, %convert_element_type.425)
+  %select_n.886 = s64[4,4]{1,0} select(%and.809, %min.120, %broadcast.1081)
+  %min.119 = s64[4,4]{1,0} minimum(%select_n.886, %select_n.888)
+  %constant.1516 = s64[] constant(53)
+  %min.121 = s64[4,4]{1,0} broadcast(%constant.1516), dimensions={}
+  %clamp.14 = s64[4,4]{1,0} clamp(%broadcast.1081, %min.119, %min.121)
+  %shift_left.50 = s64[4,4]{1,0} shift-left(%and.813, %clamp.14)
+  %sub.446 = s64[4,4]{1,0} subtract(%select_n.886, %select_n.888)
+  %max.105 = s64[4,4]{1,0} maximum(%sub.446, %broadcast.1081)
+  %shift_left.49 = s64[4,4]{1,0} shift-left(%max.105, %broadcast.1071)
+  %add.468 = s64[4,4]{1,0} add(%shift_left.50, %shift_left.49)
+  %shift_left.48 = s64[4,4]{1,0} shift-left(%select_n.886, %broadcast.1071)
+  %add.467 = s64[4,4]{1,0} add(%and.813, %shift_left.48)
+  %select_n.885 = s64[4,4]{1,0} select(%and.812, %add.468, %add.467)
+  %or.74 = s64[4,4]{1,0} or(%sub.447, %select_n.885)
+  %select_n.884 = s64[4,4]{1,0} select(%or.75, %bitcast_convert_type.506, %or.74)
+  %bitcast_convert_type.504 = f64[4,4]{1,0} bitcast-convert(%select_n.884)
+  %sub.445 = s64[4,4]{1,0} subtract(%bitcast_convert_type.505, %shift_left.48)
+  %select_n.883 = s64[4,4]{1,0} select(%and.809, %sub.445, %bitcast_convert_type.505)
+  %bitcast_convert_type.503 = f64[4,4]{1,0} bitcast-convert(%select_n.883)
+  %mul.242 = f64[4,4]{1,0} multiply(%bitcast_convert_type.504, %bitcast_convert_type.503)
+  %param_1.25 = f64[4]{0} parameter(1)
+  %broadcast.1068 = f64[4,4]{1,0} broadcast(%param_1.25), dimensions={0}
+  %multiply.23 = f64[4,4]{1,0} multiply(%mul.242, %broadcast.1068)
+  %mul.241 = f64[4,4]{1,0} multiply(%mul.247, %multiply.23)
+  ROOT %add.466 = f64[4,4]{1,0} add(%add.477, %mul.241)
+}
