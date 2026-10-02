@@ -20,10 +20,13 @@ kind of regeneration has its own route:
   regeneration;
 - a new or changed `cpu.yml` invocation ⇒ a reviewed hand edit, checked by
   `tests/ci/test_cpu_workflow_contract.py`;
-- re-measured weights ⇒ a new per-file CSV and a new `frozen_head`.
+- re-measured root `file_weights` ⇒ a new per-file CSV and a new `frozen_head`;
+- re-measured `leg_weights` ⇒ a matching per-leg CSV and an updated leg's
+  `junit_source`, with its tested source, selection and input provenance.
 
-`frozen_head` names the commit the weights were measured at, not the commit the
-manifest was last edited at, so registering a file leaves it where it is.
+`frozen_head` binds the root cross-leg CSV weights. Each `leg_weights` entry
+records its own measurement provenance in `junit_source`; updating one leg does
+not advance the root freeze or imply that other legs were re-measured.
 """
 
 from __future__ import annotations

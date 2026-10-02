@@ -16,6 +16,12 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
+Approved macOS CI change, prepared for parent publication:
+[macos-four-shards-proposal.md](macos-four-shards-proposal.md).
+The user approved four macOS shards and that leg's measured-weight refresh.
+The isolated preparation retains the reviewed source/config/test bytes;
+native runtime acceptance remains outstanding after publication.
+
 ## Stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
@@ -48,8 +54,12 @@ On Marvin:
 
 Don't touch `~/pylcm-prod-inv` while the production pair runs.
 
-## Open decisions
-- Blocked-vs-unblocked ULP contract: see `reports/stage3-ulp.md` (FMA contraction; proposal: 8 ULP for values, exact structure).
+## Recorded decisions
+- The user approved the blocked-vs-unblocked ULP contract: see
+  `reports/stage3-ulp.md` (FMA contraction; 8 ULP for values, exact structure).
+  Numerical implementation and native acceptance are separate from this CI change.
+- The authorized endpoint is Stage 8A. This macOS CI preparation makes no
+  Stage 8A implementation or acceptance claim.
 
 ## Next steps
 1. Fold the production-pair numbers into #486.
