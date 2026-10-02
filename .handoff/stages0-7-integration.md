@@ -135,8 +135,38 @@ seven-case detector runs.
 
 ## Remaining decisions and scope
 
-This isolated source integration is ready for parent review/commit; no worker
-commit or push occurred and `main` is not merged. CPU semantics/placement and
+### Explicit eager and logging-mode literal coverage
+
+On parent integration commit `3e4ec0ba4bb24864eeb10766a637544bc34cde2c`,
+the existing tiny scalar invariant fixture has 24 additional public solver
+cases: 16 complete-value cases across optimization off/on, `enable_jit=False`
+and `True`, and `off`/`warning`/`progress`/`debug`; eight refusal cases cover
+eager execution with an explicit compiler-memory budget in every logging mode.
+The supported eager value route explicitly uses `device_memory_bytes=None`.
+Each complete result is checked against independently worked literal values:
+all original type codes low/middle/high yield working values `(7, 2, 1)` and
+terminal values `(8, 2, 6)`, including every public period/regime, shape and
+dtype. Each case has one assertion; no blocked/unblocked numerical comparator
+or new tolerance is used.
+
+The first coverage run was already green: **24 passed**, zero failures/errors/
+skips, **0:00:07.853** at fp64. This is test-only coverage, not a RED-to-GREEN
+solver fix. The whole scalar module passes **33 cases** at fp64 in
+**0:00:07.880** and **33 cases** at fp32 in **0:00:09.584**, with zero failures,
+errors or skips. All normal applicable hooks pass, including Ruff and
+whole-project ty; nonmatching hooks naturally skip. The production source tree
+remains `e6eaa3d9122b675ffecdaacecc746084b149a552`; no reseal is needed.
+
+Raw new JUnits/logs, explicit commands and source/import identity are separately
+retained under aca-dev `.task-evidence/pylcm-handoff/jit-logging-coverage/`.
+Earlier integration receipts above are unchanged. These bounded one-device CPU
+cases cover scalar selected invariant reads with binary-exact literal values;
+they do not discharge general rounding, block-major/action-mesh eager coverage,
+GPU/native performance, ACA applicability or the remaining Section 12 gates.
+
+The parent committed/published the source integration as `3e4ec0ba`; this new
+test-only coverage is ready for parent review/commit. No worker commit or push
+occurred and `main` is not merged. CPU semantics/placement and
 source certificate checks do not close the Stage 7 four-A100 layout benchmark,
 queued native GPU-driver acceptance, or native ACA applicability. The general
 unblocked ULP/rounding decision and CI rebalance decision remain pending. No
