@@ -3,6 +3,7 @@
 Usage: pixi run asv-run-and-publish-main
 
 Downloads previous results from the org site, merges them with the new run,
+normalises the merged history so each machine draws one continuous series,
 generates the HTML dashboard via ``asv publish``, then pushes everything back.
 This is intended for the main branch only — PR branches should use
 ``asv-run-and-pr-comment`` instead.
@@ -13,6 +14,8 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
+
+from benchmarks.asv_machine import stable_ram
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ def publish() -> None:
 
     _ensure_site_clone()
     _download_previous_results(results_dir)
+    _normalise_results(results_dir)
 
     subprocess.run(["asv", "publish"], check=True)
     _patch_html_title(html_dir / "index.html")
@@ -90,6 +94,52 @@ def _download_previous_results(results_dir: Path) -> None:
 
         if count:
             print(f"Downloaded {count} previous result(s) for {machine_dir.name}")
+
+
+def _normalise_results(results_dir: Path) -> None:
+    """Rewrite every stored result so a machine's history is one continuous series.
+
+    ASV starts a new graph series whenever a machine param changes, and hides a
+    stored result whose version stamp differs from the current benchmark's. Both
+    happen without anything about the measurement changing: the RAM the kernel
+    reports drifts by kilobytes, the kernel itself is updated, and a version bump
+    marks a deliberate change of workload. This rewrites, in place:
+
+    - the machine params of every result (all but `python`) to the machine's current
+      `machine.json`, with the RAM in stable whole gigabytes;
+    - the version column of every result to null, which ASV treats as matching any
+      version.
+
+    Nulling versions deliberately trades ASV's guard against mixing measurement
+    semantics on one line for continuity: a version bump now shows as a step on the
+    same line instead of hiding all earlier history. Steps at version bumps are
+    expected. Files are only rewritten when their content changes, so the pass is
+    idempotent and the merged, normalised results are what gets pushed back.
+    """
+    for machine_json in results_dir.glob("*/machine.json"):
+        machine = json.loads(machine_json.read_text(encoding="utf-8"))
+        machine["ram"] = stable_ram(machine["ram"])
+        _write_json_if_changed(path=machine_json, data=machine)
+        current = {key: val for key, val in machine.items() if key != "version"}
+
+        for result_file in machine_json.parent.glob("*.json"):
+            if result_file.name == "machine.json" or result_file.name.endswith(
+                "-compare.json"
+            ):
+                continue
+            data = json.loads(result_file.read_text(encoding="utf-8"))
+            data["params"].update(current)
+            version_column = data["result_columns"].index("version")
+            for entry in data["results"].values():
+                if len(entry) > version_column:
+                    entry[version_column] = None
+            _write_json_if_changed(path=result_file, data=data)
+
+
+def _write_json_if_changed(*, path: Path, data: dict) -> None:
+    """Write `data` to `path` as ASV formats JSON, unless the content is unchanged."""
+    if json.loads(path.read_text(encoding="utf-8")) != data:
+        path.write_text(json.dumps(data, indent=4, sort_keys=True), encoding="utf-8")
 
 
 def _generate_comparison(results_dir: Path) -> None:
@@ -169,11 +219,14 @@ def _pad_graphs_in_folder(folder: Path) -> int:
         for entry in json.loads(f.read_text(encoding="utf-8")):
             if isinstance(entry, list) and entry:
                 target_revs.add(entry[0])
+    if not target_revs:
+        return 0
+    endpoints = {min(target_revs), max(target_revs)}
     padded = 0
     for f in folder.glob("bench_*.json"):
         data = json.loads(f.read_text(encoding="utf-8"))
         have = {e[0] for e in data if isinstance(e, list) and e}
-        missing = target_revs - have
+        missing = endpoints - have
         if not missing:
             continue
         data.extend([rev, None] for rev in missing)
@@ -192,10 +245,11 @@ def _pad_sparse_graphs(graphs_dir: Path) -> None:
     chart width even though most of the project history has no data for
     that benchmark.
 
-    Inject `[rev, null]` markers at every revision the longest sibling
-    series covers but this series does not. flot renders null y-values as
-    gaps, so the line is still drawn only where data exists — but the
-    x-axis now matches the rest of the grid.
+    Inject `[rev, null]` markers at the first and last revision of the folder
+    when this series does not cover them. flot fits the x-axis to them and draws
+    no point there, so the x-axis matches the rest of the grid. Interior
+    revisions are not padded: flot breaks a line at every null, so padding them
+    would cut a series wherever a sibling ran and it did not.
 
     Runs over the summary directory (`graphs/summary/`) and every
     per-environment leaf directory (`graphs/arch-*/.../`).

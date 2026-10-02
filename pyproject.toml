@@ -128,10 +128,11 @@ no-build-isolation = [ "pylcm" ]
 # device-memory budget is derived from that pool. No-ops on CPU.
 test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.75" } }
 asv-compare = "asv compare"
+asv-machine = "python -m benchmarks.asv_machine"
 asv-preview = "asv preview"
 asv-preflight = "python -m benchmarks.preflight"
 asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
+asv-publish = "python -m benchmarks.publish"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
