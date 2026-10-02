@@ -85,3 +85,23 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
   - blocks wider than one code;
   - on-disk fragments;
   - 8A.
+
+## Local receipt intake
+
+Queued native arm receipts must be checked with the hardened
+`drivers/stage5b/compare_stage5b.py` before acceptance. The comparator requires
+three distinct arms, four distinct call labels, valid nonempty matching value
+digest keysets, and panel/raw digests on the three simulation calls. It checks
+the driver's available source, library, JAX, precision, device, economic-model,
+clean-worktree and GPU-exclusivity fields, allowing the intentional execution
+configuration difference. Construction refusals remain raw outcomes rather than
+completed parity evidence.
+
+Block-major and period-major must have equal byte digests. Unblocked digests are
+a populated control; their differences do not establish an ULP bound. Matching
+keysets cannot detect the same omitted coordinate in every arm because the
+receipt does not contain an independently expected coordinate schema.
+
+The local CLI regression checks use the published driver fields without requiring
+unavailable parameter or driver hashes. Local checks do not constitute native
+GPU-driver acceptance or reopen the pending unblocked rounding decision.
