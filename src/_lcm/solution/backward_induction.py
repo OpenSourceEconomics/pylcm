@@ -1422,7 +1422,8 @@ def _run_dispatch_unit(
         Tuple of the unit's kernel output and whether it was assembled from blocks.
 
     Raises:
-        ExecutionPlanningError: A blocked regime-period is the capture target.
+        ExecutionPlanningError: A blocked regime-period is the capture target,
+            or its bound programs do not cover every code of its value.
 
     """
     graph = core_program_graph(kernel=regime.solution.period_kernels[period])
@@ -1443,6 +1444,15 @@ def _run_dispatch_unit(
         )
         raise ExecutionPlanningError(msg)
     axis_names = _value_axis_names(regimes={regime_name: regime})[regime_name]
+    first = cast("InvariantBinding", graph[bound[0]].invariant_binding)
+    n_codes = value_template.shape[axis_names.index(first.state_name)]
+    if len(bound) != n_codes:
+        msg = (
+            f"Regime {regime_name!r} dispatches {len(bound)} programs bound to "
+            f"{first.state_name!r} in period {period}, but its value holds "
+            f"{n_codes} codes; every code must be written."
+        )
+        raise ExecutionPlanningError(msg)
     value: FloatND | None = None
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
@@ -1455,8 +1465,7 @@ def _run_dispatch_unit(
             block=cast("FloatND", output.value),
             binding=binding,
             axis=axis_names.index(binding.state_name),
-            n_codes=len(bound),
-            sharding=value_template.sharding,
+            template=value_template,
         )
     return KernelOutput(value=cast("FloatND", value)), True
 
@@ -5609,19 +5618,25 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
     current_cell: tuple[RegimeName, int] | None = None
     value_axis_names = _value_axis_names(regimes=regimes)
     ordered_programs = _programs_in_producer_order(all_programs=all_programs)
+    # The programs of one invariant family differ only by their code, so a
+    # regime-period builds its state space once and a family ranks its widths
+    # once, for this solve's parameters.
+    family_width_candidates: dict[
+        tuple[RegimeName, int, str], tuple[Mapping[str, int], ...]
+    ] = {}
     for (regime_name, period, core_key), declaration in ordered_programs.items():
         triple = (regime_name, period, core_key)
+        regime = regimes[regime_name]
         if (regime_name, period) != current_cell:
             current_cell = (regime_name, period)
             producers = {}
             consumed_names = _consumed_producer_names(
                 all_programs=all_programs, regime_name=regime_name, period=period
             )
-        regime = regimes[regime_name]
-        state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name],
-            process_grid_resolver=process_grid_resolver,
-        )
+            state_action_space = regime.solution.state_action_space(
+                regime_params=flat_params[regime_name],
+                process_grid_resolver=process_grid_resolver,
+            )
         binding = declaration.invariant_binding
         edge_kwargs = _edge_kwargs(
             regime=regime,
@@ -5655,13 +5670,20 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
             ),
             value_axis_names=value_axis_names,
         )
-        width_candidates = workspace_width_candidates(
-            axes=materialized.requirements.axes,
-            fixed_widths=execution_widths.widths_for(regime_name=regime_name),
-            width_ceilings=execution_widths.axis_width_ceilings,
-            covered_axes=execution_widths.covered_axes,
-            budget_bytes=budget_bytes,
+        family = None if binding is None else (regime_name, period, binding.family)
+        width_candidates = (
+            None if family is None else family_width_candidates.get(family)
         )
+        if width_candidates is None:
+            width_candidates = workspace_width_candidates(
+                axes=materialized.requirements.axes,
+                fixed_widths=execution_widths.widths_for(regime_name=regime_name),
+                width_ceilings=execution_widths.axis_width_ceilings,
+                covered_axes=execution_widths.covered_axes,
+                budget_bytes=budget_bytes,
+            )
+            if family is not None:
+                family_width_candidates[family] = width_candidates
         state_order = tuple(
             name
             for name in state_action_space.states

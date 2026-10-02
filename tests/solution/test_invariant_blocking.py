@@ -7,16 +7,19 @@ schema equal the unblocked solve of the same model bit for bit, and an unsafe or
 unsupported request is refused before anything is dispatched.
 """
 
+import collections
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+from _lcm.engine import SolutionPhase
 from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.execution_plan import CorePlanRecord
 from _lcm.execution.scheduler import PeriodTransferCache
@@ -382,6 +385,138 @@ def test_blocked_solve_compiles_no_program_per_type(
     assert _count_compiles(
         monkeypatch=monkeypatch, model=blocked, params=params
     ) == _count_compiles(monkeypatch=monkeypatch, model=reference, params=params)
+
+
+class _CompileRequests(logging.Handler):
+    """Collect the name of every program JAX is asked to compile."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.names: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if message.startswith("Compiling "):
+            self.names.append(message.removeprefix("Compiling ").split(" with ")[0])
+
+
+def _cold_compile_requests(*, model: Model, params: dict) -> collections.Counter:
+    """Count every compile request of a solve that starts with empty JAX caches.
+
+    Clearing the caches first means a helper another test already compiled is
+    asked for again, so each solve's count is its own.
+    """
+    handler = _CompileRequests()
+    logger = logging.getLogger("jax._src.interpreters.pxla")
+    logger.addHandler(handler)
+    jax.clear_caches()
+    try:
+        with jax.log_compiles():
+            model.solve(params=params, log_level="off")
+    finally:
+        logger.removeHandler(handler)
+    return collections.Counter(handler.names)
+
+
+def _blocked_and_unblocked_compile_requests(
+    *, workload: str
+) -> tuple[collections.Counter, collections.Counter]:
+    if workload == "two_carriers":
+        params = _two_carrier_params()
+        models = tuple(
+            _two_carrier_model(execution_config=config)
+            for config in (_blocked(), ExecutionConfig())
+        )
+    else:
+        blocked, params = _workload(name=workload, execution_config=_blocked())
+        reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
+        models = (blocked, reference)
+    return (
+        _cold_compile_requests(model=models[0], params=params),
+        _cold_compile_requests(model=models[1], params=params),
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "View selection and the block write are standalone executables, one per "
+        "distinct shape; folding them into the bound core is a pending design "
+        "decision."
+    ),
+)
+@pytest.mark.parametrize("workload", [*_WORKLOADS, "two_carriers"])
+def test_a_blocked_cold_solve_compiles_exactly_the_unblocked_programs(
+    workload: str,
+) -> None:
+    """Blocking asks JAX for the same programs, by name and number, as no blocking."""
+    blocked, unblocked = _blocked_and_unblocked_compile_requests(workload=workload)
+
+    assert blocked == unblocked
+
+
+@pytest.mark.parametrize("workload", [*_WORKLOADS, "two_carriers"])
+def test_a_blocked_cold_solve_adds_only_view_selection_and_block_writes(
+    workload: str,
+) -> None:
+    """Binding a code, typing a start and allocating the full value compile nothing.
+
+    The only programs a blocked solve asks for beyond the unblocked ones are
+    the selection of a stored value's block and the write of a block into the
+    complete value.
+    """
+    blocked, unblocked = _blocked_and_unblocked_compile_requests(workload=workload)
+
+    assert unblocked - blocked == collections.Counter()
+    assert set(blocked - unblocked) <= {"jit(_select_view_blocks)", "jit(_write_block)"}
+
+
+def _planning_calls(
+    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: dict
+) -> tuple[int, int]:
+    """Count the state spaces built and the width frontiers ranked in one solve."""
+    spaces: list[object] = []
+    frontiers: list[object] = []
+    state_action_space = SolutionPhase.state_action_space
+    width_candidates = backward_induction.workspace_width_candidates
+
+    def counted_space(self: SolutionPhase, **kwargs: Any) -> Any:
+        spaces.append(self)
+        return state_action_space(self, **kwargs)
+
+    def counted_widths(**kwargs: Any) -> Any:
+        frontiers.append(kwargs["axes"])
+        return width_candidates(**kwargs)
+
+    monkeypatch.setattr(SolutionPhase, "state_action_space", counted_space)
+    monkeypatch.setattr(
+        backward_induction, "workspace_width_candidates", counted_widths
+    )
+    model.solve(params=params, log_level="off")
+    monkeypatch.undo()
+    return len(spaces), len(frontiers)
+
+
+@pytest.mark.parametrize("workload", [*_WORKLOADS, "two_carriers"])
+def test_a_blocked_solve_plans_each_family_once_per_regime_period(
+    *, monkeypatch: pytest.MonkeyPatch, workload: str
+) -> None:
+    """The codes of one family share their state space and width frontier.
+
+    A blocked solve builds as many state spaces and ranks as many width
+    frontiers as the unblocked solve, one per regime-period, not one per code.
+    """
+    if workload == "two_carriers":
+        params = _two_carrier_params()
+        blocked = _two_carrier_model(execution_config=_blocked())
+        reference = _two_carrier_model(execution_config=ExecutionConfig())
+    else:
+        blocked, params = _workload(name=workload, execution_config=_blocked())
+        reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
+
+    assert _planning_calls(
+        monkeypatch=monkeypatch, model=blocked, params=params
+    ) == _planning_calls(monkeypatch=monkeypatch, model=reference, params=params)
 
 
 class _PlanRecords(logging.Handler):

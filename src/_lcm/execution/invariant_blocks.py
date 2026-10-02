@@ -4,16 +4,16 @@ A regime carrying a state that `ExecutionConfig.invariant_block_widths` blocks
 declares one program per code, each bound by an `InvariantBinding`. These
 helpers give such a program what the engine hands it:
 
-- `block_state_action_space`: the state grid narrowed to the bound code, a
-  slice of the original array, so the code enters arithmetic with the grid's
-  own dtype and weak typing;
+- `block_state_action_space`: the state grid narrowed to the bound code,
+  built on the host in the grid's own dtype and placed where the grid lives;
 - `selected_block_view`: the view a read of a stored value carrying the state
   takes, which selects the bound code and removes that axis;
 - `block_value_template`: the shape and layout a block's output is born in;
 - `write_block`: the step that places a block's output into the regime's
   complete value.
 
-The code is data of the shared executable, never a compilation constant.
+The code is data of the shared executable, never a compilation constant. None
+of these steps asks JAX for a program of its own except the block write.
 """
 
 import dataclasses
@@ -21,7 +21,7 @@ import functools
 from types import MappingProxyType
 
 import jax
-import jax.numpy as jnp
+import numpy as np
 
 from _lcm.execution.core_program import InvariantBinding
 from _lcm.execution.value_transfer import (
@@ -38,18 +38,36 @@ from lcm.typing import FloatND
 def block_state_action_space[SpaceT](
     *, space: SpaceT, binding: InvariantBinding
 ) -> SpaceT:
-    """Return `space` with the bound state's grid narrowed to the bound code."""
+    """Return `space` with the bound state's grid narrowed to the bound code.
+
+    The one-element grid holds `binding.code`, the grid's element at
+    `binding.start`, in the grid's dtype. It is put on the device from the
+    host, so binding a code compiles no slicing program, and it is committed to
+    the grid's sharding exactly when the grid is, so it joins any mesh the grid
+    could join.
+
+    Raises:
+        TypeError: The grid is weakly typed, which a host-built array cannot
+            reproduce.
+
+    """
     states = space.states  # ty: ignore[unresolved-attribute]
+    grid = states[binding.state_name]
+    if getattr(grid, "weak_type", False):
+        msg = (
+            f"The grid of the invariant state {binding.state_name!r} is weakly "
+            "typed; a bound code would change its arithmetic promotion."
+        )
+        raise TypeError(msg)
     return dataclasses.replace(
         space,  # ty: ignore[invalid-argument-type]
         states=MappingProxyType(
             {
-                name: (
-                    jax.lax.slice_in_dim(value, binding.start, binding.start + 1)
-                    if name == binding.state_name
-                    else value
-                )
-                for name, value in states.items()
+                **states,
+                binding.state_name: jax.device_put(
+                    np.asarray([binding.code], dtype=grid.dtype),
+                    grid.sharding if grid.committed else None,
+                ),
             }
         ),
     )
@@ -130,34 +148,26 @@ def write_block(
     block: FloatND,
     binding: InvariantBinding,
     axis: int,
-    n_codes: int,
-    sharding: jax.sharding.Sharding,
+    template: FloatND,
 ) -> FloatND:
     """Place one block's output into the regime's complete value.
 
-    The first block written allocates the complete value on `sharding`, the
-    layout of the regime's value template; every later block overwrites its
-    own position in that buffer, which is donated, so the complete value is
-    never held twice.
+    The first block written goes into a device copy of `template`, the regime's
+    value template, which `device_put` makes without compiling a program; every
+    later block overwrites its own position in that buffer, which is donated, so
+    the complete value is never held twice. Every position is written, so
+    nothing of the template survives.
     """
-    if value is None:
-        return _tile_block(block=block, n_codes=n_codes, axis=axis, sharding=sharding)
     return _write_block(
-        value=value,
+        value=(
+            jax.device_put(template, template.sharding, may_alias=False)
+            if value is None
+            else value
+        ),
         block=block,
-        start=jnp.int32(binding.start),
+        start=np.int32(binding.start),
         axis=axis,
-        sharding=sharding,
-    )
-
-
-@functools.partial(jax.jit, static_argnames=("n_codes", "axis", "sharding"))
-def _tile_block(
-    *, block: FloatND, n_codes: int, axis: int, sharding: jax.sharding.Sharding
-) -> FloatND:
-    """Allocate the complete value by repeating one block along its axis."""
-    return jax.lax.with_sharding_constraint(
-        jnp.repeat(block, n_codes, axis=axis), sharding
+        sharding=template.sharding,
     )
 
 
@@ -168,7 +178,7 @@ def _write_block(
     *,
     value: FloatND,
     block: FloatND,
-    start: jax.Array,
+    start: jax.Array | np.integer,
     axis: int,
     sharding: jax.sharding.Sharding,
 ) -> FloatND:

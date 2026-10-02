@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -334,7 +335,7 @@ def transfer_result_key(
 def _select_view_blocks(
     *,
     value: jax.Array,
-    starts: jax.Array,
+    starts: jax.Array | np.ndarray,
     axes: tuple[int, ...],
     widths: tuple[int, ...],
     kept: tuple[bool, ...],
@@ -368,8 +369,8 @@ def _selection_operands(*, transfer: ResolvedValueTransfer) -> dict[str, object]
         msg = "Only a selected value view has a selection stage."
         raise ValueError(msg)
     return {
-        "starts": jnp.asarray(
-            tuple(item.start for item in view.selections), dtype=jnp.int32
+        "starts": np.asarray(
+            tuple(item.start for item in view.selections), dtype=np.int32
         ),
         "axes": view.selected_axes,
         "widths": tuple(item.width for item in view.selections),
