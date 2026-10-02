@@ -33,7 +33,10 @@ from _lcm.regime_building.age_normalization import (
     normalize_age_specialization,
 )
 from _lcm.regime_building.age_specialization import resolve_node
-from _lcm.regime_building.broadcast import root_functions
+from _lcm.regime_building.broadcast import (
+    root_functions,
+    states_read_through_their_draw,
+)
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import (
@@ -403,7 +406,9 @@ def _validate_all_variables_used(
     - the gate, gate references or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;
-    - a law of motion, unless it hands the state to itself.
+    - a law of motion, unless it hands the state to itself;
+    - for a process state, any of the above reading its next-period draw
+      `next_<state>`, which is taken from the state.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
@@ -516,6 +521,12 @@ def _validate_all_variables_used(
         # own `on` state — so a conditioner is credited to every regime that carries it,
         # not only the process's own regime.
         reachable = set(reachable) | (conditioning_names & variable_names)
+        # A process state has no `next_<state>` function node, so a computation
+        # that reads its next-period draw ends the walk at a leaf. The draw is
+        # taken from the state, so reading it is a use of the state.
+        reachable |= states_read_through_their_draw(
+            regime=user_regime, reads=reachable
+        )
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
