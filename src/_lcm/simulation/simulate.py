@@ -289,7 +289,10 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             its subjects are simulated from its values alone, and it is
             released before the next code is acquired. A code no subject holds
             is acquired and released too. The result then holds the source's
-            complete value store.
+            complete value store. A source whose `subject_codes` selects codes
+            simulates those codes' subjects alone, on the chunks the whole
+            population's plan cuts for them: the result holds their rows in
+            original order, names them in `_subject_rows`, and holds no values.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -346,6 +349,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         )
 
         grouping = next(iter(regimes.values())).simulation.programs.grouping
+        subject_codes = (
+            None if component_values is None else component_values.subject_codes
+        )
         group_plan = (
             None
             if grouping is None
@@ -360,6 +366,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                     n_subjects if original_n_subjects is None else original_n_subjects
                 ),
                 width=batch_size,
+                selected=subject_codes,
             )
         )
 
@@ -625,8 +632,13 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             component_values.release(code=cast("int", group_code))
 
     with solve_phase(name="simulation_completion", logger=logger, call_id=call_id):
-        simulation_results = _concatenate_chunk_results(
-            chunk_results=chunk_results, regimes=regimes, memory=memory
+        # Only a selection of codes no subject holds runs no chunk at all.
+        simulation_results = (
+            _concatenate_chunk_results(
+                chunk_results=chunk_results, regimes=regimes, memory=memory
+            )
+            if chunk_results
+            else {}
         )
         if group_plan is not None:
             simulation_results = _restore_subject_order(
@@ -681,6 +693,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             period_to_regime_to_V_arr=(
                 period_to_regime_to_V_arr
                 if component_values is None
+                else MappingProxyType({})
+                if subject_codes is not None
                 else component_values.values()
             ),
             ages=ages,
@@ -692,6 +706,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         # `_solution`: never part of the constructor's persisted fields, so it is
         # not written by `SimulationResult.save` and is `None` after `load`.
         result._plan_summary = plan_summary  # noqa: SLF001
+        if subject_codes is not None and group_plan is not None:
+            result._subject_rows = group_plan.rows  # noqa: SLF001
     return result
 
 

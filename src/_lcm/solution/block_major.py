@@ -23,12 +23,19 @@ every period of the component is solved before the next code starts:
 Forward simulation reads a component's values through a `ComponentValueSource`:
 `SolvingComponentValues` solves each component as its subjects are simulated,
 and `UploadedComponentValues` places a retained component back on the device.
+
+A component job solves a selection of the codes: `selected_components` scopes
+the schedules a solve or a simulation starts to those codes. A selected
+schedule retains its codes on the host and never publishes a result; its
+simulation holds the rows of its codes' subjects alone.
 """
 
 import dataclasses
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeAlias
@@ -377,6 +384,55 @@ class RetainedComponentValues:
         }
         coverage = self._coverage.with_code(code=code, entries=frozenset(flat))
         host = jax.device_get(flat)
+        self._keep(code=code, coverage=coverage, host=host)
+        self._device_to_host_bytes += sum(array.nbytes for array in host.values())
+        if not self._coordinates:
+            self._coordinates = tuple(flat)
+        delete_blocks(blocks=blocks)
+
+    def retain_host(
+        self, *, code: int, blocks: Mapping[_Coordinate, np.ndarray]
+    ) -> None:
+        """Retain one component's host blocks, listed in the solve's publication order.
+
+        The blocks come from where a component job wrote them; they are held as
+        given, never placed on a device.
+
+        Raises:
+            ExecutionPlanningError: The code is not one of the state's or is
+                already covered, the blocks cover other coordinates than the
+                solved domain or list them in another order than the codes
+                retained before, or a block does not have the component shape.
+
+        """
+        coverage = self._coverage.with_code(code=code, entries=frozenset(blocks))
+        coordinates = tuple(blocks)
+        if self._coordinates and coordinates != self._coordinates:
+            msg = (
+                f"Component {code} lists its values in the order "
+                f"{coordinates!r}, not the order {self._coordinates!r} of the "
+                "codes retained before it."
+            )
+            raise ExecutionPlanningError(msg)
+        self._keep(code=code, coverage=coverage, host=blocks)
+        if not self._coordinates:
+            self._coordinates = coordinates
+
+    def host_blocks(self, *, code: int) -> MappingProxyType[_Coordinate, np.ndarray]:
+        """Return one retained component's host blocks in publication order."""
+        blocks = self._blocks[code]
+        return MappingProxyType(
+            {coordinate: blocks[coordinate] for coordinate in self._coordinates}
+        )
+
+    def _keep(
+        self,
+        *,
+        code: int,
+        coverage: ComponentCoverage,
+        host: Mapping[_Coordinate, np.ndarray],
+    ) -> None:
+        """Hold one component's host blocks once each has the component shape."""
         for coordinate, array in host.items():
             layout = self._layouts[coordinate]
             expected = (
@@ -393,11 +449,7 @@ class RetainedComponentValues:
         self._blocks[code] = MappingProxyType(
             {coordinate: np.asarray(array) for coordinate, array in host.items()}
         )
-        self._device_to_host_bytes += sum(array.nbytes for array in host.values())
         self._coverage = coverage
-        if not self._coordinates:
-            self._coordinates = tuple(flat)
-        delete_blocks(blocks=blocks)
 
     def assemble_host_value(self, *, period: int, regime: RegimeName) -> np.ndarray:
         """Return one complete value on the host, codes in grid order."""
@@ -595,6 +647,7 @@ class ComponentSchedule:
         budget_bytes: int | None,
         solve: Callable[..., BackwardInductionResult],
         logger: logging.Logger,
+        codes: tuple[int, ...] | None = None,
     ) -> None:
         """Prepare the schedule; no component is solved yet.
 
@@ -608,16 +661,43 @@ class ComponentSchedule:
             solve: `backward_induction.solve` bound to every argument but the
                 regimes and the executable cache.
             logger: Logger receiving the retention record at debug level.
+            codes: The codes to solve, or `None` for every code. A selection
+                solves its codes in grid order; its retention holds those codes
+                alone and so never publishes a result.
+
+        Raises:
+            ExecutionPlanningError: A selected code is not a code of the state.
 
         """
         self._regimes = regimes
-        self._components = invariant_components(regimes=regimes, state_name=state_name)
+        every_component = invariant_components(regimes=regimes, state_name=state_name)
+        unknown = (
+            ()
+            if codes is None
+            else tuple(
+                code
+                for code in codes
+                if code not in {component.code for component in every_component}
+            )
+        )
+        if unknown:
+            msg = (
+                f"Codes {unknown!r} are not codes of {state_name!r}, whose codes "
+                f"are {tuple(component.code for component in every_component)!r}."
+            )
+            raise ExecutionPlanningError(msg)
+        self._subject_codes = codes
+        self._components = tuple(
+            component
+            for component in every_component
+            if codes is None or component.code in codes
+        )
         self._solve = solve
         self._cache = ExecutableCache()
         self._logger = logger
         self._retained = RetainedComponentValues(
             state_name=state_name,
-            codes=tuple(component.code for component in self._components),
+            codes=tuple(component.code for component in every_component),
             layouts=value_layouts(
                 regimes=regimes,
                 state_name=state_name,
@@ -635,6 +715,11 @@ class ComponentSchedule:
     def components(self) -> tuple[InvariantComponent, ...]:
         """Return the components in the order they are solved."""
         return self._components
+
+    @property
+    def subject_codes(self) -> tuple[int, ...] | None:
+        """Return the selected codes, or `None` when every code is solved."""
+        return self._subject_codes
 
     @property
     def retained(self) -> RetainedComponentValues:
@@ -748,6 +833,11 @@ class SolvingComponentValues:
         """Return the host retention the solved components are copied into."""
         return self._schedule.retained
 
+    @property
+    def subject_codes(self) -> tuple[int, ...] | None:
+        """Return the selected codes, or `None` when every code is solved."""
+        return self._schedule.subject_codes
+
     def acquire(
         self, *, code: int
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
@@ -790,6 +880,11 @@ class UploadedComponentValues:
         """Return the codes in grid order."""
         return self._retained.coverage.codes
 
+    @property
+    def subject_codes(self) -> None:
+        """Every code's subjects are simulated from a complete retention."""
+        return
+
     def acquire(
         self, *, code: int
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, jax.Array]]:
@@ -811,6 +906,71 @@ class UploadedComponentValues:
     def values(self) -> _ValueStoreBoundary:
         """Return the value store of the result being simulated."""
         return self._store
+
+
+class ComponentSelection:
+    """The codes that the block-major schedules started in one scope solve.
+
+    Each schedule started in the scope records its retention here, so the
+    caller that opened the scope reads the selected codes' host blocks after a
+    solve or a simulation that does not publish them.
+    """
+
+    def __init__(self, *, codes: tuple[int, ...]) -> None:
+        """Select `codes`; no schedule has started yet."""
+        self._codes = codes
+        self._retained: list[RetainedComponentValues] = []
+
+    @property
+    def codes(self) -> tuple[int, ...]:
+        """Return the selected codes."""
+        return self._codes
+
+    def record(self, *, retained: RetainedComponentValues) -> None:
+        """Record the retention of a schedule started in the scope."""
+        self._retained.append(retained)
+
+    @property
+    def retained(self) -> RetainedComponentValues:
+        """Return the retention of the one schedule the scope started.
+
+        Raises:
+            ExecutionPlanningError: The scope started no schedule, or several.
+
+        """
+        if len(self._retained) != 1:
+            msg = (
+                f"A component selection expects one block-major schedule, but "
+                f"{len(self._retained)} were started in its scope."
+            )
+            raise ExecutionPlanningError(msg)
+        return self._retained[0]
+
+
+_SELECTION: ContextVar[ComponentSelection | None] = ContextVar(
+    "component_selection", default=None
+)
+
+
+@contextmanager
+def selected_components(*, codes: tuple[int, ...]) -> Iterator[ComponentSelection]:
+    """Scope the block-major schedules started inside to `codes`.
+
+    A selected solve retains its codes and publishes no result; a selected
+    simulation simulates the subjects of its codes alone. The scope ends with
+    the block, so nothing outlives it.
+    """
+    selection = ComponentSelection(codes=codes)
+    token = _SELECTION.set(selection)
+    try:
+        yield selection
+    finally:
+        _SELECTION.reset(token)
+
+
+def active_component_selection() -> ComponentSelection | None:
+    """Return the selection of the enclosing `selected_components` scope, if any."""
+    return _SELECTION.get()
 
 
 def value_layouts(

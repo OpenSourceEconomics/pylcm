@@ -138,6 +138,7 @@ from _lcm.solution.block_major import (
     RetainedComponentValues,
     SolvingComponentValues,
     UploadedComponentValues,
+    active_component_selection,
 )
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.fingerprint import (
@@ -1378,7 +1379,9 @@ class Model:
         Each component runs the solve engine with the arguments the
         period-major solve passes, on the component view of the regimes. No
         caller inputs are retained beside it: those belong to a budgeted
-        simulation, which the block-major schedule refuses.
+        simulation, which the block-major schedule refuses. Inside a
+        `selected_components` scope the schedule solves the selected codes
+        alone, and the scope records its retention.
         """
         with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
             check_solver_params(regimes=self._regimes, flat_params=flat_params)
@@ -1389,7 +1392,8 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
             )
         (state_name,) = self._execution.invariant_block_widths
-        return ComponentSchedule(
+        selection = active_component_selection()
+        schedule = ComponentSchedule(
             regimes=self._regimes,
             state_name=state_name,
             flat_params=flat_params,
@@ -1416,7 +1420,11 @@ class Model:
                 gather_checks=self._gather_checks,
             ),
             logger=log,
+            codes=None if selection is None else selection.codes,
         )
+        if selection is not None:
+            selection.record(retained=schedule.retained)
+        return schedule
 
     def _solve_compiled(
         self,
@@ -3134,7 +3142,10 @@ class Model:
                 call_id=call_id,
                 component_values=component_values,
             )
-            if isinstance(component_values, SolvingComponentValues):
+            if (
+                isinstance(component_values, SolvingComponentValues)
+                and component_values.subject_codes is None
+            ):
                 solution = self._finish_solution(
                     preparation=cast("_SolutionPreparation", preparation),
                     internal_result=_VALUES_RETAINED_ON_THE_HOST,

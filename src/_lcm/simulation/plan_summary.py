@@ -163,7 +163,10 @@ def build_simulation_plan_summary(
         chunk_width = n_subjects if batch_size == 0 else min(batch_size, n_subjects)
         outer_chunk_count = math.ceil(n_subjects / chunk_width) if chunk_width else 1
     if group_plan is not None:
-        chunk_width = len(group_plan.chunks[0].rows)
+        # A plan of selected codes no subject holds dispatches no chunk.
+        chunk_width = (
+            len(group_plan.chunks[0].rows) if group_plan.chunks else chunk_width
+        )
         outer_chunk_count = len(group_plan.chunks)
     grouping = next(iter(regimes.values())).simulation.programs.grouping
     return SimulationPlanSummary(
