@@ -400,6 +400,10 @@ class GridSearch(Solver):
                     edge_target_regimes=context.edge_target_regimes,
                 ),
             )
+            # A bound continuation needs its selected-view transfer even when
+            # all local state and action products have extent one. "Dense"
+            # arithmetic must not bypass the engine's value-read planning.
+            requires_plan = bool(requirements.axes) or bool(context.invariant_bindings)
             program = CoreProgram(
                 name="main",
                 function=program_functions[q_id],
@@ -412,12 +416,10 @@ class GridSearch(Solver):
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
-                    if requirements.axes
+                    if requires_plan
                     else CoreExecutionDisposition.DENSE
                 ),
-                disposition_reason=(
-                    None if requirements.axes else action_streaming.value
-                ),
+                disposition_reason=(None if requires_plan else action_streaming.value),
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(

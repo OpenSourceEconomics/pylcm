@@ -399,7 +399,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
     PROCESSING_SOURCE: "f3d012502f5ac723d67b619d51cd5edf43cb8aeea8416367676664686c542a9e",
-    GRID_SEARCH_SOURCE: "c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053",
+    GRID_SEARCH_SOURCE: "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
@@ -421,7 +421,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "5d2b3806ab0cb8a3b395e9474a5711fcad292c44fff6b888802b11ac690922cf",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "05a53fc4bb7f1660d33f71b5459674dd50f7702ac089cbab956b3bcd3d912ee6",
+    BACKWARD_INDUCTION_SOURCE: "93709e36e1156ef53bf905f4a4c63cbc5e0de43f665a6a11c73c49f30aed12d7",
     PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
     INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
     RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
@@ -2515,7 +2515,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "6f5bb1ab5426382567e52565dc5c417c62ca6a930e8ac22da8aa4eb8c79026bf",
+                "GridSearch.build_period_kernels": "0c4a2f448364a67ec9d06e86c9deaf9b388b19c0e8d0b5165c1cc5e328e6a828",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -4018,7 +4018,7 @@ _EAGER_INPUT_CONTRACTS = {
     "src/_lcm/solution/backward_induction.py": (
         "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "d535008d25c09219da0f654fb5e37044f71a73f32eedd4ea962c8cb11d961c41",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_compile_all_functions": "0474e5f7226922772c630b02844fb057e2322a652ae82d612beea0dd09706df8",
         },
@@ -4102,7 +4102,7 @@ _SOLVE_READINESS_CONTRACTS = {
     "src/_lcm/solution/backward_induction.py": (
         "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "d535008d25c09219da0f654fb5e37044f71a73f32eedd4ea962c8cb11d961c41",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "f7a7e2a5de50aaeb85676cb9666e0b3571d9edc9aea8c7c1173e61d49186fc75",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
@@ -4374,7 +4374,7 @@ _COMBINED_INPUT_CONTRACTS = {
     "src/_lcm/solution/backward_induction.py": (
         "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "d535008d25c09219da0f654fb5e37044f71a73f32eedd4ea962c8cb11d961c41",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_prepare_abstract_program": "6a4dfcaa4277f0a5e58965b73c5390129848bd243d1dbfc91c32806ee982867e",
         },
@@ -4569,7 +4569,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_period_transfer_scratch_reservations": "d535008d25c09219da0f654fb5e37044f71a73f32eedd4ea962c8cb11d961c41",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
             "_lower_and_compile_wave": "7068bda7502d1136c7412667a0921c9c86178800ecc57253f0f84fc98fdf8295",
@@ -4603,7 +4603,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_publish_kernel_value": "f7685f97babcf0a002b49b1bb5708c2f723a6d64c5f28d75892650a8d6c3a43e",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
             "_resident_inventory_by_triple": "62b94dba3601033214595d6964060fbe5c0562de7029e60b500664afa73333c0",
-            "_candidate_resident_bytes": "e0eb11b724e409879088a56cebd19c7954e26588d9c826ba51c765b178f41496",
+            "_candidate_resident_bytes": "3e03eee2d0d510a5fb5012f6646e6121d645acbde1adaa6cf5c8c6bb976dc86c",
             "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
             "_period_copy_reservations": "75082956fda5cd0e642e988ffbef655df444a391b815c5e50cdd6e7d8ec3e265",
             "_internal_reservations_by_cell": "f124d4d1a32d92a70f139138f66108ee97ca4ffc13e7f3260ea2469a9890abcb",
@@ -6477,7 +6477,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/solution/backward_induction.py": (
         "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "d535008d25c09219da0f654fb5e37044f71a73f32eedd4ea962c8cb11d961c41",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "f7a7e2a5de50aaeb85676cb9666e0b3571d9edc9aea8c7c1173e61d49186fc75",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
@@ -8002,21 +8002,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=grid_source,
             old=(
                 "                    CoreExecutionDisposition.PLANNED\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             new=(
                 "                    CoreExecutionDisposition.DENSE\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             label="native graph disposition authority",
         ),
         "native_graph:dense_reason_erased": replace_once(
             source=grid_source,
             old=(
-                "                disposition_reason=(\n"
-                "                    None if requirements.axes else "
-                "action_streaming.value\n"
-                "                ),"
+                "                disposition_reason=(None if requires_plan else "
+                "action_streaming.value),"
             ),
             new="                disposition_reason=None,",
             label="native graph disposition-reason authority",
