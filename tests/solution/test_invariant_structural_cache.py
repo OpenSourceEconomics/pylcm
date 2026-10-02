@@ -1,0 +1,341 @@
+"""Warm GridSearch solves reuse an immutable structural blueprint.
+
+A model keeps, for each validated abstract schema of a solve's inputs, the
+blueprint its programs were resolved into: abstract argument trees, value-read
+plans, output layouts and ranked width frontiers. A warm solve with the same
+schema binds that blueprint to the current parameters instead of materializing,
+preparing and resolving every program again. The liveness ledger, the donation
+decisions, the lowering keys, the candidate frontier and admission are built
+afresh on every call, so a changed budget changes the admitted widths and every
+result equals the one a fresh model returns.
+"""
+
+import copy
+import dataclasses
+import gc
+import math
+import pickle
+import weakref
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from types import MappingProxyType
+from typing import Any
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from _lcm.execution.workspace_planning import CompilerMemoryReservation
+from _lcm.solution import backward_induction as bi
+from lcm import ExecutionConfig, Model
+from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution.test_invariant_blocking import _workload
+
+_WORKLOADS = ("independent_types", "sector_typed_terminal", "sector_type_free_terminal")
+_EXPENSIVE_BUILDERS = (
+    "materialize_core_program",
+    "_prepare_abstract_program",
+    "resolve_core_program_candidates",
+)
+
+
+def _config(*, blocked: bool, budget: int | None = 2**30) -> ExecutionConfig:
+    return ExecutionConfig(
+        devices=(0,),
+        device_memory_bytes=budget,
+        invariant_block_widths={"pref_type": 1} if blocked else {},
+    )
+
+
+def _solve(*, model: Model, params: dict) -> Any:
+    result = model.solve(params=params, log_level="off")
+    for values in result.values.values():
+        jax.block_until_ready(tuple(values.values()))
+    return result
+
+
+@contextmanager
+def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int]]:
+    """Count calls of the builders a blueprint hit skips."""
+    calls = dict.fromkeys(_EXPENSIVE_BUILDERS, 0)
+    with monkeypatch.context() as patch:
+        for name in _EXPENSIVE_BUILDERS:
+            original = getattr(bi, name)
+
+            def observe(*args: Any, _name: str = name, _original: Any = original,
+                        **kwargs: Any) -> Any:
+                calls[_name] += 1
+                return _original(*args, **kwargs)
+
+            patch.setattr(bi, name, observe)
+        yield calls
+
+
+@contextmanager
+def _captured_plans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[list[Any]]:
+    """Capture the compiled-program plan of every solve inside the block."""
+    plans: list[Any] = []
+    original = bi._compile_all_functions
+    with monkeypatch.context() as patch:
+
+        def capture(**kwargs: Any) -> Any:
+            compiled = original(**kwargs)
+            plans.append(compiled)
+            return compiled
+
+        patch.setattr(bi, "_compile_all_functions", capture)
+        yield plans
+
+
+def _plan_summary(compiled: Any) -> dict:
+    """Describe every selected core by what its executable was planned with."""
+    return {
+        (regime, period, name): (
+            dict(core.tile_widths),
+            core.input_transfer_plan,
+            core.donated_arguments,
+            core.layout,
+            dict(core.internal_input_templates),
+        )
+        for (regime, period), cores in compiled.executables.items()
+        for name, core in cores.items()
+    }
+
+
+def _admitted_widths(compiled: Any) -> dict:
+    return {
+        (regime, period, name): dict(core.tile_widths)
+        for (regime, period), cores in compiled.executables.items()
+        for name, core in cores.items()
+    }
+
+
+def _assert_values_identical(*, first: Any, second: Any) -> None:
+    assert set(first.values) == set(second.values)
+    for period, by_regime in first.values.items():
+        assert set(by_regime) == set(second.values[period])
+        for regime, value in by_regime.items():
+            left = np.asarray(value)
+            right = np.asarray(second.values[period][regime])
+            assert (left.shape, left.dtype) == (right.shape, right.dtype)
+            assert left.tobytes() == right.tobytes()
+
+
+def _warm(*, model: Model, params: dict, n: int = 2) -> None:
+    for _ in range(n):
+        warmed = _solve(model=model, params=params)
+        del warmed
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.parametrize("workload", _WORKLOADS)
+def test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(
+    *, blocked: bool, workload: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-schema warm calls skip the builders and still equal a fresh model."""
+    config = _config(blocked=blocked)
+    model, params = _workload(name=workload, execution_config=config)
+    _warm(model=model, params=params, n=3)
+    changed = copy.deepcopy(params)
+    changed["working"]["utility"]["weight"] = (
+        changed["working"]["utility"]["weight"] * 1.125
+    )
+    with _counted_builders(monkeypatch) as calls:
+        same = _solve(model=model, params=params)
+        different = _solve(model=model, params=changed)
+    assert calls == dict.fromkeys(calls, 0), calls
+    fresh_same, _ = _workload(name=workload, execution_config=config)
+    fresh_changed, _ = _workload(name=workload, execution_config=config)
+    _assert_values_identical(
+        first=same, second=_solve(model=fresh_same, params=params)
+    )
+    _assert_values_identical(
+        first=different, second=_solve(model=fresh_changed, params=changed)
+    )
+    assert any(
+        np.asarray(value).tobytes() != np.asarray(different.values[t][r]).tobytes()
+        for t, row in same.values.items()
+        for r, value in row.items()
+    ), "The changed-parameter control must actually change at least one value."
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+@pytest.mark.parametrize("workload", _WORKLOADS)
+def test_a_blueprint_hit_plans_every_core_as_a_fresh_model_does(
+    *, blocked: bool, workload: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Widths, read plans, codes, donations and layouts equal a fresh model's."""
+    config = _config(blocked=blocked)
+    model, params = _workload(name=workload, execution_config=config)
+    _warm(model=model, params=params)
+    fresh, _ = _workload(name=workload, execution_config=config)
+    with _captured_plans(monkeypatch) as plans:
+        _solve(model=model, params=params)
+        _solve(model=fresh, params=params)
+    hit, cold = (_plan_summary(compiled) for compiled in plans)
+    assert hit == cold
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_a_weak_typing_change_rebuilds_the_structure(
+    *, blocked: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A strongly typed scalar where a weak one was cached is a miss."""
+    config = _config(blocked=blocked)
+    model, params = _workload(name="independent_types", execution_config=config)
+    _warm(model=model, params=params)
+    strong = copy.deepcopy(params)
+    strong["discount_factor"] = jnp.asarray(
+        params["discount_factor"], dtype=jnp.asarray(1.0).dtype
+    )
+    assert jax.typeof(strong["discount_factor"]).weak_type is False
+    with _counted_builders(monkeypatch) as calls:
+        got = _solve(model=model, params=strong)
+    assert calls["materialize_core_program"] > 0, calls
+    fresh, _ = _workload(name="independent_types", execution_config=config)
+    _assert_values_identical(first=got, second=_solve(model=fresh, params=strong))
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_a_layout_change_rebuilds_the_structure(
+    *, blocked: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parameter committed to a device where an uncommitted one was is a miss."""
+    config = _config(blocked=blocked)
+    model, params = _workload(name="independent_types", execution_config=config)
+    _warm(model=model, params=params)
+    committed = copy.deepcopy(params)
+    committed["working"]["utility"]["weight"] = jax.device_put(
+        params["working"]["utility"]["weight"], jax.devices()[0]
+    )
+    with _counted_builders(monkeypatch) as calls:
+        got = _solve(model=model, params=committed)
+    assert calls["materialize_core_program"] > 0, calls
+    fresh, _ = _workload(name="independent_types", execution_config=config)
+    _assert_values_identical(first=got, second=_solve(model=fresh, params=committed))
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_a_budget_change_rebinds_and_readmits_without_rebuilding(
+    *, blocked: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A narrower budget between warm calls changes the admitted widths."""
+    monkeypatch.setattr(bi, "compiler_memory_reservation", _width_proportional_peak)
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=blocked)
+    )
+    _warm(model=model, params=params)
+    narrow = 25_000
+    with _captured_plans(monkeypatch) as plans, _counted_builders(monkeypatch) as calls:
+        wide = _solve(model=model, params=params)
+        model._execution = dataclasses.replace(
+            model._execution, device_memory_bytes=narrow
+        )
+        narrowed = _solve(model=model, params=params)
+    assert calls["materialize_core_program"] == 0, calls
+    assert calls["_prepare_abstract_program"] == 0, calls
+    wide_widths, narrow_widths = (_admitted_widths(compiled) for compiled in plans)
+    assert wide_widths != narrow_widths
+    fresh, _ = _workload(
+        name="independent_types",
+        execution_config=_config(blocked=blocked, budget=narrow),
+    )
+    with _captured_plans(monkeypatch) as fresh_plans:
+        fresh_narrowed = _solve(model=fresh, params=params)
+    assert narrow_widths == _admitted_widths(fresh_plans[0])
+    _assert_values_identical(first=narrowed, second=fresh_narrowed)
+    _assert_values_identical(first=narrowed, second=wide)
+
+
+def _width_proportional_peak(
+    *, compiled: object, widths: Mapping[str, int]
+) -> CompilerMemoryReservation:
+    """Report a compiler peak of one kilobyte per streamed width-product point."""
+    del compiled
+    return synthetic_memory(1_000 * math.prod(widths.values()))
+
+
+def test_removing_the_budget_rebuilds_the_structure(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unbudgeted solve ranks one width per core, so it is a different recipe."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    _warm(model=model, params=params)
+    model._execution = dataclasses.replace(model._execution, device_memory_bytes=None)
+    with _counted_builders(monkeypatch) as calls:
+        _solve(model=model, params=params)
+    assert calls["materialize_core_program"] > 0, calls
+
+
+def test_the_cache_is_bounded_and_released_with_its_model() -> None:
+    """Distinct schemas never grow the cache past its bound or past the model."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    cache = model._structural_blueprints
+    weight = params["working"]["utility"]["weight"]
+    for dtype in (None, jnp.float32, jnp.float16, jnp.bfloat16):
+        for committed in (False, True):
+            variant = copy.deepcopy(params)
+            if dtype is not None:
+                variant["discount_factor"] = jnp.asarray(0.9, dtype=dtype)
+            if committed:
+                variant["working"]["utility"]["weight"] = jax.device_put(
+                    weight, jax.devices()[0]
+                )
+            result = _solve(model=model, params=variant)
+            del result
+    assert 0 < len(cache) <= cache.max_entries
+    reference = weakref.ref(cache)
+    del cache, model
+    gc.collect()
+    assert reference() is None
+
+
+def test_cached_blueprints_retain_no_concrete_array() -> None:
+    """A blueprint holds abstract trees only, never a caller's or a solve's array."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    _warm(model=model, params=params)
+    entries = list(model._structural_blueprints.values())
+    assert entries
+    concrete = [leaf for leaf in _walk(entries) if isinstance(leaf, jax.Array)]
+    assert concrete == []
+
+
+def _walk(value: object, seen: set[int] | None = None) -> Iterator[object]:
+    """Yield every object reachable through containers and dataclass fields."""
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return
+    seen.add(id(value))
+    yield value
+    if isinstance(value, Mapping | MappingProxyType):
+        for key, child in value.items():
+            yield from _walk(key, seen)
+            yield from _walk(child, seen)
+    elif isinstance(value, tuple | list | set | frozenset):
+        for child in value:
+            yield from _walk(child, seen)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in dataclasses.fields(value):
+            yield from _walk(getattr(value, field.name), seen)
+
+
+def test_pickling_a_model_drops_its_blueprints() -> None:
+    """The cache is runtime state: a copy starts empty and still solves."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=False)
+    )
+    first = _solve(model=model, params=params)
+    assert len(model._structural_blueprints) > 0
+    assert "_structural_blueprints" not in model.__getstate__()
+    restored = pickle.loads(pickle.dumps(model))
+    assert len(restored._structural_blueprints) == 0
+    _assert_values_identical(first=first, second=_solve(model=restored, params=params))
