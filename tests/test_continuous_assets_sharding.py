@@ -12,7 +12,7 @@ import logging
 from fractions import Fraction
 from functools import cache
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -132,7 +132,7 @@ def _model(
     devices: tuple[int, ...],
     widths: tuple[int, int] = (1, 1),
     sharded: bool = True,
-    budget: int = 2**30,
+    budget: int | Literal["device"] = 2**30,
     identity: bool = False,
     grid: Any = None,
     extra_shard: bool = False,
@@ -1126,3 +1126,69 @@ def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> 
     assert {record.transfer_workspace_bytes for record in blocks} == {
         block_bytes + block_bytes // 8
     }
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+@pytest.mark.parametrize("budget", [2**30, "device"])
+def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
+    *, devices: tuple[int, ...], budget: int | Literal["device"]
+) -> None:
+    """Blocked solve plus grouped simulation over sharded assets is bitwise unchanged.
+
+    The groups are unbalanced, one is empty in period 1, and the subject axis
+    divides no group evenly by the device count.
+    """
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    grouped = _model(
+        devices=devices,
+        fixed_type=True,
+        budget=budget,
+        invariant_block_widths={"pref_type": 1},
+    )
+    reference = _model(devices=devices, fixed_type=True, budget=budget)
+    got_solution = grouped.solve(params=params, log_level="off")
+    want_solution = reference.solve(params=params, log_level="off")
+    rng = np.random.default_rng(5)
+    n = 37
+    initial = {
+        "pref_type": np.where(np.arange(n) % 5 == 0, 2, 0).astype(np.int32),
+        "spousal_income": rng.integers(0, 3, n).astype(np.int32),
+        "assets": rng.integers(-4, 20, n).astype(float),
+        "regime_id": rng.integers(0, 2, n).astype(np.int32),
+        "age": np.zeros(n, dtype=float),
+    }
+    got = grouped.simulate(
+        params=params,
+        solution=got_solution,
+        initial_conditions=initial,
+        seed=11,
+        log_level="off",
+    )
+    want = reference.simulate(
+        params=params,
+        solution=want_solution,
+        initial_conditions=initial,
+        seed=11,
+        log_level="off",
+    )
+
+    assert got.plan_summary is not None
+    assert want.plan_summary is not None
+    assert got.plan_summary.subject_grouping == "pref_type"
+    assert want.plan_summary.subject_grouping is None
+    got_frame, want_frame = got.to_dataframe(), want.to_dataframe()
+    assert got_frame.equals(want_frame)
+    for column in want_frame.select_dtypes("float").columns:
+        assert got_frame[column].to_numpy().tobytes() == (
+            want_frame[column].to_numpy().tobytes()
+        ), column
+    assert jax.tree.structure(got.raw_results) == jax.tree.structure(want.raw_results)
+    for got_leaf, want_leaf in zip(
+        jax.tree.leaves(got.raw_results),
+        jax.tree.leaves(want.raw_results),
+        strict=True,
+    ):
+        got_array, want_array = np.asarray(got_leaf), np.asarray(want_leaf)
+        assert got_array.dtype == want_array.dtype
+        assert got_array.tobytes() == want_array.tobytes()

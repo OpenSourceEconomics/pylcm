@@ -1168,6 +1168,7 @@ class _CanonicalRegimeBuilder:
                 pareto_weights=pareto_weights,
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
+                invariant_bindings=invariant_bindings,
             )
 
             stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -4254,6 +4255,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
+    invariant_bindings: tuple[StateName, ...] = (),
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -4328,6 +4330,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
             regime declaring no `gated_edges`.
+        invariant_bindings: Blocked states the regime carries. When non-empty,
+            the regime also declares a type-local decision whose continuation
+            reads drop each such state's axis, for forward simulation grouped
+            by one code at a time.
 
     Returns:
         Complete simulate functions container.
@@ -4449,6 +4455,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # collective branch (below) recomputes the household argmax and gathers
     # each stakeholder's own value at it.
     collective = stakeholders is not None
+    type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
+        MappingProxyType({})
+    )
     if _is_zero_node_regime(
         spec=spec,
         regime_name=regime_name,
@@ -4572,7 +4581,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             }
             | dict(functions)
         )
-        Q_and_F_functions = _build_Q_and_F_per_period(
+        decision_Q_and_F = functools.partial(
+            _build_Q_and_F_per_period,
             active_periods=simulated_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
@@ -4592,11 +4602,25 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
-        ).by_period
+        )
+        Q_and_F_functions = decision_Q_and_F().by_period
+        # Grouped forward simulation reads each continuation carrying a blocked
+        # state through the dispatched code's block, which has that axis removed.
+        if invariant_bindings:
+            type_local_Q_and_F_functions = decision_Q_and_F(
+                co_map_state_names=invariant_bindings
+            ).by_period
 
     per_subject_decisions = _build_per_subject_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+    )
+    type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
+        state_action_space=state_action_space,
+        Q_and_F_functions=type_local_Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
@@ -4873,6 +4897,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         simulation_state_names=simulation_variables.state_names,
         active_periods=tuple(simulated_periods[regime_name]),
         has_gated_edges=bool(user_regime.gated_edges),
+        type_local_Q_and_F_functions=type_local_Q_and_F_functions,
+        type_local_per_subject_decisions=type_local_per_subject_decisions,
     )
 
     return SimulationPhase(

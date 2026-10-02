@@ -7,7 +7,7 @@ when the owner has only a device-transfer budget callback.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -27,17 +27,16 @@ from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
-    ValueTransferKind,
     _validate_edge_identity,
     apply_value_transfer,
-    classify_value_transfer,
-    resolve_value_transfer,
+    transfer_result_key,
 )
+from _lcm.simulation.subject_groups import SubjectGroupingRoute, type_local_transfer
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
-type _CopyKey = tuple[ValueArtifactAddress, jax.sharding.Sharding]
+type _CopyKey = tuple[Hashable, Hashable]
 
 _logger = logging.getLogger(__name__)
 
@@ -67,9 +66,19 @@ class PeriodSimulationReads:
         reads_by_unit: Mapping[RegimeName, tuple[ValueRead, ...]],
         release_enabled: bool,
         before_transfer: BeforeValueTransfer | None = None,
+        grouping: SubjectGroupingRoute | None = None,
+        code: int | None = None,
     ) -> None:
-        """Keep exact reader occurrences and count distinct pending regime units."""
+        """Keep exact reader occurrences and count distinct pending regime units.
+
+        With a `grouping` route, every subject of the period holds `code`, and a
+        stored regime value carrying the grouping state is read through that
+        code's block: the block is selected on the stored layout and only it is
+        copied onto the subject devices.
+        """
         self._devices = devices
+        self._grouping = grouping
+        self._code = code
         self._reads_by_unit = MappingProxyType(
             {unit: tuple(reads) for unit, reads in reads_by_unit.items()}
         )
@@ -123,16 +132,14 @@ class PeriodSimulationReads:
         required = simulation_value_sharding(
             stored_sharding=value.sharding, devices=self._devices
         )
-        transfer = resolve_value_transfer(
-            target=read.target,
-            source=read.source,
-            kind=classify_value_transfer(
-                stored_sharding=value.sharding, required_sharding=required
-            ),
-            stored_template=value,
-            source_sharding=required,
+        transfer = type_local_transfer(
+            route=self._grouping,
+            code=self._code,
+            read=read,
+            stored=value,
+            required_sharding=required,
         )
-        key = (read.target, required)
+        key = transfer_result_key(transfer=transfer)
         cache = self._caches.get(key)
         if cache is None:
             units = frozenset(
@@ -161,7 +168,7 @@ class PeriodSimulationReads:
         copied = cache.get(transfer=transfer)
         if copied is None:
             if (
-                transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+                not transfer.delivers_stored_buffer
                 and self._before_transfer is not None
             ):
                 self._before_transfer(transfer=transfer, live_values=self.live_values)

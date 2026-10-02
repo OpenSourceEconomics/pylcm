@@ -55,7 +55,7 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
-from _lcm.simulation.assembly import concatenate_arrays
+from _lcm.simulation.assembly import concatenate_arrays, take_rows
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
@@ -124,6 +124,11 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
+from _lcm.simulation.subject_groups import (
+    SubjectGroupPlan,
+    SubjectRows,
+    plan_subject_groups,
+)
 from _lcm.simulation.taste_stream import (
     build_taste_stream_addresses,
     create_taste_shock_key,
@@ -191,7 +196,7 @@ type _PeriodToRegimeToReplayReader = Mapping[
 ]
 
 
-def simulate(  # noqa: C901, PLR0915
+def simulate(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
     initial_conditions: InitialConditions,
@@ -327,6 +332,24 @@ def simulate(  # noqa: C901, PLR0915
             else min(subject_batch_size, n_subjects)
         )
 
+        grouping = next(iter(regimes.values())).simulation.programs.grouping
+        group_plan = (
+            None
+            if grouping is None
+            else plan_subject_groups(
+                route=grouping,
+                codes=(
+                    np.asarray(jax.device_get(initial_conditions[grouping.state_name]))
+                    if grouping.state_name in initial_conditions
+                    else None
+                ),
+                n_real=(
+                    n_subjects if original_n_subjects is None else original_n_subjects
+                ),
+                width=batch_size,
+            )
+        )
+
         runtime = next(iter(regimes.values())).simulation.programs.executor
         memory = None
         if (
@@ -436,6 +459,7 @@ def simulate(  # noqa: C901, PLR0915
             n_subjects=n_subjects,
             batch_size=batch_size,
             prepared_chunks=prepared_chunks,
+            group_plan=group_plan,
         )
         _log_simulation_plan(logger=logger, plan_summary=plan_summary)
 
@@ -444,9 +468,20 @@ def simulate(  # noqa: C901, PLR0915
         # device residency to a single chunk. A single pass (batch_size == n_subjects)
         # keeps results on the compute device (no memory pressure, and no host
         # round-trip for downstream targets).
+        windows: tuple[tuple[slice | SubjectRows, int | None], ...] = (
+            tuple(
+                (slice(start, start + batch_size), None)
+                for start in range(0, n_subjects, batch_size)
+            )
+            if group_plan is None
+            else tuple(
+                (SubjectRows(rows=chunk.rows), chunk.code)
+                for chunk in group_plan.chunks
+            )
+        )
         host_device = (
             chunk_host_device(subject_devices=call_inputs.devices)
-            if batch_size < n_subjects
+            if len(windows) > 1
             else None
         )
 
@@ -460,7 +495,7 @@ def simulate(  # noqa: C901, PLR0915
                 tree=(initial_conditions, initial_own_stakeholder, starting_periods)
             )
         )
-    for chunk_start in range(0, n_subjects, batch_size):
+    for subject_slice, code in windows:
         with solve_phase(name="simulation_chunk", logger=logger, call_id=call_id):
             if prepared_chunks is not None:
                 if memory is None:
@@ -470,38 +505,36 @@ def simulate(  # noqa: C901, PLR0915
                 prepared_chunks.require_chunk(
                     memory=memory, completed_setup=completed_setup
                 )
-            # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
-            # `pad_initial_conditions_to_multiple`), so every chunk — including the
-            # last — is exactly `batch_size` rows; the trailing pad rows are dropped
-            # once, after the loop, by `trim_pad_from_raw_results`.
-            subject_slice = slice(chunk_start, chunk_start + batch_size)
+            # Ungrouped, `n_subjects` is padded up to a multiple of `batch_size`
+            # upstream (see `pad_initial_conditions_to_multiple`), so every chunk —
+            # including the last — is exactly `batch_size` rows; the trailing pad
+            # rows are dropped once, after the loop, by `trim_pad_from_raw_results`.
+            # Grouped, every chunk gathers `batch_size` original rows of one code.
             chunk = _simulate_subject_chunk(
                 initial_states={
-                    name: chunk_operations.slice_population(
-                        array=array, start=chunk_start, width=batch_size, memory=memory
+                    name: _population_window(
+                        array=array, window=subject_slice, memory=memory
                     )
                     for name, array in initial_states.items()
                 },
-                initial_regime_ids=chunk_operations.slice_population(
+                initial_regime_ids=_population_window(
                     array=initial_conditions["regime_id"],
-                    start=chunk_start,
-                    width=batch_size,
+                    window=subject_slice,
                     memory=memory,
                 ),
-                initial_own_stakeholder=chunk_operations.slice_population(
+                initial_own_stakeholder=_population_window(
                     array=initial_own_stakeholder,
-                    start=chunk_start,
-                    width=batch_size,
+                    window=subject_slice,
                     memory=memory,
                 ),
-                starting_periods=chunk_operations.slice_population(
+                starting_periods=_population_window(
                     array=starting_periods,
-                    start=chunk_start,
-                    width=batch_size,
+                    window=subject_slice,
                     memory=memory,
                 ),
                 n_subjects=n_subjects,
                 subject_slice=subject_slice,
+                code=code,
                 original_n_subjects=original_n_subjects,
                 regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
@@ -538,6 +571,10 @@ def simulate(  # noqa: C901, PLR0915
         simulation_results = _concatenate_chunk_results(
             chunk_results=chunk_results, regimes=regimes, memory=memory
         )
+        if group_plan is not None:
+            simulation_results = _restore_subject_order(
+                results=simulation_results, plan=group_plan, memory=memory
+            )
 
         # Drain the per-period compute graph before returning. Mirrors solve's
         # `_drain_V_arr_shards`: simulation_results carries per (regime, period)
@@ -645,7 +682,8 @@ def _simulate_subject_chunk(
     initial_regime_ids: Int1D,
     starting_periods: Int1D,
     n_subjects: int,
-    subject_slice: slice,
+    subject_slice: slice | SubjectRows,
+    code: int | None = None,
     original_n_subjects: int | None = None,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
@@ -679,8 +717,10 @@ def _simulate_subject_chunk(
     `initial_states`, `initial_regime_ids`, and `starting_periods` are already
     sliced to this chunk's subjects; `n_subjects` and `subject_slice` describe the
     chunk's position in the full population so RNG keys stay full-population and are
-    sliced by global index. The key stream is re-derived from `seed` here so the
-    per-period carry is identical across chunks (it is subject-count-independent).
+    sliced, or for a grouped chunk gathered, by original row. `code` is the code of
+    the grouping state every subject of a grouped chunk holds, `None` ungrouped.
+    The key stream is re-derived from `seed` here so the per-period carry is
+    identical across chunks (it is subject-count-independent).
     `initial_own_stakeholder`: each subject's seeded role, already sliced to
     this chunk. It is carried through the period loop and updated wherever a
     gated edge routes a row, so a dissolution follows the row's own leg.
@@ -794,6 +834,10 @@ def _simulate_subject_chunk(
             release_enabled=isinstance(executor, SimulationRuntime)
             and executor.enable_jit,
             before_transfer=None if memory is None else memory.before_transfer,
+            grouping=None
+            if code is None
+            else next(iter(regimes.values())).simulation.programs.grouping,
+            code=code,
         )
         if memory is not None:
             memory.period_owner = owner
@@ -1007,6 +1051,54 @@ def _concatenate_chunk_results(
             }
             combined[regime_name][period] = replace(per_chunk[0], **merged)
     return combined
+
+
+def _population_window(
+    *, array: jax.Array, window: slice | SubjectRows, memory: SimulationMemory | None
+) -> jax.Array:
+    """Take one chunk's rows of a population array: a window, or original rows."""
+    if isinstance(window, SubjectRows):
+        return chunk_operations.take_population(
+            array=array, rows=window.rows, memory=memory
+        )
+    return chunk_operations.slice_population(
+        array=array,
+        start=window.start,
+        width=window.stop - window.start,
+        memory=memory,
+    )
+
+
+def _restore_subject_order(
+    *,
+    results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    plan: SubjectGroupPlan,
+    memory: SimulationMemory | None = None,
+) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
+    """Gather every grouped output back into original subject order.
+
+    Each original row reads its own output; the outputs of a group's repeated
+    tail rows are read by none. Gathering copies bytes, so values, signed zeros
+    and NaN payloads are unchanged.
+    """
+    return {
+        regime_name: {
+            period: replace(
+                data,
+                **{
+                    field.name: jax.tree.map(
+                        lambda array: take_rows(
+                            array=array, rows=plan.positions, memory=memory
+                        ),
+                        getattr(data, field.name),
+                    )
+                    for field in fields(PeriodRegimeSimulationData)
+                },
+            )
+            for period, data in periods.items()
+        }
+        for regime_name, periods in results.items()
+    }
 
 
 def _require_next_period_values(
@@ -1345,7 +1437,7 @@ def _validate_simulated_value(
         raise_or_warn(logger=logger, error=error)
 
 
-def _simulate_regime_in_period(  # noqa: C901, PLR0915
+def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     *,
     regime_name: RegimeName,
     regime: Regime,
@@ -1373,7 +1465,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
     key: PRNGKeyND,
     logger: logging.Logger,
     n_subjects: int,
-    subject_slice: slice,
+    subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
     own_stakeholder: Int1D,
     new_own_stakeholder: Int1D,
@@ -1424,7 +1516,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
         key: JAX random key for stochastic operations.
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
-        subject_slice: Global-index slice of the subjects in this chunk.
+        subject_slice: Global-index slice, or original rows, of the subjects in
+            this chunk.
         own_stakeholder: The role each subject occupies this period, as a code
             in the model's role vocabulary. Decides which leg of a gated edge
             a row follows, and is published beside the states.
@@ -1608,6 +1701,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0915
     else:
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
+            if isinstance(subject_slice, SubjectRows):
+                raise ExecutionPlanningError(
+                    "Grouped simulation does not cover taste shocks."
+                )
             key, gumbel_keys = prepare_decision_taste_keys(
                 key=key,
                 taste_key=taste_key,

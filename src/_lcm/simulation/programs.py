@@ -97,6 +97,12 @@ def build_simulation_programs(
     simulation_state_names: tuple[StateOrActionName, ...],
     active_periods: tuple[int, ...],
     has_gated_edges: bool,
+    type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
+        MappingProxyType({})
+    ),
+    type_local_per_subject_decisions: MappingProxyType[int, Callable[..., object]] = (
+        MappingProxyType({})
+    ),
 ) -> SimulationPrograms:
     """Declare one regime's decision, transition, and route programs.
 
@@ -119,6 +125,12 @@ def build_simulation_programs(
         active_periods: Periods the regime is dispatched at.
         has_gated_edges: Whether the regime declares gated edges, whose routing
             a host loop drives.
+        type_local_Q_and_F_functions: The simulate phase's per-period action
+            value and feasibility reading every continuation that carries the
+            blocked state without that axis; empty when no blocked state is
+            carried.
+        type_local_per_subject_decisions: The dense reducers over
+            `type_local_Q_and_F_functions`, keyed like `per_subject_decisions`.
 
     Returns:
         The regime's declared programs.
@@ -133,54 +145,29 @@ def build_simulation_programs(
             stakeholders=context.stakeholders,
         )
     action_width_keyword = _select_action_width_keyword(context=context)
-    action_names = context.state_action_space.action_names
-    action_extents = context.state_action_space.actions_grid_shapes
 
-    decision_bodies: dict[int, Callable[..., object]] = {}
-    decision: dict[int, CoreProgram] = {}
-    for period in active_periods:
-        group = id(Q_and_F_functions[period])
-        if group not in decision_bodies:
-            decision_bodies[group] = _decision_body(
-                Q_and_F=Q_and_F_functions[period],
-                dense_reducer=per_subject_decisions[period],
-                context=context,
-                streams_actions=streams_actions,
-                action_width_keyword=action_width_keyword,
-                subject_arg_names=_decision_subject_arg_names(context=context),
-            )
-        decision[period] = CoreProgram(
-            name=DECISION_PROGRAM,
-            function=decision_bodies[group],
-            argument_builder=_ArgumentsBoundAtDispatch(
-                program_name=DECISION_PROGRAM,
-                subject_arg_names=_decision_subject_arg_names(context=context),
-            ),
-            requirements=CoreExecutionRequirements(
-                reduced_axes=(
-                    (
-                        ReducedAxis(
-                            name=ACTION_PRODUCT_AXIS,
-                            coordinate_names=action_names,
-                            coordinate_extents=action_extents,
-                            canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION,
-                            width_keyword=action_width_keyword,
-                        ),
-                    )
-                    if streams_actions
-                    else ()
-                ),
-                tiled_axes=(subject_axis(state_names=simulation_state_names),),
-                value_reads=rekeyed_value_reads(
-                    reads=_decision_value_reads(context=context, period=period),
-                    core_key=DECISION_PROGRAM,
-                ),
-            ),
-            output_roles=(ACTION_INDEX, DECISION_VALUE),
-            disposition=CoreExecutionDisposition.PLANNED,
-            donation_candidates=(),
+    decision = _decision_programs(
+        context=context,
+        Q_and_F_functions=Q_and_F_functions,
+        per_subject_decisions=per_subject_decisions,
+        simulation_state_names=simulation_state_names,
+        active_periods=active_periods,
+        streams_actions=streams_actions,
+        action_width_keyword=action_width_keyword,
+    )
+    type_local_decision = (
+        _decision_programs(
+            context=context,
+            Q_and_F_functions=type_local_Q_and_F_functions,
+            per_subject_decisions=type_local_per_subject_decisions,
+            simulation_state_names=simulation_state_names,
+            active_periods=active_periods,
+            streams_actions=streams_actions,
+            action_width_keyword=action_width_keyword,
         )
+        if type_local_Q_and_F_functions
+        else {}
+    )
 
     transition_bodies: dict[int, Callable[..., object]] = {}
     transition: dict[int, CoreProgram] = {}
@@ -237,7 +224,69 @@ def build_simulation_programs(
         decision=MappingProxyType(decision),
         transition=MappingProxyType(transition),
         route=MappingProxyType(route),
+        type_local_decision=MappingProxyType(type_local_decision),
     )
+
+
+def _decision_programs(
+    *,
+    context: SolverBuildContext,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    per_subject_decisions: MappingProxyType[int, Callable[..., object]],
+    simulation_state_names: tuple[StateOrActionName, ...],
+    active_periods: tuple[int, ...],
+    streams_actions: bool,
+    action_width_keyword: str,
+) -> dict[int, CoreProgram]:
+    """Declare one decision program per period, sharing a body per period group."""
+    action_names = context.state_action_space.action_names
+    action_extents = context.state_action_space.actions_grid_shapes
+    decision_bodies: dict[int, Callable[..., object]] = {}
+    decision: dict[int, CoreProgram] = {}
+    for period in active_periods:
+        group = id(Q_and_F_functions[period])
+        if group not in decision_bodies:
+            decision_bodies[group] = _decision_body(
+                Q_and_F=Q_and_F_functions[period],
+                dense_reducer=per_subject_decisions[period],
+                context=context,
+                streams_actions=streams_actions,
+                action_width_keyword=action_width_keyword,
+                subject_arg_names=_decision_subject_arg_names(context=context),
+            )
+        decision[period] = CoreProgram(
+            name=DECISION_PROGRAM,
+            function=decision_bodies[group],
+            argument_builder=_ArgumentsBoundAtDispatch(
+                program_name=DECISION_PROGRAM,
+                subject_arg_names=_decision_subject_arg_names(context=context),
+            ),
+            requirements=CoreExecutionRequirements(
+                reduced_axes=(
+                    (
+                        ReducedAxis(
+                            name=ACTION_PRODUCT_AXIS,
+                            coordinate_names=action_names,
+                            coordinate_extents=action_extents,
+                            canonical_order="c",
+                            reduction=HARD_MAX_REDUCTION,
+                            width_keyword=action_width_keyword,
+                        ),
+                    )
+                    if streams_actions
+                    else ()
+                ),
+                tiled_axes=(subject_axis(state_names=simulation_state_names),),
+                value_reads=rekeyed_value_reads(
+                    reads=_decision_value_reads(context=context, period=period),
+                    core_key=DECISION_PROGRAM,
+                ),
+            ),
+            output_roles=(ACTION_INDEX, DECISION_VALUE),
+            disposition=CoreExecutionDisposition.PLANNED,
+            donation_candidates=(),
+        )
+    return decision
 
 
 def attach_gated_simulation_programs(

@@ -7,13 +7,17 @@ before anything is lowered:
 - `fail_if_invariant_blocking_route_is_unsupported` reads only the
   declarations, before the regimes are built, and refuses what the route
   does not serve;
-- `fail_if_invariant_blocking_is_unsafe_for_model` runs the placement-independent
-  invariant analysis on the built model and refuses a state whose
-  declarations do not establish that its value never changes and that no
-  value read crosses its codes.
+- `admit_invariant_blocking` runs the placement-independent invariant analysis
+  on the built model and refuses a state whose declarations do not establish
+  that its value never changes and that no value read crosses its codes.
+
+When the forward phase preserves the state too, forward simulation groups its
+subjects by the state's code; otherwise it keeps the ungrouped route.
 """
 
+import dataclasses
 from collections.abc import Mapping
+from types import MappingProxyType
 
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid
@@ -24,6 +28,8 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
+from _lcm.simulation.subject_groups import SubjectGroupingRoute
+from _lcm.solution.backward_induction import _value_axis_names
 from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import RegimeName, StateName
 from lcm.ages import AgeGrid
@@ -165,7 +171,7 @@ def _regime_failures(
     return [f"regime {regime_name!r} {reason}" for failed, reason in checks if failed]
 
 
-def fail_if_invariant_blocking_is_unsafe_for_model(
+def admit_invariant_blocking(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regimes: Mapping[RegimeName, Regime],
@@ -174,13 +180,25 @@ def fail_if_invariant_blocking_is_unsafe_for_model(
     ages: AgeGrid,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
     block_widths: Mapping[StateName, int],
-) -> None:
-    """Analyse the built model and refuse an unsafe solve-phase request.
+) -> MappingProxyType[RegimeName, Regime]:
+    """Refuse an unsafe solve-phase request and group simulation where certified.
 
-    Nothing is analysed when no state is blocked.
+    Nothing is analysed when no state is blocked. Forward simulation groups
+    subjects by the blocked state only when the simulate phase preserves it as
+    well, and every regime draws through the ordinary grid decision: no regime
+    declares taste shocks or gated edges, or replays a solve payload. Any other
+    model keeps the ungrouped forward route.
+
+    Returns:
+        The regimes, whose forward programs carry the grouping route when
+        grouping applies.
+
+    Raises:
+        ExecutionPlanningError: The solve-phase request is unsafe.
+
     """
     if not block_widths:
-        return
+        return MappingProxyType(dict(regimes))
     components = analyze_invariant_components(
         user_regimes=user_regimes,
         regimes=regimes,
@@ -191,4 +209,33 @@ def fail_if_invariant_blocking_is_unsafe_for_model(
     )
     fail_if_invariant_blocking_is_unsafe(
         components=components, block_widths=block_widths, phase="solve"
+    )
+    (state_name,) = block_widths
+    component = components[state_name]
+    if not component.simulate.eligible or any(
+        regime.has_taste_shocks
+        or regime.gated_edges
+        or regime.simulation.replay_route.policy_applicable
+        or regime.simulation.external_replay_route is not None
+        for regime in regimes.values()
+    ):
+        return MappingProxyType(dict(regimes))
+    route = SubjectGroupingRoute(
+        state_name=state_name,
+        codes=component.codes,
+        value_axis_names=_value_axis_names(regimes=regimes),
+    )
+    return MappingProxyType(
+        {
+            name: dataclasses.replace(
+                regime,
+                simulation=dataclasses.replace(
+                    regime.simulation,
+                    programs=dataclasses.replace(
+                        regime.simulation.programs, grouping=route
+                    ),
+                ),
+            )
+            for name, regime in regimes.items()
+        }
     )

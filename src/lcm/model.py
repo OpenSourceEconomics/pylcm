@@ -78,7 +78,7 @@ from _lcm.regime_building.fixed_components import (
 )
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.invariant_blocking import (
-    fail_if_invariant_blocking_is_unsafe_for_model,
+    admit_invariant_blocking,
     fail_if_invariant_blocking_route_is_unsupported,
 )
 from _lcm.regime_building.phases import project_onto_solve_phase
@@ -119,6 +119,7 @@ from _lcm.simulation.simulate import (
     _require_next_period_values,
     simulate,
 )
+from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
@@ -815,7 +816,7 @@ class Model:
             prepared_structure=prepared_structure,
             execution=self._execution,
         )
-        fail_if_invariant_blocking_is_unsafe_for_model(
+        self._regimes = admit_invariant_blocking(
             user_regimes=self._engine_user_regimes,
             regimes=self._regimes,
             reachability=self.reachability,
@@ -2825,6 +2826,27 @@ class Model:
                 # Values and replay artifacts retain their solve placement. The forward
                 # period owner acquires only the copies consumed by that period's units.
                 prepared_chunks = None
+                # Grouped by an invariant state, each code's subjects form chunks
+                # of their own, so no chunk spans more than the largest group and
+                # the population is not padded to a chunk multiple.
+                grouping = next(
+                    iter(self._regimes.values())
+                ).simulation.programs.grouping
+                sizes = (
+                    None
+                    if grouping is None
+                    else group_sizes(
+                        route=grouping,
+                        codes=(
+                            np.asarray(
+                                jax.device_get(initial_conditions[grouping.state_name])
+                            )
+                            if grouping.state_name in initial_conditions
+                            else None
+                        ),
+                        n_real=original_n_subjects,
+                    )
+                )
                 if entry_allocations is not None:
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
@@ -2844,22 +2866,29 @@ class Model:
                         log_level=log_level,
                         process_grid_resolver=process_grid_resolver,
                         max_compilation_workers=max_compilation_workers,
+                        group_sizes=sizes,
                     )
                     compile_batch_size = prepared_chunks.plan.profile.n_subjects
-                    initial_conditions, _ = entry_allocations.pad(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
-                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                    if sizes is None:
+                        initial_conditions, _ = entry_allocations.pad(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
+                        entry_allocations.publish(
+                            stage="initial", tree=initial_conditions
+                        )
                 else:
                     compile_batch_size = self._resolve_compile_batch_size(
                         subject_batch_size=subject_batch_size,
-                        padded_n_subjects=padded_n_subjects,
+                        padded_n_subjects=padded_n_subjects
+                        if sizes is None
+                        else grouped_extent(sizes=sizes, alignment=alignment),
                     )
-                    initial_conditions, _ = pad_initial_conditions_to_multiple(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
+                    if sizes is None:
+                        initial_conditions, _ = pad_initial_conditions_to_multiple(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
                     )
