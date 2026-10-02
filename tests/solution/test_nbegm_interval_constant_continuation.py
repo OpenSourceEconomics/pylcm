@@ -180,7 +180,11 @@ def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
 
     plan = SimpleNamespace(
         stateful_targets=("tracker",),
-        child_reads={"tracker": SimpleNamespace(next_state_func=next_tracker)},
+        child_reads={
+            "tracker": SimpleNamespace(
+                next_state_func=next_tracker, euler_state_func=next_tracker
+            )
+        },
         compute_regime_transition_probs=compute_regime_transition_probs,
     )
     with pytest.raises(RegimeInitializationError, match="varies smoothly"):
