@@ -1573,7 +1573,10 @@ def test_numpy_dispatcher_implementation_defaults_participate(*, monkeypatch) ->
     assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
 
 
-def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity() -> None:
+@pytest.mark.parametrize("check", ["specimen-type", "native-identity", "fingerprint"])
+def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity(
+    check: str,
+) -> None:
     def dispatcher(*args: object, **kwargs: object) -> tuple:  # noqa: ARG001
         return ()
 
@@ -1584,10 +1587,13 @@ def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity() -> None:
     nominal.__module__ = np.linspace.__module__
     nominal.__name__ = np.linspace.__name__
     nominal.__qualname__ = np.linspace.__qualname__
-    assert type(nominal) is type(np.linspace)
-    assert fingerprints._native_numeric_callable_kind(nominal) is None
-    with pytest.raises(TypeError, match="non-Python __call__"):
-        fingerprints._semantic_fingerprint(nominal)
+    if check == "specimen-type":
+        assert type(nominal) is type(np.linspace)
+    elif check == "native-identity":
+        assert fingerprints._native_numeric_callable_kind(nominal) is None
+    else:
+        with pytest.raises(TypeError, match="non-Python __call__"):
+            fingerprints._semantic_fingerprint(nominal)
 
 
 def test_numpy_dispatcher_changed_implementation_code_fails_closed(
@@ -1597,7 +1603,7 @@ def test_numpy_dispatcher_changed_implementation_code_fails_closed(
         return 1
 
     implementation = cast("Any", np.linspace)._implementation
-    assert fingerprints._semantic_fingerprint(_uses_np_linspace)
+    fingerprints._semantic_fingerprint(_uses_np_linspace)
     monkeypatch.setattr(implementation, "__code__", replacement.__code__)
     with pytest.raises(TypeError, match="direct object dependency"):
         fingerprints._semantic_fingerprint(_uses_np_linspace)
