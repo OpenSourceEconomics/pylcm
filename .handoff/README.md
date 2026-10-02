@@ -23,8 +23,8 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
 | 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
-| Blueprint cache (Pro R3) | 28030481/82 failures fixed in 11a4bbb (green locally); Marvin rerun pending | `perf/invariant-structural-blueprint-cache` (#490, draft) | 1d8c306 |
-| 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
+| Blueprint cache (Pro R3) | Marvin full suite green at 1d8c306f (28033850 / 28031605) | `perf/invariant-structural-blueprint-cache` (#490, draft) | see its `.handoff/blueprint-cache.md` |
+| 5B | implemented (WIP); design decisions pending; Marvin battery 28033547–49 running | `feat/invariant-block-major-lifetime` (no PR) | 731e9fe8 |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
 | 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
 | 8A | not started; after 5B | — | — |
