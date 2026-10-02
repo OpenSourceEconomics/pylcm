@@ -2,9 +2,11 @@
 
 The planner receives the number of visible devices and assigns each regime a
 device set before anything is lowered. A regime with a distributed grid runs on
-the mesh its extent defines; a regime without one runs on a single device,
-filling devices the sharded meshes leave idle in the periods it is active and
-otherwise taking the device with the smallest planned footprint. The assignment
+the mesh its extent defines, multiplied by the devices sharing its action
+product when its actions are partitioned; a regime with neither runs on a single
+device, filling devices the sharded meshes leave idle in the periods it is
+active and otherwise taking the device with the smallest planned footprint. The
+assignment
 is a fact of the plan and of every compilation key, and it never changes a
 value.
 
@@ -20,6 +22,11 @@ from types import MappingProxyType
 
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
+
+# Mesh axis whose devices share one regime's action product. It trails the
+# regime's sharded-state axes; stored values never name it, so every value array
+# is replicated along it.
+ACTION_PARTITION_AXIS = "_lcm_action_partition"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -38,6 +45,10 @@ class PlacementRequest:
 
     template_bytes: int
     """Bytes of the regime's value template; the footprint weight of a node."""
+
+    action_partitions: int = 1
+    """Devices sharing the regime's action product; each holds a full replica of
+    the regime's state shard, so the regime spans its state mesh times this."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -113,8 +124,10 @@ def plan_submesh_placement(
 ) -> SubmeshPlacement:
     """Assign every regime its device ids.
 
-    Sharded regimes take consecutive blocks in declaration order, wrapping to the
-    first block when no full block is left. A single-device regime takes the
+    Sharded and action-partitioned regimes take consecutive blocks in
+    declaration order, wrapping to the first block when no full block is left;
+    a block spans the state mesh times the action partitions. A single-device
+    regime takes the
     lowest device — among the devices every sharded mesh leaves idle when there
     are any, else among all — that no regime co-active with it occupies; when
     every candidate is occupied it takes the device with the smallest planned
@@ -127,22 +140,22 @@ def plan_submesh_placement(
     footprint = dict.fromkeys(range(n_devices), 0)
     offset = 0
     for request in requests:
-        if not request.distributed_extents:
+        if not request.distributed_extents and request.action_partitions == 1:
             continue
-        size = mesh_size_for_extents(
-            extents=request.distributed_extents, n_devices=n_devices
-        )
+        size = _device_block_size(request=request, n_devices=n_devices)
         start = offset if offset + size <= n_devices else 0
         block = tuple(range(start, start + size))
         offset = start + size
         device_ids[request.regime_name] = block
         for device in block:
-            footprint[device] += request.template_bytes // size
+            footprint[device] += (
+                request.template_bytes * request.action_partitions // size
+            )
     sharded_devices = {device for ids in device_ids.values() for device in ids}
     idle = tuple(device for device in range(n_devices) if device not in sharded_devices)
     candidates = idle or tuple(range(n_devices))
     for request in requests:
-        if request.distributed_extents:
+        if request.distributed_extents or request.action_partitions > 1:
             continue
         busy = {
             device
@@ -159,6 +172,27 @@ def plan_submesh_placement(
         device_ids[request.regime_name] = (device,)
         footprint[device] += request.template_bytes
     return SubmeshPlacement(device_ids_by_regime=device_ids, n_devices=n_devices)
+
+
+def _device_block_size(*, request: PlacementRequest, n_devices: int) -> int:
+    """Return how many devices one regime's mesh spans.
+
+    The action partitions are an explicit count and are never reduced: the
+    state axes take the largest mesh the remaining devices allow.
+    """
+    partitions = request.action_partitions
+    if partitions > n_devices:
+        msg = (
+            f"Regime {request.regime_name!r} shares its actions over {partitions} "
+            f"devices, but only {n_devices} are available. Lower "
+            "ExecutionConfig.action_partitions or select more devices."
+        )
+        raise ExecutionPlanningError(msg)
+    if not request.distributed_extents:
+        return partitions
+    return partitions * mesh_size_for_extents(
+        extents=request.distributed_extents, n_devices=n_devices // partitions
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

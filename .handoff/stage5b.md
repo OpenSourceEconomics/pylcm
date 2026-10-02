@@ -85,3 +85,47 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
   - blocks wider than one code;
   - on-disk fragments;
   - 8A.
+
+## Local receipt intake
+
+Queued native arm receipts must be checked with the hardened
+`drivers/stage5b/compare_stage5b.py` before acceptance. The comparator requires
+three distinct arms, four distinct call labels, valid nonempty matching value
+digest keysets, and panel/raw digests on the three simulation calls. It checks
+the driver's available source, library, JAX, precision, device, economic-model,
+clean-worktree and GPU-exclusivity fields, allowing the intentional execution
+configuration difference. Construction refusals remain raw outcomes rather than
+completed parity evidence.
+
+Block-major and period-major must have equal byte digests. Unblocked digests are
+a populated control; their differences do not establish an ULP bound. Matching
+keysets cannot detect the same omitted coordinate in every arm because the
+receipt does not contain an independently expected coordinate schema.
+
+The local CLI regression checks use the published driver fields without requiring
+unavailable parameter or driver hashes. Local checks do not constitute native
+GPU-driver acceptance or reopen the pending unblocked rounding decision.
+
+The comparator CLI acceptance check completed with **49 passed, 0 failed,
+0 errors, 0 skipped**, in **0:00:07.554** on hmg-office. The checked comparator
+and adjacent test are committed at
+`e19da294f4bcfad2cfd0416155c261fe0b301882`; comparator SHA256 is
+`fab439f546db5604f36969493534b24a73347169b32a6ef4f8b0e86a8284d083`.
+The verbose log, exact JUnit population, red/green sequence, environment identity,
+and full commands are recorded locally in
+`/home/hmg/econ/aca-dev/.task-evidence/pylcm-handoff/5b-comparator/REPORT.md`.
+This is comparator intake acceptance; the queued native GPU gate remains pending.
+
+Reproduce the CLI check with the installed tests-cpu environment and a separate
+JUnit output, preserving the archived receipt:
+
+```sh
+zsh -ic '
+  cd /home/hmg/econ/aca-dev/.codex-worktrees/invariant-5b-comparator &&
+  STAGE5B_TEST_MANIFEST=/home/hmg/econ/aca-dev/pylcm/pyproject.toml \
+    cap pixi run --as-is \
+    --manifest-path /home/hmg/econ/aca-dev/pylcm/pyproject.toml -e tests-cpu \
+    pytest .handoff/drivers/stage5b/test_compare_stage5b.py --noconftest -v \
+    --junitxml=/tmp/stage5b-comparator-reproduction.xml
+'
+```

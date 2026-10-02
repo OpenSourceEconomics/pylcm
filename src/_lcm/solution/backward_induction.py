@@ -2184,6 +2184,7 @@ def _iter_edge_topologies(
                         grids=target.solution.grids,
                         sharded_state_names=target.solution.sharded_state_names,
                         devices=devices,
+                        action_partitions=target.solution.action_partitions,
                     ),
                     state_order=tuple(target_states),
                     devices=devices,
@@ -4076,7 +4077,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     else plan_workspace(
                         axes=representative.requirements.axes,
                         fixed_widths=execution.widths_for(regime_name=triple[0]),
-                        width_ceilings=execution.axis_width_ceilings,
+                        width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                         covered_axes=execution.covered_axes,
                         compile_candidate=_CompiledCandidateLookup(
                             compiled_by_width=compiled_by_width
@@ -4126,7 +4127,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     plan=plan,
                     axes=representative.requirements.axes,
                     fixed_widths=execution.widths_for(regime_name=triple[0]),
-                    width_ceilings=execution.axis_width_ceilings,
+                    width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                     frontier=frontier,
                     gather_checks=gather_checks,
                     compile_candidate=functools.partial(
@@ -4582,7 +4583,7 @@ def _bounded_candidate_source(
         selector = BoundedWidthSelector(
             axes=representative.requirements.axes,
             fixed_widths=execution.widths_for(regime_name=triple[0]),
-            width_ceilings=execution.axis_width_ceilings,
+            width_ceilings=execution.ceilings_for(regime_name=triple[0]),
             covered_axes=execution.covered_axes,
             policy=policy,
             hint=policy.hints.get(triple[0]),
@@ -5722,7 +5723,7 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
             width_candidates = workspace_width_candidates(
                 axes=materialized.requirements.axes,
                 fixed_widths=execution_widths.widths_for(regime_name=regime_name),
-                width_ceilings=execution_widths.axis_width_ceilings,
+                width_ceilings=execution_widths.ceilings_for(regime_name=regime_name),
                 covered_axes=execution_widths.covered_axes,
                 budget_bytes=budget_bytes,
             )

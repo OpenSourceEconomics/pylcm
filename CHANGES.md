@@ -5,6 +5,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Opt-in action-partitioned GridSearch
+
+- `ExecutionConfig(action_partitions={"<regime>": n})` shares a `GridSearch` regime's
+  action product over `n` devices. Each device reduces its own contiguous run of action
+  blocks with the exact hard maximum, and the devices exchange and merge one compact
+  accumulator per state cell instead of any value over actions. Ties, infinities, NaNs
+  and signed zeros keep the ordinary route's conventions; at the same action width the
+  tested workloads publish values bitwise equal to the ordinary route, alone, with a
+  sharded continuous state and with type-local blocks. The default `{}` and a count of
+  one leave the solve unchanged. Unsupported requests are refused at model
+  construction. See [Share a large action product over
+  devices](docs/user_guide/tuning.md).
+
 ### Opt-in type-local GridSearch
 
 - `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal

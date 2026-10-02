@@ -2,9 +2,10 @@
 
 `get_max_Q_over_a` builds the dense reducer — a hard max, or the EV1 smoothed
 maximum when the regime declares taste shocks. `get_streaming_max_Q_over_a` is
-the blockwise route that never materializes the whole action product, and
-`get_argmax_and_max_Q_over_a` the variant simulation needs, which returns the
-winning action alongside the value.
+the blockwise route that never materializes the whole action product,
+`get_action_partitioned_max_Q_over_a` the blockwise route whose action product
+several devices share, and `get_argmax_and_max_Q_over_a` the variant simulation
+needs, which returns the winning action alongside the value.
 """
 
 import functools
@@ -20,6 +21,7 @@ import jax.numpy as jnp
 from dags import with_signature
 from jax import Array
 
+from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import (
@@ -29,6 +31,7 @@ from _lcm.regime_building.collective import (
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.action_streaming import (
+    build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
@@ -694,6 +697,211 @@ class _StreamedMaxQOverA:
             collective_result.best_stakeholder_values,
             ~collective_result.any_feasible,
         )
+
+
+def get_action_partitioned_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[StateName, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    n_partitions: int,
+    mesh: jax.sharding.Mesh,
+    action_width_keyword: str = "_lcm_action_block_width",
+    cell_width_keyword: str | None = None,
+    untiled_state_names: tuple[StateName, ...] = (),
+    broadcast_state_names: tuple[StateName, ...] = (),
+) -> MaxQOverAFunction:
+    """Build a singleton hard-max V kernel whose action product devices share.
+
+    The returned callable has the argument layout of
+    `get_streaming_max_Q_over_a` for an ordinary singleton regime. It runs its
+    body once per device of `mesh`'s `ACTION_PARTITION_AXIS`, with every input
+    replicated along that axis and the regime's state axes left to the
+    compiler. Each device streams the contiguous run of whole action blocks
+    `ActionPartitionLayout` assigns it at the planner-bound width, gathers one
+    hard-max accumulator per state cell from every device of the axis and
+    merges them in partition order, so all devices publish the same value.
+
+    Taste shocks, collective regimes, folded processes and co-mapped states are
+    not served; model construction refuses them before this is called.
+    """
+    if n_partitions < 2:  # noqa: PLR2004
+        raise ValueError("An action-partitioned kernel needs at least two partitions.")
+    if ACTION_PARTITION_AXIS not in mesh.axis_names:
+        raise ValueError(
+            f"The mesh {mesh.axis_names!r} has no {ACTION_PARTITION_AXIS!r} axis."
+        )
+    if mesh.shape[ACTION_PARTITION_AXIS] != n_partitions:
+        raise ValueError(
+            f"The mesh action axis has {mesh.shape[ACTION_PARTITION_AXIS]} devices, "
+            f"not the {n_partitions} partitions requested."
+        )
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        state_names=state_names,
+    )
+    # The keyword order differs from the streamed builder's call on purpose:
+    # that call is a certified mutation anchor and must stay unique.
+    _fail_if_action_width_keyword_collides(
+        extra_param_names=extra_param_names,
+        action_names=action_names,
+        state_names=state_names,
+        action_width_keyword=action_width_keyword,
+    )
+    partitioned_max_Q_over_a = with_signature(
+        _ActionPartitionedMaxQOverA(
+            Q_and_F=Q_and_F,
+            action_names=action_names,
+            q_and_f_arg_names=frozenset(inspect.signature(Q_and_F).parameters),
+            action_width_keyword=action_width_keyword,
+            n_partitions=n_partitions,
+        ),
+        args=[
+            "next_regime_to_V_arr",
+            *action_names,
+            *state_names,
+            *extra_param_names,
+            action_width_keyword,
+        ],
+        return_annotation="FloatND",
+        enforce=False,
+    )
+    mapped = (
+        tiled_productmap(
+            func=partitioned_max_Q_over_a,
+            variables=state_names,
+            width_keyword=cell_width_keyword,
+            untiled_variables=untiled_state_names,
+            broadcast_variables=broadcast_state_names,
+        )
+        if cell_width_keyword is not None
+        else productmap(
+            func=partitioned_max_Q_over_a,
+            variables=state_names,
+            batch_sizes={name: batch_sizes[name] for name in state_names},
+        )
+    )
+    static_names = (
+        action_width_keyword,
+        *((cell_width_keyword,) if cell_width_keyword is not None else ()),
+    )
+    return cast(
+        "MaxQOverAFunction",
+        with_signature(
+            _OnActionPartitionAxis(
+                function=mapped, mesh=mesh, static_names=static_names
+            ),
+            args=list(inspect.signature(mapped).parameters),
+            return_annotation="FloatND",
+            enforce=False,
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ActionPartitionedMaxQOverA:
+    """The maximum of Q over this device's run of the action product, merged.
+
+    Called inside `_OnActionPartitionAxis`, so the action axis is bound and
+    every device of it returns the same merged value.
+    """
+
+    __name__: ClassVar[str] = "action_partitioned_max_Q_over_a"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The regime's action value and feasibility, evaluated per action block."""
+
+    action_names: tuple[ActionName, ...]
+    """Action variable names, discrete first, spanning the partitioned product."""
+
+    q_and_f_arg_names: frozenset[str]
+    """The argument names `Q_and_F` declares, which select what it is handed."""
+
+    action_width_keyword: str
+    """Name of the planner-bound static action-block width in the call."""
+
+    n_partitions: int
+    """Devices along the action axis, each owning one run of blocks."""
+
+    def __call__(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **states_actions_params: Any,  # noqa: ANN401
+    ) -> FloatND:
+        """Return the cell's value after merging every device's accumulator."""
+        reduce_cell = build_partitioned_streaming_max_Q_over_a(
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            block_width=cast("int", states_actions_params[self.action_width_keyword]),
+            n_partitions=self.n_partitions,
+            axis_name=ACTION_PARTITION_AXIS,
+        )
+        result = reduce_cell(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **_arguments_named(
+                arguments=states_actions_params, names=self.q_and_f_arg_names
+            ),
+        )
+        return result.best_value
+
+
+def _arguments_named(
+    *, arguments: Mapping[str, Any], names: frozenset[str]
+) -> dict[str, Any]:
+    """Return the entries of `arguments` whose names `names` lists."""
+    return {name: value for name, value in arguments.items() if name in names}
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OnActionPartitionAxis:
+    """Run a kernel once per device of the mesh's action axis.
+
+    Only the action axis is manual: every input is replicated along it, and
+    the regime's state axes stay under the compiler's automatic partitioning,
+    exactly as for the unpartitioned kernel. The merged value is identical on
+    every device of the axis, so the output is replicated along it.
+    """
+
+    __name__: ClassVar[str] = "on_action_partition_axis"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    function: Callable[..., FloatND]
+    """The state-mapped kernel, reading the action axis inside its reduction."""
+
+    mesh: jax.sharding.Mesh
+    """The regime's mesh, whose trailing axis is the action axis."""
+
+    static_names: tuple[str, ...]
+    """Planner-bound widths, passed as compile-time constants, not operands."""
+
+    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        """Evaluate the kernel on every device of the action axis."""
+        static = {name: kwargs.pop(name) for name in self.static_names}
+        return jax.shard_map(
+            functools.partial(_call_with_operands, function=self.function, **static),
+            mesh=self.mesh,
+            in_specs=jax.P(),
+            out_specs=jax.P(),
+            axis_names=frozenset({ACTION_PARTITION_AXIS}),
+            # Every device merges the same gathered accumulators in the same
+            # order, so the replicated output holds one value per cell.
+            check_vma=False,
+        )(kwargs)
+
+
+# keyword-only-exempt: library-callback=jax.shard_map
+def _call_with_operands(
+    operands: Mapping[str, Any],
+    *,
+    function: Callable[..., FloatND],
+    **static: Any,  # noqa: ANN401
+) -> FloatND:
+    """Call `function` with its traced operands and its static widths."""
+    return function(**operands, **static)
 
 
 def _fail_if_action_width_keyword_collides(

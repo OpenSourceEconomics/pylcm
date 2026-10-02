@@ -294,6 +294,67 @@ state, when the simulation is budgeted (pass `device_memory_bytes=None`), or whe
 `log_path` asks for snapshots that would hold every value at once. A solution loaded
 from an archive is read whole, as on any other model.
 
+## Share a large action product over devices
+
+A regime with a small state grid and a large action product leaves most devices idle
+when only its states are spread. Name it in `ExecutionConfig(action_partitions=...)` to
+let several devices share its actions:
+
+```python
+from lcm import ExecutionConfig, Model
+
+model = Model(
+    ...,
+    execution_config=ExecutionConfig(action_partitions={"working": 4}),
+)
+```
+
+The canonical action product is cut into contiguous runs of whole action blocks, one run
+per device, with block counts that differ by at most one. Each device evaluates its own
+run with the unchanged `Q` and feasibility functions and keeps one exact hard-max
+accumulator per state cell: the best value, the winning action's canonical identity and
+whether any action was feasible. The devices exchange only these accumulators and every
+device merges them in device order. The published value is the same exact hard maximum
+the ordinary route computes:
+
+- equal values go to the lowest action identity;
+- a feasible `-inf` stays distinct from a cell without a feasible action;
+- a feasible NaN publishes NaN, and a `{-0, +0}` maximum publishes `+0`;
+- padded slots of the last block are infeasible and never become an action identity.
+
+At the same action block width the published values equal the ordinary route bit for
+bit. The route caps the action block at `n_actions // count` identities, so that every
+device owns at least one block; the ordinary route may pick a wider block, and a
+different width compiles a differently vectorized `Q`, so compare across routes at an
+action width fixed with `axis_widths` when you need bit equality.
+
+The regime's devices form a mesh of its sharded-state axes times the count, so the
+request composes with a sharded continuous state (states times actions) and with
+[type-local blocks](#solve-one-invariant-code-at-a-time):
+
+```python
+ExecutionConfig(
+    devices=(0, 1, 2, 3),
+    sharded_states=("assets",),
+    action_partitions={"working": 2},  # assets over 2 devices, actions over 2
+)
+```
+
+The count is never reduced: the state axis takes the largest shard count the remaining
+devices allow. Values stay sharded along the states and replicated along the action
+devices. The exchanged accumulators are temporaries of the compiled program, so the
+memory admission that charges each program's compiler reservation covers them. A count
+of one, or an empty mapping, runs the ordinary route unchanged.
+
+The request is checked at model construction. It is refused, naming every reason, when:
+
+- it names a regime the model does not declare, or more devices than the model may use;
+- the regime is terminal, is not solved by `GridSearch`, declares taste shocks,
+  stakeholders, gated edges or same-period references, folds a process, or carries a
+  discrete sharded state;
+- the action product has fewer than two actions or fewer actions than devices;
+- a fixed `action_product` width cuts the product into fewer blocks than devices.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in

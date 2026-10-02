@@ -334,6 +334,37 @@ class ExecutionConfig:
     published values and simulated panels are those of the period-major route.
     """
 
+    action_partitions: Mapping[RegimeName, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Regime name to the number of devices sharing its action product; empty
+    shares none.
+
+    Naming a regime here solves it on an action-parallel `GridSearch` route:
+    the canonical action product is cut into that many contiguous runs of
+    whole action blocks, each device of the regime's action group reduces its
+    own run with the exact hard maximum, and the devices exchange one compact
+    accumulator per state cell — best value, winning action identity and
+    feasibility — which every device merges in partition order. Values and
+    the winning actions equal the unpartitioned solve: ties go to the lowest
+    action identity, feasible `-inf` stays distinct from an all-infeasible
+    cell, and signed zeros and NaNs keep their usual conventions.
+
+    The regime's devices form a mesh of its sharded-state axes times this
+    count, so a regime without a sharded state uses exactly this many devices
+    and one with a sharded state uses the state's shards times this many.
+    The action block width is capped so that every device owns at least one
+    block where the product allows it.
+
+    A count of one is the ordinary route. Model construction refuses, before
+    anything is lowered, a count larger than the visible devices or the
+    action product, a regime that does not exist, and regimes the route does
+    not serve: terminal regimes, another solver, taste shocks, collective
+    regimes, gated edges, same-period references, folded processes, a
+    discrete sharded state, and a fixed action width that leaves a device
+    without a block.
+    """
+
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
@@ -429,6 +460,11 @@ class ExecutionConfig:
             _normalized_invariant_block_widths(
                 invariant_block_widths=self.invariant_block_widths
             ),
+        )
+        object.__setattr__(
+            self,
+            "action_partitions",
+            _normalized_action_partitions(action_partitions=self.action_partitions),
         )
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
@@ -548,6 +584,22 @@ def _normalized_invariant_block_widths(
             raise TypeError(msg)
         _fail_if_width_invalid(label=f"invariant_block_widths[{name!r}]", width=width)
         validated[name] = width
+    return MappingProxyType(validated)
+
+
+def _normalized_action_partitions(
+    *, action_partitions: Mapping[RegimeName, int]
+) -> MappingProxyType[RegimeName, int]:
+    """Require non-empty regime names with positive exact counts, and freeze them."""
+    validated: dict[RegimeName, int] = {}
+    for name, count in action_partitions.items():
+        if type(name) is not str or not name:
+            msg = (
+                "ExecutionConfig.action_partitions keys must be non-empty regime names."
+            )
+            raise TypeError(msg)
+        _fail_if_width_invalid(label=f"action_partitions[{name!r}]", width=count)
+        validated[name] = count
     return MappingProxyType(validated)
 
 

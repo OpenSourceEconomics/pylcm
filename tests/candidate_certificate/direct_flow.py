@@ -24,11 +24,15 @@ semantic boundary and is not re-proved here. The proof is strict by design: a ne
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
 
-The nine corridors are:
+The ten corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
   optional unchanged fold quadrature -> compiled VALUE core;
+* singleton action-partitioned solve -> admitted GridSearch request -> one
+  contiguous run of whole C-order blocks per device of the action axis, unowned
+  and padded slots infeasible -> exact hard-max accumulator -> gather over the
+  action axis -> ascending-order exact hard-max merge -> compiled VALUE core;
 * singleton simulate -> published dense argmax or streamed C-order hard max ->
   subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
@@ -385,7 +389,7 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_INPUTS_SOURCE: "546ff0670f64c41fcfd3c3f629e783e30697b9de6164411150d8d69f40ec6e24",
     SIMULATION_RESIDENCY_SOURCE: "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc",
     SIMULATION_GATED_ROUTING_SOURCE: "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce",
-    VALUE_TOPOLOGY_SOURCE: "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343",
+    VALUE_TOPOLOGY_SOURCE: "03872c6ce87f4a5b817caf0ac922ff92073c4d4b15213b3bcfebf151b9a672fa",
     RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
     SCHEDULER_SOURCE: "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
@@ -397,15 +401,15 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
-    PROCESSING_SOURCE: "f3d012502f5ac723d67b619d51cd5edf43cb8aeea8416367676664686c542a9e",
-    GRID_SEARCH_SOURCE: "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403",
+    MAX_Q_SOURCE: "d225aef79994b0ad959f818a39cc670f1fa612d898538513e91e99590e8277a0",
+    PROCESSING_SOURCE: "d6b3eda5b281bd7b466f501db2f6940d214d988ae0bdfda47a582fa2d780a051",
+    GRID_SEARCH_SOURCE: "c7a276237aa612e81f3a06ae280e9b1d5c33b5112ff07d30e5263e3a750f3637",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
-    ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
+    ACTION_STREAMING_SOURCE: "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
     DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
@@ -414,14 +418,14 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "2df29da38df9135b80a27e8669aae1c3ec6c96d5bb6bf12ae60839c9b3a00df5",
+    ENGINE_SOURCE: "c6953fa33c4300d9f262a8ac767b10c5416df18758d65f3edced6ad8f01aecfd",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "529fc10f75cc12a70be9b19edf3e5a5a7ccd27a2555a5f69f0e1129dcb64c75a",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "1eea67f9619d392c95eb2f08c742b0d682149c7f1d64ddbe578352db52a7a9e6",
+    MODEL_SOURCE: "f595efaee002b4ae5086df9ed682a14e74304a98abdaa5f40f480a23a1679947",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "82386e6a9c20a3babb11b9c70e8c39a384a89326f812e0f72e18d36788246a7a",
+    BACKWARD_INDUCTION_SOURCE: "8f56c5c77178859e8fd5e6c3628d5f667f7a26c262692826206f00baeec6312e",
     PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
     INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
     RESULT_SOURCE: "1ed2f208575096c46af0d8295192bf984bcc3497ba3b05e8b844e91b0180fbd3",
@@ -430,7 +434,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "f755c4a35a8ef395d2990d08e725f999a2deb4aff803df5940edbf3e1c4ccd2e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "45ff7b3798e1ae733e68ae23434fe3b6f2b8944c7983db8fc096a4b2eea29f47",
+    SOLUTION_CONTRACT_SOURCE: "f4495a539c00cb8ef88750aae9e059424ce320fff0194dcd74d51ea961e6dc94",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -1774,6 +1778,7 @@ Q_and_F = productmap(
                 "allow_args",
                 "allow_only_kwargs",
                 "argmax_and_max",
+                "build_partitioned_streaming_max_Q_over_a",
                 "build_streaming_collective_max_Q_over_a",
                 "build_streaming_ev1_max_Q_over_a",
                 "build_streaming_max_Q_over_a",
@@ -1810,7 +1815,7 @@ Q_and_F = productmap(
                     "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
                 ),
                 (
-                    "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
+                    "from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a, build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
                 ),
                 "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
@@ -1822,6 +1827,7 @@ Q_and_F = productmap(
                 "allow_args": 1,
                 "allow_only_kwargs": 1,
                 "argmax_and_max": 1,
+                "build_partitioned_streaming_max_Q_over_a": 1,
                 "build_streaming_collective_max_Q_over_a": 1,
                 "build_streaming_ev1_max_Q_over_a": 1,
                 "build_streaming_max_Q_over_a": 1,
@@ -2515,7 +2521,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "0c4a2f448364a67ec9d06e86c9deaf9b388b19c0e8d0b5165c1cc5e328e6a828",
+                "GridSearch.build_period_kernels": "19bec5035c11fc9d3657e1a780169754c2e3cb1164f2d12804ce13e598dc986b",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -3062,7 +3068,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
         contracts={
             "_build_per_subject_decisions_per_period": "762d57a4dca8e9ce3cafc9725c81032b1a87dff7a2297593395cb5040fab1e2d",
             "_argmax_reducer": "d703712f2beec0f93e9cacbb67754faffe20bf4628e71979dba4dd8f4dd6842c",
-            "process_regimes": "a06cc715815a797f376452a1ea753397aaf02ca5d33749889e91683bbbf3384a",
+            "process_regimes": "1e4e619458ed4249eb404aaccac0d16ca835da9801b4ea8e165d4dec96c864c2",
         },
     )
     try:
@@ -3342,12 +3348,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "69af15e7742b623e7dddbf2fbeec2dd44f4e88589b8cf002fd5b6cf70736604a",
+            "81314ff7aca95168fe32c9fd63b46d4fadfca06ddc01d2cc285c0fabb5c05b1a",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "2af7895e244272414933ed05dae5d90fb4ddaab71203696352153d04d6de982c",
+                "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "b9d62d6c69034fd0e0c4164c273bb70d90c5c7e5fb820c7dda5a37950b6e1691",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3373,7 +3379,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         ENGINE_SOURCE: (
-            "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
+            "cf1fbe37cb6a1aaafe165e65bf78d3251181c16e5e497a7938fb017199e322f9",
             {},
         ),
     }
@@ -3687,7 +3693,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         {
             "expected_V_rank": "3fb0dac3bed9027261436cff2316bd122cff31e99dd1b825977272d09e6212f7",
             "placed_V_sharding": "2232aa6bbc1e01337e19bd39637a254e34d14e9e6296407c2aceb6b2467333c2",
-            "_get_regime_V_shapes_and_shardings": "98dce83dcfec6ab9ee239b6072a32ebbd9b364c5ef11fdc5c0c150fa2364a167",
+            "_get_regime_V_shapes_and_shardings": "3c4cca2ac4331f7076dcd8552e07f8e434301c8a9dbef4d489351c1e49e0fc47",
             "_build_zero_V_arr": "83c861c7149e4ee341e409c56e8c08fe2a8a01d859bb8d6e80b7ff62e04a632f",
         },
     ),
@@ -3995,12 +4001,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "69af15e7742b623e7dddbf2fbeec2dd44f4e88589b8cf002fd5b6cf70736604a",
+        "81314ff7aca95168fe32c9fd63b46d4fadfca06ddc01d2cc285c0fabb5c05b1a",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "2af7895e244272414933ed05dae5d90fb4ddaab71203696352153d04d6de982c",
+            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
             "Model.simulate": "b9d62d6c69034fd0e0c4164c273bb70d90c5c7e5fb820c7dda5a37950b6e1691",
         },
     ),
@@ -4036,7 +4042,7 @@ _EAGER_INPUT_CONTRACTS = {
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "ea6d9262e2ae3cc0257ab0c4eac26779939de7186a71ca992f979b5ae046ef2f",
+            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -4368,12 +4374,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "69af15e7742b623e7dddbf2fbeec2dd44f4e88589b8cf002fd5b6cf70736604a",
+        "81314ff7aca95168fe32c9fd63b46d4fadfca06ddc01d2cc285c0fabb5c05b1a",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "2af7895e244272414933ed05dae5d90fb4ddaab71203696352153d04d6de982c",
+            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4599,9 +4605,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "ea6d9262e2ae3cc0257ab0c4eac26779939de7186a71ca992f979b5ae046ef2f",
+            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "1dd780b58d41f8461889caff39f1a054dbda53b945c7077c8f35f6a7da0dca01",
+            "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
@@ -5430,6 +5436,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _ACTION_PARTITION_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _action_partition_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _UNIFORM_PROCESS_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5553,6 +5566,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "Q_and_F -> canonical C-order action blocks -> exact mergeable "
                 "hard max -> optional unchanged fold quadrature -> VALUE-only "
                 "compiled core"
+            ),
+            "singleton_action_partitioned_solve": (
+                "admitted GridSearch request -> device-mapped kernel over the "
+                "action axis -> per-device contiguous run of whole C-order blocks, "
+                "block zero outside the scan, unowned and padded slots infeasible "
+                "-> exact hard-max accumulator -> gather over the action axis -> "
+                "ascending-order exact hard-max merge -> VALUE-only compiled core"
             ),
             "singleton_simulate": (
                 "published decision program: Q_and_F -> canonical dense argmax or "
@@ -6445,10 +6465,10 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
 _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/engine.py": (
-        "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
+        "cf1fbe37cb6a1aaafe165e65bf78d3251181c16e5e497a7938fb017199e322f9",
         {
-            "SolutionPhase.resolve_process_grids": "a55dc3105166d3a9ab413e6abaf302335fdf8eb7bffc5fe3ff7157ab27ac5b55",
-            "SolutionPhase.state_action_space": "40ce37d189b00879e93e4aacb8352dee685c0db751601379e4bbd7adecbed85a",
+            "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
+            "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
         },
     ),
     "src/_lcm/simulation/chunk_admission.py": (
@@ -6510,10 +6530,10 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "solve": "2f9e903e6bbd6d7bda7fa4d9bc30ff862964300000ff5304b66e829ce3ebdd96",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
-            "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
+            "_iter_edge_topologies": "1f00ea1efc353c24b0709e83b46dd417118147f9a7e7a6079d6a57e8132150ed",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "ea6d9262e2ae3cc0257ab0c4eac26779939de7186a71ca992f979b5ae046ef2f",
-            "_resolve_output_layouts_and_lowering_keys": "1dd780b58d41f8461889caff39f1a054dbda53b945c7077c8f35f6a7da0dca01",
+            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
+            "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -6549,7 +6569,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/solution/v_topology.py": (
         "bff578469ea366b108f9484bd047f4ec24ab1866aa365b39b01598230c0618da",
         {
-            "_get_regime_V_shapes_and_shardings": "98dce83dcfec6ab9ee239b6072a32ebbd9b364c5ef11fdc5c0c150fa2364a167"
+            "_get_regime_V_shapes_and_shardings": "3c4cca2ac4331f7076dcd8552e07f8e434301c8a9dbef4d489351c1e49e0fc47"
         },
     ),
     "src/_lcm/transition_checks.py": (
@@ -6586,12 +6606,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "69af15e7742b623e7dddbf2fbeec2dd44f4e88589b8cf002fd5b6cf70736604a",
+        "81314ff7aca95168fe32c9fd63b46d4fadfca06ddc01d2cc285c0fabb5c05b1a",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "2af7895e244272414933ed05dae5d90fb4ddaab71203696352153d04d6de982c",
+            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "84dd777e739317d9645398633d51b0a7e03750a4cc44d43dbed68cb012669113",
@@ -7744,6 +7764,359 @@ def allocation_reservation_mutation_specs(
     """Keep represented-allocation controls separately identifiable."""
     return _callable_mutation_specs(
         repo_root=repo_root, mutations=_ALLOCATION_RESERVATION_MUTATIONS
+    )
+
+
+# The action-partitioned singleton solve is its own corridor. GridSearch selects
+# it only for an admitted request; the device-mapped kernel hands Q_and_F
+# exactly its declared arguments and the planner-bound width; every device
+# streams the contiguous run of whole blocks the layout assigns it, block zero
+# outside the scan as on the unpartitioned stream, with blocks it does not own
+# and padded slots infeasible; the per-device hard-max accumulators are
+# gathered over the action axis and merged in ascending partition order with the
+# exact hard-max law. Shared stream helpers are pinned here too, at the digests
+# the unpartitioned corridor pins them to, so the route is proved end to end.
+_ACTION_PARTITION_CONTRACTS = {
+    GRID_SEARCH_SOURCE: (
+        "2e4ef4b493dc7e205b328af04c5a1f6003150bd25e62382a24a82c53b52be675",
+        {
+            "GridSearch.build_period_kernels": "19bec5035c11fc9d3657e1a780169754c2e3cb1164f2d12804ce13e598dc986b",
+            "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
+            "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+            "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
+            "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
+        },
+    ),
+    MAX_Q_SOURCE: (
+        "e96b4051cb461360246205620fe84dc01fff7d5c13526eeea1fe3b05fc335db4",
+        {
+            "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
+            "_ActionPartitionedMaxQOverA.__call__": "42b11107cae7f2d6ddcf098584a4bf01e358b5c333b6e94c785c0d525ef42d30",
+            "_arguments_named": "6666a0078aec6dfa0c91d175ea84cf4c9342b770d9c32704b848fa1a209742d7",
+            "_OnActionPartitionAxis.__call__": "5a6a2bc83fef20de071e87d28740dad799a7448607a2679a1ad2f6de6bae5114",
+            "_call_with_operands": "5758549543745e6470dae727d7a774c784acf7fd6e5e2e314626015b8dece189",
+            "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
+            "_fail_if_action_width_keyword_collides": "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4",
+        },
+    ),
+    ACTION_STREAMING_SOURCE: (
+        "1d6f50bb41c017a1bc8200411ea6fc5ebadedf763beceab0b4608720b3c4fde1",
+        {
+            "build_partitioned_streaming_max_Q_over_a": "c5d535574a8f38951a58347fdb54875ad8904fb75ca883397ce392a687df5e38",
+            "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
+            "_fail_if_not_positive_int": "6944a14f1c0cef5505aaf713589fa95b9aa921ab03d6ef624db5a24c1011e2e0",
+            "ActionPartitionLayout.__post_init__": "9957631cd979a1ec48136310cb5e3cfb246b1c7367331544c68447b0b092539b",
+            "ActionPartitionLayout.n_blocks": "269793628a54b8cd15b276fa360f884a97483ffbeb27bff2b68d4ba94ae055fe",
+            "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
+            "ActionPartitionLayout.block_range": "c306308ded5a8642519248ce4bd7f400c8ea13b25b06a3fe2c01c24c90f03845",
+            "ActionPartitionLayout.action_interval": "dbaa877fae3466c4ea5af7c2657fe18be813c4487ed3a26e6cbb06b1fac17aba",
+            "_PartitionedStreamingHardMax.__call__": "26e4d541e495cc023c1c1850682225cd9e74d08e6e0cbb1c0b29e7227e0c3b60",
+            "_PartitionedStreamingHardMax.local": "679866bf38deece50d7e7ecea0c41b653ab6c8bf656d6bf73c6c395f68e8c169",
+            "_evaluate_owned_block": "f95eb5df6591891562f8d2779dd24a879e5f6fd931f146888b46393b7f4e6366",
+            "_validate_streaming_configuration": "aadcd9931b24e60ef8ecdac59f540163642ce656cc10c88e7d58eafa0c790210",
+            "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
+            "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
+            "_evaluate_one_action": "4898f988e87d4d49195e08da2651e4dc9a7c2601e827f686460e71dfd95d1e89",
+            "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
+            "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
+            "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
+            "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
+            "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
+        },
+    ),
+    ACTION_REDUCTION_SOURCE: (
+        "875f69aba4cd24712f749ad4276232dfbe3a3b311ddb53c3d6f98d62b85bd987",
+        {
+            "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
+            "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
+            "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
+            "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
+            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
+        },
+    ),
+}
+
+
+def _action_partition_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin the action-partitioned hard-max route independently of byte seals."""
+    surface, callables = _ACTION_PARTITION_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="action-partitioned route", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            "action-partitioned route: module bindings or kernel schemas changed"
+        )
+    return errors
+
+
+# Each control seeds one defect into the action-partitioned hard-max route: the
+# GridSearch selection, the device-mapped kernel, the contiguous block layout,
+# the per-device stream, the accumulator exchange, and the ordered merge.
+_ACTION_PARTITION_MUTATIONS = {
+    "action_partition:merge_order_reversed": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "tuple(range(self.n_partitions))",
+        "tuple(reversed(range(self.n_partitions)))",
+        1,
+    ),
+    "action_partition:merge_starts_at_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[0]",
+        "order[-1]",
+        1,
+    ),
+    "action_partition:merge_skips_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[1:]",
+        "order[1:-1]",
+        1,
+    ),
+    "action_partition:elementwise_max_replaces_hard_max_merge": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        (
+            "HARD_MAX_REDUCTION.merge(left=merged, right=jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        (
+            "jax.tree.map(jnp.maximum, merged, jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:merged_accumulator_discarded": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "HARD_MAX_REDUCTION.finalize(accumulator=merged)",
+        (
+            "HARD_MAX_REDUCTION.finalize(accumulator=jax.tree.map("
+            "lambda leaf: leaf[order[0]], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:local_only_reduce": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        (
+            "merge_partition_accumulators(accumulators=gathered, "
+            "order=tuple(range(self.n_partitions)))"
+        ),
+        "HARD_MAX_REDUCTION.finalize(accumulator=local)",
+        1,
+    ),
+    "action_partition:gather_replaced_by_local_copies": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.all_gather(local, self.axis_name)",
+        "jax.tree.map(lambda leaf: jnp.stack([leaf] * self.n_partitions), local)",
+        1,
+    ),
+    "action_partition:partition_index_constant": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.axis_index(self.axis_name).astype(jnp.int32)",
+        "jnp.int32(0)",
+        1,
+    ),
+    "action_partition:block_zero_outside_scan_removed": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        (
+            "_start_reduction(block=_evaluate_owned_block(block_index=zero, "
+            "first_block_index=first_block_index, "
+            "stop_block_index=stop_block_index, evaluate_block=evaluate_block))"
+        ),
+        "HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros(()))",
+        1,
+    ),
+    "action_partition:block_zero_rescanned": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "jnp.maximum(first_block_index, 1)",
+        "first_block_index",
+        1,
+    ),
+    "action_partition:start_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "partition * n_blocks // self.n_partitions",
+        "partition * n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:stop_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "(partition + 1) * n_blocks // self.n_partitions",
+        "(partition + 1) * n_blocks // self.n_partitions - 1",
+        1,
+    ),
+    "action_partition:padded_tail_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "keyword",
+        "n_actions",
+        "n_actions + self.block_width",
+        2,
+    ),
+    "action_partition:layout_block_count_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.n_blocks",
+        "expression",
+        "-(-self.n_actions // self.block_width)",
+        "self.n_actions // self.block_width",
+        1,
+    ),
+    "action_partition:layout_run_length_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.blocks_per_partition",
+        "expression",
+        "-(-self.n_blocks // self.n_partitions)",
+        "self.n_blocks // self.n_partitions",
+        1,
+    ),
+    "action_partition:layout_block_range_overlaps": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.block_range",
+        "expression",
+        "(partition + 1) * self.n_blocks // self.n_partitions",
+        "(partition + 1) * self.n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:unowned_blocks_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "feasible & owned",
+        "feasible",
+        1,
+    ),
+    "action_partition:owned_upper_bound_inclusive": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "block_index < stop_block_index",
+        "block_index <= stop_block_index",
+        1,
+    ),
+    "action_partition:partition_local_action_ids": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "global_ids",
+        "global_ids - global_ids[0]",
+        1,
+    ),
+    "action_partition:kernel_ignores_planned_width": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "keyword",
+        "block_width",
+        "1",
+        1,
+    ),
+    "action_partition:q_arguments_unfiltered": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "expression",
+        (
+            "_arguments_named(arguments=states_actions_params, "
+            "names=self.q_and_f_arg_names)"
+        ),
+        "states_actions_params",
+        1,
+    ),
+    "action_partition:kernel_partition_count_dropped": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "n_partitions",
+        "1",
+        1,
+    ),
+    "action_partition:state_product_order_reversed": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "variables",
+        "tuple(reversed(state_names))",
+        2,
+    ),
+    "action_partition:manual_axes_widened": (
+        MAX_Q_SOURCE,
+        "_OnActionPartitionAxis.__call__",
+        "expression",
+        "frozenset({ACTION_PARTITION_AXIS})",
+        "frozenset(self.mesh.axis_names)",
+        1,
+    ),
+    "action_partition:route_selection_bypassed": (
+        GRID_SEARCH_SOURCE,
+        "GridSearch.build_period_kernels",
+        "expression",
+        "action_partition_mesh is not None",
+        "False",
+        1,
+    ),
+    "action_partition:request_silently_ignored": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "context.action_partitions == 1",
+        "True",
+        1,
+    ),
+    "action_partition:unstreamed_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "action_streaming is not _ActionStreamingDisposition.STREAMED",
+        "False",
+        1,
+    ),
+    "action_partition:fold_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.fold_state_names)",
+        "False",
+        1,
+    ),
+    "action_partition:co_map_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.co_map_state_names)",
+        "False",
+        1,
+    ),
+}
+
+EXPECTED_ACTION_PARTITION_MUTATION_COUNT = 29
+EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256 = (
+    "011688c988e1b107b5e63adc8cb13df4900bc84137531153bd2ab8743aeb9798"
+)
+
+
+def action_partition_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build the action-partitioned hard-max route's mutation population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ACTION_PARTITION_MUTATIONS
     )
 
 
@@ -10856,6 +11229,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     guard = grouped_guard_mutation_specs(repo_root=root)
     allocation = allocation_reservation_mutation_specs(repo_root=root)
     normal = normal_process_mutation_specs(repo_root=root)
+    partition = action_partition_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10873,6 +11247,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             | guard
             | allocation
             | normal
+            | partition
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10885,6 +11260,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    partition_cases = {name: cases.pop(name) for name in partition}
+    partition_admitted = sorted(
+        name for name, result in partition_cases.items() if not result["rejected"]
+    )
+    partition_names_match = (
+        len(partition_cases) == EXPECTED_ACTION_PARTITION_MUTATION_COUNT
+        and _mutation_name_digest(tuple(partition_cases))
+        == EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256
+    )
     normal_cases = {name: cases.pop(name) for name in normal}
     normal_admitted = sorted(
         name for name, result in normal_cases.items() if not result["rejected"]
@@ -10973,6 +11357,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "action_partition_mutations": partition_cases,
+        "action_partition_mutation_count": len(partition_cases),
+        "action_partition_names_match_expected": partition_names_match,
+        "admitted_action_partition_mutations": partition_admitted,
         "normal_process_mutations": normal_cases,
         "normal_process_mutation_count": len(normal_cases),
         "normal_process_names_match_expected": normal_names_match,
@@ -11007,6 +11395,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
+            and not partition_admitted
+            and partition_names_match
             and not normal_admitted
             and normal_names_match
             and not allocation_admitted

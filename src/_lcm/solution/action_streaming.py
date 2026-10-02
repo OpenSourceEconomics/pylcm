@@ -113,6 +113,146 @@ def build_streaming_max_Q_over_a(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class ActionPartitionLayout:
+    """Contiguous runs of whole action blocks, one run per participant.
+
+    The canonical action product is cut into `n_blocks` blocks of `block_width`
+    identities, exactly as the unpartitioned stream cuts it. Partition `p` owns
+    blocks `[p * n_blocks // P, (p + 1) * n_blocks // P)` for `P` partitions,
+    so the partitions are ascending, disjoint intervals of global identities
+    that together cover the product once, and their block counts differ by at
+    most one. A partition is empty only when there are fewer blocks than
+    participants.
+    """
+
+    n_actions: int
+    """Number of identities in the canonical action product."""
+
+    block_width: int
+    """Identities per block, the planner-bound width of the action axis."""
+
+    n_partitions: int
+    """Number of participants sharing the product."""
+
+    def __post_init__(self) -> None:
+        """Require positive exact integers."""
+        for label, value in (
+            ("n_actions", self.n_actions),
+            ("block_width", self.block_width),
+            ("n_partitions", self.n_partitions),
+        ):
+            _fail_if_not_positive_int(label=label, value=value)
+        if self.n_partitions * self.n_blocks > _INT32_MAX:
+            raise ValueError(
+                "n_partitions times the number of action blocks exceeds the int32 "
+                "range the traced block ranges are computed in"
+            )
+
+    @property
+    def n_blocks(self) -> int:
+        """Return the number of blocks covering the product, the last padded."""
+        return -(-self.n_actions // self.block_width)
+
+    @property
+    def blocks_per_partition(self) -> int:
+        """Return how many blocks every participant evaluates, padding included.
+
+        The longest run; a participant with a shorter run evaluates infeasible
+        padding blocks for the rest.
+        """
+        return -(-self.n_blocks // self.n_partitions)
+
+    def block_range(self, *, partition: int) -> tuple[int, int]:
+        """Return the half-open range of block indices one participant owns."""
+        return (
+            partition * self.n_blocks // self.n_partitions,
+            (partition + 1) * self.n_blocks // self.n_partitions,
+        )
+
+    def action_interval(self, *, partition: int) -> tuple[int, int]:
+        """Return the half-open global identity interval one participant owns."""
+        start_block, stop_block = self.block_range(partition=partition)
+        return (
+            min(start_block * self.block_width, self.n_actions),
+            min(stop_block * self.block_width, self.n_actions),
+        )
+
+
+def build_partitioned_streaming_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    block_width: int,
+    n_partitions: int,
+    axis_name: str,
+) -> _PartitionedStreamingHardMax:
+    """Build the fixed-state hard max whose actions are shared by participants.
+
+    The returned callable runs inside a mapped context binding `axis_name` to
+    `n_partitions` members — a manual mesh axis of a `shard_map`, or a named
+    `vmap`. Each member reads its partition from the axis index, reduces the
+    blocks `ActionPartitionLayout` assigns it with the exact hard-max
+    accumulator, gathers every member's accumulator over the axis and merges
+    them in partition order. Every member therefore publishes the same
+    `HardMaxResult`, equal to the unpartitioned stream at the same
+    `block_width`: blocks are those of the unpartitioned stream, padded slots
+    are infeasible, and the merge law is exact.
+
+    Only one accumulator per member and state cell crosses the axis; the
+    action values themselves never do.
+    """
+    _validate_streaming_configuration(
+        action_names=action_names, block_width=block_width
+    )
+    _fail_if_not_positive_int(label="n_partitions", value=n_partitions)
+    if not action_names:
+        raise ValueError(
+            "A partitioned action reduction requires a non-empty action product"
+        )
+    return _PartitionedStreamingHardMax(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        block_width=block_width,
+        n_partitions=n_partitions,
+        axis_name=axis_name,
+    )
+
+
+def merge_partition_accumulators(
+    *, accumulators: HardMaxAccumulator, order: tuple[int, ...]
+) -> HardMaxResult:
+    """Merge per-partition accumulators along their leading axis, then finalize.
+
+    `order` lists every partition once; the merge visits them in that order.
+    The hard-max merge is exact, commutative and associative, so every order
+    publishes the same bits. Production merges in ascending partition order so
+    the program is one fixed sequence.
+    """
+    n_partitions = accumulators.best_value.shape[0]
+    if sorted(order) != list(range(n_partitions)):
+        msg = (
+            f"order must list each of the {n_partitions} partitions once; "
+            f"got {order!r}."
+        )
+        raise ValueError(msg)
+    merged = jax.tree.map(lambda leaf: leaf[order[0]], accumulators)
+    for partition in order[1:]:
+        merged = HARD_MAX_REDUCTION.merge(
+            left=merged,
+            right=jax.tree.map(lambda leaf, index=partition: leaf[index], accumulators),
+        )
+    return HARD_MAX_REDUCTION.finalize(accumulator=merged)
+
+
+def _fail_if_not_positive_int(*, label: str, value: object) -> None:
+    """Require a positive exact integer, refusing bools and floats."""
+    if type(value) is not int:
+        raise TypeError(f"{label} must be an exact int; got {value!r}")
+    if value <= 0:
+        raise ValueError(f"{label} must be positive; got {value!r}")
+
+
 def build_streaming_ev1_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[Any, Any]],
@@ -235,6 +375,83 @@ class _StreamingHardMax:
             n_remaining=n_blocks - 1,
         )
         return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+
+
+@dataclass(frozen=True)
+class _PartitionedStreamingHardMax:
+    """Configured action-partitioned hard-max callable."""
+
+    Q_and_F: Callable[..., tuple[Any, Any]]
+    action_names: tuple[str, ...]
+    block_width: int
+    n_partitions: int
+    axis_name: str
+
+    def __call__(self, **kwargs: Any) -> HardMaxResult:  # noqa: ANN401
+        """Reduce this member's partition, exchange accumulators and merge them."""
+        partition = jax.lax.axis_index(self.axis_name).astype(jnp.int32)
+        local = self.local(partition=partition, **kwargs)
+        gathered = jax.lax.all_gather(local, self.axis_name)
+        return merge_partition_accumulators(
+            accumulators=gathered, order=tuple(range(self.n_partitions))
+        )
+
+    def local(self, *, partition: jax.Array, **kwargs: Any) -> HardMaxAccumulator:  # noqa: ANN401
+        """Reduce the blocks one partition owns into an unfinalized accumulator."""
+        action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
+            action_names=self.action_names,
+            kwargs=kwargs,
+        )
+        layout = ActionPartitionLayout(
+            n_actions=n_actions,
+            block_width=self.block_width,
+            n_partitions=self.n_partitions,
+        )
+        # The traced form of `ActionPartitionLayout.block_range`.
+        n_blocks = jnp.int32(layout.n_blocks)
+        first_block_index = partition * n_blocks // self.n_partitions
+        stop_block_index = (partition + 1) * n_blocks // self.n_partitions
+        evaluate_block = partial(
+            _evaluate_block,
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+            fixed_kwargs=fixed_kwargs,
+            n_actions=n_actions,
+            block_width=self.block_width,
+            block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
+        )
+        # Every participant evaluates block zero outside the scan and every
+        # other block inside it, exactly as the unpartitioned stream does, so
+        # each action's value comes from the same traced expression on either
+        # route. Block zero counts only for the participant owning it.
+        zero = jnp.int32(0)
+        accumulator = _start_reduction(
+            block=_evaluate_owned_block(
+                block_index=zero,
+                first_block_index=first_block_index,
+                stop_block_index=stop_block_index,
+                evaluate_block=evaluate_block,
+            )
+        )
+        # A block outside this participant's run is padding: every slot of it
+        # is infeasible, so an empty partition keeps the empty accumulator.
+        (accumulator, _), _history = jax.lax.scan(
+            partial(
+                _scan_one_block,
+                evaluate_block=partial(
+                    _evaluate_owned_block,
+                    first_block_index=first_block_index,
+                    stop_block_index=stop_block_index,
+                    evaluate_block=evaluate_block,
+                ),
+            ),
+            (accumulator, jnp.maximum(first_block_index, 1)),
+            xs=None,
+            length=layout.blocks_per_partition,
+        )
+        return accumulator
 
 
 @dataclass(frozen=True)
@@ -419,6 +636,19 @@ def _evaluate_block(
     feasible = jnp.asarray(feasible)
     _validate_block_Q_and_F(values=values, feasible=feasible)
     return values, feasible & valid, global_ids
+
+
+def _evaluate_owned_block(
+    *,
+    block_index: jax.Array,
+    first_block_index: jax.Array,
+    stop_block_index: jax.Array,
+    evaluate_block: Callable[..., _Block],
+) -> _Block:
+    """Evaluate one block, marking it infeasible outside the partition's run."""
+    values, feasible, global_ids = evaluate_block(block_index=block_index)
+    owned = (first_block_index <= block_index) & (block_index < stop_block_index)
+    return values, feasible & owned, global_ids
 
 
 def _evaluate_ev1_branch_block(
