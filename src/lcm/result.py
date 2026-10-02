@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import cloudpickle
 import jax
@@ -28,8 +28,17 @@ from _lcm.simulation.result_dataframe import (
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
 from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
+from lcm._solver_api.entries import _LazyEntry
+from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.ages import AgeGrid
 from lcm.typing import FloatND
+
+if TYPE_CHECKING:
+    _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
+else:
+    # A block-major simulation holds a `ValueStore` whose values are assembled
+    # only when read; the runtime annotation check must not read them all.
+    _PeriodValuesBoundary = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,9 +63,7 @@ class SimulationResult:
         ],
         regimes: MappingProxyType[RegimeName, Regime],
         flat_params: FlatParams,
-        period_to_regime_to_V_arr: MappingProxyType[
-            int, MappingProxyType[RegimeName, FloatND]
-        ],
+        period_to_regime_to_V_arr: _PeriodValuesBoundary,
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
@@ -99,10 +106,12 @@ class SimulationResult:
         return self._flat_params
 
     @property
-    def period_to_regime_to_V_arr(
-        self,
-    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-        """Value function arrays from the solution."""
+    def period_to_regime_to_V_arr(self) -> _PeriodValuesBoundary:
+        """Value function arrays from the solution.
+
+        A block-major simulation holds the solution's `ValueStore`, which
+        assembles each value when it is read.
+        """
         return self._period_to_regime_to_V_arr
 
     @property
@@ -566,9 +575,7 @@ def _log_top_array_tree_leaves(
 
 def _save_period_to_regime_to_V_arr(
     *,
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ],
+    period_to_regime_to_V_arr: _PeriodValuesBoundary,
     output_dir: Path,
 ) -> None:
     """Persist the solution as a single orbax checkpoint.
@@ -576,9 +583,12 @@ def _save_period_to_regime_to_V_arr(
     orbax serialises each leaf with a streaming device-to-host transfer — a
     single-device leaf is read in place (no second contiguous device buffer) and a
     sharded leaf is transferred shard by shard — so a near-device-cap leaf does not
-    blow up at save time. Periods are stringified so orbax can use them as path
-    components. `force=True` overwrites any checkpoint already at `output_dir`, so
-    re-running into an existing output directory replaces it rather than failing.
+    blow up at save time. A block-major value is assembled on the host and saved
+    from a host array, so the save never holds every complete value on a device;
+    it is restored on the host. Periods are stringified so orbax can use them as
+    path components. `force=True` overwrites any checkpoint already at
+    `output_dir`, so re-running into an existing output directory replaces it
+    rather than failing.
     """
     checkpointer = ocp.StandardCheckpointer()
     checkpointer.save(
@@ -660,18 +670,46 @@ def _array_tree_to_raw_results(
 
 
 def _period_V_to_array_tree(
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ],
+    period_to_regime_to_V_arr: _PeriodValuesBoundary,
 ) -> dict[str, dict[RegimeName, FloatND]]:
     """Convert the per-period V-array dict into orbax-friendly form.
 
-    Periods are stringified so orbax can use them as path components.
+    Periods are stringified so orbax can use them as path components. A value
+    a `ValueStore` can assemble on the host is placed on the host device.
     """
+    if isinstance(period_to_regime_to_V_arr, ValueStore):
+        host = jax.devices("cpu")[0]
+        return {
+            str(period): {
+                regime: _host_or_device_value(
+                    store=period_to_regime_to_V_arr,
+                    period=period,
+                    regime=regime,
+                    host=host,
+                )
+                for regime in regimes
+            }
+            for period, regimes in period_to_regime_to_V_arr.items()
+        }
     return {
         str(period): dict(regime_dict)
         for period, regime_dict in period_to_regime_to_V_arr.items()
     }
+
+
+def _host_or_device_value(
+    *,
+    store: _ValueStoreBoundary,
+    period: int,
+    regime: RegimeName,
+    host: jax.Device,
+) -> FloatND:
+    """Return one stored value, on the host when its entry can be assembled there."""
+    entry = store._raw(period=period, regime=regime)  # noqa: SLF001
+    host_value = entry.host_value() if isinstance(entry, _LazyEntry) else None
+    if host_value is None:
+        return store[period][regime]
+    return jax.device_put(host_value, host)
 
 
 def _array_tree_to_period_V(

@@ -35,6 +35,7 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     ExecutionConfig,
+    InvariantBlockSchedule,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -132,12 +133,13 @@ def _model(
     devices: tuple[int, ...],
     widths: tuple[int, int] = (1, 1),
     sharded: bool = True,
-    budget: int | Literal["device"] = 2**30,
+    budget: int | Literal["device"] | None = 2**30,
     identity: bool = False,
     grid: Any = None,
     extra_shard: bool = False,
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
+    schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
 ) -> Model:
     return Model(
         regimes={
@@ -175,6 +177,7 @@ def _model(
             },
             device_memory_bytes=budget,
             invariant_block_widths=invariant_block_widths or {},
+            invariant_block_schedule=schedule,
         ),
         # The tests start subjects in both living regimes at both living ages.
         initial_regimes={(0, 1): ("r0", "r1")},
@@ -1192,3 +1195,86 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
         got_array, want_array = np.asarray(got_leaf), np.asarray(want_leaf)
         assert got_array.dtype == want_array.dtype
         assert got_array.tobytes() == want_array.tobytes()
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+@pytest.mark.parametrize("budget", [None, 2**30])
+def test_block_major_components_over_assets_shards_equal_period_major_values(
+    *, devices: tuple[int, ...], budget: int | None
+) -> None:
+    """Each type solved through its lifetime over sharded assets moves no value bit.
+
+    Every value is published on the period-major solve's sharding and equals
+    its bytes.
+    """
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    models = {
+        schedule: _model(
+            devices=devices,
+            fixed_type=True,
+            budget=budget,
+            invariant_block_widths={"pref_type": 1},
+            schedule=schedule,
+        )
+        for schedule in InvariantBlockSchedule
+    }
+    got = models[InvariantBlockSchedule.BLOCK_MAJOR].solve(
+        params=params, log_level="off"
+    )
+    want = models[InvariantBlockSchedule.PERIOD_MAJOR].solve(
+        params=params, log_level="off"
+    )
+
+    assert {(t, r) for t in got.values for r in got.values[t]} == {
+        (t, r) for t in want.values for r in want.values[t]
+    }
+    for period in want.values:
+        for regime in want.values[period]:
+            got_value = got.value(period=period, regime=regime)
+            want_value = want.value(period=period, regime=regime)
+            assert got_value.sharding == want_value.sharding
+            assert np.asarray(got_value).tobytes() == np.asarray(want_value).tobytes()
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+def test_block_major_combined_simulation_over_assets_shards_equals_period_major(
+    devices: tuple[int, ...],
+) -> None:
+    """Solving and simulating one type at a time over sharded assets keeps the panel."""
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    rng = np.random.default_rng(5)
+    n = 37
+    initial = {
+        "pref_type": np.where(np.arange(n) % 5 == 0, 2, 0).astype(np.int32),
+        "spousal_income": rng.integers(0, 3, n).astype(np.int32),
+        "assets": rng.integers(-4, 20, n).astype(float),
+        "regime_id": rng.integers(0, 2, n).astype(np.int32),
+        "age": np.zeros(n, dtype=float),
+    }
+    results = {
+        schedule: _model(
+            devices=devices,
+            fixed_type=True,
+            budget=None,
+            invariant_block_widths={"pref_type": 1},
+            schedule=schedule,
+        ).simulate(params=params, initial_conditions=initial, seed=11, log_level="off")
+        for schedule in InvariantBlockSchedule
+    }
+    got = results[InvariantBlockSchedule.BLOCK_MAJOR]
+    want = results[InvariantBlockSchedule.PERIOD_MAJOR]
+
+    got_frame, want_frame = got.to_dataframe(), want.to_dataframe()
+    assert got_frame.equals(want_frame)
+    for column in want_frame.select_dtypes("float").columns:
+        assert got_frame[column].to_numpy().tobytes() == (
+            want_frame[column].to_numpy().tobytes()
+        ), column
+    for got_leaf, want_leaf in zip(
+        jax.tree.leaves(got.raw_results),
+        jax.tree.leaves(want.raw_results),
+        strict=True,
+    ):
+        assert np.asarray(got_leaf).tobytes() == np.asarray(want_leaf).tobytes()

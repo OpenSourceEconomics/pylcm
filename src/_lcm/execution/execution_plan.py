@@ -23,7 +23,12 @@ from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.value_transfer import TransferCost, TransferOperationClass
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
-from lcm.execution import AxisWidth, ExecutionConfig, WidthSearchPolicy
+from lcm.execution import (
+    AxisWidth,
+    ExecutionConfig,
+    InvariantBlockSchedule,
+    WidthSearchPolicy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +120,11 @@ class ResolvedExecution:
 
     invariant_block_widths: MappingProxyType[StateName, int] = MappingProxyType({})
     """Invariant states solved one block of codes at a time, with the block width."""
+
+    invariant_block_schedule: InvariantBlockSchedule = (
+        InvariantBlockSchedule.PERIOD_MAJOR
+    )
+    """Whether a blocked solve runs period by period or code by code."""
 
     def widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
         """Return the fixed widths one regime's programs are planned against.
@@ -335,6 +345,7 @@ def resolve_execution_config(
         width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
         invariant_block_widths=MappingProxyType(dict(config.invariant_block_widths)),
+        invariant_block_schedule=config.invariant_block_schedule,
     )
     if requested_bytes is not None:
         summary = resolved.device_memory_budget_summary()

@@ -23,6 +23,20 @@ class WidthSearch(Enum):
     """Seed, shrink and refine within one evaluation budget per core."""
 
 
+class InvariantBlockSchedule(Enum):
+    """In which order a blocked solve visits periods and invariant codes."""
+
+    PERIOD_MAJOR = "period_major"
+    """Solve every code of a period before the next period; the default."""
+    BLOCK_MAJOR = "block_major"
+    """Solve each code through all of its periods before the next code.
+
+    Simulation of that code's subjects follows while its values are still on
+    the device; its values are then retained on the host and its device
+    buffers deleted.
+    """
+
+
 @dataclass(frozen=True, kw_only=True)
 class WidthSearchPolicy:
     """How a budgeted solve chooses a width when its first candidate is refused.
@@ -293,6 +307,31 @@ class ExecutionConfig:
     own and read each value carrying the state through that code's block. Each
     subject keeps its original random keys and output row, so the panel is the
     ungrouped one. Otherwise simulation is ungrouped.
+    """
+
+    invariant_block_schedule: InvariantBlockSchedule = (
+        InvariantBlockSchedule.PERIOD_MAJOR
+    )
+    """Order in which the blocked solve visits periods and codes.
+
+    - `PERIOD_MAJOR` (the default) solves every code of a period before the
+      next period and keeps every period's complete value on the device until
+      the solve returns.
+    - `BLOCK_MAJOR` solves one code through all of its periods, then the next
+      code. A combined `simulate` (no `solution` passed) runs that code's
+      subjects while its values are still on the device. The code's values are
+      then copied to the host and its device buffers deleted, so the device
+      holds one code's values at a time. The result is still complete: each
+      value is assembled from the retained codes, on the layout the
+      period-major solve publishes, when it is read, and `ValueStore.materialize`
+      refuses to place every value on a device whose budget they exceed.
+      Simulating a block-major result reads one code's values at a time.
+
+    `BLOCK_MAJOR` requires a blocked state in `invariant_block_widths` that
+    every regime carries; model construction refuses it otherwise. Simulating
+    from it requires the grouped forward route and an unbudgeted simulation
+    (`device_memory_bytes=None`); `simulate` refuses it otherwise. The
+    published values and simulated panels are those of the period-major route.
     """
 
     devices: tuple[int, ...] | None = None

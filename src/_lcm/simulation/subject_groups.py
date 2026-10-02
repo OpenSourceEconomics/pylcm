@@ -16,6 +16,7 @@ irrelevant, never enters a regime carrying it, and joins the first code's group.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
 import jax
 import numpy as np
@@ -30,6 +31,7 @@ from _lcm.execution.value_transfer import (
     resolve_value_transfer,
 )
 from _lcm.typing import RegimeName, StateName
+from lcm.typing import FloatND
 
 # Program family named by the binding a grouped read's view selects with.
 _FAMILY = "simulation"
@@ -53,6 +55,39 @@ class SubjectGroupingRoute:
         object.__setattr__(
             self, "value_axis_names", MappingProxyType(dict(self.value_axis_names))
         )
+
+
+@runtime_checkable
+class ComponentValueSource(Protocol):
+    """Where grouped simulation reads one code's values from, one code at a time.
+
+    The values of each code exist on the device only between its `acquire` and
+    its `release` (or `abandon`, when its simulation fails). Each holds the
+    code alone along the grouping state's axis.
+    """
+
+    @property
+    def codes(self) -> tuple[int, ...]:
+        """Return every code, in the order they are acquired."""
+        ...
+
+    def acquire(
+        self, *, code: int
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+        """Return the code's values on the device, by period and regime."""
+        ...
+
+    def release(self, *, code: int) -> None:
+        """Finish with the code's values once its subjects are simulated."""
+        ...
+
+    def abandon(self, *, code: int) -> None:
+        """Delete the code's device values after its simulation failed."""
+        ...
+
+    def values(self) -> Mapping[int, Mapping[RegimeName, FloatND]]:
+        """Return the complete logical value store, once every code is released."""
+        ...
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -169,8 +204,14 @@ def type_local_view(
     stored: object,
     required_sharding: jax.sharding.Sharding,
     code: int,
+    stored_codes: tuple[int, ...] | None = None,
 ) -> ValueViewDescriptor | None:
     """Describe the block of `code` a grouped read takes from a value with the state.
+
+    `stored_codes` are the codes the stored value holds along the state's axis,
+    in order; `None` means every code of the route. The selected position is
+    the code's position among them, so a stored value holding one code alone
+    is read at position zero.
 
     Returns:
         The selected view, without the state's axis, or `None` for a value read
@@ -186,7 +227,7 @@ def type_local_view(
         artifact=read.target,
         binding=InvariantBinding(
             state_name=route.state_name,
-            start=route.codes.index(code),
+            start=(route.codes if stored_codes is None else stored_codes).index(code),
             code=code,
             family=_FAMILY,
         ),
@@ -203,11 +244,13 @@ def type_local_transfer(
     read: ValueRead,
     stored: object,
     required_sharding: jax.sharding.Sharding,
+    stored_codes: tuple[int, ...] | None = None,
 ) -> ResolvedValueTransfer:
     """Resolve a read onto `required_sharding`, selecting the group's block.
 
     Without a route the value is read whole. With one, a value carrying the
     state is selected on its stored layout first and only that block moves.
+    `stored_codes` are the codes the stored value holds, `None` for all.
     """
     view = (
         None
@@ -218,6 +261,7 @@ def type_local_transfer(
             stored=stored,
             required_sharding=required_sharding,
             code=code,
+            stored_codes=stored_codes,
         )
     )
     stored_sharding = stored.sharding  # ty: ignore[unresolved-attribute]

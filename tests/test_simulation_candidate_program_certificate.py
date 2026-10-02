@@ -753,8 +753,9 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/_lcm/simulation/simulate.py",
         (
             "prepared_chunks.require_chunk(\n"
-            "                    memory=memory, completed_setup=completed_setup\n"
-            "                )"
+            "                            memory=memory, "
+            "completed_setup=completed_setup\n"
+            "                        )"
         ),
         "pass",
     ),

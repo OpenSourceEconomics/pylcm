@@ -68,17 +68,20 @@ class PeriodSimulationReads:
         before_transfer: BeforeValueTransfer | None = None,
         grouping: SubjectGroupingRoute | None = None,
         code: int | None = None,
+        stored_codes: tuple[int, ...] | None = None,
     ) -> None:
         """Keep exact reader occurrences and count distinct pending regime units.
 
         With a `grouping` route, every subject of the period holds `code`, and a
         stored regime value carrying the grouping state is read through that
         code's block: the block is selected on the stored layout and only it is
-        copied onto the subject devices.
+        copied onto the subject devices. `stored_codes` are the codes a stored
+        value holds along the state's axis; `None` means every code.
         """
         self._devices = devices
         self._grouping = grouping
         self._code = code
+        self._stored_codes = stored_codes
         self._reads_by_unit = MappingProxyType(
             {unit: tuple(reads) for unit, reads in reads_by_unit.items()}
         )
@@ -138,6 +141,7 @@ class PeriodSimulationReads:
             read=read,
             stored=value,
             required_sharding=required,
+            stored_codes=self._stored_codes,
         )
         key = transfer_result_key(transfer=transfer)
         cache = self._caches.get(key)

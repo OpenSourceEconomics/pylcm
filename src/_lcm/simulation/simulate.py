@@ -125,6 +125,7 @@ from _lcm.simulation.residency import (
 )
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
 from _lcm.simulation.subject_groups import (
+    ComponentValueSource,
     SubjectGroupPlan,
     SubjectRows,
     plan_subject_groups,
@@ -224,6 +225,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     prepared_chunks: PreparedSimulationChunks | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
+    component_values: ComponentValueSource | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -281,9 +283,20 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         call_id: Identifier of the public call whose phase records the setup,
             each chunk, the completion wait and the result assembly are
             written under, or `None` to write none.
+        component_values: Where a block-major solution's values are read from,
+            one code at a time, or `None` to read `period_to_regime_to_V_arr`.
+            Requires the grouped route: every code is acquired in grid order,
+            its subjects are simulated from its values alone, and it is
+            released before the next code is acquired. A code no subject holds
+            is acquired and released too. The result then holds the source's
+            complete value store.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
+
+    Raises:
+        ExecutionPlanningError: `component_values` is given without a grouping
+            route or with a budgeted simulation.
 
     """
     with solve_phase(name="simulation_setup", logger=logger, call_id=call_id):
@@ -350,6 +363,12 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             )
         )
 
+        if component_values is not None and group_plan is None:
+            raise ExecutionPlanningError(
+                "Values retained one code at a time can only be simulated with "
+                "subjects grouped by that code."
+            )
+
         runtime = next(iter(regimes.values())).simulation.programs.executor
         memory = None
         if (
@@ -402,6 +421,11 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 inputs=inputs,
             )
             memory.check_resident()
+            if component_values is not None:
+                raise ExecutionPlanningError(
+                    "Values retained one code at a time are simulated without a "
+                    "device budget; set ExecutionConfig.device_memory_bytes=None."
+                )
 
         call_inputs = (
             prepare_simulation_call_inputs(
@@ -495,77 +519,110 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 tree=(initial_conditions, initial_own_stakeholder, starting_periods)
             )
         )
-    for subject_slice, code in windows:
-        with solve_phase(name="simulation_chunk", logger=logger, call_id=call_id):
-            if prepared_chunks is not None:
-                if memory is None:
-                    raise ExecutionPlanningError(
-                        "A prepared chunk requires its live memory owner."
+    for group_code, group_windows in _window_groups(
+        windows=windows,
+        codes=None if component_values is None else component_values.codes,
+    ):
+        values = (
+            period_to_regime_to_V_arr
+            if component_values is None
+            else component_values.acquire(code=cast("int", group_code))
+        )
+        try:
+            for subject_slice, code in group_windows:
+                with solve_phase(
+                    name="simulation_chunk", logger=logger, call_id=call_id
+                ):
+                    if prepared_chunks is not None:
+                        if memory is None:
+                            raise ExecutionPlanningError(  # noqa: TRY301
+                                "A prepared chunk requires its live memory owner."
+                            )
+                        prepared_chunks.require_chunk(
+                            memory=memory, completed_setup=completed_setup
+                        )
+                    # Ungrouped, `n_subjects` is padded up to a multiple of
+                    # `batch_size` upstream (see `pad_initial_conditions_to_multiple`),
+                    # so every chunk — including the last — is exactly `batch_size`
+                    # rows; the trailing pad rows are dropped once, after the loop,
+                    # by `trim_pad_from_raw_results`. Grouped, every chunk gathers
+                    # `batch_size` original rows of one code.
+                    chunk = _simulate_subject_chunk(
+                        initial_states={
+                            name: _population_window(
+                                array=array, window=subject_slice, memory=memory
+                            )
+                            for name, array in initial_states.items()
+                        },
+                        initial_regime_ids=_population_window(
+                            array=initial_conditions["regime_id"],
+                            window=subject_slice,
+                            memory=memory,
+                        ),
+                        initial_own_stakeholder=_population_window(
+                            array=initial_own_stakeholder,
+                            window=subject_slice,
+                            memory=memory,
+                        ),
+                        starting_periods=_population_window(
+                            array=starting_periods,
+                            window=subject_slice,
+                            memory=memory,
+                        ),
+                        n_subjects=n_subjects,
+                        subject_slice=subject_slice,
+                        code=code,
+                        stored_codes=(
+                            None
+                            if component_values is None
+                            else (cast("int", group_code),)
+                        ),
+                        original_n_subjects=original_n_subjects,
+                        regimes=regimes,
+                        regime_names_to_ids=regime_names_to_ids,
+                        regime_ids_to_names=regime_ids_to_names,
+                        period_to_regime_to_V_arr=values,
+                        period_to_regime_to_dissolution_flags=(
+                            period_to_regime_to_dissolution_flags
+                        ),
+                        period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+                        period_to_regime_to_replay_reader=(
+                            period_to_regime_to_replay_reader
+                        ),
+                        flat_params=flat_params,
+                        ages=ages,
+                        seed=seed,
+                        taste_shock_seed=taste_shock_seed,
+                        taste_addresses=taste_addresses,
+                        logger=logger,
+                        device_ids=device_ids,
+                        memory=memory,
+                        call_inputs=call_inputs,
+                        process_grid_resolver=process_grid_resolver,
                     )
-                prepared_chunks.require_chunk(
-                    memory=memory, completed_setup=completed_setup
-                )
-            # Ungrouped, `n_subjects` is padded up to a multiple of `batch_size`
-            # upstream (see `pad_initial_conditions_to_multiple`), so every chunk —
-            # including the last — is exactly `batch_size` rows; the trailing pad
-            # rows are dropped once, after the loop, by `trim_pad_from_raw_results`.
-            # Grouped, every chunk gathers `batch_size` original rows of one code.
-            chunk = _simulate_subject_chunk(
-                initial_states={
-                    name: _population_window(
-                        array=array, window=subject_slice, memory=memory
-                    )
-                    for name, array in initial_states.items()
-                },
-                initial_regime_ids=_population_window(
-                    array=initial_conditions["regime_id"],
-                    window=subject_slice,
-                    memory=memory,
-                ),
-                initial_own_stakeholder=_population_window(
-                    array=initial_own_stakeholder,
-                    window=subject_slice,
-                    memory=memory,
-                ),
-                starting_periods=_population_window(
-                    array=starting_periods,
-                    window=subject_slice,
-                    memory=memory,
-                ),
-                n_subjects=n_subjects,
-                subject_slice=subject_slice,
-                code=code,
-                original_n_subjects=original_n_subjects,
-                regimes=regimes,
-                regime_names_to_ids=regime_names_to_ids,
-                regime_ids_to_names=regime_ids_to_names,
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
-                period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-                period_to_regime_to_replay_reader=(period_to_regime_to_replay_reader),
-                flat_params=flat_params,
-                ages=ages,
-                seed=seed,
-                taste_shock_seed=taste_shock_seed,
-                taste_addresses=taste_addresses,
-                logger=logger,
-                device_ids=device_ids,
-                memory=memory,
-                call_inputs=call_inputs,
-                process_grid_resolver=process_grid_resolver,
-            )
-            if host_device is not None:
-                # `block_until_ready` forces the D2H copy to complete before the loop
-                # continues, so the chunk's device buffers become free for the next
-                # chunk; the host-resident copies stay `jax.Array` (CPU-backed).
-                chunk = offload_chunk(
-                    tree=chunk, host_device=host_device, memory=memory
-                )
-            chunk_results.append(chunk)
-            if memory is not None:
-                memory.close_unit()
-                memory.set_chunk_inputs(tree=())
-                memory.replace_outputs(tree=chunk_results)
+                    if host_device is not None:
+                        # `block_until_ready` forces the D2H copy to complete
+                        # before the loop continues, so the chunk's device buffers
+                        # become free for the next chunk; the host-resident copies
+                        # stay `jax.Array` (CPU-backed).
+                        chunk = offload_chunk(
+                            tree=chunk, host_device=host_device, memory=memory
+                        )
+                    chunk_results.append(chunk)
+                    if memory is not None:
+                        memory.close_unit()
+                        memory.set_chunk_inputs(tree=())
+                        memory.replace_outputs(tree=chunk_results)
+            if component_values is not None and group_windows:
+                # Every chunk of the code has finished reading its values
+                # before they are released.
+                jax.block_until_ready(chunk_results[-len(group_windows) :])
+        except BaseException:
+            if component_values is not None:
+                component_values.abandon(code=cast("int", group_code))
+            raise
+        if component_values is not None:
+            component_values.release(code=cast("int", group_code))
 
     with solve_phase(name="simulation_completion", logger=logger, call_id=call_id):
         simulation_results = _concatenate_chunk_results(
@@ -621,7 +678,11 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             raw_results=wrapped_results,
             regimes=regimes,
             flat_params=flat_params,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_V_arr=(
+                period_to_regime_to_V_arr
+                if component_values is None
+                else component_values.values()
+            ),
             ages=ages,
             simulation_output_dtypes=simulation_output_dtypes,
             subject_batch_size=subject_batch_size,
@@ -646,6 +707,24 @@ def _log_simulation_plan(
         logger.info(plan_summary.summary())
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(plan_summary.details())
+
+
+def _window_groups(
+    *,
+    windows: tuple[tuple[slice | SubjectRows, int | None], ...],
+    codes: tuple[int, ...] | None,
+) -> tuple[tuple[int | None, tuple[tuple[slice | SubjectRows, int | None], ...]], ...]:
+    """Return the windows as one group per code, or as one group without codes.
+
+    With `codes`, every code gets a group in that order, empty when no window
+    holds it; a window's code is the code of its group.
+    """
+    if codes is None:
+        return ((None, windows),)
+    return tuple(
+        (code, tuple(window for window in windows if window[1] == code))
+        for code in codes
+    )
 
 
 def _initialize_chunk_state(
@@ -684,6 +763,7 @@ def _simulate_subject_chunk(
     n_subjects: int,
     subject_slice: slice | SubjectRows,
     code: int | None = None,
+    stored_codes: tuple[int, ...] | None = None,
     original_n_subjects: int | None = None,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
@@ -718,7 +798,9 @@ def _simulate_subject_chunk(
     sliced to this chunk's subjects; `n_subjects` and `subject_slice` describe the
     chunk's position in the full population so RNG keys stay full-population and are
     sliced, or for a grouped chunk gathered, by original row. `code` is the code of
-    the grouping state every subject of a grouped chunk holds, `None` ungrouped.
+    the grouping state every subject of a grouped chunk holds, `None` ungrouped;
+    `stored_codes` are the codes the stored values hold along that state's
+    axis, `None` for every code.
     The key stream is re-derived from `seed` here so the per-period carry is
     identical across chunks (it is subject-count-independent).
     `initial_own_stakeholder`: each subject's seeded role, already sliced to
@@ -838,6 +920,7 @@ def _simulate_subject_chunk(
             if code is None
             else next(iter(regimes.values())).simulation.programs.grouping,
             code=code,
+            stored_codes=stored_codes,
         )
         if memory is not None:
             memory.period_owner = owner

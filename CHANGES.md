@@ -18,6 +18,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   starting code and reads each typed value through one code's block. Every subject keeps
   its original random draws and output row, so the panel is unchanged; otherwise
   simulation stays ungrouped.
+- `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)` solves
+  each code through all of its periods before the next code, simulates its subjects
+  while its values are still on the device, then copies them to the host and deletes the
+  device buffers, so the device holds one code's values at a time. Every code runs the
+  programs the first compiled. The result is complete: each value is assembled from the
+  retained codes when read, on the layout the period-major schedule publishes, saves
+  from the host, and simulates one code at a time; `values.materialize()` is refused
+  when every value cannot fit the device budget. Values and panels equal the default
+  period-major schedule's byte for byte. Unsupported requests (no blocked state, a
+  regime without it, budgeted or ungrouped simulation, `log_path`) are refused. See
+  [Solve, simulate and release one code at a time](docs/user_guide/tuning.md).
 
 ### Required starting problems and keyword-only age-indexed declarations
 

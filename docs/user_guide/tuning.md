@@ -245,6 +245,55 @@ regime declares taste shocks or gated edges or replays a stored policy. The plan
 summary's `subject_grouping` names the grouping state, or is `None` on the ungrouped
 route.
 
+### Solve, simulate and release one code at a time
+
+By default the blocked solve is period-major: each period solves every code before the
+next period starts, and the device keeps every period's complete value until `solve`
+returns. When those retained values, rather than one period's working set, are what
+fills the device, solve each code through its whole lifetime instead:
+
+```python
+from lcm import ExecutionConfig, InvariantBlockSchedule, Model
+
+model = Model(
+    ...,
+    execution_config=ExecutionConfig(
+        invariant_block_widths={"pref_type": 1},
+        invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
+        device_memory_bytes=None,
+    ),
+)
+```
+
+Each code is solved through every period on the same compiled programs, then copied to
+the host, and its device buffers are deleted before the next code starts, so the device
+holds one code's values at a time. `simulate` without a `solution` simulates each code's
+subjects right after that code is solved, while its values are still on the device.
+
+The result keeps its usual contract. `solution.values` lists every period and regime,
+and inspecting it reads nothing. Reading a value assembles it from the retained codes on
+the layout the period-major solve publishes, and `SolutionResult.save` writes every
+value from the host. Simulating the result reads one code's values at a time. Values and
+simulated panels are those of the period-major schedule, byte for byte; where blocking
+itself places a value on a neighbouring float of the unblocked one, so does this
+schedule.
+
+What moves where:
+
+- every value crosses from the device to the host once, and each simulation from a saved
+  or returned result uploads one code's values at a time;
+- the host holds every value of the result for as long as the result is referenced;
+- `solution.values.materialize()` places every value on the device at once, and is
+  refused before anything is placed when they exceed the device budget. Read values one
+  at a time with `solution.value(period=..., regime=...)` instead.
+
+The schedule is refused at model construction unless a state is named in
+`invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
+block-major solution is refused when the simulate phase does not group subjects by the
+state, when the simulation is budgeted (pass `device_memory_bytes=None`), or when
+`log_path` asks for snapshots that would hold every value at once. A solution loaded
+from an archive is read whole, as on any other model.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in
