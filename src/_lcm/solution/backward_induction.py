@@ -1512,8 +1512,10 @@ def _period_shared_transfer_plan(
     A regime dispatch commits once for every core it runs, so the count that
     matters for release is per regime, not per core: two cores of one regime
     reading a shared transfer still leave it needing only that regime's own
-    commit. An `ALIGNED_LOCAL` transfer names no copy for the cache to hold and
-    is excluded, whatever its `reused_by_several_consumers` mark. Keys are
+    commit. A transfer that delivers the stored artifact's own buffer names no
+    copy for the cache to hold and is excluded, whatever its
+    `reused_by_several_consumers` mark; a selected view is a fresh block even
+    when its layout is aligned, so it is counted. Keys are
     `transfer_result_key`s under `generation`, the key the period's cache uses.
 
     Returns:
@@ -1528,7 +1530,7 @@ def _period_shared_transfer_plan(
             for transfer in core.input_transfer_plan:
                 if (
                     transfer.reused_by_several_consumers
-                    and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+                    and not transfer.delivers_stored_buffer
                 ):
                     regime_keys.add(
                         transfer_result_key(transfer=transfer, generation=generation)
@@ -3010,7 +3012,9 @@ def _period_copy_reservations(
 ) -> Mapping[Hashable, ArtifactFootprint]:
     """Reserve each shared destination throughout its period, including aliases.
 
-    Runtime caches a destination by artifact and required layout. Its release can
+    Runtime caches a destination by artifact and required layout, or by the
+    selected block of it a value view reads, whose aligned selection is a fresh
+    buffer as well. Its release can
     be delayed when a copy shares a source shard, so whole-period retention is a
     conservative bound instead of a prediction of the allocator's release instant.
     """
@@ -3026,7 +3030,7 @@ def _period_copy_reservations(
             if triple[1] == period
             for transfer in program.input_transfer_plan
             if transfer.reused_by_several_consumers
-            and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+            and not transfer.delivers_stored_buffer
         }
     )
 

@@ -788,9 +788,11 @@ def apply_value_transfer_plan(
 
     With a `cache`, a transfer marked as reused by several consumers is
     executed once per cache lifetime and served from the cache afterwards.
-    An `ALIGNED_LOCAL` transfer's result is the stored value's own buffer, so
-    the cache serves it like any other but its `put` never registers it: the
-    buffer it names already belongs to the stored artifact.
+    An `ALIGNED_LOCAL` transfer without a selection returns the stored value's
+    own buffer, so the cache serves it like any other but its `put` never
+    registers it: the buffer it names already belongs to the stored artifact.
+    A selected view's block is fresh even on an aligned layout and is
+    registered like any copy.
 
     A source locator is the read's named argument, or ``channel.value`` when it
     names none, followed by ``path``. Each locator may occur once in a plan.

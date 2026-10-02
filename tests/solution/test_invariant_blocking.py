@@ -19,6 +19,7 @@ from beartype.roar import BeartypeCallHintParamViolation
 
 from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.execution_plan import CorePlanRecord
+from _lcm.execution.scheduler import PeriodTransferCache
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
@@ -465,3 +466,126 @@ def test_a_reset_of_the_blocked_state_is_refused_at_construction() -> None:
             typed_terminal=True,
             execution_config=ExecutionConfig(invariant_block_widths={"sector": 1}),
         )
+
+
+@categorical(ordered=False)
+class _TwoCarrierRegimeId:
+    left: ScalarInt
+    right: ScalarInt
+    terminal: ScalarInt
+
+
+def _two_carrier_utility(
+    *,
+    consumption: ContinuousAction,
+    pref_type: DiscreteState,
+    weight: FloatND,
+    exponent: FloatND,
+) -> FloatND:
+    return weight[pref_type] * (1.0 + consumption) ** exponent[pref_type]
+
+
+def _stay_left() -> ScalarInt:
+    return _TwoCarrierRegimeId.left
+
+
+def _stay_right() -> ScalarInt:
+    return _TwoCarrierRegimeId.right
+
+
+def _two_carrier_regime(*, stay: str) -> Regime:
+    pref_type = DiscreteGrid(category_class=independent_types.PrefType)
+    wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
+    return Regime(
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
+            law=Choose(
+                func=_stay_left if stay == "left" else _stay_right, targets=(stay,)
+            ),
+            then=Choose(
+                func=lambda: _TwoCarrierRegimeId.terminal, targets=("terminal",)
+            ),
+        ),
+        states={"pref_type": pref_type, "wealth": wealth},
+        state_transitions={
+            "pref_type": fixed_transition("pref_type"),
+            "wealth": _next_wealth,
+        },
+        actions={"consumption": wealth},
+        functions={"utility": _two_carrier_utility},
+        constraints={"affordable": _affordable},
+    )
+
+
+def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
+    """Two type-carrying regimes read one typed terminal in the same period."""
+    ages = AgeGrid(start=0, stop=2, step="Y")
+    return Model(
+        regimes={
+            "left": _two_carrier_regime(stay="left"),
+            "right": _two_carrier_regime(stay="right"),
+            "terminal": Regime(
+                regime_transitions=None,
+                states={
+                    "pref_type": DiscreteGrid(
+                        category_class=independent_types.PrefType
+                    ),
+                    "wealth": LinSpacedGrid(start=0, stop=10, n_points=11),
+                },
+                functions={"utility": _typed_bequest},
+            ),
+        },
+        ages=ages,
+        regime_id_class=_TwoCarrierRegimeId,
+        initial_regimes={0: ("left", "right")},
+        execution_config=execution_config,
+    )
+
+
+def _two_carrier_params() -> dict:
+    sector = _sector_params(typed_terminal=True)
+    return {
+        "discount_factor": 0.9,
+        "left": sector["working"],
+        "right": sector["working"],
+        "terminal": sector["terminal"],
+    }
+
+
+def test_two_carriers_reading_one_typed_terminal_equal_the_unblocked_solve() -> None:
+    """Two regimes sharing each type's selected terminal view solve bit for bit."""
+    params = _two_carrier_params()
+
+    got = _values(model=_two_carrier_model(execution_config=_blocked()), params=params)
+
+    _assert_values_bitwise_equal(
+        got=got,
+        expected=_values(
+            model=_two_carrier_model(execution_config=ExecutionConfig()),
+            params=params,
+        ),
+    )
+
+
+def test_a_type_view_two_carriers_share_is_released_after_the_second_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each type's shared terminal view is freed once, by its last reader."""
+    commits: list[tuple[object, int]] = []
+    commit = PeriodTransferCache.commit_consumer
+
+    # keyword-only-exempt: primary-argument=self
+    def observed(self: PeriodTransferCache, *, key: Any) -> Any:
+        released = commit(self, key=key)
+        commits.append((key, len(released)))
+        return released
+
+    monkeypatch.setattr(PeriodTransferCache, "commit_consumer", observed)
+    _two_carrier_model(execution_config=_blocked()).solve(
+        params=_two_carrier_params(), log_level="off"
+    )
+
+    by_view: dict[object, list[int]] = {}
+    for key, n_released in commits:
+        by_view.setdefault(key, []).append(n_released)
+    assert sorted(by_view.values()) == [[0, 1]] * _N_TYPES
