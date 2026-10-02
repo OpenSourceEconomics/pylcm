@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 from benchmarks.asv_machine import stable_ram
+from benchmarks.pr_comment import display_names, display_sort_key
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,9 @@ _ORG_REPO = "git@github.com:OpenSourceEconomics/OpenSourceEconomics.github.io.gi
 _BRANCH = "main"
 _SITE_DIR = Path(".benchmark-site")
 _SUBDIR = "pylcm-benchmarks"
+
+# Separates the benchmark label from the statistic label in a dashboard title.
+_TITLE_SEPARATOR = " \u2014 "
 
 # Benchmarks renamed from an ASV-native `time_*` method to `track_execution_time`.
 # Both report seconds over the same params, but `time_*` is ASV's own repeat
@@ -59,6 +63,8 @@ def publish() -> None:
     _default_x_axis_to_date(html_dir / "graphdisplay.js")
     _default_y_axis_to_log(html_dir / "graphdisplay.js")
     _log_scale_summary_thumbnails(html_dir / "summarygrid.js")
+    _group_summary_grid_by_title(html_dir / "summarygrid.js")
+    _title_and_order_benchmarks(html_dir / "index.json")
     _pad_sparse_graphs(html_dir / "graphs")
 
     _generate_comparison(results_dir)
@@ -369,6 +375,59 @@ def _log_scale_summary_thumbnails(summarygrid_js: Path) -> None:
         logger.warning("thumbnail y-axis not found in summarygrid.js — skipping")
         return
     summarygrid_js.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+
+
+def _title_and_order_benchmarks(index_json: Path) -> None:
+    """Title and order the dashboard's benchmarks as the PR comparison table does.
+
+    Each benchmark's `pretty_name`, which asv shows in the grid, the navigation and
+    the detail view, becomes "<benchmark label> — <statistic label>" from the labels
+    in `pr_comment`, so the dashboard and the PR table cannot drift apart. The
+    benchmarks are reordered by the table's order, which puts each family's execution
+    time first; the grid lays thumbnails out in this order.
+    """
+    data = json.loads(index_json.read_text(encoding="utf-8"))
+    for name, benchmark in data["benchmarks"].items():
+        benchmark["pretty_name"] = _TITLE_SEPARATOR.join(display_names(name))
+    data["benchmarks"] = {
+        name: data["benchmarks"][name]
+        for name in sorted(data["benchmarks"], key=display_sort_key)
+    }
+    index_json.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _group_summary_grid_by_title(summarygrid_js: Path) -> None:
+    """Group the front-page grid by benchmark label instead of by module.
+
+    asv heads each group with the benchmark's module and each thumbnail with its
+    `pretty_name`. Split the `pretty_name` written by `_title_and_order_benchmarks`
+    instead: the benchmark label heads the group and the statistic label the
+    thumbnail, mirroring the two columns of the PR comparison table. Best-effort --
+    a layout change upstream just leaves asv's grouping.
+    """
+    if not summarygrid_js.is_file():
+        logger.warning("summarygrid.js not found — skipping title grouping")
+        return
+    separator = json.dumps(_TITLE_SEPARATOR)
+    edits = {
+        "            var group = bm_name.slice(0, i);\n": (
+            "            var group = bm.pretty_name ? "
+            f"bm.pretty_name.split({separator})[0] : bm_name.slice(0, i);\n"
+        ),
+        "        var display_name = bm.pretty_name || "
+        "bm.name.slice(bm.name.indexOf('.') + 1);\n": (
+            "        var display_name = bm.pretty_name ? "
+            f"bm.pretty_name.split({separator}).pop() : "
+            "bm.name.slice(bm.name.indexOf('.') + 1);\n"
+        ),
+    }
+    text = summarygrid_js.read_text(encoding="utf-8")
+    if not all(anchor in text for anchor in edits):
+        logger.warning("grid grouping not found in summarygrid.js — skipping")
+        return
+    for anchor, replacement in edits.items():
+        text = text.replace(anchor, replacement, 1)
+    summarygrid_js.write_text(text, encoding="utf-8")
 
 
 def _patch_html_title(index_html: Path) -> None:

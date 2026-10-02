@@ -172,3 +172,38 @@ def test_renamed_benchmark_carries_its_history(tmp_path: Path) -> None:
     loaded = asv.results.Results.load(str(path))
     assert loaded.get_result_keys({new: {"version": "1"}}) == {new}
     assert loaded.get_result_value(new, [["1", "8"]]) == [0.05, 0.24]
+
+
+def test_dashboard_index_uses_table_titles_and_order(tmp_path: Path) -> None:
+    """Benchmarks get the PR table's titles, execution time first per family."""
+    index_json = tmp_path / "index.json"
+    names = [
+        "bench_aca_baseline.AcaBaseline.track_compilation_time",
+        "bench_aca_baseline.AcaBaseline.track_execution_time",
+        "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem",
+    ]
+    index_json.write_text(
+        json.dumps({"benchmarks": {name: {"name": name} for name in names}}),
+        encoding="utf-8",
+    )
+
+    publish._title_and_order_benchmarks(index_json)
+
+    benchmarks = json.loads(index_json.read_text(encoding="utf-8"))["benchmarks"]
+    assert [bm["pretty_name"] for bm in benchmarks.values()] == [
+        "ACA (reduced) — warm solve + simulate (reuses compiled code)",
+        "ACA (reduced) — cold solve + simulate (first run, includes compilation)",
+        "ACA (reduced) — peak CPU mem",
+    ]
+
+
+def test_summary_grid_groups_by_title(tmp_path: Path) -> None:
+    """The installed asv grid heads groups and thumbnails with the title's parts."""
+    summarygrid_js = tmp_path / "summarygrid.js"
+    shutil.copy(_ASV_WWW / "summarygrid.js", summarygrid_js)
+
+    publish._group_summary_grid_by_title(summarygrid_js)
+
+    text = summarygrid_js.read_text(encoding="utf-8")
+    assert "var group = bm.pretty_name ? bm.pretty_name.split(" in text
+    assert "var display_name = bm.pretty_name ? bm.pretty_name.split(" in text

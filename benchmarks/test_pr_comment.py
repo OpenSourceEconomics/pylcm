@@ -579,3 +579,64 @@ def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
     assert "2.50 s" not in table
     assert "0.00 s" not in table
     assert head_file.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("benchmark_name", "expected"),
+    [
+        (
+            "bench_aca_baseline.AcaBaseline.track_execution_time",
+            ("ACA (reduced)", "warm solve + simulate (reuses compiled code)"),
+        ),
+        (
+            (
+                "bench_aca_baseline.AcaBaselineGpuPeakMem."
+                "track_peak_gpu_mem_load_supplied_solution_simulate"
+            ),
+            ("ACA (reduced)", "peak GPU mem: load saved solution + simulate"),
+        ),
+        (
+            "bench_collective_household.ReferenceChainSolve.track_execution_time",
+            ("Reference Chain - Solve", "execution time"),
+        ),
+        (
+            "bench_simulation_dispatch.SimulationDispatch.track_second_call_compiles",
+            (
+                "SimulationDispatch",
+                "backend compile requests on second simulation call",
+            ),
+        ),
+    ],
+)
+def test_display_names_match_the_comparison_table(
+    *, benchmark_name: str, expected: tuple[str, str]
+) -> None:
+    """A dashboard benchmark gets the table's benchmark and statistic labels."""
+    assert pr_comment.display_names(benchmark_name) == expected
+
+
+def test_display_sort_key_orders_families_then_execution_time_first() -> None:
+    """Families follow the table order; each starts with its execution time."""
+    names = [
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
+        (
+            "bench_aca_baseline.AcaBaselineGpuPeakMem."
+            "track_peak_gpu_mem_automatic_solve_simulate"
+        ),
+        "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem",
+        "bench_aca_baseline.AcaBaseline.track_compilation_time",
+        "bench_aca_baseline.AcaBaseline.track_execution_time",
+    ]
+
+    assert sorted(names, key=pr_comment.display_sort_key) == [
+        "bench_aca_baseline.AcaBaseline.track_execution_time",
+        "bench_aca_baseline.AcaBaseline.track_compilation_time",
+        "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem",
+        (
+            "bench_aca_baseline.AcaBaselineGpuPeakMem."
+            "track_peak_gpu_mem_automatic_solve_simulate"
+        ),
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
+        "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
+    ]
