@@ -67,7 +67,7 @@ jobs:
       - name: Restore or install the benchmark environment
         uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.80.0
+          pixi-version: v0.81.0
           pixi-bin-path: ${{ runner.temp }}/pixi-bin/pixi
           cache: true
           cache-write: false

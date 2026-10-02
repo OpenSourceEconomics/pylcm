@@ -13,6 +13,7 @@ from lcm import (
     UniformIIDProcess,
 )
 from lcm.ages import AgeGrid
+from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
@@ -154,19 +155,24 @@ def _next_regime_multi(
     )
 
 
-@functools.cache
 def get_multi_regime_model(
     *,
     n_periods: int,
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ],
+    execution_config: ExecutionConfig | None = None,
 ) -> Model:
     """Create a model with two non-terminal regimes that each have shock grids.
 
     Triggers cross-regime shock transitions (work → retire), which is the
-    scenario that fails when shock stubs leak across regime boundaries.
+    scenario that fails when shock stubs leak across regime boundaries. Under
+    the default execution config the model is built once per argument pair.
     """
+    if execution_config is None:
+        return _get_default_multi_regime_model(
+            n_periods=n_periods, distribution_type=distribution_type
+        )
     work_final_age = n_periods // 2 - 1
     retire_final_age = n_periods - 2
 
@@ -233,6 +239,23 @@ def get_multi_regime_model(
             "retire_final_age": retire_final_age,
         },
         initial_regimes={0: "work"},
+        execution_config=execution_config,
+    )
+
+
+@functools.cache
+def _get_default_multi_regime_model(
+    *,
+    n_periods: int,
+    distribution_type: Literal[
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+    ],
+) -> Model:
+    """Return the multi-regime model under the default execution config, cached."""
+    return get_multi_regime_model(
+        n_periods=n_periods,
+        distribution_type=distribution_type,
+        execution_config=ExecutionConfig(),
     )
 
 

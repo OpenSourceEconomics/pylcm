@@ -42,6 +42,8 @@ def publish() -> None:
     subprocess.run(["asv", "publish"], check=True)
     _patch_html_title(html_dir / "index.html")
     _default_x_axis_to_date(html_dir / "graphdisplay.js")
+    _default_y_axis_to_log(html_dir / "graphdisplay.js")
+    _log_scale_summary_thumbnails(html_dir / "summarygrid.js")
     _pad_sparse_graphs(html_dir / "graphs")
 
     _generate_comparison(results_dir)
@@ -238,6 +240,65 @@ def _default_x_axis_to_date(graphdisplay_js: Path) -> None:
         )
         return
     graphdisplay_js.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+
+
+def _default_y_axis_to_log(graphdisplay_js: Path) -> None:
+    """Default the per-benchmark graph y-axis to the log scale.
+
+    asv's detail view switches to a log y-axis only when the `y-axis-scale=log` URL
+    param is present. Add an `else` branch to the param parser so log is the default
+    when no param is given, and make the log toggle write `linear` when switched off,
+    so that switching it off does not fall back to the new default. Best-effort — a
+    parser change upstream just leaves the asv default in place.
+    """
+    if not graphdisplay_js.is_file():
+        logger.warning("graphdisplay.js not found — skipping log-axis default")
+        return
+    edits = {
+        "            delete params['y-axis-scale'];\n        }\n": (
+            "            delete params['y-axis-scale'];\n"
+            "        } else {\n"
+            "            $('#log-scale').addClass('active');\n"
+            "            log_scale = true;\n"
+            "        }\n"
+        ),
+        "log_scale ? ['log']: []": "log_scale ? ['log'] : ['linear']",
+    }
+    text = graphdisplay_js.read_text(encoding="utf-8")
+    if not all(anchor in text for anchor in edits):
+        logger.warning(
+            "y-axis-scale handling not found in graphdisplay.js — skipping log default"
+        )
+        return
+    for anchor, replacement in edits.items():
+        text = text.replace(anchor, replacement, 1)
+    graphdisplay_js.write_text(text, encoding="utf-8")
+
+
+def _log_scale_summary_thumbnails(summarygrid_js: Path) -> None:
+    """Draw the front-page thumbnail graphs on a log y-axis.
+
+    Non-positive values have no logarithm and are left out of the thumbnail.
+    Best-effort — a layout change upstream just leaves the linear thumbnails.
+    """
+    if not summarygrid_js.is_file():
+        logger.warning("summarygrid.js not found — skipping log thumbnails")
+        return
+    anchor = "                        ticks: [],\n                        min: 0\n"
+    replacement = (
+        "                        ticks: [],\n"
+        "                        transform: function (v) {\n"
+        "                            return v > 0 ? Math.log(v) : null;\n"
+        "                        },\n"
+        "                        inverseTransform: function (v) {\n"
+        "                            return Math.exp(v);\n"
+        "                        }\n"
+    )
+    text = summarygrid_js.read_text(encoding="utf-8")
+    if anchor not in text:
+        logger.warning("thumbnail y-axis not found in summarygrid.js — skipping")
+        return
+    summarygrid_js.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
 
 
 def _patch_html_title(index_html: Path) -> None:

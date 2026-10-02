@@ -60,7 +60,7 @@ def test_every_cpu_coverage_upload_uses_the_cpu_python_flag() -> None:
         step
         for job in workflow["jobs"].values()
         for step in job.get("steps", ())
-        if step.get("uses") == "codecov/codecov-action@v7.0.0"
+        if str(step.get("uses", "")).startswith("codecov/codecov-action@")
     ]
 
     assert len(uploads) == 1
