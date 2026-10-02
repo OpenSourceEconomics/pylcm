@@ -22,11 +22,20 @@ what changed since.
 - `check_seals`, `verify`, `verify --self-test`, `generate_ci_workloads --check`,
   `prek run --all-files`: all exit 0.
 
+## Marvin evidence at 12be1db9 (run by the aca session)
+Clone `~/pylcm-inv-5a-r2`, outputs in `~/marvin-jobs/pylcm-inv-5a/12be1db9/`; head
+matched and the tree was clean in both jobs.
+
+| Job | Set | Tests | Fail | Err | Skip | Wall (junit / sacct) |
+|---|---|---|---|---|---|---|
+| 28031402 | main fp64, `-n 96` | 5410 | 0 | 0 | 39 | 0:09:54 / 0:11:01 |
+| 28031403 | main fp32, `-n 96` | 5410 | 0 | 0 | 44 | 0:09:02 / 0:09:26 |
+
+All 296 reseal parametrizations passed at both precisions, including the 4 earlier
+failures and both `type_local_decision:*` rows.
+
 ## Still to do
-1. Marvin rerun of `drivers/marvin/battery5a.sbatch`, `SET=main`, `-n 96`, fp64 then
-   fp32, on this branch's head. Pass: all 6 reseal parametrizations pass, no other
-   failures.
-2. The GPU simulate driver, job 28029945 at 9dc2145a, was still pending at the time of
-   writing.
-3. Then a PR stacked on #486.
-4. Deferred: grouping for taste shocks, gated edges and replay routes.
+1. The GPU simulate driver, job 28029945, is pinned to 9dc2145a in `~/pylcm-inv-5a`
+   and was pending on priority (estimated start 2026-10-03 03:35). Its source
+   differs from this head only in tests and certificate files.
+2. Deferred: grouping for taste shocks, gated edges and replay routes.
