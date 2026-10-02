@@ -3071,7 +3071,7 @@ def _period_transfer_scratch_reservations(
         if triple[1] != period:
             continue
         for transfer in program.input_transfer_plan:
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+            if transfer.delivers_stored_buffer:
                 continue
             cost = transfer.cost
             unplanned = sorted(frozenset(cost.devices) - frozenset(device_ids))
@@ -3262,16 +3262,16 @@ def _aligned_input_artifacts(
 ) -> tuple[ValueArtifactAddress, ...]:
     """Name the values one program's executable is handed without a copy.
 
-    A planned program's resolved transfer plan says which reads reach the
-    executable in their stored layout; every other transfer kind allocates a
-    copy that the stored buffer outlives, so both are live. A program with no
-    plan reads its declared values directly.
+    A planned program's transfer says whether the executable receives the stored
+    buffer itself. An aligned transport of a selected view still receives a
+    fresh block, so its stored owner remains live. A program with no plan
+    reads its declared values directly.
     """
     if metadata.input_transfer_plan:
         return tuple(
             transfer.target
             for transfer in metadata.input_transfer_plan
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+            if transfer.delivers_stored_buffer
         )
     return tuple(read.target for read in metadata.requirements.value_reads)
 
@@ -3297,7 +3297,7 @@ def _candidate_resident_bytes(
         frozenset(
             transfer.source
             for transfer in program.input_transfer_plan
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+            if transfer.delivers_stored_buffer
         )
         if program.input_transfer_plan
         else frozenset(read.source for read in program.requirements.value_reads)
@@ -3311,7 +3311,7 @@ def _candidate_resident_bytes(
     copied_inputs: set[Hashable] = set()
     temporary_bytes: dict[int, int] = {}
     for transfer in program.input_transfer_plan:
-        if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+        if transfer.delivers_stored_buffer:
             continue
         kept = _compiler_reads_source(shardings=input_shardings, source=transfer.source)
         if transfer.reused_by_several_consumers:
