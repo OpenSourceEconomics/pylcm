@@ -454,9 +454,9 @@ EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 50
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 52
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "b176bba30443cc35e8148ad34e8e3fdd69bb0639a118e984b4b9379ffd5349e9"
+    "fda7a5bd745f56321762741f5299af83dafd8ac904ac2ebc963e86aaa53051f7"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
@@ -3078,6 +3078,15 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
     stakeholders=stakeholders,
     pareto_weights=pareto_weights,
 )""",
+        # The grouped route's dense reducer must reduce the type-local Q/F it is
+        # declared beside, never the ordinary one.
+        "type_local_per_subject_decisions": """type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
+    state_action_space=state_action_space,
+    Q_and_F_functions=type_local_Q_and_F_functions,
+    has_taste_shocks=has_taste_shocks,
+    stakeholders=stakeholders,
+    pareto_weights=pareto_weights,
+)""",
         "programs": """programs = build_simulation_programs(
     context=solver_context,
     Q_and_F_functions=Q_and_F_functions,
@@ -3203,6 +3212,11 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
     prepares the same cache with bounded transient templates; budgeted preparation
     is deferred until live residency is available at the first dispatch.
 
+    The ordinary and the type-local decision families are declared by the same
+    pinned per-period builder, and the forward selector that substitutes the
+    type-local family on the grouped route is pinned beside them, so both
+    families stay inside this corridor.
+
     Callable ASTs pin these executable bodies independently of refreshable byte
     seals. Separate module surfaces forbid import rebinding, altered constants,
     descriptors or replacement classes from bypassing those body checks.
@@ -3212,6 +3226,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
             "30c890cbba9586b5a0c27495d483e73b83c17267178a317a3b298d4702d42ab1",
             {
                 "build_simulation_programs": "22ff4a3460252d9a7431e795eff0344bf87b038f30f0132dd914db6a7ee58ea0",
+                "_decision_programs": "1594a9e60852e1db131b0f158f3c48ca66f7ac4f36e5ea22357b7e98dd559f6a",
                 "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
                 "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
                 "budgeted_simulation_programs_ready": "0cb813fd106dee1a74a7a04138ce35ed40fafbefc5731cdc618535313fc3f87f",
@@ -3235,6 +3250,7 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
                 "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
                 "SimulationPrograms.__post_init__": "4628d895b955a9c1915e50c12972b3d7b7981e72bdb2d3e832a23b5b8aec2322",
                 "SimulationPrograms.declared_axis_names": "1451b9d993c5de21035c9a25f9aa19ba953d2e8dfebb5f952bda617d2fa69b81",
+                "SimulationPrograms.forward_decision": "369b61edb30600fcabc910d0d6a333a939519fcda229f315d91101b96cb4de3f",
                 "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
                 "route_output_roles": "81ccd2cdf1a29d1dcb3021d775c4abc8cb70364819a027303968afc69af19a2e",
                 "subject_axis": "2d1dda5c95debf5b8c7d0a72c8fa71db6c42b2fb22763cc943ec494dfd3d942f",
@@ -6408,6 +6424,19 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         "src/_lcm/simulation/runtime.py",
         "        with jax.set_mesh(mesh):",
         "        with jax.set_mesh(None):",
+    ),
+    # The grouped route dispatches the type-local decision family in place of
+    # the ordinary one; both its selection and its dense reducer's Q/F pairing
+    # are live candidate transport.
+    "type_local_decision:ordinary_decision_shadows_type_local": (
+        SIMULATION_PROGRAM_TYPES_SOURCE,
+        "MappingProxyType({**self.decision, **self.type_local_decision})",
+        "MappingProxyType({**self.type_local_decision, **self.decision})",
+    ),
+    "type_local_decision:reducer_reads_ordinary_q_and_f": (
+        PROCESSING_SOURCE,
+        "        Q_and_F_functions=type_local_Q_and_F_functions,\n        has_taste_shocks",
+        "        Q_and_F_functions=Q_and_F_functions,\n        has_taste_shocks",
     ),
 }
 

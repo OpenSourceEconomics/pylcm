@@ -20,7 +20,7 @@ def test_grouped_guard_population_is_independent() -> None:
         direct_flow.action_grid_mutation_specs(repo_root=root),
         direct_flow.grouped_mapper_mutation_specs(repo_root=root),
     )
-    assert tuple(map(len, populations)) == (406, 50, 37, 10, 18)
+    assert tuple(map(len, populations)) == (406, 52, 37, 10, 18)
     guard = direct_flow.grouped_guard_mutation_specs(repo_root=root)
     assert len(guard) == 6
     digest = hashlib.sha256(("\n".join(sorted(guard)) + "\n").encode()).hexdigest()
