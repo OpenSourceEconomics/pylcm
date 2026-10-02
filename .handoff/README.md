@@ -1,8 +1,9 @@
 # Handoff: invariant-state execution (#486 and follow-ups)
 
-This directory is a working space for passing the work between sessions. CI's
-`handoff-guard` job fails any pull request into `main` while it exists, so delete it
-before merging. It is a copy of the original local handoff (2026-10-02), updated by
+This directory is a working space for passing the work between sessions. Delete it
+before anything merges into `main`. A `handoff-guard` workflow that fails pull
+requests into `main` while it exists is pending: the cloud session's token cannot
+write workflow files, so a person has to add it. It is a copy of the original local handoff (2026-10-02), updated by
 the cloud session that now owns the work:
 https://claude.ai/code/session_01Pxm4joxHzgeNTvT5vf4eN9
 
