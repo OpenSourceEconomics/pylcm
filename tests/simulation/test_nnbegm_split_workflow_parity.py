@@ -130,6 +130,7 @@ def test_result_without_replay_policies_is_refused(route: str) -> None:
         _simulate(model=model, solution=without_replay)
 
 
+@pytest.mark.slow
 def test_replay_policies_published_by_the_other_outer_search_are_refused() -> None:
     """A replay policy of the wrong route cannot stand in for this one's."""
     finite_solution = _build("finite").solve(params=_PARAMS, log_level="debug")

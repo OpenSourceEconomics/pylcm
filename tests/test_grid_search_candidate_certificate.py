@@ -2329,6 +2329,7 @@ def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask
             aaae(observed, expected, decimal=DECIMAL_PRECISION)
 
 
+@pytest.mark.slow
 def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):
