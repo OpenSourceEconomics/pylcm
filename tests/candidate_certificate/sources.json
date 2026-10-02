@@ -366,7 +366,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053"
+            "sha256": "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "2e1a37d90f0d2308a4c28f3679319daf002c4c9a8c7d3654f426eb3c733d6009"
+        "source_inventory_sha256": "d4a10ed7216b3898db4afe3e0c70b21ba9b597e15239e5daee2700d2a118f521"
       },
       "fast": {
         "candidate_sources": [
@@ -836,7 +836,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053"
+            "sha256": "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "2e1a37d90f0d2308a4c28f3679319daf002c4c9a8c7d3654f426eb3c733d6009"
+        "source_inventory_sha256": "d4a10ed7216b3898db4afe3e0c70b21ba9b597e15239e5daee2700d2a118f521"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "2e1a37d90f0d2308a4c28f3679319daf002c4c9a8c7d3654f426eb3c733d6009",
+  "source_inventory_sha256": "d4a10ed7216b3898db4afe3e0c70b21ba9b597e15239e5daee2700d2a118f521",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1310,7 +1310,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053"
+      "sha256": "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",

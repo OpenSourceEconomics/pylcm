@@ -399,7 +399,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
     PROCESSING_SOURCE: "76d7f57677d18dcc75492b5a0ba4a769d439bf8758b3d1dc4d2bf9e2b7847a4e",
-    GRID_SEARCH_SOURCE: "c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053",
+    GRID_SEARCH_SOURCE: "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
@@ -2515,7 +2515,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "6f5bb1ab5426382567e52565dc5c417c62ca6a930e8ac22da8aa4eb8c79026bf",
+                "GridSearch.build_period_kernels": "0c4a2f448364a67ec9d06e86c9deaf9b388b19c0e8d0b5165c1cc5e328e6a828",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -8000,21 +8000,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=grid_source,
             old=(
                 "                    CoreExecutionDisposition.PLANNED\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             new=(
                 "                    CoreExecutionDisposition.DENSE\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             label="native graph disposition authority",
         ),
         "native_graph:dense_reason_erased": replace_once(
             source=grid_source,
             old=(
-                "                disposition_reason=(\n"
-                "                    None if requirements.axes else "
-                "action_streaming.value\n"
-                "                ),"
+                "                disposition_reason=(None if requires_plan else "
+                "action_streaming.value),"
             ),
             new="                disposition_reason=None,",
             label="native graph disposition-reason authority",
