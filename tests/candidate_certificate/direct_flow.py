@@ -24,11 +24,15 @@ semantic boundary and is not re-proved here. The proof is strict by design: a ne
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
 
-The nine corridors are:
+The ten corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
   optional unchanged fold quadrature -> compiled VALUE core;
+* singleton action-partitioned solve -> admitted GridSearch request -> one
+  contiguous run of whole C-order blocks per device of the action axis, unowned
+  and padded slots infeasible -> exact hard-max accumulator -> gather over the
+  action axis -> ascending-order exact hard-max merge -> compiled VALUE core;
 * singleton simulate -> published dense argmax or streamed C-order hard max ->
   subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
@@ -5414,6 +5418,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _ACTION_PARTITION_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _action_partition_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _UNIFORM_PROCESS_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5537,6 +5548,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "Q_and_F -> canonical C-order action blocks -> exact mergeable "
                 "hard max -> optional unchanged fold quadrature -> VALUE-only "
                 "compiled core"
+            ),
+            "singleton_action_partitioned_solve": (
+                "admitted GridSearch request -> device-mapped kernel over the "
+                "action axis -> per-device contiguous run of whole C-order blocks, "
+                "block zero outside the scan, unowned and padded slots infeasible "
+                "-> exact hard-max accumulator -> gather over the action axis -> "
+                "ascending-order exact hard-max merge -> VALUE-only compiled core"
             ),
             "singleton_simulate": (
                 "published decision program: Q_and_F -> canonical dense argmax or "
@@ -7715,6 +7733,359 @@ def allocation_reservation_mutation_specs(
     """Keep represented-allocation controls separately identifiable."""
     return _callable_mutation_specs(
         repo_root=repo_root, mutations=_ALLOCATION_RESERVATION_MUTATIONS
+    )
+
+
+# The action-partitioned singleton solve is its own corridor. GridSearch selects
+# it only for an admitted request; the device-mapped kernel hands Q_and_F
+# exactly its declared arguments and the planner-bound width; every device
+# streams the contiguous run of whole blocks the layout assigns it, block zero
+# outside the scan as on the unpartitioned stream, with blocks it does not own
+# and padded slots infeasible; the per-device hard-max accumulators are
+# gathered over the action axis and merged in ascending partition order with the
+# exact hard-max law. Shared stream helpers are pinned here too, at the digests
+# the unpartitioned corridor pins them to, so the route is proved end to end.
+_ACTION_PARTITION_CONTRACTS = {
+    GRID_SEARCH_SOURCE: (
+        "2e4ef4b493dc7e205b328af04c5a1f6003150bd25e62382a24a82c53b52be675",
+        {
+            "GridSearch.build_period_kernels": "19bec5035c11fc9d3657e1a780169754c2e3cb1164f2d12804ce13e598dc986b",
+            "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
+            "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+            "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
+            "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
+        },
+    ),
+    MAX_Q_SOURCE: (
+        "e96b4051cb461360246205620fe84dc01fff7d5c13526eeea1fe3b05fc335db4",
+        {
+            "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
+            "_ActionPartitionedMaxQOverA.__call__": "42b11107cae7f2d6ddcf098584a4bf01e358b5c333b6e94c785c0d525ef42d30",
+            "_arguments_named": "6666a0078aec6dfa0c91d175ea84cf4c9342b770d9c32704b848fa1a209742d7",
+            "_OnActionPartitionAxis.__call__": "5a6a2bc83fef20de071e87d28740dad799a7448607a2679a1ad2f6de6bae5114",
+            "_call_with_operands": "5758549543745e6470dae727d7a774c784acf7fd6e5e2e314626015b8dece189",
+            "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
+            "_fail_if_action_width_keyword_collides": "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4",
+        },
+    ),
+    ACTION_STREAMING_SOURCE: (
+        "1d6f50bb41c017a1bc8200411ea6fc5ebadedf763beceab0b4608720b3c4fde1",
+        {
+            "build_partitioned_streaming_max_Q_over_a": "c5d535574a8f38951a58347fdb54875ad8904fb75ca883397ce392a687df5e38",
+            "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
+            "_fail_if_not_positive_int": "6944a14f1c0cef5505aaf713589fa95b9aa921ab03d6ef624db5a24c1011e2e0",
+            "ActionPartitionLayout.__post_init__": "9957631cd979a1ec48136310cb5e3cfb246b1c7367331544c68447b0b092539b",
+            "ActionPartitionLayout.n_blocks": "269793628a54b8cd15b276fa360f884a97483ffbeb27bff2b68d4ba94ae055fe",
+            "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
+            "ActionPartitionLayout.block_range": "c306308ded5a8642519248ce4bd7f400c8ea13b25b06a3fe2c01c24c90f03845",
+            "ActionPartitionLayout.action_interval": "dbaa877fae3466c4ea5af7c2657fe18be813c4487ed3a26e6cbb06b1fac17aba",
+            "_PartitionedStreamingHardMax.__call__": "26e4d541e495cc023c1c1850682225cd9e74d08e6e0cbb1c0b29e7227e0c3b60",
+            "_PartitionedStreamingHardMax.local": "679866bf38deece50d7e7ecea0c41b653ab6c8bf656d6bf73c6c395f68e8c169",
+            "_evaluate_owned_block": "f95eb5df6591891562f8d2779dd24a879e5f6fd931f146888b46393b7f4e6366",
+            "_validate_streaming_configuration": "aadcd9931b24e60ef8ecdac59f540163642ce656cc10c88e7d58eafa0c790210",
+            "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
+            "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
+            "_evaluate_one_action": "4898f988e87d4d49195e08da2651e4dc9a7c2601e827f686460e71dfd95d1e89",
+            "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
+            "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
+            "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
+            "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
+            "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
+        },
+    ),
+    ACTION_REDUCTION_SOURCE: (
+        "875f69aba4cd24712f749ad4276232dfbe3a3b311ddb53c3d6f98d62b85bd987",
+        {
+            "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
+            "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
+            "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
+            "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
+            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
+        },
+    ),
+}
+
+
+def _action_partition_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin the action-partitioned hard-max route independently of byte seals."""
+    surface, callables = _ACTION_PARTITION_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="action-partitioned route", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            "action-partitioned route: module bindings or kernel schemas changed"
+        )
+    return errors
+
+
+# Each control seeds one defect into the action-partitioned hard-max route: the
+# GridSearch selection, the device-mapped kernel, the contiguous block layout,
+# the per-device stream, the accumulator exchange, and the ordered merge.
+_ACTION_PARTITION_MUTATIONS = {
+    "action_partition:merge_order_reversed": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "tuple(range(self.n_partitions))",
+        "tuple(reversed(range(self.n_partitions)))",
+        1,
+    ),
+    "action_partition:merge_starts_at_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[0]",
+        "order[-1]",
+        1,
+    ),
+    "action_partition:merge_skips_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[1:]",
+        "order[1:-1]",
+        1,
+    ),
+    "action_partition:elementwise_max_replaces_hard_max_merge": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        (
+            "HARD_MAX_REDUCTION.merge(left=merged, right=jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        (
+            "jax.tree.map(jnp.maximum, merged, jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:merged_accumulator_discarded": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "HARD_MAX_REDUCTION.finalize(accumulator=merged)",
+        (
+            "HARD_MAX_REDUCTION.finalize(accumulator=jax.tree.map("
+            "lambda leaf: leaf[order[0]], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:local_only_reduce": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        (
+            "merge_partition_accumulators(accumulators=gathered, "
+            "order=tuple(range(self.n_partitions)))"
+        ),
+        "HARD_MAX_REDUCTION.finalize(accumulator=local)",
+        1,
+    ),
+    "action_partition:gather_replaced_by_local_copies": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.all_gather(local, self.axis_name)",
+        "jax.tree.map(lambda leaf: jnp.stack([leaf] * self.n_partitions), local)",
+        1,
+    ),
+    "action_partition:partition_index_constant": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.axis_index(self.axis_name).astype(jnp.int32)",
+        "jnp.int32(0)",
+        1,
+    ),
+    "action_partition:block_zero_outside_scan_removed": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        (
+            "_start_reduction(block=_evaluate_owned_block(block_index=zero, "
+            "first_block_index=first_block_index, "
+            "stop_block_index=stop_block_index, evaluate_block=evaluate_block))"
+        ),
+        "HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros(()))",
+        1,
+    ),
+    "action_partition:block_zero_rescanned": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "jnp.maximum(first_block_index, 1)",
+        "first_block_index",
+        1,
+    ),
+    "action_partition:start_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "partition * n_blocks // self.n_partitions",
+        "partition * n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:stop_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "(partition + 1) * n_blocks // self.n_partitions",
+        "(partition + 1) * n_blocks // self.n_partitions - 1",
+        1,
+    ),
+    "action_partition:padded_tail_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "keyword",
+        "n_actions",
+        "n_actions + self.block_width",
+        2,
+    ),
+    "action_partition:layout_block_count_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.n_blocks",
+        "expression",
+        "-(-self.n_actions // self.block_width)",
+        "self.n_actions // self.block_width",
+        1,
+    ),
+    "action_partition:layout_run_length_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.blocks_per_partition",
+        "expression",
+        "-(-self.n_blocks // self.n_partitions)",
+        "self.n_blocks // self.n_partitions",
+        1,
+    ),
+    "action_partition:layout_block_range_overlaps": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.block_range",
+        "expression",
+        "(partition + 1) * self.n_blocks // self.n_partitions",
+        "(partition + 1) * self.n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:unowned_blocks_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "feasible & owned",
+        "feasible",
+        1,
+    ),
+    "action_partition:owned_upper_bound_inclusive": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "block_index < stop_block_index",
+        "block_index <= stop_block_index",
+        1,
+    ),
+    "action_partition:partition_local_action_ids": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "global_ids",
+        "global_ids - global_ids[0]",
+        1,
+    ),
+    "action_partition:kernel_ignores_planned_width": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "keyword",
+        "block_width",
+        "1",
+        1,
+    ),
+    "action_partition:q_arguments_unfiltered": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "expression",
+        (
+            "_arguments_named(arguments=states_actions_params, "
+            "names=self.q_and_f_arg_names)"
+        ),
+        "states_actions_params",
+        1,
+    ),
+    "action_partition:kernel_partition_count_dropped": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "n_partitions",
+        "1",
+        1,
+    ),
+    "action_partition:state_product_order_reversed": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "variables",
+        "tuple(reversed(state_names))",
+        2,
+    ),
+    "action_partition:manual_axes_widened": (
+        MAX_Q_SOURCE,
+        "_OnActionPartitionAxis.__call__",
+        "expression",
+        "frozenset({ACTION_PARTITION_AXIS})",
+        "frozenset(self.mesh.axis_names)",
+        1,
+    ),
+    "action_partition:route_selection_bypassed": (
+        GRID_SEARCH_SOURCE,
+        "GridSearch.build_period_kernels",
+        "expression",
+        "action_partition_mesh is not None",
+        "False",
+        1,
+    ),
+    "action_partition:request_silently_ignored": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "context.action_partitions == 1",
+        "True",
+        1,
+    ),
+    "action_partition:unstreamed_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "action_streaming is not _ActionStreamingDisposition.STREAMED",
+        "False",
+        1,
+    ),
+    "action_partition:fold_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.fold_state_names)",
+        "False",
+        1,
+    ),
+    "action_partition:co_map_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.co_map_state_names)",
+        "False",
+        1,
+    ),
+}
+
+EXPECTED_ACTION_PARTITION_MUTATION_COUNT = 29
+EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256 = (
+    "011688c988e1b107b5e63adc8cb13df4900bc84137531153bd2ab8743aeb9798"
+)
+
+
+def action_partition_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build the action-partitioned hard-max route's mutation population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ACTION_PARTITION_MUTATIONS
     )
 
 
@@ -10827,6 +11198,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     guard = grouped_guard_mutation_specs(repo_root=root)
     allocation = allocation_reservation_mutation_specs(repo_root=root)
     normal = normal_process_mutation_specs(repo_root=root)
+    partition = action_partition_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10844,6 +11216,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             | guard
             | allocation
             | normal
+            | partition
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10856,6 +11229,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    partition_cases = {name: cases.pop(name) for name in partition}
+    partition_admitted = sorted(
+        name for name, result in partition_cases.items() if not result["rejected"]
+    )
+    partition_names_match = (
+        len(partition_cases) == EXPECTED_ACTION_PARTITION_MUTATION_COUNT
+        and _mutation_name_digest(tuple(partition_cases))
+        == EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256
+    )
     normal_cases = {name: cases.pop(name) for name in normal}
     normal_admitted = sorted(
         name for name, result in normal_cases.items() if not result["rejected"]
@@ -10944,6 +11326,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "action_partition_mutations": partition_cases,
+        "action_partition_mutation_count": len(partition_cases),
+        "action_partition_names_match_expected": partition_names_match,
+        "admitted_action_partition_mutations": partition_admitted,
         "normal_process_mutations": normal_cases,
         "normal_process_mutation_count": len(normal_cases),
         "normal_process_names_match_expected": normal_names_match,
@@ -10978,6 +11364,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
+            and not partition_admitted
+            and partition_names_match
             and not normal_admitted
             and normal_names_match
             and not allocation_admitted
