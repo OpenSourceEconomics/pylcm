@@ -2741,7 +2741,7 @@ class _TargetContinuation:
     """
 
 
-def _draw_dependencies_by_law(
+def draw_dependencies_by_law(
     *,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
@@ -3197,7 +3197,7 @@ def _build_target_continuation(
         lottery_weights=lottery_weights,
         stochastic_names=lottery_variables,
     )
-    dependencies_by_law = _draw_dependencies_by_law(
+    dependencies_by_law = draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_variables
     )
     # A declared entry is a coordinate like any other, so a law reading a

@@ -239,6 +239,30 @@ _ROUTES = (
         period=0,
     ),
     _Route(
+        name="stochastic_node_draw",
+        build_model=lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm", n_periods=3, income_timing="draw", **_SMALL
+        ),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0
+        ),
+        period=0,
+    ),
+    _Route(
+        name="stochastic_node_draw_jump",
+        build_model=lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            income_timing="draw",
+            tax_kind="jump",
+            **_SMALL,
+        ),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0, tax_lump=1.0
+        ),
+        period=0,
+    ),
+    _Route(
         name="ride_discrete",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL

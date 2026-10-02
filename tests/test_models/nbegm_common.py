@@ -233,7 +233,7 @@ def make_alive_dead_model(
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
-    if isinstance(alive_solver, NBEGM):
+    if isinstance(alive_solver, OneMarginSolver):
         alive = ConsumptionSavingsRegime(
             actions=alive_actions,
             states=alive_states,

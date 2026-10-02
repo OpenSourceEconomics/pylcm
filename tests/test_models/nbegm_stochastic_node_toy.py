@@ -116,6 +116,20 @@ def next_liquid_from_savings(
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income)
 
 
+def next_liquid_from_savings_and_draw(
+    *,
+    savings: FloatND,
+    next_income: ContinuousState,
+    return_liquid: float,
+) -> ContinuousState:
+    """Liquid law reading the income drawn for next period, not the current one.
+
+    Toward `alive` the draw persists as next period's `income`; `dead` carries no
+    income, so toward `dead` it is drawn inside the transition and discarded.
+    """
+    return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(next_income)
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -130,6 +144,7 @@ def build_model(
     savings_max: float = 28.0,
     with_kind: bool = False,
     distributed_kind: bool = False,
+    income_timing: str = "current",
 ) -> Model:
     """Create the (alive, dead) tax toy with a stochastic ride-along income node.
 
@@ -148,6 +163,8 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
+        income_timing: `"current"` adds this period's income node to next
+            liquid; `"draw"` adds the income drawn for next period.
 
     Returns:
         The assembled `Model`.
@@ -168,7 +185,11 @@ def build_model(
         envelope_arithmetic=envelope_arithmetic,
     )
     alive_functions = {**alive_functions, "savings": savings}
-    liquid_law = next_liquid_from_savings
+    liquid_law = (
+        next_liquid_from_savings_and_draw
+        if income_timing == "draw"
+        else next_liquid_from_savings
+    )
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     extra_states: dict[str, Grid] = {"income": income_grid}
