@@ -172,3 +172,49 @@ queued native GPU-driver acceptance, or native ACA applicability. The general
 unblocked ULP/rounding decision and CI rebalance decision remain pending. No
 blanket tolerance, cache work, Stage 8A work or new receipt-intake repair is part
 of this chunk.
+
+## Eager action mesh and shared block assembly
+
+A subsequent Section 12 probe at parent base `d5fb50e1` found a real supported
+route defect. Three two-CPU public eager arms (block-major/count 1,
+period-major/count 2, block-major/count 2) retain the independently literal
+working `(8,3,2)` and terminal `(8,2,6)` complete values, all original type
+codes, shape/dtype/bytes; action one is the unique maximum, width one.
+Initial RED was **1 passed / 2 failed**, exact JUnit **0:00:16.872**: the eager
+Explicit action mesh disagreed with the action wrapper's stored Auto mesh.
+Context-only adaptation exposed Explicit outputs meeting Auto block assembly.
+A discrete-state sharded sibling with no action partitions proved this shared
+assembly defect; its public regression RED was **1 failure**, **0:00:05.274**.
+
+The minimum repair aligns only the wrapper's local axis typing when active mesh
+names/shape match, preserving physical devices and the sole manual action axis.
+At shared `write_block`, a strict existing physical-layout comparison precedes
+mesh-typing normalization; actual PartitionSpec, memory kind, shape and dtype
+survive. EagerCore/PlannedCore exact output identity contracts are untouched.
+All four new public regressions pass at fp64 in **0:00:35.412**; the complete
+scalar/logging/eager module passes **37 cases** at fp32 in **0:00:48.280**.
+The final fp64 eager identity/metadata, action admission and jitted/vmapped
+numerical/derivative slice passes **528 cases**, **0:01:50.015**. Existing
+ordered four-CPU eager placement and eight-CPU compiled action/state/invariant/
+block-major report pass **46 cases** at fp64 **0:00:37.833**, and fp32
+**0:00:36.616**. Every GREEN receipt has zero failures/errors/skips.
+
+The maintained certificate repin changes only
+`_OnActionPartitionAxis.__call__`; its transport surface is unchanged. Existing
+MAX_Q byte seals/inventory entries are regenerated; inventory membership remains
+116. Seal check, verification and all 600 mutation self-test controls pass, including
+all 29 action controls, with no relaxed
+declaration, allowlist, mutation population or gate. The shared assembly helper
+is outside the existing candidate-array certificate corridor; concrete public
+regressions cover this repair, without inventing certificate scope.
+Raw source/import identity, immutable RED/GREEN XMLs and logs are separate under
+aca-dev `.task-evidence/pylcm-handoff/eager-block-major-actions/`.
+
+A separate valid eager continuous-state probe fails earlier in interpolation
+with an Explicit gather out-sharding error; it never reaches block assembly and
+is not claimed repaired. These cases do not establish broader eager continuous/
+state-by-action support or GPU performance. Native macOS CI diagnosis and native
+ACA/GPU acceptance remain separate. The user has approved the general 8-ULP
+contract and macOS proposal, and selected Stage 8A; those are separate follow-up
+chunks. This mesh fix retains exact same-program and complete literal-byte gates.
+Parent alone commits/pushes; no worker commit or push occurred.
