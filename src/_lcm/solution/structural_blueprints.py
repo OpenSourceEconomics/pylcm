@@ -130,7 +130,10 @@ def frozen_policy(value: object) -> Hashable:
             "mapping",
             tuple(
                 sorted(
-                    ((frozen_policy(key), frozen_policy(item)) for key, item in value.items()),
+                    (
+                        (frozen_policy(key), frozen_policy(item))
+                        for key, item in value.items()
+                    ),
                     key=repr,
                 )
             ),

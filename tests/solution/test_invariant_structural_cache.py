@@ -63,8 +63,9 @@ def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int
         for name in _EXPENSIVE_BUILDERS:
             original = getattr(bi, name)
 
-            def observe(*args: Any, _name: str = name, _original: Any = original,
-                        **kwargs: Any) -> Any:
+            def observe(
+                *args: Any, _name: str = name, _original: Any = original, **kwargs: Any
+            ) -> Any:
                 calls[_name] += 1
                 return _original(*args, **kwargs)
 
@@ -149,9 +150,7 @@ def test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(
     assert calls == dict.fromkeys(calls, 0), calls
     fresh_same, _ = _workload(name=workload, execution_config=config)
     fresh_changed, _ = _workload(name=workload, execution_config=config)
-    _assert_values_identical(
-        first=same, second=_solve(model=fresh_same, params=params)
-    )
+    _assert_values_identical(first=same, second=_solve(model=fresh_same, params=params))
     _assert_values_identical(
         first=different, second=_solve(model=fresh_changed, params=changed)
     )
@@ -309,7 +308,7 @@ def test_cached_blueprints_retain_no_concrete_array() -> None:
     assert concrete == []
 
 
-def _walk(value: object, seen: set[int] | None = None) -> Iterator[object]:
+def _walk(value: object, *, seen: set[int] | None = None) -> Iterator[object]:
     """Yield every object reachable through containers and dataclass fields."""
     seen = set() if seen is None else seen
     if id(value) in seen:
@@ -318,14 +317,14 @@ def _walk(value: object, seen: set[int] | None = None) -> Iterator[object]:
     yield value
     if isinstance(value, Mapping | MappingProxyType):
         for key, child in value.items():
-            yield from _walk(key, seen)
-            yield from _walk(child, seen)
+            yield from _walk(key, seen=seen)
+            yield from _walk(child, seen=seen)
     elif isinstance(value, tuple | list | set | frozenset):
         for child in value:
-            yield from _walk(child, seen)
+            yield from _walk(child, seen=seen)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
         for field in dataclasses.fields(value):
-            yield from _walk(getattr(value, field.name), seen)
+            yield from _walk(getattr(value, field.name), seen=seen)
 
 
 def test_pickling_a_model_drops_its_blueprints() -> None:

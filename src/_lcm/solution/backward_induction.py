@@ -170,13 +170,13 @@ from _lcm.solution.contract import (
     ContinuationPayload,
     GeneratedReplayAuthority,
 )
-from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
     _fold_period_diagnostics,
     _init_diagnostic_accumulators,
     _states_for_period,
 )
+from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -5555,7 +5555,7 @@ class _LazyCandidateFrontier:
         return candidate
 
 
-def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0913
+def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -5573,8 +5573,7 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0913
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     process_grid_resolver: ProcessGridResolver | None = None,
-    structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint]
-    | None = None,
+    structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint] | None = None,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
     logger: logging.Logger | None = None,
 ) -> tuple[
