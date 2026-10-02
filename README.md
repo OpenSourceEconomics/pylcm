@@ -8,6 +8,7 @@
 [![GPU tests](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/gpu32.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/gpu32.yml)
 [![Notebooks](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/notebooks.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/notebooks.yml)
 [![ty](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/ty.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/ty.yml)
+[![Benchmarks](https://img.shields.io/badge/benchmarked%20by-asv-blue)](https://open-econ.org/pylcm-benchmarks/)
 [![codecov](https://codecov.io/gh/OpenSourceEconomics/pylcm/branch/main/graph/badge.svg)](https://codecov.io/gh/OpenSourceEconomics/pylcm)
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/OpenSourceEconomics/pylcm/main.svg)](https://results.pre-commit.ci/latest/github/OpenSourceEconomics/pylcm/main)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
