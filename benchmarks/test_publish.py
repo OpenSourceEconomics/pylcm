@@ -151,3 +151,24 @@ def test_padding_extends_the_x_range_without_interior_gaps(tmp_path: Path) -> No
 
     padded = json.loads((folder / "bench_b.json").read_text(encoding="utf-8"))
     assert padded == [[1, None], [2, 2.0], [4, 2.0], [5, None]]
+
+
+def test_renamed_benchmark_carries_its_history(tmp_path: Path) -> None:
+    """A `time_execution` result is stored under its `track_execution_time` name."""
+    machine_dir = tmp_path / "results" / "gpu-01"
+    machine_dir.mkdir(parents=True)
+    (machine_dir / "machine.json").write_text(json.dumps(_MACHINE), encoding="utf-8")
+    old = "bench_collective_household.ReferenceChainSolve.time_execution"
+    new = "bench_collective_household.ReferenceChainSolve.track_execution_time"
+    path = _write_result(
+        machine_dir=machine_dir,
+        commit="aaaaaaaa",
+        ram="134807396352",
+        results={old: [[0.05, 0.24], [["1", "8"]], "1", 1, 0.1]},
+    )
+
+    publish._normalise_results(tmp_path / "results")
+
+    loaded = asv.results.Results.load(str(path))
+    assert loaded.get_result_keys({new: {"version": "1"}}) == {new}
+    assert loaded.get_result_value(new, [["1", "8"]]) == [0.05, 0.24]

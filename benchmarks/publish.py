@@ -24,6 +24,17 @@ _BRANCH = "main"
 _SITE_DIR = Path(".benchmark-site")
 _SUBDIR = "pylcm-benchmarks"
 
+# Benchmarks renamed from an ASV-native `time_*` method to `track_execution_time`.
+# Both report seconds over the same params, but `time_*` is ASV's own repeat
+# statistic and `track_execution_time` the median of a few warm calls, so the
+# carried-over history shows a step at the rename.
+_RENAMED_BENCHMARKS = {
+    f"bench_collective_household.{cls}.time_execution": (
+        f"bench_collective_household.{cls}.track_execution_time"
+    )
+    for cls in ("CollectiveHouseholdSimulate", "ReferenceChainSolve")
+}
+
 
 def publish() -> None:
     """Publish benchmark results and dashboard to the org site."""
@@ -108,7 +119,8 @@ def _normalise_results(results_dir: Path) -> None:
     - the machine params of every result (all but `python`) to the machine's current
       `machine.json`, with the RAM in stable whole gigabytes;
     - the version column of every result to null, which ASV treats as matching any
-      version.
+      version;
+    - the names in `_RENAMED_BENCHMARKS` to their current names.
 
     Nulling versions deliberately trades ASV's guard against mixing measurement
     semantics on one line for continuity: a version bump now shows as a step on the
@@ -129,8 +141,12 @@ def _normalise_results(results_dir: Path) -> None:
                 continue
             data = json.loads(result_file.read_text(encoding="utf-8"))
             data["params"].update(current)
+            results = data["results"]
+            for old, new in _RENAMED_BENCHMARKS.items():
+                if old in results:
+                    results.setdefault(new, results.pop(old))
             version_column = data["result_columns"].index("version")
-            for entry in data["results"].values():
+            for entry in results.values():
                 if len(entry) > version_column:
                     entry[version_column] = None
             _write_json_if_changed(path=result_file, data=data)

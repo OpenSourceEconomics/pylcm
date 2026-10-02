@@ -16,8 +16,8 @@ pays for, and each cost is measured on its own axis here:
   itself reads another, and the solver orders each period's regimes by that
   chain. Depth is the axis on which an accidental quadratic would appear.
 
-Host memory is tracked by `peakmem_*` and device memory by the `GpuPeakMem`
-companions, on the same workloads.
+Host memory is tracked by `track_peak_cpu_mem` or `peakmem_*` and device memory
+by the `GpuPeakMem` companions, on the same workloads.
 """
 
 import gc
@@ -28,15 +28,16 @@ from lcm import AgeRange, ByAge
 
 from . import _gpu_mem
 
-# Warm samples CollectiveHouseholdConstruct's and CollectiveHouseholdSolve's
-# setup_cache collect per commit, shared by track_execution_time and
+# Timed warm calls behind every `track_execution_time` here, which reports their
+# median. CollectiveHouseholdConstruct's and CollectiveHouseholdSolve's
+# setup_cache collect them per commit, shared by track_execution_time and
 # track_peak_cpu_mem: build once, one cold call, then this many timed warm
 # calls -- not one independent build+warm cycle per metric (mirrors
 # bench_mahler_yum.py's MahlerYumBudgetedGpu). The parameterized
-# CollectiveHouseholdSimulate and ReferenceChainSolve below still use the
-# ASV-native time_execution/peakmem_execution pair: sharing their setup
-# across params would need the subprocess CLI in `_gpu_mem` to accept
-# parameters, which is out of scope here.
+# CollectiveHouseholdSimulate and ReferenceChainSolve below time them in
+# process, after `setup`'s cold call, and keep ASV-native `peakmem_execution`:
+# sharing their setup across params would need the subprocess CLI in
+# `_gpu_mem` to accept parameters.
 _WARM_SAMPLES = 3
 
 _N_PERIODS = 6
@@ -221,13 +222,13 @@ class CollectiveHouseholdSimulate:
     def setup(self, n_subjects):
         self._build(n_subjects)
         start = time.perf_counter()
-        self._simulate()
+        self.execute_for_measurement()
         self._compile_time = time.perf_counter() - start
 
     def setup_for_gpu_measurement(self, n_subjects=_GPU_N_SUBJECTS):
         self._build(n_subjects)
 
-    def _simulate(self):
+    def execute_for_measurement(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -236,11 +237,20 @@ class CollectiveHouseholdSimulate:
             seed=0,
         )
 
-    def time_execution(self, n_subjects=_GPU_N_SUBJECTS):
-        self._simulate()
+    def track_execution_time(self, n_subjects):
+        return statistics.median(
+            _gpu_mem.warm_call_seconds(
+                execute=self.execute_for_measurement, warm_samples=_WARM_SAMPLES
+            )
+        )
+
+    # Replaces ASV-native `time_execution`, which ASV timed with its own repeat
+    # statistics; this is the median of `_WARM_SAMPLES` warm calls, so its
+    # history shows a step at the rename.
+    track_execution_time.unit = "seconds"
 
     def peakmem_execution(self, n_subjects):
-        self._simulate()
+        self.execute_for_measurement()
 
     def teardown(self, n_subjects):
         _clear_gpu_memory()
@@ -291,17 +301,29 @@ class ReferenceChainSolve:
     def setup(self, depth):
         self._build(depth)
         start = time.perf_counter()
-        self.model.solve(params=self.model_params, log_level="off")
+        self.execute_for_measurement()
         self._compile_time = time.perf_counter() - start
 
     def setup_for_gpu_measurement(self, depth=_GPU_DEPTH):
         self._build(depth)
 
-    def time_execution(self, depth=_GPU_DEPTH):
+    def execute_for_measurement(self):
         self.model.solve(params=self.model_params, log_level="off")
 
+    def track_execution_time(self, depth):
+        return statistics.median(
+            _gpu_mem.warm_call_seconds(
+                execute=self.execute_for_measurement, warm_samples=_WARM_SAMPLES
+            )
+        )
+
+    # Replaces ASV-native `time_execution`, which ASV timed with its own repeat
+    # statistics; this is the median of `_WARM_SAMPLES` warm calls, so its
+    # history shows a step at the rename.
+    track_execution_time.unit = "seconds"
+
     def peakmem_execution(self, depth):
-        self.model.solve(params=self.model_params, log_level="off")
+        self.execute_for_measurement()
 
     def teardown(self, depth):
         _clear_gpu_memory()
