@@ -24,7 +24,15 @@ https://claude.ai/code/session_01Pxm4joxHzgeNTvT5vf4eN9
     exact `_StructuralBlueprint` class shape are now pinned.
   - The seam test looked for `materialize_core_program` in its old location. It now
     asserts the seam in the builder, with stricter checks.
-- **Rerun of the full suite at the fix commit:** requested from the aca session.
+- **Marvin full-suite rerun at 1d8c306f (green):**
+  - clone `~/pylcm-inv-cache-r2`, evidence in `~/marvin-jobs/pylcm-inv-cache/1d8c306f/`;
+  - fp64, 28033850: 18205 tests, 0 failures, 0 errors, 333 skipped, 0:18:55;
+  - fp32, 28031605: 18166 tests, 0 failures, 0 errors, 606 skipped, 0:18:18;
+  - The first fp64 job, 28031604, hung on node140 during xdist worker startup (zero tests in 2 h). It was cancelled by ID; its log is `full_p64.hung-28031604.log`.
+  - The previously failing files all pass at both precisions:
+    - `test_core_program_graph.py`: 49 tests;
+    - `test_simulation_candidate_program_certificate.py`: 308 tests;
+    - `test_invariant_structural_cache.py`: 24 tests.
 
 ## Open
 - **Certificate gap:** `src/_lcm/solution/structural_blueprints.py` (`abstract_schema`
