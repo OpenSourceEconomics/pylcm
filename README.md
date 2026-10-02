@@ -1,8 +1,16 @@
 # Life Cycle Models
 
+[![PyPI version](https://img.shields.io/pypi/v/pylcm)](https://pypi.org/project/pylcm/)
+[![conda-forge version](https://img.shields.io/conda/vn/conda-forge/pylcm)](https://anaconda.org/conda-forge/pylcm)
+[![License](https://img.shields.io/github/license/OpenSourceEconomics/pylcm)](https://github.com/OpenSourceEconomics/pylcm/blob/main/LICENSE)
+[![Documentation](https://readthedocs.org/projects/pylcm/badge/?version=latest)](https://pylcm.readthedocs.io/en/latest/)
+[![CPU tests](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/cpu.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/cpu.yml)
+[![GPU tests](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/gpu32.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/gpu32.yml)
+[![Notebooks](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/notebooks.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/notebooks.yml)
+[![ty](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/ty.yml/badge.svg?branch=main)](https://github.com/OpenSourceEconomics/pylcm/actions/workflows/ty.yml)
+[![codecov](https://codecov.io/gh/OpenSourceEconomics/pylcm/branch/main/graph/badge.svg)](https://codecov.io/gh/OpenSourceEconomics/pylcm)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/OpenSourceEconomics/pylcm/main.svg)](https://results.pre-commit.ci/latest/github/OpenSourceEconomics/pylcm/main)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/opensourceeconomics/pylcm/main.svg)](https://results.pre-commit.ci/latest/github/opensourceeconomics/pylcm/main)
-[![image](https://codecov.io/gh/opensourceeconomics/pylcm/branch/main/graph/badge.svg)](https://codecov.io/gh/opensourceeconomics/pylcm)
 
 This package aims to generalize and facilitate the specification, solution, and
 simulation of finite-horizon discrete-continuous dynamic choice models.
