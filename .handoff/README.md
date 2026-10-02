@@ -22,8 +22,8 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 |---|---|---|---|
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
-| 5A | implemented; Marvin gates pending | `feat/invariant-type-aware-simulation` (no PR) | 9dc2145a (merged with F1/F2) |
-| Blueprint cache (Pro R3) | green locally; Marvin battery pending | `perf/invariant-structural-blueprint-cache` (no PR) | b7c87690 |
+| 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
+| Blueprint cache (Pro R3) | 28030481/82 failures fixed in 11a4bbb (green locally); Marvin rerun pending | `perf/invariant-structural-blueprint-cache` (#490, draft) | 1d8c306 |
 | 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
 | 7 | in progress (subagent) | `feat/invariant-action-partitions` | based on 9b36adcb |
@@ -36,7 +36,7 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 |---|---|---|
 | 28028091 / 28028092 | production pair fp32, blocked vs unblocked | 9b36adcb |
 | 28028093 / 28028094 | production pair fp64, blocked vs unblocked | 9b36adcb |
-| 28029942 / 28029943 | 5A battery main, fp64 / fp32, `-n 96` | 9dc2145a |
+| 28031402 / 28031403 | 5A battery main rerun, fp64 / fp32, `-n 96`: green | 12be1db9 |
 | 28029944 | 5A topology set | 9dc2145a |
 | 28029945 | 5A GPU simulate driver, reduced3, A100, fp64 | 9dc2145a |
 | 28030481 / 28030482 | blueprint-cache full suite, fp64 / fp32, `-n 96` | b7c87690 |
@@ -50,7 +50,7 @@ Don't touch `~/pylcm-prod-inv` while the production pair runs.
 
 ## Next steps
 1. Fold the production-pair numbers into #486.
-2. Once their batteries are green, open PRs for 5A and the cache, stacked on #486.
+2. 5A (#491) and the cache (#490) are open as drafts stacked on #486.
 3. Then 5B, then 8A (8A depends on 5B).
 4. Still to write for the cache: a CPU host-time A B A2 ledger and a reduced3 driver.
 
