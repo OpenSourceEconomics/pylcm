@@ -51,8 +51,26 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
    host-backed entries, and `stored_codes`. Open a draft PR once Marvin is green, then
    run the reduced3 GPU driver, then 8A.
 
+## Marvin battery at 731e9fe8 (aca session; `~/marvin-jobs/pylcm-inv-5b/731e9fe8/`)
+| Job | Set | Tests | Fail | Err | Skip | Wall (junit) |
+|---|---|---|---|---|---|---|
+| 28036892 | full fp64, `-n 96` | 18246 | 1 | 0 | 333 | 0:19:10 |
+| 28033548 | full fp32, `-n 96` | 18207 | 0 | 0 | 606 | 0:17:51 |
+| 28033549 | topology set (sim8/shard8/grouped2 at both precisions, four-device files at fp64) | all files green | 0 | 0 | 0 | 0:16:51 elapsed |
+
+- **The fp64 failure:** a host-time bar,
+  `test_admission_preflight_contract::test_unstubbed_warm_full_call_progress_meets_existing_time_bar[multi_regime]`.
+  The measured ratio was 1.53 against a bar of 1.5, under `-n 96`. 5B touches
+  `simulate.py`, so an isolated A/B rerun is requested: 5B, then the 5A base
+  68f35d39, then 5B again.
+- **Your checks:** `test_block_major_lifetime.py` ran 40/40 at both precisions. The
+  six new `block_major` tests in the 8-device sharding file all pass.
+- **A hang, not a test failure:** the first fp64 job, 28033547, hung on node120 after
+  "created: 96/96 workers" and was resubmitted. It's the second such hang today (the
+  cache's 28031604 was the first).
+
 ## Still to do
-- Marvin full-suite battery (fp64, fp32) and topology set.
+- Isolated timing A/B (above).
 - The reduced3 GPU driver run.
 - Deferred:
   - budgeted block-major simulation;
