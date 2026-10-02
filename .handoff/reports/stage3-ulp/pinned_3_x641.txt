@@ -1,0 +1,29 @@
+lcm: /home/user/pylcm-486/src/lcm/__init__.py x64: True jax 0.11.1
+typed_dead=True extra={'axis_widths': {'subject': 3, 'action_product': 5, 'cell': 12}}
+  [td=True] period 4 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 3 work shape (3, 2, 6): 7/36 differ, max ULP 1, max abs 8.882e-16
+     idx (0, 0, 5) blocked np.float64(1.8878527344011986) unblocked np.float64(1.8878527344011988) ulp 1
+     idx (1, 0, 4) blocked np.float64(3.4848401267153397) unblocked np.float64(3.4848401267153393) ulp 1
+     idx (1, 1, 4) blocked np.float64(3.68484012671534) unblocked np.float64(3.6848401267153394) ulp 1
+     idx (2, 0, 4) blocked np.float64(4.854455417406104) unblocked np.float64(4.854455417406103) ulp 1
+     idx (2, 0, 5) blocked np.float64(5.307161165032938) unblocked np.float64(5.307161165032937) ulp 1
+     idx (2, 1, 4) blocked np.float64(5.054455417406104) unblocked np.float64(5.054455417406103) ulp 1
+     idx (2, 1, 5) blocked np.float64(5.507161165032938) unblocked np.float64(5.5071611650329375) ulp 1
+  [td=True] period 3 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 2 work shape (3, 2, 6): 2/36 differ, max ULP 1, max abs 8.882e-16
+     idx (2, 0, 5) blocked np.float64(5.331140970908422) unblocked np.float64(5.331140970908421) ulp 1
+     idx (2, 1, 5) blocked np.float64(5.600736932083517) unblocked np.float64(5.6007369320835165) ulp 1
+  [td=True] period 2 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 1 work: bitwise equal (36 cells, dtype float64)
+  [td=True] period 1 dead: bitwise equal (18 cells, dtype float64)
+  [td=True] period 0 work: bitwise equal (36 cells, dtype float64)
+typed_dead=False extra={'axis_widths': {'subject': 3, 'action_product': 5, 'cell': 12}}
+  [td=False] period 4 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 3 work: bitwise equal (36 cells, dtype float64)
+  [td=False] period 3 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 2 work: bitwise equal (36 cells, dtype float64)
+  [td=False] period 2 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 1 work: bitwise equal (36 cells, dtype float64)
+  [td=False] period 1 dead: bitwise equal (6 cells, dtype float64)
+  [td=False] period 0 work: bitwise equal (36 cells, dtype float64)
+TOTAL differing cells: 9

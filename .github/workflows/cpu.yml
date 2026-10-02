@@ -17,7 +17,7 @@ on:
       - '**.md'
       - '**.ipynb'
 jobs:
-  # General (`notslow`) work, duration-weighted into three shards per fp64 OS.
+  # General (`notslow`) work, duration-weighted into a per-leg shard count.
   # The split is deterministic: `tests/ci/shard_test_files.py` sorts the
   # manifest's general universe by decreasing observed per-LEG weight and fills
   # the lightest bin, and `tests/conftest.py` applies the result at collection
@@ -37,10 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       # Shard counts differ per leg because the legs cost different amounts and
-      # carry different setup. Measured on run 35078533997: 141 worker-minutes
-      # of payload on fp64 Linux, 117 on macOS, 232 on Windows, against roughly
-      # 2, 3 and 8 minutes of per-job checkout and pixi install respectively.
-      # At four workers that is 11.7, 14.6 and 14.5 payload minutes per job.
+      # carry different setup. The manifest preserves observed weights and
+      # records each leg's payload prediction against the operating budgets.
       matrix:
         include:
           - os: ubuntu-latest
@@ -62,12 +60,22 @@ jobs:
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 2
+            shards: 4
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos
             shard: 2
-            shards: 2
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 3
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 4
+            shards: 4
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows
