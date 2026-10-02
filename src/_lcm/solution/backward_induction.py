@@ -5998,10 +5998,10 @@ def _bind_structural_blueprint(
     )
 
 
+# Budget facts admission reads; the recipe reads only whether a budget applies.
 _ADMISSION_ONLY_EXECUTION_FIELDS = frozenset(
     {"device_memory_bytes", "requested_device_memory_bytes", "device_pool_limit_bytes"}
 )
-"""Budget facts admission reads; the recipe reads only whether a budget applies."""
 
 
 def _structural_key(

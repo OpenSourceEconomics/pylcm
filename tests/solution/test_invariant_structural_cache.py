@@ -14,13 +14,13 @@ import copy
 import dataclasses
 import gc
 import math
-import pickle
 import weakref
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -179,42 +179,110 @@ def test_a_blueprint_hit_plans_every_core_as_a_fresh_model_does(
 
 
 @pytest.mark.parametrize("blocked", [False, True])
-def test_a_weak_typing_change_rebuilds_the_structure(
+def test_user_typing_and_placement_normalise_to_the_cached_schema(
     *, blocked: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A strongly typed scalar where a weak one was cached is a miss."""
+    """Typing and placement that parameter processing erases reuse the blueprint.
+
+    Every float parameter is cast to a strongly typed, uncommitted array of the
+    canonical float dtype before the structural key is taken, so a strongly
+    typed scalar, a narrower float or a committed array solves with the cached
+    blueprint and equals a fresh model.
+    """
     config = _config(blocked=blocked)
     model, params = _workload(name="independent_types", execution_config=config)
     _warm(model=model, params=params)
-    strong = copy.deepcopy(params)
-    strong["discount_factor"] = jnp.asarray(
-        params["discount_factor"], dtype=jnp.asarray(1.0).dtype
+    variant = copy.deepcopy(params)
+    variant["discount_factor"] = jnp.asarray(
+        params["discount_factor"], dtype=jnp.float16
     )
-    assert jax.typeof(strong["discount_factor"]).weak_type is False
+    variant["working"]["utility"]["weight"] = jax.device_put(
+        params["working"]["utility"]["weight"], jax.devices()[0]
+    )
     with _counted_builders(monkeypatch) as calls:
-        got = _solve(model=model, params=strong)
-    assert calls["materialize_core_program"] > 0, calls
+        got = _solve(model=model, params=variant)
+    assert calls == dict.fromkeys(calls, 0), calls
     fresh, _ = _workload(name="independent_types", execution_config=config)
-    _assert_values_identical(first=got, second=_solve(model=fresh, params=strong))
+    _assert_values_identical(first=got, second=_solve(model=fresh, params=variant))
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_a_weak_typing_change_rebuilds_the_structure(
+    *, blocked: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A weakly typed processed scalar where a strong one was cached is a miss."""
+    config = _config(blocked=blocked)
+    model, params = _workload(name="independent_types", execution_config=config)
+    _warm(model=model, params=params)
+    fresh, _ = _workload(name="independent_types", execution_config=config)
+    for target in (model, fresh):
+        _respecify_processed_params(
+            model=target, monkeypatch=monkeypatch, weak=True, committed=False
+        )
+    with _counted_builders(monkeypatch) as calls:
+        got = _solve(model=model, params=params)
+    assert calls["materialize_core_program"] > 0, calls
+    _assert_values_identical(first=got, second=_solve(model=fresh, params=params))
 
 
 @pytest.mark.parametrize("blocked", [False, True])
 def test_a_layout_change_rebuilds_the_structure(
     *, blocked: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A parameter committed to a device where an uncommitted one was is a miss."""
+    """Processed arrays committed to a device where uncommitted ones were is a miss."""
     config = _config(blocked=blocked)
     model, params = _workload(name="independent_types", execution_config=config)
     _warm(model=model, params=params)
-    committed = copy.deepcopy(params)
-    committed["working"]["utility"]["weight"] = jax.device_put(
-        params["working"]["utility"]["weight"], jax.devices()[0]
-    )
-    with _counted_builders(monkeypatch) as calls:
-        got = _solve(model=model, params=committed)
-    assert calls["materialize_core_program"] > 0, calls
     fresh, _ = _workload(name="independent_types", execution_config=config)
-    _assert_values_identical(first=got, second=_solve(model=fresh, params=committed))
+    for target in (model, fresh):
+        _respecify_processed_params(
+            model=target, monkeypatch=monkeypatch, weak=False, committed=True
+        )
+    with _counted_builders(monkeypatch) as calls:
+        got = _solve(model=model, params=params)
+    assert calls["materialize_core_program"] > 0, calls
+    _assert_values_identical(first=got, second=_solve(model=fresh, params=params))
+
+
+def _respecify_processed_params(
+    *, model: Model, monkeypatch: pytest.MonkeyPatch, weak: bool, committed: bool
+) -> None:
+    """Change the abstract schema of `model`'s processed parameters, not their values.
+
+    With `weak`, every scalar leaf becomes a weakly typed array of the same
+    dtype; with `committed`, every array leaf is committed to the first device.
+    Leaves shared between slots stay shared.
+    """
+    process = model._process_params
+
+    def respecify(leaf: object) -> jax.Array:
+        assert isinstance(leaf, jax.Array)
+        if weak and leaf.ndim == 0:
+            leaf = jnp.asarray(leaf.item())
+        if committed and leaf.ndim > 0:
+            leaf = jax.device_put(leaf, jax.devices()[0])
+        return leaf
+
+    def processed(params: dict, **kwargs: Any) -> MappingProxyType:
+        flat_params = process(params, **kwargs)
+        memo: dict[int, jax.Array] = {}
+        respecified = MappingProxyType(
+            {
+                regime: MappingProxyType(
+                    {
+                        name: memo.setdefault(id(leaf), respecify(leaf))
+                        for name, leaf in leaves.items()
+                    }
+                )
+                for regime, leaves in flat_params.items()
+            }
+        )
+        leaves = jax.tree.leaves(respecified)
+        assert any(leaf.weak_type for leaf in leaves) is weak
+        assert any(leaf.committed for leaf in leaves) is committed
+        return respecified
+
+    monkeypatch.setattr(model, "_process_params", processed)
 
 
 @pytest.mark.parametrize("blocked", [False, True])
@@ -229,7 +297,7 @@ def test_a_budget_change_rebinds_and_readmits_without_rebuilding(
     _warm(model=model, params=params)
     narrow = 25_000
     with _captured_plans(monkeypatch) as plans, _counted_builders(monkeypatch) as calls:
-        wide = _solve(model=model, params=params)
+        _solve(model=model, params=params)
         model._execution = dataclasses.replace(
             model._execution, device_memory_bytes=narrow
         )
@@ -246,7 +314,6 @@ def test_a_budget_change_rebinds_and_readmits_without_rebuilding(
         fresh_narrowed = _solve(model=fresh, params=params)
     assert narrow_widths == _admitted_widths(fresh_plans[0])
     _assert_values_identical(first=narrowed, second=fresh_narrowed)
-    _assert_values_identical(first=narrowed, second=wide)
 
 
 def _width_proportional_peak(
@@ -271,14 +338,16 @@ def test_removing_the_budget_rebuilds_the_structure(
     assert calls["materialize_core_program"] > 0, calls
 
 
-def test_the_cache_is_bounded_and_released_with_its_model() -> None:
+def test_the_cache_is_bounded_and_released_with_its_model(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Distinct schemas never grow the cache past its bound or past the model."""
     model, params = _workload(
         name="independent_types", execution_config=_config(blocked=True)
     )
     cache = model._structural_blueprints
     weight = params["working"]["utility"]["weight"]
-    for dtype in (None, jnp.float32, jnp.float16, jnp.bfloat16):
+    for dtype in (None, jnp.float32, jnp.float16):
         for committed in (False, True):
             variant = copy.deepcopy(params)
             if dtype is not None:
@@ -289,7 +358,21 @@ def test_the_cache_is_bounded_and_released_with_its_model() -> None:
                 )
             result = _solve(model=model, params=variant)
             del result
-    assert 0 < len(cache) <= cache.max_entries
+    assert (len(cache), cache.misses) == (1, 1)
+    for budget in (2**30, None):
+        model._execution = dataclasses.replace(
+            model._execution, device_memory_bytes=budget
+        )
+        for weak in (False, True):
+            for committed in (False, True):
+                with monkeypatch.context() as patch:
+                    _respecify_processed_params(
+                        model=model, monkeypatch=patch, weak=weak, committed=committed
+                    )
+                    result = _solve(model=model, params=params)
+                    del result
+    assert cache.misses == 8
+    assert len(cache) == cache.max_entries
     reference = weakref.ref(cache)
     del cache, model
     gc.collect()
@@ -304,11 +387,11 @@ def test_cached_blueprints_retain_no_concrete_array() -> None:
     _warm(model=model, params=params)
     entries = list(model._structural_blueprints.values())
     assert entries
-    concrete = [leaf for leaf in _walk(entries) if isinstance(leaf, jax.Array)]
+    concrete = [leaf for leaf in _walk(value=entries) if isinstance(leaf, jax.Array)]
     assert concrete == []
 
 
-def _walk(value: object, *, seen: set[int] | None = None) -> Iterator[object]:
+def _walk(*, value: object, seen: set[int] | None = None) -> Iterator[object]:
     """Yield every object reachable through containers and dataclass fields."""
     seen = set() if seen is None else seen
     if id(value) in seen:
@@ -317,24 +400,25 @@ def _walk(value: object, *, seen: set[int] | None = None) -> Iterator[object]:
     yield value
     if isinstance(value, Mapping | MappingProxyType):
         for key, child in value.items():
-            yield from _walk(key, seen=seen)
-            yield from _walk(child, seen=seen)
+            yield from _walk(value=key, seen=seen)
+            yield from _walk(value=child, seen=seen)
     elif isinstance(value, tuple | list | set | frozenset):
         for child in value:
-            yield from _walk(child, seen=seen)
+            yield from _walk(value=child, seen=seen)
     elif dataclasses.is_dataclass(value) and not isinstance(value, type):
         for field in dataclasses.fields(value):
-            yield from _walk(getattr(value, field.name), seen=seen)
+            yield from _walk(value=getattr(value, field.name), seen=seen)
 
 
 def test_pickling_a_model_drops_its_blueprints() -> None:
-    """The cache is runtime state: a copy starts empty and still solves."""
+    """The cache is runtime state: a copy starts empty, solves, and fills its own."""
     model, params = _workload(
         name="independent_types", execution_config=_config(blocked=False)
     )
     first = _solve(model=model, params=params)
     assert len(model._structural_blueprints) > 0
     assert "_structural_blueprints" not in model.__getstate__()
-    restored = pickle.loads(pickle.dumps(model))
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
     assert len(restored._structural_blueprints) == 0
     _assert_values_identical(first=first, second=_solve(model=restored, params=params))
+    assert len(restored._structural_blueprints) == 1

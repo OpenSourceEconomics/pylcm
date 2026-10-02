@@ -154,4 +154,4 @@ def frozen_policy(value: object) -> Hashable:
         hash(value)
     except TypeError as error:
         raise UncacheableSchemaError(str(error)) from error
-    return value  # ty: ignore[invalid-return-type]
+    return value
