@@ -46,7 +46,8 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import DiscreteState, ScalarInt
-from tests.conftest import assert_agrees_to_ulp
+from tests.conftest import assert_agrees_to_ulp, assert_general_values_agree
+from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
@@ -1058,10 +1059,10 @@ def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
 
 @pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
 @pytest.mark.parametrize("widths", [(1, 1), (3, 9)])
-def test_type_blocks_over_assets_shards_equal_the_unblocked_solve_bitwise(
+def test_type_blocks_over_assets_shards_agree_with_the_unblocked_solve(
     *, devices: tuple[int, ...], widths: tuple[int, int]
 ) -> None:
-    """Three type blocks over sharded assets publish the unblocked values exactly."""
+    """Type blocks retain sharding and agree with unblocked values within eight ULP."""
     _require_eight()
     params = {"discount_factor": 0.5}
     blocked = _model(
@@ -1075,15 +1076,10 @@ def test_type_blocks_over_assets_shards_equal_the_unblocked_solve_bitwise(
     got = blocked.solve(params=params, log_level="off").values
     want = reference.solve(params=params, log_level="off").values
 
-    assert {(t, r) for t, arrays in got.items() for r in arrays} == {
-        (t, r) for t, arrays in want.items() for r in arrays
-    }
+    assert_general_values_agree(got=got, expected=want)
     for period, arrays in want.items():
         for regime, value in arrays.items():
             assert got[period][regime].sharding == value.sharding
-            np.testing.assert_array_equal(
-                np.asarray(got[period][regime]), np.asarray(value)
-            )
 
 
 def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> None:
@@ -1136,7 +1132,7 @@ def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> 
 def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
     *, devices: tuple[int, ...], budget: int | Literal["device"]
 ) -> None:
-    """Blocked solve plus grouped simulation over sharded assets is bitwise unchanged.
+    """Sharded blocked/grouped simulation keeps exact structure and eight-ULP values.
 
     The groups are unbalanced, one is empty in period 1, and the subject axis
     divides no group evenly by the device count.
@@ -1180,21 +1176,7 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
     assert want.plan_summary is not None
     assert got.plan_summary.subject_grouping == "pref_type"
     assert want.plan_summary.subject_grouping is None
-    got_frame, want_frame = got.to_dataframe(), want.to_dataframe()
-    assert got_frame.equals(want_frame)
-    for column in want_frame.select_dtypes("float").columns:
-        assert got_frame[column].to_numpy().tobytes() == (
-            want_frame[column].to_numpy().tobytes()
-        ), column
-    assert jax.tree.structure(got.raw_results) == jax.tree.structure(want.raw_results)
-    for got_leaf, want_leaf in zip(
-        jax.tree.leaves(got.raw_results),
-        jax.tree.leaves(want.raw_results),
-        strict=True,
-    ):
-        got_array, want_array = np.asarray(got_leaf), np.asarray(want_leaf)
-        assert got_array.dtype == want_array.dtype
-        assert got_array.tobytes() == want_array.tobytes()
+    grouped_simulation._assert_general_panels_agree(got=got, want=want)
 
 
 @pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])

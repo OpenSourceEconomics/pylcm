@@ -24,6 +24,7 @@ import jax
 import numpy as np
 
 from _lcm.execution.core_program import InvariantBinding
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.value_transfer import (
     CoordinateSelection,
     ValueArtifactAddress,
@@ -158,6 +159,24 @@ def write_block(
     the complete value is never held twice. Every position is written, so
     nothing of the template survives.
     """
+    actual = block.sharding
+    expected = template.sharding
+    if (
+        isinstance(actual, jax.NamedSharding)
+        and isinstance(expected, jax.NamedSharding)
+        and actual.mesh.axis_types != expected.mesh.axis_types
+    ):
+        if not runtime_shardings_match(
+            actual=actual, expected=expected, ndim=block.ndim
+        ):
+            msg = "An invariant block's physical layout differs from its template."
+            raise ExecutionPlanningError(msg)
+        block = jax.device_put(
+            block,
+            jax.NamedSharding(
+                expected.mesh, actual.spec, memory_kind=actual.memory_kind
+            ),
+        )
     return _write_block(
         value=(
             jax.device_put(template, template.sharding, may_alias=False)

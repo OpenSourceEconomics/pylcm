@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import tests.conftest as test_config
 from _lcm.simulation import value_reads
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.random import generate_simulation_keys
@@ -312,6 +313,49 @@ def _assert_panels_identical(
                     )
 
 
+def _assert_general_panels_agree(
+    *, got: SimulationResult, want: SimulationResult
+) -> None:
+    """Require singleton panels' structural bytes and values within eight ULP."""
+    got_frame, want_frame = got.to_dataframe(), want.to_dataframe()
+    assert got_frame.columns.equals(want_frame.columns)
+    pd.testing.assert_frame_equal(
+        got_frame.drop(columns="value"),
+        want_frame.drop(columns="value"),
+        check_exact=True,
+    )
+    for column in want_frame.columns:
+        if column != "value" and pd.api.types.is_float_dtype(want_frame[column]):
+            assert _leaf_bytes(got_frame[column].to_numpy()) == _leaf_bytes(
+                want_frame[column].to_numpy()
+            ), column
+    test_config.assert_general_values_agree(
+        got={0: {"value": got_frame["value"].to_numpy()}},
+        expected={0: {"value": want_frame["value"].to_numpy()}},
+    )
+    assert jax.tree.structure(got.raw_results) == jax.tree.structure(want.raw_results)
+    for regime, periods in want.raw_results.items():
+        for period, data in periods.items():
+            other = got.raw_results[regime][period]
+            for field in dataclasses.fields(data):
+                if field.name == "V_arr":
+                    test_config.assert_general_values_agree(
+                        got={period: {regime: other.V_arr}},
+                        expected={period: {regime: data.V_arr}},
+                    )
+                    continue
+                for got_leaf, want_leaf in zip(
+                    jax.tree.leaves(getattr(other, field.name)),
+                    jax.tree.leaves(getattr(data, field.name)),
+                    strict=True,
+                ):
+                    assert _leaf_bytes(got_leaf) == _leaf_bytes(want_leaf), (
+                        regime,
+                        period,
+                        field.name,
+                    )
+
+
 def _subject_grouping(*, result: SimulationResult) -> str | None:
     """Return the grouping state the call's plan reports."""
     assert result.plan_summary is not None
@@ -531,7 +575,7 @@ def test_blocked_solve_then_grouped_simulation_equals_the_unblocked_route() -> N
     )
 
     assert _subject_grouping(result=got) == "pref_type"
-    _assert_panels_identical(got=got, want=want)
+    _assert_general_panels_agree(got=got, want=want)
 
 
 @pytest.mark.parametrize("budget", [None, _BUDGET], ids=["unbudgeted", "budgeted"])

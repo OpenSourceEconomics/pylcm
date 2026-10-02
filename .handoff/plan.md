@@ -251,6 +251,14 @@ A single component spanning several nodes (native multi-process JAX, explicit MP
 
 Use independently constructed tiny-model oracles plus the pinned #482 path. Require existing exact/bitwise gates on their supported stack, including transformed execution and negative one-ULP/signed-zero comparator controls. Mathematical equivalence is not a license to introduce a blanket tolerance. Where existing state-sharding behavior already has documented floating-point limits, record them and compare like-for-like; investigate any newly introduced change before widening an acceptance contract. [S8, S9]
 
+The user-approved exception is general blocked versus independently compiled
+unblocked **published values**, bounded by eight ULP at each of fp32/fp64. It does
+not relax policies, states, actions, regime/subject identity, schema, shape, dtype,
+or sharding. Same compiled-program and same-input-solution byte gates, including
+signed zeros, remain binding. The existing accepted Stage 7 one-ULP exception and
+all certificate mutation controls are unchanged. Comparator controls must reject
+nine value ULP and a one-ULP or signed-zero structural change.
+
 Test fp32/fp64, default and explicit budgets, logging modes, relevant JIT configurations, and changed numerical parameters. Preserve the currently supported JAX transformations and autodiff behavior on differentiable probes; do not introduce host numerical work or stop-gradient boundaries as an implementation shortcut. Newly unsupported optimized combinations must fail clearly while unchanged unoptimized routes retain support.
 
 ### Required performance comparisons

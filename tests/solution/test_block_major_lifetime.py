@@ -9,10 +9,12 @@ holds one code's lifetime values at a time.
 
 The public result keeps its contract: a complete logical `ValueStore` whose
 entries assemble one value, on the layout an eager solve publishes, only when
-read. Values and simulated panels equal the period-major blocked route and the
-unblocked route byte for byte, and the enumeration oracle independently.
+read. Values and simulated panels equal the period-major blocked route byte for
+byte. Against the unblocked route, structural outputs remain exact and published
+values agree within eight ULP; the enumeration oracle is independent.
 """
 
+import dataclasses
 import gc
 import logging
 import weakref
@@ -24,7 +26,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
@@ -49,6 +50,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.result import SimulationResult
 from lcm.solver_api import LoadState, SolutionResult, ValueStore
+from lcm.tuning import _array_ulp_gap
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -228,14 +230,14 @@ def test_block_major_values_equal_the_period_major_values_bitwise(
 
 
 @pytest.mark.parametrize("workload", ["independent_types", "sector_typed_terminal"])
-def test_block_major_values_equal_the_unblocked_values_bitwise(workload: str) -> None:
-    """Where blocking moves no bit, the block-major solve moves none either."""
+def test_block_major_values_agree_with_the_unblocked_values(workload: str) -> None:
+    """Published values agree with the unblocked solve within eight ULP."""
     model, params = _workload(name=workload, schedule=_BLOCK_MAJOR)
     reference, _ = _workload(name=workload, schedule=None)
 
-    _assert_value_bytes_equal(
+    test_config.assert_general_values_agree(
         got=_solution(model=model, params=params).values,
-        want=_solution(model=reference, params=params).values,
+        expected=_solution(model=reference, params=params).values,
     )
 
 
@@ -252,14 +254,7 @@ def test_life_cycle_values_agree_with_the_unblocked_values_to_the_ulp() -> None:
     got = _solution(model=model, params=params).values
     want = _solution(model=reference, params=params).values
 
-    for period in want:
-        for regime in want[period]:
-            test_config.assert_agrees_to_ulp(
-                got=got[period][regime],
-                expected=want[period][regime],
-                n_ulp=int(test_config.INVARIANCE_EPS_MULTIPLE),
-                err_msg=f"{(period, regime)}",
-            )
+    test_config.assert_general_values_agree(got=got, expected=want)
 
 
 def test_block_major_values_match_the_enumerated_oracle() -> None:
@@ -284,8 +279,8 @@ def test_block_major_values_follow_changed_params() -> None:
 
     changed = _solution(model=model, params=changed_params).values
 
-    _assert_value_bytes_equal(
-        got=changed, want=_solution(model=reference, params=changed_params).values
+    test_config.assert_general_values_agree(
+        got=changed, expected=_solution(model=reference, params=changed_params).values
     )
     assert _leaf_bytes(changed[0]["working"]) != _leaf_bytes(base[0]["working"])
 
@@ -390,38 +385,169 @@ def _reference_panels(
 def _assert_panels_match_the_references(
     *, got: SimulationResult, references: Mapping[str, SimulationResult]
 ) -> None:
-    """Require the period-major panel's bytes, and move no bit it does not move.
-
-    Where the period-major blocked route simulates the unblocked panel bit for
-    bit, so must the block-major route. Where blocking places a value on an
-    adjacent float of the unblocked one — the precision and the population
-    decide whether it does — every float column agrees to the ULP and every
-    other column exactly.
-    """
+    """Require period-major bytes and exact unblocked structure with value-only ULP."""
     life_cycle._assert_panels_identical(got=got, want=references["period_major"])
-    try:
-        life_cycle._assert_panels_identical(
-            got=references["period_major"], want=references["unblocked"]
+    life_cycle._assert_general_panels_agree(got=got, want=references["unblocked"])
+
+
+@pytest.fixture
+def rounding_panel() -> tuple[Model, SimulationResult]:
+    """Return a real one-subject panel for published-result rounding witnesses."""
+    model = _life_cycle_model(schedule=None)
+    result = _simulate(
+        model=model,
+        params=life_cycle._params(typed_dead=True),
+        initial=life_cycle._initial(codes=(0,)),
+        solution=None,
+    )
+    return model, result
+
+
+def _create_rounding_panel(
+    *,
+    model: Model,
+    result: SimulationResult,
+    value_steps: int = 0,
+    start_steps_below_one: int = 0,
+    structural_field: str | None = None,
+    structural_zero: bool = False,
+) -> SimulationResult:
+    """Publish a fixed value with an optional adjacent state or action witness."""
+    data = result.raw_results["work"][0]
+    one = np.ones_like(np.asarray(data.V_arr))
+    value = one.copy()
+    for _ in range(start_steps_below_one):
+        value = np.nextafter(value, np.zeros_like(value))
+    for _ in range(value_steps):
+        value = np.nextafter(value, np.full_like(value, np.inf))
+    wealth = np.ones_like(np.asarray(data.states["wealth"]))
+    consumption = np.ones_like(np.asarray(data.actions["consumption"]))
+    if structural_zero:
+        wealth = np.zeros_like(wealth)
+    if structural_field == "state":
+        wealth = (
+            -wealth
+            if structural_zero
+            else np.nextafter(wealth, np.full_like(wealth, np.inf))
         )
-    except AssertionError:
-        period_major_is_unblocked = False
-    else:
-        period_major_is_unblocked = True
-    if period_major_is_unblocked:
-        life_cycle._assert_panels_identical(got=got, want=references["unblocked"])
-        return
-    got_frame = got.to_dataframe()
-    want_frame = references["unblocked"].to_dataframe()
-    for column in want_frame.columns:
-        if pd.api.types.is_float_dtype(want_frame[column]):
-            test_config.assert_agrees_to_ulp(
-                got=got_frame[column].to_numpy(),
-                expected=want_frame[column].to_numpy(),
-                n_ulp=int(test_config.INVARIANCE_EPS_MULTIPLE),
-                err_msg=column,
-            )
-        else:
-            pd.testing.assert_series_equal(got_frame[column], want_frame[column])
+    elif structural_field == "action":
+        consumption = np.nextafter(consumption, np.full_like(consumption, np.inf))
+    changed = dataclasses.replace(
+        data,
+        V_arr=jnp.asarray(value),
+        states=MappingProxyType({**data.states, "wealth": jnp.asarray(wealth)}),
+        actions=MappingProxyType(
+            {**data.actions, "consumption": jnp.asarray(consumption)}
+        ),
+    )
+    raw = MappingProxyType(
+        {
+            **result.raw_results,
+            "work": MappingProxyType({**result.raw_results["work"], 0: changed}),
+        }
+    )
+    return SimulationResult(
+        raw_results=raw,
+        regimes=model._regimes,
+        flat_params=result.flat_params,
+        period_to_regime_to_V_arr=result.period_to_regime_to_V_arr,
+        ages=model.ages,
+        simulation_output_dtypes=model.simulation_output_dtypes,
+    )
+
+
+@pytest.mark.parametrize("structural_field", ["state", "action"])
+def test_general_panel_refuses_an_adjacent_structural_output(
+    *, rounding_panel: tuple[Model, SimulationResult], structural_field: str
+) -> None:
+    """An allowed eight-ULP value gap never permits a one-ULP state or action gap."""
+    model, result = rounding_panel
+    want = _create_rounding_panel(model=model, result=result)
+    got = _create_rounding_panel(
+        model=model, result=result, value_steps=8, structural_field=structural_field
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_panels_match_the_references(
+            got=got, references={"period_major": got, "unblocked": want}
+        )
+
+
+@pytest.mark.parametrize("start_steps_below_one", [0, 7])
+def test_general_panel_accepts_an_eight_ulp_value_gap(
+    *, rounding_panel: tuple[Model, SimulationResult], start_steps_below_one: int
+) -> None:
+    """Exactly eight value ULP are accepted while every structural bit agrees."""
+    model, result = rounding_panel
+    want = _create_rounding_panel(
+        model=model, result=result, start_steps_below_one=start_steps_below_one
+    )
+    got = _create_rounding_panel(
+        model=model,
+        result=result,
+        start_steps_below_one=start_steps_below_one,
+        value_steps=8,
+    )
+
+    assert (
+        _array_ulp_gap(
+            got=np.asarray(got.raw_results["work"][0].V_arr),
+            expected=np.asarray(want.raw_results["work"][0].V_arr),
+        ),
+        _assert_panels_match_the_references(
+            got=got, references={"period_major": got, "unblocked": want}
+        ),
+    ) == (8.0, None)
+
+
+def test_general_panel_refuses_a_nine_ulp_value_gap(
+    *, rounding_panel: tuple[Model, SimulationResult]
+) -> None:
+    """A published value nine representable steps away exceeds the eight-ULP bound."""
+    model, result = rounding_panel
+    want = _create_rounding_panel(model=model, result=result)
+    got = _create_rounding_panel(model=model, result=result, value_steps=9)
+
+    with pytest.raises(AssertionError):
+        _assert_panels_match_the_references(
+            got=got, references={"period_major": got, "unblocked": want}
+        )
+
+
+def test_general_panel_refuses_a_state_signed_zero_change(
+    *, rounding_panel: tuple[Model, SimulationResult]
+) -> None:
+    """An allowed value gap preserves the sign bit of a published float state."""
+    model, result = rounding_panel
+    want = _create_rounding_panel(model=model, result=result, structural_zero=True)
+    got = _create_rounding_panel(
+        model=model,
+        result=result,
+        value_steps=8,
+        structural_field="state",
+        structural_zero=True,
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_panels_match_the_references(
+            got=got, references={"period_major": got, "unblocked": want}
+        )
+
+
+def test_general_panel_refuses_nine_value_steps_across_a_binade(
+    *, rounding_panel: tuple[Model, SimulationResult]
+) -> None:
+    """A change in float spacing never admits more than eight representable steps."""
+    model, result = rounding_panel
+    want = _create_rounding_panel(model=model, result=result, start_steps_below_one=7)
+    got = _create_rounding_panel(
+        model=model, result=result, start_steps_below_one=7, value_steps=9
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_panels_match_the_references(
+            got=got, references={"period_major": got, "unblocked": want}
+        )
 
 
 @pytest.mark.parametrize("codes", _POPULATIONS)

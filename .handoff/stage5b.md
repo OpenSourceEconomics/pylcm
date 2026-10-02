@@ -42,10 +42,13 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
    economic model and fingerprints unchanged.
 2. **Stage 3 vs unblocked, 5A life-cycle model:** Stage 3's blocked `work` values
    differ from unblocked by up to 2 ULP at fp64, and one panel value by 1 ULP. This is
-   to be **investigated on #486**: root-cause it, and fix it there if possible. 5B
-   keeps its bitwise gate against period-major.
-3. **The 5B tests' 8-ULP assertion against unblocked on that model is provisional**
-   until decision 2 is resolved.
+   the measured historical rounding difference. The user subsequently approved
+   general blocked/unblocked published-value agreement within **8 ULP at fp32 and
+   fp64**, with exact structural outputs. 5B keeps its bitwise gate against
+   period-major.
+3. **The 5B tests' value-only 8-ULP assertion against unblocked is approved.**
+   States, actions, policies, regimes, schema, and same-program bytes remain exact;
+   the tolerance does not apply to every float column.
 4. **API and contract changes approved:** `InvariantBlockSchedule`,
    `ExecutionConfig.invariant_block_schedule`, `solve(executable_cache=...)`, lazy
    host-backed entries, and `stored_codes`. Open a draft PR once Marvin is green, then
@@ -104,7 +107,7 @@ receipt does not contain an independently expected coordinate schema.
 
 The local CLI regression checks use the published driver fields without requiring
 unavailable parameter or driver hashes. Local checks do not constitute native
-GPU-driver acceptance or reopen the pending unblocked rounding decision.
+GPU-driver acceptance; the general value-only rounding contract is approved.
 
 The comparator CLI acceptance check completed with **49 passed, 0 failed,
 0 errors, 0 skipped**, in **0:00:07.554** on hmg-office. The checked comparator

@@ -861,9 +861,9 @@ class _OnActionPartitionAxis:
     """Run a kernel once per device of the mesh's action axis.
 
     Only the action axis is manual: every input is replicated along it, and
-    the regime's state axes stay under the compiler's automatic partitioning,
-    exactly as for the unpartitioned kernel. The merged value is identical on
-    every device of the axis, so the output is replicated along it.
+    the regime's state axes retain the enclosing execution context's typing.
+    The merged value is identical on every device of the axis, so the output
+    is replicated along it.
     """
 
     __name__: ClassVar[str] = "on_action_partition_axis"
@@ -881,9 +881,13 @@ class _OnActionPartitionAxis:
     def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
         """Evaluate the kernel on every device of the action axis."""
         static = {name: kwargs.pop(name) for name in self.static_names}
+        mesh = self.mesh
+        context = jax.sharding.get_abstract_mesh()
+        if context.axis_names == mesh.axis_names and context.shape == mesh.shape:
+            mesh = mesh.update(axis_types=context.axis_types)
         return jax.shard_map(
             functools.partial(_call_with_operands, function=self.function, **static),
-            mesh=self.mesh,
+            mesh=mesh,
             in_specs=jax.P(),
             out_specs=jax.P(),
             axis_names=frozenset({ACTION_PARTITION_AXIS}),

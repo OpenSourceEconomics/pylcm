@@ -18,6 +18,14 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 
 ## Stage status (2026-10-02)
 
+Live integration and rounding-contract acceptance are tracked in
+[`stages0-7-integration.md`](stages0-7-integration.md) and
+[`rounding-contract.md`](rounding-contract.md). The user approved value-only eight
+ULP for general blocked/unblocked comparisons and the macOS CI proposal; exact
+structural and same-program byte contracts remain binding. Stage 8A is required;
+the optional blueprint cache is deferred. The table below is the historical
+cloud-session checkpoint, not a fresh native execution receipt.
+
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |

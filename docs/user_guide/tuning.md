@@ -215,8 +215,11 @@ so the number of compiled programs does not grow with the number of codes. A
 continuation that carries the state is read through that code's block only, so a
 continuation replicated onto other devices, for example under a sharded continuous
 state, moves one code's share at a time. The blocked solve evaluates the same Bellman
-problem as the unblocked one and publishes values in the same layout; compare the two
-before relying on bitwise equality for your model. Terminal regimes are solved whole.
+problem as the unblocked one and publishes values in the same layout. Independently
+compiled blocked and unblocked values agree within eight ULP of the working float
+format; policies, states, actions, regimes, and public result structure remain exact.
+Routes dispatching the same compiled program retain their bitwise contract. Terminal
+regimes are solved whole.
 
 The request is checked at model construction. It is refused, naming every reason, when:
 
