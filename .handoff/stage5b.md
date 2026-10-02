@@ -36,16 +36,20 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
   - it equals unblocked bytewise on the two Stage 3 workloads;
   - on the 5A life-cycle model it is within 8 ULP of unblocked (see below).
 
-## Decisions pending (user)
-1. **Plan §1, "no per-type model reconstruction".** Per code, the narrowed regimes go
-   through the same engine. This is not `Model.solve`, and nothing about the economic
-   model changes. Is that acceptable?
-2. **Stage 3 vs unblocked, 5A life-cycle model.** At fp64, Stage 3's blocked `work`
-   values differ from unblocked by up to 2 ULP, and one panel value by 1 ULP. This
-   predates 5B (5B reproduces Stage 3 exactly). Plan §13 says to investigate before
-   widening a gate.
-3. **The 5B tests assert 8 ULP against unblocked on that model.** This holds only until
-   decision 2 is settled.
+## Decisions (user, 2026-10-02)
+1. **Plan §1:** per-code narrowing of the canonical regimes through the same engine is
+   **accepted**. It reuses the engine, scheduler and executable cache, and leaves the
+   economic model and fingerprints unchanged.
+2. **Stage 3 vs unblocked, 5A life-cycle model:** Stage 3's blocked `work` values
+   differ from unblocked by up to 2 ULP at fp64, and one panel value by 1 ULP. This is
+   to be **investigated on #486**: root-cause it, and fix it there if possible. 5B
+   keeps its bitwise gate against period-major.
+3. **The 5B tests' 8-ULP assertion against unblocked on that model is provisional**
+   until decision 2 is resolved.
+4. **API and contract changes approved:** `InvariantBlockSchedule`,
+   `ExecutionConfig.invariant_block_schedule`, `solve(executable_cache=...)`, lazy
+   host-backed entries, and `stored_codes`. Open a draft PR once Marvin is green, then
+   run the reduced3 GPU driver, then 8A.
 
 ## Still to do
 - Marvin full-suite battery (fp64, fp32) and topology set.
