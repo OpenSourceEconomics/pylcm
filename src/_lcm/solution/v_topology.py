@@ -162,6 +162,7 @@ def _get_regime_V_shapes_and_shardings(
                 grids=regime.solution.grids,
                 sharded_state_names=regime.solution.sharded_state_names,
                 devices=devices,
+                action_partitions=regime.solution.action_partitions,
             ),
             state_order=state_order,
             devices=devices,

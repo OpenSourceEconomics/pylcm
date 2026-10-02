@@ -545,6 +545,9 @@ def process_regimes(
                     template_bytes=_value_template_bytes(
                         state_grids=state_grids[regime_name]
                     ),
+                    action_partitions=resolved_execution.action_partitions_for(
+                        regime_name=regime_name
+                    ),
                 )
                 for regime_name in user_regimes
             ),
@@ -730,6 +733,7 @@ def process_regimes(
         placement=placement,
         sharded_state_names_by_regime=sharded_state_names_by_regime,
         invariant_block_widths=resolved_execution.invariant_block_widths,
+        action_partitions=resolved_execution.action_partitions,
         reachability=reachability,
         regime_names_to_ids=regime_names_to_ids,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -915,6 +919,9 @@ class _CanonicalRegimeBuilder:
 
     invariant_block_widths: MappingProxyType[StateName, int]
     """States the solve evaluates one code at a time, with their block widths."""
+
+    action_partitions: MappingProxyType[RegimeName, int]
+    """Regimes whose action product several devices share, with the count."""
 
     reachability: ModelReachability
     """The model's static solution and simulation regime graphs."""
@@ -1116,6 +1123,7 @@ class _CanonicalRegimeBuilder:
                 edge_target_regimes=tuple(user_regime.gated_edges),
                 fold_state_names=fold_state_names,
                 invariant_bindings=invariant_bindings,
+                action_partitions=self.action_partitions.get(regime_name, 1),
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
             )
@@ -3188,6 +3196,7 @@ def _build_solution_phase(  # noqa: PLR0915
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
+    action_partitions: int = 1,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
@@ -3242,6 +3251,8 @@ def _build_solution_phase(  # noqa: PLR0915
             time. The solve `Q_and_F` reads each one's continuation at the
             evaluated code, so its coordinate is dropped like a co-mapped
             state's. Empty when nothing is blocked.
+        action_partitions: Devices sharing the regime's action product, from
+            `ExecutionConfig.action_partitions`; one when it is not shared.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
@@ -3485,6 +3496,7 @@ def _build_solution_phase(  # noqa: PLR0915
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
         sharded_state_names=sharded_state_names,
+        action_partitions=action_partitions,
         axis_widths=axis_widths,
         period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
@@ -3658,6 +3670,7 @@ def _build_solution_phase(  # noqa: PLR0915
         pareto_weights=pareto_weights,
         submesh_device_ids=submesh_device_ids,
         sharded_state_names=sharded_state_names,
+        action_partitions=action_partitions,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )

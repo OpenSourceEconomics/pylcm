@@ -116,6 +116,38 @@ class ResolvedExecution:
     invariant_block_widths: MappingProxyType[StateName, int] = MappingProxyType({})
     """Invariant states solved one block of codes at a time, with the block width."""
 
+    action_partitions: MappingProxyType[RegimeName, int] = MappingProxyType({})
+    """Regimes whose action product is shared by several devices, with the count."""
+
+    axis_width_ceilings_by_regime: MappingProxyType[
+        RegimeName, MappingProxyType[str, int]
+    ] = MappingProxyType({})
+    """Ceilings one regime's programs are planned under on top of the model-wide
+    ones, by regime name then axis name; the tighter of the two binds."""
+
+    def action_partitions_for(self, *, regime_name: RegimeName) -> int:
+        """Return how many devices share one regime's action product; one by default."""
+        return self.action_partitions.get(regime_name, 1)
+
+    def ceilings_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
+        """Return the width ceilings one regime's programs are planned under.
+
+        Args:
+            regime_name: The regime whose programs are being planned.
+
+        Returns:
+            The model-wide ceilings, each lowered to this regime's own ceiling
+            where it declares a tighter one.
+
+        """
+        own = self.axis_width_ceilings_by_regime.get(regime_name)
+        if not own:
+            return self.axis_width_ceilings
+        merged = dict(self.axis_width_ceilings)
+        for axis_name, ceiling in own.items():
+            merged[axis_name] = min(ceiling, merged.get(axis_name, ceiling))
+        return MappingProxyType(merged)
+
     def widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
         """Return the fixed widths one regime's programs are planned against.
 
@@ -335,6 +367,7 @@ def resolve_execution_config(
         width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
         invariant_block_widths=MappingProxyType(dict(config.invariant_block_widths)),
+        action_partitions=MappingProxyType(dict(config.action_partitions)),
     )
     if requested_bytes is not None:
         summary = resolved.device_memory_budget_summary()

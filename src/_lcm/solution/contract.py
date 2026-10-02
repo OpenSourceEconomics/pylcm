@@ -267,6 +267,14 @@ class SolverBuildContext:
     sharded_state_names: frozenset[StateName] = frozenset()
     """State axes assigned to devices by the model's execution configuration."""
 
+    action_partitions: int = 1
+    """Devices sharing this regime's action product; one when it is not shared.
+
+    Set from `ExecutionConfig.action_partitions`. Above one, the regime's mesh
+    carries a trailing action axis of this size, and a solver serving the
+    request reduces each device's run of the action product separately.
+    """
+
     axis_widths: MappingProxyType[str, int] = MappingProxyType({})
     """Immutable mapping of execution axis name to the width it is fixed at.
 
@@ -483,6 +491,7 @@ class SolverBuildContext:
             states=self.state_action_space.states,
             fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
+            action_partitions=self.action_partitions,
         )
 
 

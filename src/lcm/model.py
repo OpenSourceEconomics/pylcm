@@ -62,6 +62,10 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
 from _lcm.reachability import ModelReachability
+from _lcm.regime_building.action_partitioning import (
+    action_partition_width_ceilings,
+    fail_if_action_partition_route_is_unsupported,
+)
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
@@ -776,6 +780,9 @@ class Model:
             user_regimes=self._engine_user_regimes,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
+        )
+        self._execution = _with_action_partition_ceilings(
+            execution=self._execution, user_regimes=self._engine_user_regimes
         )
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
@@ -3654,6 +3661,44 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
         return False
     process = cast("_ContinuousStochasticProcess", grid)
     return process.is_fully_specified and process.state_conditioned is None
+
+
+def _with_action_partition_ceilings(
+    *,
+    execution: ResolvedExecution,
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+) -> ResolvedExecution:
+    """Admit an `action_partitions` request and record its width ceilings.
+
+    Refuses, before anything is built, a request the action-partitioned
+    GridSearch route does not serve. An admitted request plans each
+    partitioned regime's action blocks narrow enough that every device of its
+    action group owns at least one.
+    """
+    if not execution.action_partitions:
+        return execution
+    fixed_widths_by_regime = MappingProxyType(
+        {
+            regime_name: execution.widths_for(regime_name=regime_name)
+            for regime_name in execution.action_partitions
+        }
+    )
+    fail_if_action_partition_route_is_unsupported(
+        user_regimes=user_regimes,
+        action_partitions=execution.action_partitions,
+        sharded_states=execution.sharded_states,
+        continuous_sharded_state=execution.continuous_sharded_state,
+        n_devices=len(execution.device_ids),
+        fixed_widths_by_regime=fixed_widths_by_regime,
+    )
+    return dataclasses.replace(
+        execution,
+        axis_width_ceilings_by_regime=action_partition_width_ceilings(
+            user_regimes=user_regimes,
+            action_partitions=execution.action_partitions,
+            fixed_widths_by_regime=fixed_widths_by_regime,
+        ),
+    )
 
 
 def _fail_if_a_sharded_state_is_pruned(
