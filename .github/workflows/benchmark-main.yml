@@ -73,7 +73,7 @@ jobs:
             exit "$status"
           fi
       - name: Setup ASV machine
-        run: pixi run -e benchmarks-cuda12 asv machine --yes
+        run: pixi run -e benchmarks-cuda12 asv-machine
       - name: Verify external benchmark compatibility
         run: pixi run -e benchmarks-cuda12 asv-preflight
       - name: Run benchmarks and publish

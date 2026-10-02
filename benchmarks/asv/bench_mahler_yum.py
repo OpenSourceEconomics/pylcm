@@ -61,12 +61,6 @@ class _MahlerYum:
     def setup_for_gpu_measurement(self):
         self._build()
 
-    def time_execution(self):
-        self.execute_for_measurement()
-
-    def peakmem_execution(self):
-        self.execute_for_measurement()
-
     def execute_for_measurement(self) -> None:
         self.model.simulate(
             params=self.model_params,
@@ -132,17 +126,13 @@ class _MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
 class MahlerYumBudgetedGpu(_MahlerYum):
     """Distinct fp64 ASV series with capacity-admitted GPU execution.
 
-    Unlike the retired `_MahlerYum` base, timing is not ASV-native: ASV calls
-    `setup()` once per discovered benchmark (and again per round), so a
-    class exposing `time_execution`, `peakmem_execution`, and
-    `track_compilation_time` as three separate native/track benchmarks paid
-    for three (or more, across rounds) independent build+compile+solve
-    cycles for what is the same underlying measurement. `setup_cache`
-    collects one cold call and `_WARM_SAMPLES` warm calls in one isolated
-    subprocess (mirroring `AcaBaseline`'s combined producer); the cheap
-    `track_*` methods below read the shared result. `time_execution` and
-    `peakmem_execution` are unset so ASV does not also discover the
-    inherited native-timing identities for this subclass.
+    Timing is not ASV-native: ASV calls `setup()` once per discovered
+    benchmark (and again per round), so separate native timing, memory and
+    compilation benchmarks would each pay for an independent
+    build+compile+solve cycle of the same underlying measurement.
+    `setup_cache` collects one cold call and `_WARM_SAMPLES` warm calls in one
+    isolated subprocess (mirroring `AcaBaseline`'s combined producer); the
+    cheap `track_*` methods below read the shared result.
 
     `setup_cache` also reads the automatic solve+simulate GPU peak from that
     same cold call (before any warm call). `GpuPeakMemProfile`'s
@@ -155,8 +145,6 @@ class MahlerYumBudgetedGpu(_MahlerYum):
     # A different capacity/width policy is a different measurement series.
     version = f"4-{POLICY_LABEL}"
     simulation_seed = 0
-    time_execution = None
-    peakmem_execution = None
 
     def _build(self):
         self.model, self.capacity_receipt = create_mahler_gpu_model()

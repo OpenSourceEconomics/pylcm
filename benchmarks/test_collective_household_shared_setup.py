@@ -1,5 +1,7 @@
 """Tests for the shared-measurement collective-household construct/solve benchmarks."""
 
+# ruff: noqa: SLF001
+
 import pytest
 
 from benchmarks.asv import _gpu_mem, bench_collective_household
@@ -67,3 +69,31 @@ def test_solve_still_tracks_compilation_time(monkeypatch: pytest.MonkeyPatch) ->
     cache = instance.setup_cache()
     instance.setup(cache)
     assert instance.track_compilation_time(cache) == 1.5
+
+
+@pytest.mark.parametrize(
+    ("benchmark_class", "param"),
+    [
+        (bench_collective_household.CollectiveHouseholdSimulate, 1_000),
+        (bench_collective_household.ReferenceChainSolve, 1),
+    ],
+)
+def test_parameterized_classes_track_the_median_warm_call(
+    *, monkeypatch: pytest.MonkeyPatch, benchmark_class: type, param: int
+) -> None:
+    """Execution time is the median of the shared warm-call timer, as elsewhere."""
+    calls = []
+
+    def _fake_warm_call_seconds(*, execute, warm_samples):
+        calls.append((execute, warm_samples))
+        return [3.0, 1.0, 2.0]
+
+    monkeypatch.setattr(_gpu_mem, "warm_call_seconds", _fake_warm_call_seconds)
+    instance = benchmark_class()
+
+    assert instance.track_execution_time(param) == 2.0
+    assert calls == [
+        (instance.execute_for_measurement, bench_collective_household._WARM_SAMPLES)
+    ]
+    assert benchmark_class.track_execution_time.unit == "seconds"
+    assert not hasattr(benchmark_class, "time_execution")
