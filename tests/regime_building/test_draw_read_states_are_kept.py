@@ -173,6 +173,7 @@ def test_a_regime_that_never_reads_the_draw_does_not_keep_the_shock_states() -> 
     assert model.pruned_variables["active"] == frozenset()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("declared_at", ["model", "regime"])
 def test_value_matches_the_scalar_reference(
     declared_at: Literal["model", "regime"],
@@ -186,6 +187,7 @@ def test_value_matches_the_scalar_reference(
     np.testing.assert_allclose(V[on_grid], reference[on_grid], rtol=0, atol=_ATOL)
 
 
+@pytest.mark.slow
 def test_value_is_constant_in_lagged_xi_and_varies_with_lagged_zeta() -> None:
     V = _active_V(_model(declared_at="model"))
 
@@ -193,6 +195,7 @@ def test_value_is_constant_in_lagged_xi_and_varies_with_lagged_zeta() -> None:
     assert np.abs(V - V[:, :1, :]).max() > 0.1
 
 
+@pytest.mark.slow
 def test_simulation_draws_from_the_kept_states() -> None:
     model = _model(declared_at="model")
     n = 4
