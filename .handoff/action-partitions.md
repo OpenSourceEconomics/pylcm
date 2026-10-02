@@ -53,6 +53,46 @@ The one fp32 failure is `test_compile_requests::test_simulate_host_time_at_progr
 - **GPU benchmark (plan §12):** 4×A100, comparing four layouts: ordinary
   assets-sharded; type blocks; type blocks + actions; type blocks + states × actions.
   `stage3_arms.py` still needs an `--action-partitions` flag.
-- **Admission:** no explicit test that the budget refuses the exchanged accumulators.
+- **Admission:** the public CPU boundary is covered by the addendum below.
 - **Deferred:** simulation partitioning, discrete sharded states, folded processes,
   taste shocks and collective reductions (all refused today), and a custom collective.
+
+## Explicit action-partition admission acceptance
+
+The public `Model.solve` seam uses `ExecutionConfig` with four action partitions,
+four CPU devices, fixed action width 5 and cell width 8. Three separate tests check
+refusal one byte below the represented workspace ceiling, bitwise value parity at
+the exact ceiling, and terminal values equal to the analytical bequest
+`sqrt(linspace(1, 10, 8))`. The existing source already meets this behavior; no
+production arithmetic or certificate change is needed.
+
+The ceiling uses independently compiled executable `memory_analysis()` counters
+plus fixture-specific retained residency: two unread value vectors in period 0,
+one in period 1, terminal owner and transfer scratch in period 2, and neither in
+period 3. Diagnostics must charge that independently measured reservation. The
+largest compiler reservation is 2524 bytes at fp64 and 2080 at fp32; the largest
+resident charge is 592 and 308 bytes, respectively. Exact admission ceilings are
+3116 and 2388 bytes; budgets 3115 and 2387 are refused. The three `[8, 4]` exchanged
+accumulators occupy 416 and 288 bytes, respectively.
+
+An external negative-control harness removes the exchange charge globally,
+including the calibration solve. It is rejected because charged reservations
+2108/1792 disagree with the native 2524/2080 bytes. This guards against a lowered
+calibration ceiling concealing an accounting omission. The mutation is not
+persisted in production source.
+
+Evidence is in `.task-evidence/pylcm-handoff/stage7-admission/` of the enclosing
+ACA workspace; `REPORT.md` records commands, source/diff identities and raw paths.
+At source base `71c902d266e4eb49d7d92232f8283df302ae8fd2`, the focused device,
+route and workspace-budget matrix has these exact JUnit totals:
+
+| Run | Passed | Failed | Errors | Skipped | JUnit wall |
+|---|---|---|---|---|---|
+| Global omission control, fp64 | 0 | 1 | 0 | 0 | 0:00:01.139 |
+| Global omission control, fp32 | 0 | 1 | 0 | 0 | 0:00:01.071 |
+| Focused matrix, fp64 | 83 | 0 | 0 | 0 | 0:00:38.055 |
+| Focused matrix, fp32 | 83 | 0 | 0 | 0 | 0:00:36.898 |
+
+Both green runs import this isolated worktree's native payload. These are CPU
+semantic and admission checks; they provide no GPU performance or physical
+process-memory bound. The Stage 7 GPU acceptance remains open.

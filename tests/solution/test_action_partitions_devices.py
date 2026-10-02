@@ -15,12 +15,13 @@ CPU proves semantics and placement, not GPU performance.
 
 import json
 import os
+import shutil
 import subprocess
-import sys
 from functools import cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from tests import conftest
@@ -40,9 +41,15 @@ def _report_for(*, x64: bool, directory: Path) -> dict[str, Any]:
         "JAX_PLATFORMS": "cpu",
         "PYTHONPATH": os.pathsep.join((str(_REPO_ROOT / "src"), str(_REPO_ROOT))),
     }
+    pixi = shutil.which("pixi")
+    assert pixi is not None
     result = subprocess.run(  # noqa: S603
         [
-            sys.executable,
+            pixi,
+            "run",
+            "-e",
+            "tests-cpu",
+            "python",
             "-m",
             "tests.solution._action_partition_report",
             "--x64",
@@ -241,3 +248,29 @@ def test_the_gathered_accumulators_are_reserved_as_compiled_workspace(
     gathered = 4 * 8 * (value_bytes + 4 + 1)
 
     assert report["programs"]["partitioned"]["temp_bytes"] >= gathered
+
+
+def test_a_partitioned_solve_refuses_one_byte_below_its_workspace_budget(
+    report: dict[str, Any],
+) -> None:
+    """The exchanged accumulators fit at the reported ceiling, never below it."""
+    assert report["budget"]["refused_below_ceiling"] is True
+
+
+def test_a_partitioned_solve_at_its_exact_workspace_budget_preserves_values(
+    report: dict[str, Any],
+) -> None:
+    """The admitted solve publishes every ordinary fixed-width value bitwise."""
+    assert report["budget"]["mismatches_at_ceiling"] == []
+
+
+def test_a_partitioned_solve_at_its_exact_budget_publishes_terminal_bequests(
+    report: dict[str, Any],
+) -> None:
+    """Terminal wealth nodes receive their square-root bequests."""
+    np.testing.assert_allclose(
+        report["budget"]["terminal_values"],
+        np.sqrt(np.linspace(1.0, 10.0, 8)),
+        rtol=10**-conftest.DECIMAL_PRECISION,
+        atol=0.0,
+    )

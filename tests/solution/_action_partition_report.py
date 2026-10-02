@@ -1,11 +1,12 @@
 """Solve the many-actions model on eight host devices and report what it shows.
 
-Run as `python -m tests.solution._action_partition_report --x64 <0|1> --out <json>`
+Run as `pixi run -e tests-cpu python -m tests.solution._action_partition_report`
+with `--x64 <0|1> --out <json>`
 in a fresh process whose `XLA_FLAGS` force eight host CPU devices. It solves the
 model on the ordinary route and on the action-partitioned route in several
 layouts and writes one JSON report; `test_action_partitions_devices.py` asserts
-on it. Nothing here asserts: a report that stops early has no JSON, and the
-test reads that as a failure.
+on it. Budget probes validate the charged compiler counters and retained owners.
+A report that stops early has no JSON, and the test reads that as a failure.
 
 CPU establishes semantics and placement only, never GPU performance.
 """
@@ -136,6 +137,7 @@ def _report() -> dict[str, Any]:
     }
 
     report["programs"] = _program_report()
+    report["budget"] = _budget_report()
     return report
 
 
@@ -303,6 +305,88 @@ def _all_gather_result_shapes(*, hlo_text: str) -> list[list[int]]:
             for match in re.finditer(r"(?:f32|f64|s32|pred)\[([0-9,]*)\]", result)
         )
     return shapes
+
+
+def _budget_report() -> dict[str, Any]:
+    """Solve at the exact represented-memory ceiling and immediately below it."""
+    import logging  # noqa: PLC0415
+
+    import lcm  # noqa: PLC0415
+    from _lcm.solution import backward_induction  # noqa: PLC0415
+    from lcm import ExecutionConfig  # noqa: PLC0415
+    from lcm.exceptions import ExecutionPlanningError  # noqa: PLC0415
+    from tests.execution.test_core_plan_record import _PlanRecords  # noqa: PLC0415
+    from tests.test_models import many_actions  # noqa: PLC0415
+
+    def solve(budget: int) -> Any:
+        return many_actions.get_model(
+            execution_config=ExecutionConfig(
+                devices=(0, 1, 2, 3),
+                axis_widths={"action_product": _FIXED_WIDTH, "cell": 8},
+                action_partitions={"working": 4},
+                device_memory_bytes=budget,
+            )
+        ).solve(params=many_actions.get_params(), log_level="debug")
+
+    records = _PlanRecords()
+    logger = logging.getLogger("lcm")
+    lowered: dict[str, Any] = {}
+    original = backward_induction._lower_resolved_candidate
+    backward_induction._lower_resolved_candidate = _LoweringRecorder(  # ty: ignore[invalid-assignment]
+        lower=original, lowered=lowered
+    )
+    logger.addHandler(records)
+    try:
+        reference = solve(2**30)
+    finally:
+        logger.removeHandler(records)
+        backward_induction._lower_resolved_candidate = original
+    native_reservations: dict[str, int] = {}
+    for label, program in lowered.items():
+        stats = program.compile().memory_analysis()
+        native_reservations[label] = max(
+            int(stats.peak_memory_in_bytes),
+            int(stats.argument_size_in_bytes)
+            + int(stats.output_size_in_bytes)
+            - int(stats.alias_size_in_bytes)
+            + int(stats.temp_size_in_bytes),
+        )
+    value_bytes = 8 if jax.config.jax_enable_x64 else 4
+    totals = []
+    for record in records.records:
+        native = max(
+            size
+            for label, size in native_reservations.items()
+            if label.startswith(record.regime)
+        )
+        # Period 0 retains two unread values; period 1 retains one. Period 2
+        # charges the terminal owner plus its transfer scratch; period 3 has neither.
+        resident = max(record.stored_owner_bytes.values()) + (
+            {0: 2, 1: 1, 2: 2, 3: 0}[record.period] * 8 * value_bytes
+        )
+        assert record.compiler_reservation_bytes == native, (
+            f"Charged {record.compiler_reservation_bytes} bytes, "
+            f"but the native executable requires {native}."
+        )
+        assert record.resident_bytes == resident
+        totals.append(native + resident)
+    ceiling = max(totals)
+    refused = False
+    try:
+        solve(ceiling - 1)
+    except ExecutionPlanningError:
+        refused = True
+    admitted = solve(ceiling)
+    return {
+        "module_file": lcm.__file__,
+        "ceiling_bytes": ceiling,
+        "gathered_bytes": 4 * 8 * (value_bytes + 4 + 1),
+        "refused_below_ceiling": refused,
+        "mismatches_at_ceiling": _bitwise_mismatches(
+            got=admitted.values, expected=reference.values
+        ),
+        "terminal_values": np.asarray(admitted.values[3]["dead"]).tolist(),
+    }
 
 
 if __name__ == "__main__":
