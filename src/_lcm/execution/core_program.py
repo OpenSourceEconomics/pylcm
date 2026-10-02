@@ -84,6 +84,47 @@ class ValueRead:
                 raise ValueError(msg)
 
 
+@dataclass(frozen=True, kw_only=True)
+class InvariantBinding:
+    """The one code of an invariant state a block program evaluates.
+
+    A regime solving a blocked state one code at a time declares one program
+    per code. Each is bound here to its position on the state's grid and the
+    canonical code held there, so a block holding code 2 is bound to code 2.
+    The engine evaluates the program on the state's grid narrowed to that
+    position and reads every continuation carrying the state through that
+    code's block. Programs of one `family` differ only by their binding and
+    share one executable.
+    """
+
+    state_name: StateName
+    """Name of the blocked state."""
+
+    start: int
+    """Position of the bound code along the state's grid."""
+
+    code: int
+    """Canonical code at that position."""
+
+    family: str
+    """Name shared by the programs that differ only by their binding."""
+
+    def __post_init__(self) -> None:
+        """Require a named state, a non-negative position and exact integers."""
+        if type(self.state_name) is not str or not self.state_name:
+            msg = "An invariant binding must name its state."
+            raise TypeError(msg)
+        if type(self.family) is not str or not self.family:
+            msg = "An invariant binding must name its program family."
+            raise TypeError(msg)
+        if type(self.start) is not int or type(self.code) is not int:
+            msg = "An invariant binding's position and code must be exact ints."
+            raise TypeError(msg)
+        if self.start < 0:
+            msg = f"An invariant binding's position must be non-negative: {self.start}."
+            raise ValueError(msg)
+
+
 @runtime_checkable
 class _TransferArgumentLeaf(Protocol):
     """Array-like dynamic leaf validated before transfer planning."""
@@ -438,6 +479,8 @@ class CoreProgram:
     """Outputs another program of the same graph may name as an input."""
     compiler_options: tuple[tuple[str, int], ...] = ()
     """Fixed compiler choices bound by the function, separate from its arguments."""
+    invariant_binding: InvariantBinding | None = None
+    """The invariant code this program evaluates, or `None` for a whole-grid program."""
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
@@ -476,6 +519,8 @@ class MaterializedCoreProgram:
     """Outputs another program of the same graph may name as an input."""
     compiler_options: tuple[tuple[str, int], ...] = ()
     """Fixed compiler choices inherited from the declaration."""
+    invariant_binding: InvariantBinding | None = None
+    """The invariant code this program evaluates, inherited from the declaration."""
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
@@ -951,6 +996,7 @@ def materialize_core_program(
         replaces_program=program.replaces_program,
         internal_outputs=program.internal_outputs,
         compiler_options=program.compiler_options,
+        invariant_binding=program.invariant_binding,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -988,6 +1034,8 @@ class ResolvedCoreProgram:
     """Outputs another program of the same graph may name as an input."""
     compiler_options: tuple[tuple[str, int], ...] = ()
     """Fixed compiler choices included in the engine's lowering identity."""
+    invariant_binding: InvariantBinding | None = None
+    """The invariant code this program evaluates; its code is a runtime operand."""
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
@@ -1155,6 +1203,7 @@ def _resolve_core_program(
         replaces_program=program.replaces_program,
         internal_outputs=program.internal_outputs,
         compiler_options=program.compiler_options,
+        invariant_binding=program.invariant_binding,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(

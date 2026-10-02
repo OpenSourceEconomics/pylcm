@@ -113,6 +113,9 @@ class ResolvedExecution:
     )
     """Which width search a budgeted solve's compilation waves are driven by."""
 
+    invariant_block_widths: MappingProxyType[StateName, int] = MappingProxyType({})
+    """Invariant states solved one block of codes at a time, with the block width."""
+
     def widths_for(self, *, regime_name: RegimeName) -> MappingProxyType[str, int]:
         """Return the fixed widths one regime's programs are planned against.
 
@@ -331,6 +334,7 @@ def resolve_execution_config(
         halve_on_materialised_gather=config.halve_on_materialised_gather,
         width_search=config.width_search,
         simulation_sharding=config.simulation_sharding,
+        invariant_block_widths=MappingProxyType(dict(config.invariant_block_widths)),
     )
     if requested_bytes is not None:
         summary = resolved.device_memory_budget_summary()
@@ -643,7 +647,7 @@ class CorePlanRecord:
     every state is evaluated over its whole extent."""
 
     logical_value_shape: tuple[int, ...]
-    """Shape of the whole published value."""
+    """Shape of the whole value the core publishes; one block's for a bound core."""
 
     physical_value_shape: tuple[int, ...]
     """Shape of the value shard one device holds."""
@@ -714,6 +718,7 @@ def build_core_plan_record(
     compiler_peak_bytes: int | None,
     compiler_reservation_bytes: int | None,
     hlo_text: str | None,
+    selected_block: Mapping[StateName, tuple[int, int]] | None = None,
 ) -> CorePlanRecord:
     """Assemble one core's plan record from planning results already in hand.
 
@@ -731,6 +736,8 @@ def build_core_plan_record(
         compiler_peak_bytes: Raw compiler peak, or `None` when unreported.
         compiler_reservation_bytes: Admitted reservation, or `None` unbudgeted.
         hlo_text: Optimized HLO of the selected executable, or `None`.
+        selected_block: Half-open interval a bound core evaluates per blocked
+            state, or `None` for a core evaluating every state whole.
 
     Returns:
         The record.
@@ -745,7 +752,9 @@ def build_core_plan_record(
         state_extents=MappingProxyType(
             dict(zip(state_names, value_shape, strict=False)) if named else {}
         ),
-        selected_block=None,
+        selected_block=(
+            None if selected_block is None else MappingProxyType(dict(selected_block))
+        ),
         logical_value_shape=tuple(value_shape),
         physical_value_shape=tuple(value_sharding.shard_shape(tuple(value_shape))),
         device_ids=tuple(sorted(device.id for device in value_sharding.device_set)),

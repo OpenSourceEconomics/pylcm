@@ -8,6 +8,7 @@ CPU tests establish semantics and ownership only, never GPU performance.
 """
 
 import dataclasses
+import logging
 from fractions import Fraction
 from functools import cache
 from types import MappingProxyType
@@ -43,7 +44,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import ScalarInt
+from lcm.typing import DiscreteState, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
@@ -70,7 +71,16 @@ def _landing(*, assets, decision, pref_type, spousal_income):
     return 15 - assets + (decision - 1) + (pref_type - spousal_income + 1) / 4
 
 
-def _regime(*, source: int, identity: bool) -> Regime:
+def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_income):
+    return _landing(
+        assets=assets,
+        decision=decision,
+        pref_type=pref_type,
+        spousal_income=spousal_income,
+    )
+
+
+def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
     def utility(*, assets, decision, pref_type, spousal_income):
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
@@ -81,6 +91,11 @@ def _regime(*, source: int, identity: bool) -> Regime:
             - spousal_income / 8
             + source / 2
         )
+
+    if fixed_type:
+        # The identity law is annotated from the grid, so every reader of the
+        # fixed type states the same annotation.
+        utility.__annotations__["pref_type"] = DiscreteState
 
     def probabilities(age):
         weight = 0.25 if source == 0 else 0.75
@@ -95,13 +110,18 @@ def _regime(*, source: int, identity: bool) -> Regime:
             then=MarkovTransition(func=probabilities, targets=("terminal",)),
         ),
         actions={"decision": DiscreteGrid(_Three)},
-        functions={"utility": utility, "landing": _landing},
+        functions={
+            "utility": utility,
+            "landing": _fixed_type_landing if fixed_type else _landing,
+        },
         constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
         state_transitions={
             "assets": fixed_transition("assets")
             if identity
             else lambda landing: landing,
-            "pref_type": lambda pref_type: (pref_type + 1 + source) % 3,
+            "pref_type": fixed_transition("pref_type")
+            if fixed_type
+            else lambda pref_type: (pref_type + 1 + source) % 3,
             "spousal_income": lambda spousal_income: (spousal_income + 2) % 3,
         },
     )
@@ -116,11 +136,13 @@ def _model(
     identity: bool = False,
     grid: Any = None,
     extra_shard: bool = False,
+    fixed_type: bool = False,
+    invariant_block_widths: dict[str, int] | None = None,
 ) -> Model:
     return Model(
         regimes={
-            "r0": _regime(source=0, identity=identity),
-            "r1": _regime(source=1, identity=identity),
+            "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
+            "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
             "terminal": Regime(
                 regime_transitions=None,
                 functions={
@@ -152,6 +174,7 @@ def _model(
                 "subject": 432,
             },
             device_memory_bytes=budget,
+            invariant_block_widths=invariant_block_widths or {},
         ),
         # The tests start subjects in both living regimes at both living ages.
         initial_regimes={(0, 1): ("r0", "r1")},
@@ -896,6 +919,11 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             tracked.update(
                 cache=self,
                 key=(transfer.target, transfer.source_sharding),
+                # The cache keys every copy by the solve's transfer generation.
+                cache_key=value_transfer.transfer_result_key(
+                    transfer=transfer,
+                    generation=self._generation,
+                ),
                 copy=copied,
                 source=stored,
                 expected=np.asarray(stored).copy(),
@@ -915,7 +943,9 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
 
     def observe_commit(self: Any, **kwargs: Any) -> Any:
         selected = (
-            tracked and self is tracked["cache"] and kwargs["key"] == tracked["key"]
+            tracked
+            and self is tracked["cache"]
+            and kwargs["key"] == tracked["cache_key"]
         )
         if selected:
             assert not tracked["copy"].is_deleted()
@@ -942,7 +972,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
                 array is tracked["copy"]
                 for array in kwargs["arrays_by_artifact"].values()
             )
-            and tracked["key"] in kwargs["artifacts"]
+            and tracked["cache_key"] in kwargs["artifacts"]
         )
         if not selected:
             return release(**kwargs)
@@ -1021,3 +1051,78 @@ def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
             max_abs = max(max_abs, float(np.max(np.abs(got - want))))
             assert_agrees_to_ulp(got=got, expected=want, n_ulp=8)
     record_property("max_abs_value_difference", max_abs)
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+@pytest.mark.parametrize("widths", [(1, 1), (3, 9)])
+def test_type_blocks_over_assets_shards_equal_the_unblocked_solve_bitwise(
+    *, devices: tuple[int, ...], widths: tuple[int, int]
+) -> None:
+    """Three type blocks over sharded assets publish the unblocked values exactly."""
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    blocked = _model(
+        devices=devices,
+        widths=widths,
+        fixed_type=True,
+        invariant_block_widths={"pref_type": 1},
+    )
+    reference = _model(devices=devices, widths=widths, fixed_type=True)
+
+    got = blocked.solve(params=params, log_level="off").values
+    want = reference.solve(params=params, log_level="off").values
+
+    assert {(t, r) for t, arrays in got.items() for r in arrays} == {
+        (t, r) for t, arrays in want.items() for r in arrays
+    }
+    for period, arrays in want.items():
+        for regime, value in arrays.items():
+            assert got[period][regime].sharding == value.sharding
+            np.testing.assert_array_equal(
+                np.asarray(got[period][regime]), np.asarray(value)
+            )
+
+
+def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> None:
+    """Each block's continuation replica holds one of the three types.
+
+    The unblocked solve replicates all three types of the terminal value on
+    every device; a block replicates one.
+    """
+    _require_eight()
+    model = _model(
+        devices=tuple(range(8)),
+        fixed_type=True,
+        invariant_block_widths={"pref_type": 1},
+    )
+    records = []
+
+    class _Records(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            plan_record = getattr(record, "core_plan_record", None)
+            if plan_record is not None:
+                records.append(plan_record)
+
+    handler = _Records(level=logging.DEBUG)
+    logger = logging.getLogger("lcm")
+    logger.addHandler(handler)
+    try:
+        solution = model.solve(params={"discount_factor": 0.5}, log_level="debug")
+    finally:
+        logger.removeHandler(handler)
+    terminal_bytes = np.asarray(solution.values[2]["terminal"]).nbytes
+
+    blocks = [
+        record
+        for record in records
+        if record.regime in ("r0", "r1") and record.period == 1
+    ]
+    assert sorted(
+        (record.regime, record.selected_block["pref_type"]) for record in blocks
+    ) == [(regime, (code, code + 1)) for regime in ("r0", "r1") for code in range(3)]
+    # One type's block is selected on its eight stored shards and then
+    # replicated: each device holds its shard of the block and the whole block.
+    block_bytes = terminal_bytes // 3
+    assert {record.transfer_workspace_bytes for record in blocks} == {
+        block_bytes + block_bytes // 8
+    }

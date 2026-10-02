@@ -77,6 +77,10 @@ from _lcm.regime_building.fixed_components import (
     split_initial_conditions,
 )
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
+from _lcm.regime_building.invariant_blocking import (
+    fail_if_invariant_blocking_is_unsafe_for_model,
+    fail_if_invariant_blocking_route_is_unsupported,
+)
 from _lcm.regime_building.phases import project_onto_solve_phase
 from _lcm.regime_building.processing import (
     Regime,
@@ -519,7 +523,7 @@ class Model:
     """Serialize creation of runtime executors for each subject shape."""
 
     @beartype(conf=MODEL_CONF)
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         *,
         description: str = "",
@@ -768,6 +772,11 @@ class Model:
         self._execution = dataclasses.replace(
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
+        fail_if_invariant_blocking_route_is_unsupported(
+            user_regimes=self._engine_user_regimes,
+            block_widths=self._execution.invariant_block_widths,
+            sharded_states=self._execution.sharded_states,
+        )
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
             ages=self.ages,
@@ -805,6 +814,15 @@ class Model:
             params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
             execution=self._execution,
+        )
+        fail_if_invariant_blocking_is_unsafe_for_model(
+            user_regimes=self._engine_user_regimes,
+            regimes=self._regimes,
+            reachability=self.reachability,
+            initial_nodes=self.initial_nodes,
+            ages=self.ages,
+            fixed_component_splits=self._fixed_component_splits,
+            block_widths=self._execution.invariant_block_widths,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.

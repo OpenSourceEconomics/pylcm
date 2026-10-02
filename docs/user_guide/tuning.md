@@ -194,6 +194,41 @@ must declare that grouping or use `fixed_transition`; inconsistent groupings and
 reset/entry laws without an established group are rejected. Generated `_rest` and
 `_fixed` names must be unused by user declarations.
 
+## Solve one invariant code at a time
+
+A state that never changes, such as a preference type with `fixed_transition`, splits
+the solve into independent problems, one per code. Name it in
+`ExecutionConfig(invariant_block_widths={"pref_type": 1})` to solve every non-terminal
+regime carrying it one code at a time:
+
+```python
+from lcm import ExecutionConfig, Model
+
+model = Model(
+    ...,
+    execution_config=ExecutionConfig(invariant_block_widths={"pref_type": 1}),
+)
+```
+
+Each code is its own dispatch of one shared executable; the code is a runtime operand,
+so the number of compiled programs does not grow with the number of codes. A
+continuation that carries the state is read through that code's block only, so a
+continuation replicated onto other devices, for example under a sharded continuous
+state, moves one code's share at a time. The blocked solve evaluates the same Bellman
+problem as the unblocked one and publishes values in the same layout; compare the two
+before relying on bitwise equality for your model. Terminal regimes are solved whole.
+
+The request is checked at model construction. It is refused, naming every reason, when:
+
+- more than one state is named, or a width other than 1 is given;
+- the state is also in `sharded_states`, or no regime declares it;
+- the state's value can change, or a value read crosses its codes;
+- a non-terminal regime carrying it is not solved by `GridSearch`, declares taste
+  shocks, stakeholders, gated edges or same-period references, folds a process, reads a
+  gated-edge reference value, or carries the state on a non-discrete grid.
+
+A blocked regime-period cannot be captured or replayed with the period-replay tools.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in
