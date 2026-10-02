@@ -286,6 +286,13 @@ class ExecutionConfig:
     same-period references, edge-reference reads, folded processes and a
     non-discrete grid for the state. Terminal regimes, which read no
     continuation, are solved unblocked.
+
+    When the simulate phase provably keeps the state fixed too, and no regime
+    declares taste shocks, gated edges or a policy replay, `simulate` groups
+    subjects by their starting code: each code's subjects run in chunks of their
+    own and read each value carrying the state through that code's block. Each
+    subject keeps its original random keys and output row, so the panel is the
+    ungrouped one. Otherwise simulation is ungrouped.
     """
 
     devices: tuple[int, ...] | None = None

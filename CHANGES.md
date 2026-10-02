@@ -14,6 +14,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   publish values, policies and simulated panels bitwise equal to the unblocked solve's;
   the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
   [Solve one invariant code at a time](docs/user_guide/tuning.md).
+- When the simulate phase also keeps the state fixed, `simulate` groups subjects by their
+  starting code and reads each typed value through one code's block. Every subject keeps
+  its original random draws and output row, so the panel is unchanged; otherwise
+  simulation stays ungrouped.
 
 ### Required starting problems and keyword-only age-indexed declarations
 

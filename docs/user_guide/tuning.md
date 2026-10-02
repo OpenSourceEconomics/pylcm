@@ -229,6 +229,22 @@ The request is checked at model construction. It is refused, naming every reason
 
 A blocked regime-period cannot be captured or replayed with the period-replay tools.
 
+### Grouped simulation
+
+When the forward phase provably never changes the state either, `simulate` groups the
+subjects by their starting code. Each code's subjects run in chunks of their own, and
+every stored value carrying the state is read through that code's block, so a device
+receives one code's share of each such value rather than all of them. Each subject keeps
+the random draws of its original row and its original row in the result, so the panel is
+the ungrouped panel. A subject that starts without the state, in a regime that does not
+carry it, joins the first code's group; an empty group dispatches nothing.
+
+Simulation falls back to the ungrouped route when the simulate phase can change the
+state, for example through a `Phased` law whose `simulate` branch moves it, or when a
+regime declares taste shocks or gated edges or replays a stored policy. The plan
+summary's `subject_grouping` names the grouping state, or is `None` on the ungrouped
+route.
+
 ## Distribute state work
 
 Declare a discrete state at model level, then name it in
