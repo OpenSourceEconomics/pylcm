@@ -244,7 +244,7 @@ _ROUTES = (
             variant="nbegm", n_periods=3, income_timing="draw", **_SMALL
         ),
         build_params=lambda: nbegm_stochastic_node_toy.build_params(
-            final_age_alive=2.0
+            final_age_alive=2.0, income_timing="draw"
         ),
         period=0,
     ),
@@ -258,7 +258,7 @@ _ROUTES = (
             **_SMALL,
         ),
         build_params=lambda: nbegm_stochastic_node_toy.build_params(
-            final_age_alive=2.0, tax_lump=1.0
+            final_age_alive=2.0, tax_lump=1.0, income_timing="draw"
         ),
         period=0,
     ),

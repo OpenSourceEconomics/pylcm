@@ -22,7 +22,6 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 from dags import concatenate_functions
-from dags.tree import qname_from_tree_path
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import (
@@ -96,23 +95,6 @@ from lcm.typing import (
 # Stable Epstein-Zin partials `(nu, W, b, T~)` returned by a child reader
 # when a power certainty equivalent is active.
 type _EZPartials = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
-
-
-def _runtime_process_nodes(
-    *,
-    grid: _ContinuousStochasticProcess,
-    name: StateName,
-    combo_pool: Mapping[str, Any],
-) -> FloatND:
-    """A runtime-parameterized process's nodes under the params in `combo_pool`."""
-    params = {
-        **dict(grid.params),
-        **{
-            param: combo_pool[qname_from_tree_path((name, param))]
-            for param in grid.params_to_pass_at_runtime
-        },
-    }
-    return jnp.asarray(grid.compute_gridpoints(**params), dtype=canonical_float_dtype())
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -250,15 +232,6 @@ class _ChildRead:
     resolved grid the kernel substitutes for the build-time placeholder in
     `stochastic_node_values`. `None` for Markov-discrete dimensions and for
     fully-specified processes (whose build-time grid is already final)."""
-
-    runtime_process_grids: Mapping[StateName, _ContinuousStochasticProcess] = (
-        MappingProxyType({})
-    )
-    """The runtime-parameterized processes among the stochastic dims.
-
-    A read the caller supplies no resolved grid for computes these nodes from
-    the processes' runtime params in the combo pool.
-    """
 
     weight_keys: tuple[str, ...]
     """`weight_<target>__next_<state>` keys aligned with the stochastic dims."""
@@ -736,10 +709,6 @@ def _get_child_carry_reader(
     stochastic_node_values = tuple(
         resolved_process_grids[name]
         if name is not None and name in resolved_process_grids
-        else _runtime_process_nodes(
-            grid=read.runtime_process_grids[name], name=name, combo_pool=combo_pool
-        )
-        if name is not None and name in read.runtime_process_grids
         else values
         for name, values in zip(
             read.process_grid_names, read.stochastic_node_values, strict=True
@@ -975,7 +944,7 @@ class _ChildEulerState:
         )
         return cast("ScalarFloat", inner[self.next_state_key])
 
-    def at_node(self, *, draws: Mapping[str, ScalarFloat]) -> "_ChildEulerState":
+    def at_node(self, *, draws: Mapping[str, ScalarFloat]) -> _ChildEulerState:
         """The Euler state with the draws it reads fixed at one node."""
         return replace(self, draws=draws)
 
@@ -1545,20 +1514,17 @@ def euler_draw_nodes(
     """Node values of each draw the child's Euler-state law reads.
 
     A draw of a stochastic state the child carries takes that state's nodes; a
-    draw local to the edge takes its support, evaluated under `combo_pool`.
+    draw local to the edge takes its support, evaluated under `combo_pool`. A law
+    reading a draw requires the draw's nodes at construction, so a carried
+    state's build-time nodes are final here.
     """
-    nodes = {
-        f"next_{name}": (
-            _runtime_process_nodes(
-                grid=read.runtime_process_grids[name], name=name, combo_pool=combo_pool
-            )
-            if name in read.runtime_process_grids
-            else values
+    nodes = dict(
+        zip(
+            (f"next_{name}" for name in read.stochastic_state_names),
+            read.stochastic_node_values,
+            strict=True,
         )
-        for name, values in zip(
-            read.stochastic_state_names, read.stochastic_node_values, strict=True
-        )
-    }
+    )
     if read.local_support_func is not None:
         supports = read.local_support_func(**combo_pool)
         nodes |= {
@@ -2429,16 +2395,6 @@ def _build_child_reads(
             stochastic_state_names=stochastic_state_names,
             stochastic_node_values=stochastic_node_values,
             process_grid_names=process_grid_names,
-            runtime_process_grids=MappingProxyType(
-                {
-                    name: cast(
-                        "_ContinuousStochasticProcess",
-                        target_info.discrete_states[name],
-                    )
-                    for name in process_grid_names
-                    if name is not None and draw_reads.euler_draw_names
-                }
-            ),
             weight_keys=weight_keys,
             weights_func=weights_func,
             passive_state_names=passive_state_names,
@@ -2510,7 +2466,9 @@ def _child_draw_reads(
         if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
         and lottery.support_provider_name is not None
     )
-    support_keys = tuple(cast("str", lottery.support_provider_name) for lottery in local)
+    support_keys = tuple(
+        cast("str", lottery.support_provider_name) for lottery in local
+    )
     dependencies = draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_names
     )

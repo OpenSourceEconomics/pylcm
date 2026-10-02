@@ -48,7 +48,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm import continuation as continuation_module
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
     CoreBuildContext,
@@ -722,9 +721,7 @@ def _euler_draw_nodes(
     nodes = {
         f"next_{name}": list(values)
         for name, values in zip(
-            read.stochastic_state_names,
-            _carried_node_values(read=read, combo_pool=combo_pool),
-            strict=True,
+            read.stochastic_state_names, read.stochastic_node_values, strict=True
         )
     }
     if read.local_support_func is not None:
@@ -736,22 +733,6 @@ def _euler_draw_nodes(
             )
         }
     return {name: nodes[name] for name in sorted(read.euler_draw_names)}
-
-
-def _carried_node_values(
-    *, read: Any, combo_pool: Mapping[str, Any]
-) -> list[Any]:
-    """Each carried stochastic axis's nodes, a runtime process's from its params."""
-    return [
-        continuation_module._runtime_process_nodes(  # noqa: SLF001
-            grid=read.runtime_process_grids[name], name=name, combo_pool=combo_pool
-        )
-        if name in read.runtime_process_grids
-        else values
-        for name, values in zip(
-            read.stochastic_state_names, read.stochastic_node_values, strict=True
-        )
-    ]
 
 
 def _cliff_targets_at_node(
@@ -889,10 +870,7 @@ class _ChildReader:
             )
             if not is_stochastic
         )
-        self.node_values = [
-            jnp.asarray(v)
-            for v in _carried_node_values(read=read, combo_pool=combo_pool)
-        ]
+        self.node_values = [jnp.asarray(v) for v in read.stochastic_node_values]
         if read.local_support_func is not None:
             supports = read.local_support_func(**combo_pool)
             self.node_values += [
@@ -916,7 +894,7 @@ class _ChildReader:
         def next_states(savings: Any) -> Any:
             return read.next_state_func(**combo_pool, **{post_decision_name: savings})
 
-        def euler_state(savings: Any, stochastic_values: tuple[Any, ...]) -> Any:
+        def euler_state(*, savings: Any, stochastic_values: tuple[Any, ...]) -> Any:
             draws = dict(zip(draw_names, stochastic_values, strict=True))
             return read.euler_state_func(
                 **combo_pool,
@@ -933,7 +911,9 @@ class _ChildReader:
         ) -> Any:
             carried_values = stochastic_values[: len(read.stochastic_state_names)]
             bound = {
-                read.euler_state_name: euler_state(savings, stochastic_values),
+                read.euler_state_name: euler_state(
+                    savings=savings, stochastic_values=stochastic_values
+                ),
                 **dict(zip(self.code_names, codes, strict=True)),
                 **dict(zip(read.stochastic_state_names, carried_values, strict=True)),
                 **dict(zip(read.row_arg_names, row_values, strict=True)),

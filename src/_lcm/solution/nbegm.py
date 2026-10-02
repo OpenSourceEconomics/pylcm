@@ -4250,11 +4250,11 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(
     tol = 1e-6
 
     for target, next_state_func in (
-        (target, func)
-        for target in continuation_plan.stateful_targets
+        (name, func)
+        for name in continuation_plan.stateful_targets
         for func in (
-            continuation_plan.child_reads[target].next_state_func,
-            continuation_plan.child_reads[target].euler_state_func,
+            continuation_plan.child_reads[name].next_state_func,
+            continuation_plan.child_reads[name].euler_state_func,
         )
     ):
         worst = _max_abs_first_liquid_derivative(

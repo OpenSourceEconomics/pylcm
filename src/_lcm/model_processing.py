@@ -524,9 +524,7 @@ def _validate_all_variables_used(
         # A process state has no `next_<state>` function node, so a computation
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.
-        reachable |= states_read_through_their_draw(
-            regime=user_regime, reads=reachable
-        )
+        reachable |= states_read_through_their_draw(regime=user_regime, reads=reachable)
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:

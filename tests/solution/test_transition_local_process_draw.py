@@ -53,7 +53,9 @@ BASE_INCOME = 1.0
 GROSS_RETURN = 1.02
 DISCOUNT_FACTOR = 0.95
 CRRA = 2.0
-LIQUID_GRID = LinSpacedGrid(start=0.0, stop=40.0, n_points=41)
+N_LIQUID = 41
+LIQUID_MAX = 40.0
+LIQUID_GRID = LinSpacedGrid(start=0.0, stop=LIQUID_MAX, n_points=N_LIQUID)
 
 # At `liquid < 3` the borrowing constraint binds and the value function is no
 # longer affine; above 30 next liquid can leave the grid. Between, the closed
@@ -96,8 +98,8 @@ def _model(*, solver: Solver, process: Process) -> Model:
     )
     return make_alive_dead_model(
         n_periods=3,
-        n_liquid=LIQUID_GRID.n_points,
-        liquid_max=LIQUID_GRID.stop,
+        n_liquid=N_LIQUID,
+        liquid_max=LIQUID_MAX,
         n_consumption=4001,
         liquid_grid=LIQUID_GRID,
         alive_functions={
@@ -163,7 +165,7 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
 @pytest.mark.parametrize("process", ["iid", "ar1"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
 def test_the_non_carrying_target_keeps_only_its_own_states(
-    solver: Solver, process: Process
+    *, solver: Solver, process: Process
 ) -> None:
     model = _model(solver=solver, process=process)
 
@@ -172,7 +174,7 @@ def test_the_non_carrying_target_keeps_only_its_own_states(
 
 @pytest.mark.parametrize("process", ["iid", "ar1"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
-def test_value_matches_the_closed_form(solver: Solver, process: Process) -> None:
+def test_value_matches_the_closed_form(*, solver: Solver, process: Process) -> None:
     values = _alive_values(_model(solver=solver, process=process))
     expected = _closed_form(process)
     liquid = np.asarray(LIQUID_GRID.to_jax())

@@ -5517,25 +5517,10 @@ def _process_regime_core(
         state_grids=state_grids,
         continuation_targets=continuation_targets,
     )
-    for (target, process), grid in source_draw_grids.items():
-        processed_functions[f"{target}__next_{process}"] = _joint_support_indices(
-            grid.n_points
-        )
-        processed_functions[f"{target}__support_next_{process}"] = (
-            _get_source_process_nodes(name=process, grid=grid)
-        )
-        processed_functions[f"weight_{target}__next_{process}"] = (
-            _get_weights_func_for_process(
-                name=process, grid=grid, grids=all_grids[source_regime_name]
-            )
-        )
-    source_draw_keys = tuple(
-        key
-        for target, process in source_draw_grids
-        for key in (
-            f"{target}__next_{process}",
-            f"{target}__support_next_{process}",
-        )
+    source_draw_keys = _add_source_draw_functions(
+        processed_functions=processed_functions,
+        source_draw_grids=source_draw_grids,
+        source_grids=all_grids[source_regime_name],
     )
 
     # Bundle insertion order fixes the continuation's lottery reduction axes.
@@ -5699,8 +5684,8 @@ def _process_joint_transitions(
 
 def _source_draws_read_by_target_laws(
     *,
-    flat_nested_transitions: Mapping[str, object],
-    functions: Mapping[str, object],
+    flat_nested_transitions: Mapping[str, UserFunction],
+    functions: Mapping[str, UserFunction],
     source_process_grids: Mapping[ProcessName, _ContinuousStochasticProcess],
     state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
     continuation_targets: Collection[RegimeName],
@@ -5735,8 +5720,38 @@ def _source_draws_read_by_target_laws(
     return draws
 
 
+def _add_source_draw_functions(
+    *,
+    processed_functions: dict[str, EconFunction],
+    source_draw_grids: Mapping[
+        tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
+    ],
+    source_grids: Mapping[StateOrActionName, Grid],
+) -> tuple[str, ...]:
+    """Add each transition-local draw's node axis, support and weights.
+
+    The axis enumerates the source process's nodes, the support provider gives
+    their values, and the weights are the source process's row at the source's
+    current value. Returns the keys of the axis and support functions, which
+    belong to the target's transition bundle.
+    """
+    keys: list[str] = []
+    for (target, process), grid in source_draw_grids.items():
+        axis_name = f"{target}__next_{process}"
+        support_name = f"{target}__support_next_{process}"
+        processed_functions[axis_name] = _joint_support_indices(grid.n_points)
+        processed_functions[support_name] = _get_source_process_nodes(
+            name=process, grid=grid
+        )
+        processed_functions[f"weight_{axis_name}"] = _get_weights_func_for_process(
+            name=process, grid=grid, grids=source_grids
+        )
+        keys += [axis_name, support_name]
+    return tuple(keys)
+
+
 def _names_read_by(
-    *, roots: Iterable[object], functions: Mapping[str, object]
+    *, roots: Iterable[UserFunction], functions: Mapping[str, UserFunction]
 ) -> frozenset[str]:
     """Collect every argument name `roots` read, through `functions`."""
     reads: set[str] = set()
@@ -5943,8 +5958,7 @@ def _build_transition_plans(
                 )
                 continue
             if next_state_name.startswith("support_next_") and (
-                (target, next_state_name.removeprefix("support_next_"))
-                in source_draws
+                (target, next_state_name.removeprefix("support_next_")) in source_draws
             ):
                 continue
 

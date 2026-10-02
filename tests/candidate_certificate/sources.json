@@ -98,7 +98,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+            "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -154,7 +154,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "ac5599b84c8732e0de90a76aa30b2452e4508f3962fa1330ea27807a7f410007"
+            "sha256": "dd1e5bc8693138f5dc3a506c29c385b014d450c2d9bedb65589120ec6a55f95a"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -382,7 +382,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "fab51139d7d53ceb831c83ae01febc8e289002676c5e3f6e60bd4f01744f04ef"
+            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "0346afd7013862f3c15f2818d071ba1d3d05f786a767e2cdc4b4fb6d644eb4d5"
+        "source_inventory_sha256": "0211ffd79acb536f1fb5839bbc289845754be641f0281aa04af8502921baa166"
       },
       "fast": {
         "candidate_sources": [
@@ -568,7 +568,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+            "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -624,7 +624,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "ac5599b84c8732e0de90a76aa30b2452e4508f3962fa1330ea27807a7f410007"
+            "sha256": "dd1e5bc8693138f5dc3a506c29c385b014d450c2d9bedb65589120ec6a55f95a"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -852,7 +852,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "fab51139d7d53ceb831c83ae01febc8e289002676c5e3f6e60bd4f01744f04ef"
+            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "0346afd7013862f3c15f2818d071ba1d3d05f786a767e2cdc4b4fb6d644eb4d5"
+        "source_inventory_sha256": "0211ffd79acb536f1fb5839bbc289845754be641f0281aa04af8502921baa166"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "0346afd7013862f3c15f2818d071ba1d3d05f786a767e2cdc4b4fb6d644eb4d5",
+  "source_inventory_sha256": "0211ffd79acb536f1fb5839bbc289845754be641f0281aa04af8502921baa166",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1042,7 +1042,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+      "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
     },
     {
       "path": "src/_lcm/pandas_utils.py",
@@ -1098,7 +1098,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "ac5599b84c8732e0de90a76aa30b2452e4508f3962fa1330ea27807a7f410007"
+      "sha256": "dd1e5bc8693138f5dc3a506c29c385b014d450c2d9bedb65589120ec6a55f95a"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -1326,7 +1326,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "fab51139d7d53ceb831c83ae01febc8e289002676c5e3f6e60bd4f01744f04ef"
+      "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",

@@ -41,12 +41,12 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _cost(next_zeta: ContinuousState, next_xi: ContinuousState) -> FloatND:
+def _cost(*, next_zeta: ContinuousState, next_xi: ContinuousState) -> FloatND:
     return jnp.exp(0.5 * next_zeta + 0.3 * next_xi)
 
 
 def _next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, cost: FloatND
+    *, wealth: ContinuousState, consumption: ContinuousAction, cost: FloatND
 ) -> ContinuousState:
     return wealth - consumption - cost
 

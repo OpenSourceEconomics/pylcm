@@ -5,6 +5,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### A shock read only through its next-period draw stays in the regime
+
+- A law may read the draw `next_<process>` of a process state, for instance costs
+  realized after the period's choices and paid out of next period's wealth. Reading the
+  draw is now a read of the state: the regime that reads it keeps the state, whether the
+  state is declared at model level (broadcast pruning) or at regime level (the
+  unused-variable check). A persistent process's draw is conditional on the state's
+  current node. An IID process's draw is not, but it is still taken from the carried
+  state, so the state keeps its axis and the value is constant along it.
+- Toward a target that does not carry the process, the draw exists only inside the
+  transition: it is taken from the source's process at the source's current node, read
+  by the target's laws and discarded. A terminal regime valuing only wealth therefore
+  carries only wealth. `GridSearch`, `DCEGM` and `NBEGM` solve and simulate such
+  edges.
+- `DCEGM` and `NBEGM` accept a liquid law that reads a draw, persisted or local to the
+  edge: the Euler state and its savings derivative are evaluated at every node of the
+  draws the law reads. `NBEGM`'s save-to-cliff targets are inverted per node. Under the
+  EGM solvers only the liquid law may read a draw; any other law reading one is refused
+  at construction.
+
 ### Opt-in type-local GridSearch
 
 - `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal
