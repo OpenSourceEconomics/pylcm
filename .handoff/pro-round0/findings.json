@@ -1,0 +1,1168 @@
+{
+  "schema_version": "3.2",
+  "workflow_class": "computational-method",
+  "mode": "audit",
+  "round": 0,
+  "repair_attempt": 0,
+  "reviewer_turn_status": "complete",
+  "baseline_commit": "7e6fff631856572c63ac63cad43cfdf2e8c29c5c",
+  "audit_scope": {
+    "scope_mode": "delta",
+    "target": "Design consultation with a bounded audit of the Stage 3 blocked route (ExecutionConfig(invariant_block_widths={\"pref_type\": 1}), commits 266927d9..ec882386 on 7e6fff63, PR #486): decide whether and how to remove the two residual cold-only helper compiles of the blocked solve -- one jit(_select_view_blocks) per distinct stored shape read through a selected view (value_transfer.py) and one jit(_write_block) per distinct blocked output shape (invariant_blocks.py), neither growing with the number of types -- choosing among Option 1 (write-back inside the bound core through a donated full-size accumulator plus a start-offset operand), Option 2 (selection inside the bound core, slicing the stored value by the code operand, which on several devices puts a resharding collective inside the core while keeping the no-full-type-gather rule, changes Stage 2's \"selection is a planned transfer stage\" contract and moves transfer_workspace_bytes into the compiler reservation), or neither; and judge whether structural_resolution (re-run for every program on every solve, about 2 ms host time per program, mostly code-dependent) should be cached across warm calls on a params-independent key for both the blocked and the unblocked route. Return a decision with reasons; the invariants the chosen design must preserve (bitwise parity blocked vs unblocked at fp32 and fp64, donation and liveness, admission and footprint, certified corridors, multi-device layouts); the minimal changeset outline; and the tests that would show the fold red first.",
+    "manifest_digest": "aad5686b9c73b03da0fce9f99b396a6e1b2a43c6a98e3f613b26dd2e753f90d6",
+    "profile_contract_digest": "486c5c43025d84d22cd553d638a1bb3956810f19357213f980c34322018e8fa1",
+    "base_ref": "7e6fff631856572c63ac63cad43cfdf2e8c29c5c",
+    "head_ref": "ec882386ca8fe0717ed878b8eb8e7a74173c3df4",
+    "changed_paths": [
+      "CHANGES.md",
+      "docs/user_guide/tuning.md",
+      "src/_lcm/execution/core_program.py",
+      "src/_lcm/execution/execution_plan.py",
+      "src/_lcm/execution/invariant_blocks.py",
+      "src/_lcm/execution/value_transfer.py",
+      "src/_lcm/regime_building/invariant_blocking.py",
+      "src/_lcm/regime_building/processing.py",
+      "src/_lcm/solution/backward_induction.py",
+      "src/_lcm/solution/contract.py",
+      "src/_lcm/solution/grid_search.py",
+      "src/_lcm/solution/period_replay.py",
+      "src/lcm/execution.py",
+      "src/lcm/model.py",
+      "tests/candidate_certificate/direct_flow.py",
+      "tests/candidate_certificate/sources.json",
+      "tests/ci/ci-workloads.json",
+      "tests/solution/test_invariant_blocking.py",
+      "tests/test_continuous_assets_sharding.py"
+    ],
+    "dependency_closure": [
+      {
+        "path": "tests/test_models/independent_types.py",
+        "entered_from": [
+          "tests/solution/test_invariant_blocking.py"
+        ],
+        "reason": "oracle_dependency",
+        "finding_ids": [
+          "F1"
+        ]
+      },
+      {
+        "path": "src/_lcm/execution/value_views.py",
+        "entered_from": [
+          "src/_lcm/execution/value_transfer.py"
+        ],
+        "reason": "claim_dependency",
+        "finding_ids": [
+          "F1"
+        ]
+      },
+      {
+        "path": "tests/execution/test_value_views.py",
+        "entered_from": [
+          "src/_lcm/execution/value_transfer.py"
+        ],
+        "reason": "oracle_dependency",
+        "finding_ids": [
+          "F1"
+        ]
+      },
+      {
+        "path": "tests/test_continuous_transfer_admission.py",
+        "entered_from": [
+          "src/_lcm/solution/backward_induction.py"
+        ],
+        "reason": "oracle_dependency",
+        "finding_ids": [
+          "F1"
+        ]
+      }
+    ],
+    "required_profiles": [
+      "fast",
+      "certified"
+    ],
+    "profile_applicability": "required",
+    "declared_budgets": "Grid-conditional exact value and argmax agreement for fp32 fast and fp64 certified; warm compile growth 0; no cold compile growth per type; current per-shape select/write helpers explicitly accepted; peak device memory no increase over A; fail-closed admission; sealed corridors and no full-type gather. Repair review triggers 5% warm / 10% compile or memory, noise floor 3%. Candidate-set error beyond the fixed grid is not supplied and is not assessed.",
+    "environment": "Reviewer Python 3.13.5; project requires Python >=3.14. Native project execution not_run as instructed; no interpreter search, syntax rewrite or shim. Complete static source/AST/token/JSON analysis, including direct delta/dependency review. Six delivered Python artifacts were syntax-parsed; only the independent standard-library reference was executed. Supplied forced-host-device and GPU evidence retains its actual source revision and is not reviewer execution."
+  },
+  "ingestion": {
+    "manifest_digest": "aad5686b9c73b03da0fce9f99b396a6e1b2a43c6a98e3f613b26dd2e753f90d6",
+    "manifest_files_declared": 53,
+    "manifest_files_fully_read": 49,
+    "manifest_paths_left_as_reference": [
+      "project/.pre-commit-config.yaml",
+      "project/AGENTS.md",
+      "project/README.md",
+      "project/pyproject.toml"
+    ],
+    "unreadable_or_truncated": [],
+    "required_read_paths_unread": [],
+    "coverage_complete_for_verdict": true,
+    "reading_order": [
+      "Control record and manifest; all ZIP and manifest integrity checks.",
+      "Profile/return contracts and authoritative complete diff; full-file static AST/token/JSON traversal and base/head changed-symbol mapping.",
+      "Changed source and runtime dependency seams: blocked declarations, views, transfers, ownership/admission, core resolution, GridSearch, result assembly, model lifecycle.",
+      "Supplied reports, compile logs/drivers, full profile tables and complete benchmark-summary JSON; independent aggregation and version segregation.",
+      "Regression fixtures, certificate/CI data, defect casebook; full generated-data comparisons and available-source digest checks.",
+      "Candidate patches, references and tests; coverage/evidence records and reply validation."
+    ]
+  },
+  "verdict": "serious_gap",
+  "closure_status": "implementation_required",
+  "verdict_explanation": "Neither helper fold is justified as the next change: the supplied contract accepts both residual per-shape cold helpers. Two supported target-owned source defects survive: aligned selected views are misclassified in ownership/admission, and singleton blocked cores can bypass selected-read planning. The package supplies minimal source patches and native red-first regressions, plus a safe immutable-blueprint cache contract for both routes. Native verification is not_run under the expressly stated Python mismatch, so the candidate repairs are not closed. Historical GPU evidence is retained with its real revision rather than promoted to current-head acceptance.",
+  "audit_confidence": "moderate",
+  "root_causes": [
+    {
+      "id": "R1",
+      "defect_class_id": "selected-layout-is-not-owner-alias",
+      "title": "Fresh aligned selections receive stored-owner credit or lose allocation charges",
+      "finding_ids": [
+        "F1"
+      ],
+      "repair_attempt": 0,
+      "diagnosis": "Transport alignment after selecting an invariant coordinate is confused with receiving the original stored allocation. Four ownership/admission predicates still use ALIGNED_LOCAL instead of delivers_stored_buffer.",
+      "counterexample_class": "A selected value view on the same placement, with its parent still resident; compiler-live and compiler-pruned reads, shared and unshared consumers, any selected axis position and K>1.",
+      "repair_invariant": "Only delivers_stored_buffer may earn full stored-owner credit. All fresh selected destinations and declared stage workspace remain represented, including pruned operands and endpoint devices.",
+      "repair_strategy": "local_patch",
+      "closure_criterion": "RT1 is red at the stated ownership/admission assertions on head and green with P1 at both precisions; ordinary unsliced-aligned controls remain green; native owner/liveness, budget, multi-device and sealed-corridor gates pass.",
+      "expected_resource_delta": "No changed Bellman arithmetic or helper-count policy. Corrected conservative admission may reduce selected widths and increase runtime; current physical resource delta is not measured. Do not waive omitted charges to keep prior timings.",
+      "escalation_required": false
+    },
+    {
+      "id": "R2",
+      "defect_class_id": "bound-scalar-core-skips-value-view-planning",
+      "title": "A bound no-axis GridSearch core omits its mandatory selected read",
+      "finding_ids": [
+        "F2"
+      ],
+      "repair_attempt": 0,
+      "diagnosis": "GridSearch selects execution disposition from the existence of tiling/reduction axes alone, although invariant binding independently requires selected-view planning.",
+      "counterexample_class": "A fixed discrete type is the only nontrivial state coordinate; after width-one binding both local state and action products have extent one, and the child value retains the type.",
+      "repair_invariant": "Every bound continuation is supplied in its declared selected representation even when arithmetic is dense and no width axis exists.",
+      "repair_strategy": "local_patch",
+      "closure_criterion": "RT2 structural and numeric witnesses plus MT2 permutations/scales pass at fp32/fp64, against the literal one-step Bellman equation; nonblocked and ordinary dense controls stay unchanged; native admission/certification pass.",
+      "expected_resource_delta": "Newly correct selection on this boundary may add the accepted per-shape helper, but no per-type specialization. Dense arithmetic and the ordinary unblocked route remain unchanged; measured resource delta not_run.",
+      "escalation_required": false
+    },
+    {
+      "id": "R3",
+      "defect_class_id": "repeated-structural-reconstruction-design",
+      "title": "Cache-boundary design for repeated structural resolution (nonblocking optimization work)",
+      "finding_ids": [],
+      "repair_attempt": 0,
+      "diagnosis": "The repeated resolution function mixes reusable structural recipes with current numeric arguments, donation/liveness state and budget-dependent candidate processing. Wholesale memoization is unsafe.",
+      "counterexample_class": "Repeated valid same-schema calls and equal-schema type families, including changed numerical parameter values; changed runtime support, layout or ownership must not reuse stale decisions.",
+      "repair_invariant": "Cache immutable schema-certified blueprints only; always bind and validate current data and independently admit current memory.",
+      "repair_strategy": "architecture_change",
+      "closure_criterion": "RT3 and the cache safety/retention/schema/resource matrix in report.md pass for blocked and unblocked GridSearch; current-head paired resources meet the supplied contract or require an explicit workload-specific decision.",
+      "expected_resource_delta": "Expected reduction in host structural work and repeated Python-object creation; bounded small metadata cache. No numerical speedup estimate and no elimination of select/write compiles promised.",
+      "escalation_required": false
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "root_cause_id": "R1",
+      "type": "code",
+      "primary_type": "RESOURCE",
+      "severity": "serious",
+      "severity_scope": "Supported Stage 3 route, not repository-wide severity.",
+      "status": "open",
+      "blocks_clean": true,
+      "title": "Selected aligned views are misclassified in four ownership/admission predicates",
+      "location_text": "protocol/profile-contract.yaml: fail-closed admission and exact grid-conditional parity",
+      "location_code": "src/_lcm/solution/backward_induction.py:3074,3274,3300,3314; src/_lcm/execution/value_transfer.py:delivers_stored_buffer,stages,cost",
+      "claim": "A supported invariant-bound GridSearch call preserves its selected-value representation, correct ownership/admission, and the ordinary numerical result.",
+      "issue": "ALIGNED_LOCAL can describe a fresh selected block; using it for full-owner credit and scratch/pruned-input exclusions contradicts delivers_stored_buffer and the selection stage allocation contract.",
+      "classification": "code_text_mismatch",
+      "hinge_step": true,
+      "in_supported_envelope": true,
+      "reachable": true,
+      "trigger_path": "Model(invariant_block_widths={pref_type:1}, devices=(0,), finite device_memory_bytes).solve -> bound program -> selected ALIGNED_LOCAL transfer -> period/candidate residency accounting.",
+      "witness": "Normal independent_types solve reaches selected compact compiler inputs while full continuation owners remain live. RT1 also isolates a valid pruned selected input: owner C plus destination B plus declared selection scratch B must be reserved; head skips the fresh-selection predicates.",
+      "counterexample_class_id": "R1",
+      "evidence": "Exact source/contract contradiction; candidate native regression delivered but not executed. The independent literal reference was executed without importing pylcm/JAX. See report.md section 2 and the artifact IDs.",
+      "scope_ownership": {
+        "category": "NEWLY_REACHABLE_BY_TARGET",
+        "target_changed_failing_path": false,
+        "target_newly_exposes_path": true,
+        "target_uses_as_runtime_dependency": true,
+        "target_uses_as_oracle_or_benchmark": false,
+        "target_claim_invalidated": true,
+        "rationale": "The baseline snapshot has no public Stage 3 blocking request. The target wires selected reads into this path. This is not a finding on unrelated private-object misuse; the public witness constructs a documented model."
+      },
+      "base_head_evidence": {
+        "comparison_possible": false,
+        "reason_if_impossible": "Native project execution was expressly excluded: Python 3.13.5 here versus required >=3.14; the shipped Git snapshot is also partial. No interpreter/syntax workaround was attempted. Original SHAs are mapped by synthetic snapshot subjects.",
+        "environment": "Static original baseline/head snapshot comparison; native matched dtype/backend comparison not_run.",
+        "command": "See evidence/commands.md for native witness and closure commands.",
+        "reproducer_path": "tests/solution/test_audit486_selected_view_admission.py",
+        "base_reproduces": null,
+        "head_reproduces": null,
+        "base_result": "not_run; source baseline lacks the blocking API and does not feed selected views through this Stage 3 path. The ordinary route is the intended control, not an observed pass.",
+        "head_result": "not_run; source path contradicts the declared selected-view/ownership contract.",
+        "behavior_delta": "newly reachable"
+      },
+      "level_effect": "The planner can underrepresent required resident storage and admit an unsafe width/budget. Actual OOM and production numerical differences are not claimed.",
+      "decision_effect": "No measured policy or simulated-moment change is claimed; admission/completion or the value representation itself is affected.",
+      "affects_reported_result": "unknown",
+      "numerical_effect": {
+        "max_value_regret": null,
+        "q95_value_regret": null,
+        "policy_disagreement_mass": null,
+        "boundary_shift_grid_cells": null,
+        "moment_or_objective_change": null,
+        "parameter_or_welfare_change": null,
+        "unresolved_or_certification_rate": null,
+        "measured_under": "not measured natively; static proof and literal equations only",
+        "candidate_set_error": {
+          "profile": "fast, certified",
+          "eps_candidate": "unknown",
+          "assessed_by": "none",
+          "command": null,
+          "why_unknown": "No refinement/candidate-set budget supplied; this audit concerns the same finite candidate grid and representation/admission, not a full-action optimum.",
+          "on_unavailable_applied": "report_unknown",
+          "inherited_bound": {
+            "value": null,
+            "source": null,
+            "source_digest": null,
+            "assumptions": null,
+            "applies_to": null
+          }
+        }
+      },
+      "resource_effect": {
+        "measured": false,
+        "benchmark_command": null,
+        "base_warm_seconds": null,
+        "head_warm_seconds": null,
+        "base_compile_seconds": null,
+        "head_compile_seconds": null,
+        "base_peak_host_gib": null,
+        "head_peak_host_gib": null,
+        "base_peak_device_gib": null,
+        "head_peak_device_gib": null,
+        "cache_or_shape_growth": "No helper fold or new per-type numerical specialization in the candidate patch.",
+        "ci_viable": null
+      },
+      "profile_blocking": {
+        "fast": true,
+        "balanced": false,
+        "certified": true,
+        "rationale": "Required fast/certified fail-closed memory and selected-input semantic contracts apply on this supported path. Balanced is not a required/supplied profile."
+      },
+      "target_blocking": {
+        "blocks_target": true,
+        "blocking_route": "NEWLY_REACHABLE",
+        "required_merge_profiles": [
+          "fast",
+          "certified"
+        ],
+        "rationale": "The target newly introduces this public blocked route; exact static contradiction meets the ownership gate despite explicitly not_run native execution."
+      },
+      "repairability": "local",
+      "suggestion": "Only delivers_stored_buffer may earn full stored-owner credit. All fresh selected destinations and declared stage workspace remain represented, including pruned operands and endpoint devices.",
+      "smallest_repair": "Apply P1 source change, install and run the delivered regressions, regenerate touched seals/corridors using the native tools.",
+      "proposed_disposition": "FIX_IN_TARGET",
+      "issue_and_exit": {
+        "eligible": false,
+        "issue_filed": false,
+        "issue_url": null,
+        "issue_draft_path": null,
+        "evidence_directory": null,
+        "likely_provenance": null,
+        "provenance_certainty": "proven",
+        "bisection_command": null,
+        "followup_repair": "",
+        "followup_tests": [],
+        "non_blocking_rationale": "",
+        "would_become_blocking_if": []
+      },
+      "maintainer_decision": {
+        "status": "PENDING",
+        "decided_by": null,
+        "decided_at": null,
+        "rationale": "No waiver or acceptance is asserted by the reviewer."
+      },
+      "patch_ids": [
+        "P1"
+      ],
+      "oracle_ids": [
+        "OR1"
+      ],
+      "test_ids": [
+        "RT1"
+      ],
+      "mutation_ids": [],
+      "blocking_artifacts": [],
+      "verification": {
+        "status": "not_run",
+        "basis": "static_proof",
+        "commands": [],
+        "result": "Native red/green not_run by the requested environment escape. Source changes apply cleanly; syntax parsing and independent stdlib equations do not establish native closure."
+      },
+      "confidence": "high",
+      "demo_ids": []
+    },
+    {
+      "id": "F2",
+      "root_cause_id": "R2",
+      "type": "code",
+      "primary_type": "SEMANTIC",
+      "severity": "serious",
+      "severity_scope": "Supported Stage 3 route, not repository-wide severity.",
+      "status": "open",
+      "blocks_clean": true,
+      "title": "One-cell/one-action blocked cores bypass selected continuation planning",
+      "location_text": "protocol/profile-contract.yaml: fail-closed admission and exact grid-conditional parity",
+      "location_code": "src/_lcm/solution/grid_search.py:280-303,400-423; src/_lcm/regime_building/processing.py:3417-3423; src/_lcm/solution/backward_induction.py:6097-6139",
+      "claim": "A supported invariant-bound GridSearch call preserves its selected-value representation, correct ownership/admission, and the ordinary numerical result.",
+      "issue": "No width axes makes the bound core DENSE, so prepare does not plan a selected read although Q continuation construction already removed the invariant coordinate.",
+      "classification": "code_text_mismatch",
+      "hinge_step": true,
+      "in_supported_envelope": true,
+      "reachable": true,
+      "trigger_path": "Public two-period model with only fixed pref_type, one action and typed terminal -> width-one binding -> requirements.axes=() -> DENSE -> whole typed continuation supplied to a bound reader.",
+      "witness": "For flow=(1,2,3), terminal=(4,8,12), beta=1/2 the literal values are (3,6,9). RT2 first asserts the absent PLANNED disposition, then checks literal output; the exact erroneous native outcome is not asserted without execution.",
+      "counterexample_class_id": "R2",
+      "evidence": "Exact source/contract contradiction; candidate native regression delivered but not executed. The independent literal reference was executed without importing pylcm/JAX. See report.md section 2 and the artifact IDs.",
+      "scope_ownership": {
+        "category": "NEWLY_REACHABLE_BY_TARGET",
+        "target_changed_failing_path": true,
+        "target_newly_exposes_path": true,
+        "target_uses_as_runtime_dependency": true,
+        "target_uses_as_oracle_or_benchmark": false,
+        "target_claim_invalidated": true,
+        "rationale": "The baseline snapshot has no public Stage 3 blocking request. The target wires selected reads into this path. This is not a finding on unrelated private-object misuse; the public witness constructs a documented model."
+      },
+      "base_head_evidence": {
+        "comparison_possible": false,
+        "reason_if_impossible": "Native project execution was expressly excluded: Python 3.13.5 here versus required >=3.14; the shipped Git snapshot is also partial. No interpreter/syntax workaround was attempted. Original SHAs are mapped by synthetic snapshot subjects.",
+        "environment": "Static original baseline/head snapshot comparison; native matched dtype/backend comparison not_run.",
+        "command": "See evidence/commands.md for native witness and closure commands.",
+        "reproducer_path": "tests/solution/test_audit486_scalar_block.py",
+        "base_reproduces": null,
+        "head_reproduces": null,
+        "base_result": "not_run; source baseline lacks the blocking API and does not feed selected views through this Stage 3 path. The ordinary route is the intended control, not an observed pass.",
+        "head_result": "not_run; source path contradicts the declared selected-view/ownership contract.",
+        "behavior_delta": "newly reachable"
+      },
+      "level_effect": "The advertised supported scalar boundary can receive a wrong-shaped/wrong-type continuation, jeopardizing values or completion. The single-action witness makes no policy-change claim.",
+      "decision_effect": "No measured policy or simulated-moment change is claimed; admission/completion or the value representation itself is affected.",
+      "affects_reported_result": "unknown",
+      "numerical_effect": {
+        "max_value_regret": null,
+        "q95_value_regret": null,
+        "policy_disagreement_mass": null,
+        "boundary_shift_grid_cells": null,
+        "moment_or_objective_change": null,
+        "parameter_or_welfare_change": null,
+        "unresolved_or_certification_rate": null,
+        "measured_under": "not measured natively; static proof and literal equations only",
+        "candidate_set_error": {
+          "profile": "fast, certified",
+          "eps_candidate": "unknown",
+          "assessed_by": "none",
+          "command": null,
+          "why_unknown": "No refinement/candidate-set budget supplied; this audit concerns the same finite candidate grid and representation/admission, not a full-action optimum.",
+          "on_unavailable_applied": "report_unknown",
+          "inherited_bound": {
+            "value": null,
+            "source": null,
+            "source_digest": null,
+            "assumptions": null,
+            "applies_to": null
+          }
+        }
+      },
+      "resource_effect": {
+        "measured": false,
+        "benchmark_command": null,
+        "base_warm_seconds": null,
+        "head_warm_seconds": null,
+        "base_compile_seconds": null,
+        "head_compile_seconds": null,
+        "base_peak_host_gib": null,
+        "head_peak_host_gib": null,
+        "base_peak_device_gib": null,
+        "head_peak_device_gib": null,
+        "cache_or_shape_growth": "No helper fold or new per-type numerical specialization in the candidate patch.",
+        "ci_viable": null
+      },
+      "profile_blocking": {
+        "fast": true,
+        "balanced": false,
+        "certified": true,
+        "rationale": "Required fast/certified fail-closed memory and selected-input semantic contracts apply on this supported path. Balanced is not a required/supplied profile."
+      },
+      "target_blocking": {
+        "blocks_target": true,
+        "blocking_route": "NEWLY_REACHABLE",
+        "required_merge_profiles": [
+          "fast",
+          "certified"
+        ],
+        "rationale": "The target newly introduces this public blocked route; exact static contradiction meets the ownership gate despite explicitly not_run native execution."
+      },
+      "repairability": "local",
+      "suggestion": "Every bound continuation is supplied in its declared selected representation even when arithmetic is dense and no width axis exists.",
+      "smallest_repair": "Apply P2 source change, install and run the delivered regressions, regenerate touched seals/corridors using the native tools.",
+      "proposed_disposition": "FIX_IN_TARGET",
+      "issue_and_exit": {
+        "eligible": false,
+        "issue_filed": false,
+        "issue_url": null,
+        "issue_draft_path": null,
+        "evidence_directory": null,
+        "likely_provenance": null,
+        "provenance_certainty": "proven",
+        "bisection_command": null,
+        "followup_repair": "",
+        "followup_tests": [],
+        "non_blocking_rationale": "",
+        "would_become_blocking_if": []
+      },
+      "maintainer_decision": {
+        "status": "PENDING",
+        "decided_by": null,
+        "decided_at": null,
+        "rationale": "No waiver or acceptance is asserted by the reviewer."
+      },
+      "patch_ids": [
+        "P2"
+      ],
+      "oracle_ids": [
+        "OR1"
+      ],
+      "test_ids": [
+        "RT2"
+      ],
+      "mutation_ids": [
+        "MT2"
+      ],
+      "blocking_artifacts": [],
+      "verification": {
+        "status": "not_run",
+        "basis": "static_proof",
+        "commands": [],
+        "result": "Native red/green not_run by the requested environment escape. Source changes apply cleanly; syntax parsing and independent stdlib equations do not establish native closure."
+      },
+      "confidence": "high",
+      "demo_ids": []
+    }
+  ],
+  "hardening_notes": [
+    {
+      "id": "H1",
+      "title": "Do not promote historical resource receipts to current-head acceptance",
+      "scope": "Evidence limitation, not an additional native-reproduced current-head blocker.",
+      "in_supported_envelope": true,
+      "reachable": true,
+      "affects_reported_result": "Resource claims only; no reviewer reproduction",
+      "blocks_clean": false,
+      "suggestion": "Run same-head A/B after the fixes and cache work; retain historical actual SHAs and distinguish cold public wall from compilation time."
+    },
+    {
+      "id": "H2",
+      "title": "Bitwise acceptance needs signed-zero-sensitive comparators",
+      "scope": "Test-strength recommendation, not an independently demonstrated numerical defect.",
+      "in_supported_envelope": true,
+      "reachable": true,
+      "affects_reported_result": "No numerical discrepancy established",
+      "blocks_clean": false,
+      "suggestion": "Use byte comparisons with explicit NaN-mask policy and one-ULP/signed-zero negative controls; do not infer signed-zero identity from array_equal alone."
+    }
+  ],
+  "resource_report": [
+    {
+      "id": "B1",
+      "profile": "fast",
+      "workload": "reduced2 fp32; historical single-A100 supplied evidence",
+      "command": "Implementer stage3_arms.py arms as described in context/evidence/03-REPORT.md; exact original launcher command is not shipped. See evidence/resource-summary.json for complete numeric inputs.",
+      "comparison": "A blocking off -> B blocking on at 9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7; NOT original baseline -> audited head",
+      "warm_seconds_base": 7.580958443228155,
+      "warm_seconds_head": 9.035050147678703,
+      "compile_seconds_base": null,
+      "compile_seconds_head": null,
+      "peak_host_gib_base": null,
+      "peak_host_gib_head": null,
+      "peak_device_gib_base": 0.708176851272583,
+      "peak_device_gib_head": 0.6876528263092041,
+      "value_regret": 0.0,
+      "policy_disagreement_mass": null,
+      "moment_or_objective_change": null,
+      "within_declared_budget": null,
+      "source": "supplied_evidence",
+      "measurement_notes": "Four steady observations across two isolated arms per mode; historical revision, not audit head. Warm increase exceeds the review trigger at that historical revision; there is no measured current-head verdict. Value equality is reported by supplied summary; raw arrays not rerun."
+    },
+    {
+      "id": "B2",
+      "profile": "fast",
+      "workload": "reduced3 fp32; historical single-A100 supplied evidence",
+      "command": "Implementer stage3_arms.py arms as described in context/evidence/03-REPORT.md; exact original launcher command is not shipped. See evidence/resource-summary.json for complete numeric inputs.",
+      "comparison": "A blocking off -> B blocking on at 9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7; NOT original baseline -> audited head",
+      "warm_seconds_base": 8.316951557528228,
+      "warm_seconds_head": 10.793254820629954,
+      "compile_seconds_base": null,
+      "compile_seconds_head": null,
+      "peak_host_gib_base": null,
+      "peak_host_gib_head": null,
+      "peak_device_gib_base": 0.7453267574310303,
+      "peak_device_gib_head": 0.6981780529022217,
+      "value_regret": 0.0,
+      "policy_disagreement_mass": null,
+      "moment_or_objective_change": null,
+      "within_declared_budget": null,
+      "source": "supplied_evidence",
+      "measurement_notes": "Four steady observations across two isolated arms per mode; historical revision, not audit head. Warm increase exceeds the review trigger at that historical revision; there is no measured current-head verdict. Value equality is reported by supplied summary; raw arrays not rerun."
+    },
+    {
+      "id": "B3",
+      "profile": "certified",
+      "workload": "reduced3 fp64; historical single-A100 supplied evidence",
+      "command": "Implementer stage3_arms.py arms as described in context/evidence/03-REPORT.md; exact original launcher command is not shipped. See evidence/resource-summary.json for complete numeric inputs.",
+      "comparison": "A blocking off -> B blocking on at 9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7; NOT original baseline -> audited head",
+      "warm_seconds_base": 9.259227780625224,
+      "warm_seconds_head": 11.835180788766593,
+      "compile_seconds_base": null,
+      "compile_seconds_head": null,
+      "peak_host_gib_base": null,
+      "peak_host_gib_head": null,
+      "peak_device_gib_base": 0.5556533336639404,
+      "peak_device_gib_head": 0.34554624557495117,
+      "value_regret": 0.0,
+      "policy_disagreement_mass": null,
+      "moment_or_objective_change": null,
+      "within_declared_budget": null,
+      "source": "supplied_evidence",
+      "measurement_notes": "Two steady observations in one arm per mode; below the requested three repetitions, historical revision. Warm increase exceeds the review trigger at that historical revision; there is no measured current-head verdict. Value equality is reported by supplied summary; raw arrays not rerun."
+    },
+    {
+      "id": "B4",
+      "profile": "fast",
+      "workload": "current-overhead-patch CPU tiny compile-count fixtures",
+      "command": "Native count driver is context/evidence/08-count_compiles.py (hard-coded implementer checkout path); supplied outputs 05/06. Not executed by reviewer.",
+      "comparison": "A vs B for overhead patch replayed as ec882386 according to report 02",
+      "warm_seconds_base": null,
+      "warm_seconds_head": null,
+      "compile_seconds_base": null,
+      "compile_seconds_head": null,
+      "peak_host_gib_base": null,
+      "peak_host_gib_head": null,
+      "peak_device_gib_base": null,
+      "peak_device_gib_head": null,
+      "value_regret": null,
+      "policy_disagreement_mass": null,
+      "moment_or_objective_change": null,
+      "within_declared_budget": true,
+      "source": "supplied_evidence",
+      "measurement_notes": "Limited to explicitly accepted cold-helper counts: 12->14,13->16,13->15. This is not a complete resource-acceptance statement. Warm-helper execution and GPU costs remain. The standalone count driver does not itself set precision; its counts are not a replacement for separate fp32/fp64 native acceptance."
+    }
+  ],
+  "patches": [
+    {
+      "id": "P1",
+      "related_findings": [
+        "F1"
+      ],
+      "target_paths": [
+        "src/_lcm/solution/backward_induction.py"
+      ],
+      "format": "unified_diff",
+      "artifact_ref": "P1",
+      "filename_hint": "P1-selected-owner-accounting.patch",
+      "package_path": "patches/P1-selected-owner-accounting.patch",
+      "rationale": "Use actual stored-buffer delivery, not post-selection transport alignment, for all four ownership/cost decisions.",
+      "expected_resource_delta": "Unmeasured. Arithmetic unchanged; corrected admission may narrow widths. Native sealed-source regeneration is required.",
+      "diff": "--- a/src/_lcm/solution/backward_induction.py\n+++ b/src/_lcm/solution/backward_induction.py\n@@ -3071,7 +3071,7 @@\n         if triple[1] != period:\n             continue\n         for transfer in program.input_transfer_plan:\n-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:\n+            if transfer.delivers_stored_buffer:\n                 continue\n             cost = transfer.cost\n             unplanned = sorted(frozenset(cost.devices) - frozenset(device_ids))\n@@ -3262,16 +3262,16 @@\n ) -> tuple[ValueArtifactAddress, ...]:\n     \"\"\"Name the values one program's executable is handed without a copy.\n \n-    A planned program's resolved transfer plan says which reads reach the\n-    executable in their stored layout; every other transfer kind allocates a\n-    copy that the stored buffer outlives, so both are live. A program with no\n-    plan reads its declared values directly.\n+    A planned program's transfer says whether the executable receives the stored\n+    buffer itself. An aligned transport of a selected view still receives a\n+    fresh block, so its stored owner remains live. A program with no plan\n+    reads its declared values directly.\n     \"\"\"\n     if metadata.input_transfer_plan:\n         return tuple(\n             transfer.target\n             for transfer in metadata.input_transfer_plan\n-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL\n+            if transfer.delivers_stored_buffer\n         )\n     return tuple(read.target for read in metadata.requirements.value_reads)\n \n@@ -3297,7 +3297,7 @@\n         frozenset(\n             transfer.source\n             for transfer in program.input_transfer_plan\n-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL\n+            if transfer.delivers_stored_buffer\n         )\n         if program.input_transfer_plan\n         else frozenset(read.source for read in program.requirements.value_reads)\n@@ -3311,7 +3311,7 @@\n     copied_inputs: set[Hashable] = set()\n     temporary_bytes: dict[int, int] = {}\n     for transfer in program.input_transfer_plan:\n-        if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:\n+        if transfer.delivers_stored_buffer:\n             continue\n         kept = _compiler_reads_source(shardings=input_shardings, source=transfer.source)\n         if transfer.reused_by_several_consumers:\n",
+      "delivered_as": "patches/P1-selected-owner-accounting.patch",
+      "delivered_sha256": "df37a4d86fab6442bef18414eff525ef3b82220560380ce3068c023e9b10da68"
+    },
+    {
+      "id": "P2",
+      "related_findings": [
+        "F2"
+      ],
+      "target_paths": [
+        "src/_lcm/solution/grid_search.py"
+      ],
+      "format": "unified_diff",
+      "artifact_ref": "P2",
+      "filename_hint": "P2-plan-bound-scalar-reads.patch",
+      "package_path": "patches/P2-plan-bound-scalar-reads.patch",
+      "rationale": "Require planning for invariant-bound cores even when the arithmetic declares no execution-width axes.",
+      "expected_resource_delta": "Unmeasured. Correct selected transfer on scalar boundary; keeps dense arithmetic, no new per-code specialization. Native sealed-source regeneration is required.",
+      "diff": "--- a/src/_lcm/solution/grid_search.py\n+++ b/src/_lcm/solution/grid_search.py\n@@ -400,6 +400,10 @@\n                     edge_target_regimes=context.edge_target_regimes,\n                 ),\n             )\n+            # A bound continuation needs its selected-view transfer even when\n+            # all local state and action products have extent one. \"Dense\"\n+            # arithmetic must not bypass the engine's value-read planning.\n+            requires_plan = bool(requirements.axes) or bool(context.invariant_bindings)\n             program = CoreProgram(\n                 name=\"main\",\n                 function=program_functions[q_id],\n@@ -412,11 +416,11 @@\n                 ),\n                 disposition=(\n                     CoreExecutionDisposition.PLANNED\n-                    if requirements.axes\n+                    if requires_plan\n                     else CoreExecutionDisposition.DENSE\n                 ),\n                 disposition_reason=(\n-                    None if requirements.axes else action_streaming.value\n+                    None if requires_plan else action_streaming.value\n                 ),\n                 donation_candidates=(),\n             )\n",
+      "delivered_as": "patches/P2-plan-bound-scalar-reads.patch",
+      "delivered_sha256": "593f67470ba84fa107bca7c6d70e4d6f24cf46ae1a5244f64a10279d963cfde4"
+    }
+  ],
+  "implementation_plan": [
+    {
+      "order": 1,
+      "root_cause_id": "R1",
+      "finding_ids": [
+        "F1"
+      ],
+      "action": "Run RT1 red at the specified assertions, apply P1, and run green at fp32/fp64. Check compiler-live and pruned selected inputs, shared copies and endpoint scratch; unsliced owner credits remain valid. Do not globally rewrite transport-dispatch kinds.",
+      "repair_strategy": "local_patch",
+      "repair_cost_tier": "semantic_repair",
+      "patch_ids": [
+        "P1"
+      ],
+      "oracle_ids": [
+        "OR1"
+      ],
+      "test_ids": [
+        "RT1"
+      ],
+      "mutation_ids": [],
+      "done_when": "RT1 is red at the stated ownership/admission assertions on head and green with P1 at both precisions; ordinary unsliced-aligned controls remain green; native owner/liveness, budget, multi-device and sealed-corridor gates pass."
+    },
+    {
+      "order": 2,
+      "root_cause_id": "R2",
+      "finding_ids": [
+        "F2"
+      ],
+      "action": "Run the public scalar RT2 graph/numerical witness red, apply P2, and run RT2/MT2 green at both precisions. PLANNED disposition enables selected reads without adding artificial numerical tiles.",
+      "repair_strategy": "local_patch",
+      "repair_cost_tier": "semantic_repair",
+      "patch_ids": [
+        "P2"
+      ],
+      "oracle_ids": [
+        "OR1"
+      ],
+      "test_ids": [
+        "RT2"
+      ],
+      "mutation_ids": [
+        "MT2"
+      ],
+      "done_when": "RT2 structural and numeric witnesses plus MT2 permutations/scales pass at fp32/fp64, against the literal one-step Bellman equation; nonblocked and ordinary dense controls stay unchanged; native admission/certification pass."
+    },
+    {
+      "order": 3,
+      "root_cause_id": "R3",
+      "finding_ids": [],
+      "action": "Retain both per-shape select/write helpers. Split structural blueprint construction from current invocation binding in core_program/backward_induction. Cache only adapter-certified built-in GridSearch structure keyed by sealed program identity and current validated abstract schema, layout/view structure, compiler options and recipe policy. Start with warm reuse in both routes, then equal-schema family reuse. Exact cache content and mandatory fresh fields are in report.md section 3.",
+      "repair_strategy": "architecture_change",
+      "repair_cost_tier": "redesign",
+      "patch_ids": [],
+      "oracle_ids": [],
+      "test_ids": [
+        "RT3"
+      ],
+      "mutation_ids": [],
+      "done_when": "No concrete arguments, mutable liveness/donation/frontier objects, old transfer generations or numerical results live in the cache; warm same-schema changed-parameter outputs equal fresh models; schema changes miss/refuse correctly."
+    },
+    {
+      "order": 4,
+      "root_cause_id": "R3",
+      "finding_ids": [],
+      "action": "Add a bounded model-local runtime cache with lifecycle/serialization exclusions; current params, runtime grids, exact code/offset/read addresses, actual owners, transfer generations, liveness, donation, budgets and admission are rebound each solve. Leave uncertified third-party builders uncached. Test retention, layout/precision/weak-type changes, stale seals and lowered available budgets.",
+      "repair_strategy": "architecture_change",
+      "repair_cost_tier": "redesign",
+      "patch_ids": [],
+      "oracle_ids": [],
+      "test_ids": [
+        "RT3"
+      ],
+      "mutation_ids": [],
+      "done_when": "RT3 and the cache safety/retention/schema/resource matrix in report.md pass for blocked and unblocked GridSearch; current-head paired resources meet the supplied contract or require an explicit workload-specific decision."
+    },
+    {
+      "order": 5,
+      "root_cause_id": "R1",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "action": "Regenerate changed certificate/corridor anchors and CI registrations using native project tooling; run targeted ownership/donation/liveness, scalar and ordinary blocked/unblocked 1/2/8-device gates and mutation self-tests. Run one representative smoke per repair and one matched full resource/profile suite at closure. Preserve helper-count acceptance and exact numerical/RNG controls.",
+      "repair_strategy": "local_patch",
+      "repair_cost_tier": "invariant_or_diagnostic",
+      "patch_ids": [
+        "P1",
+        "P2"
+      ],
+      "oracle_ids": [
+        "OR1"
+      ],
+      "test_ids": [
+        "RT1",
+        "RT2",
+        "RT3"
+      ],
+      "mutation_ids": [
+        "MT2"
+      ],
+      "done_when": "Current exact source has native red/green, regenerated seals/corridor mutation receipts, no full-type gather, safe actual admission and matched current-head resource evidence. Historical receipts remain separately labelled."
+    }
+  ],
+  "todo_responses": [
+    {
+      "id": "D1",
+      "marker_location": "audit target: Option 1 / Option 2 / neither",
+      "instruction": "Choose whether/how to remove residual helpers.",
+      "response": "Neither now. The supplied contract accepts the residual per-shape helpers. Option 1 is a possible later measured write/launch optimization; Option 2 is a larger transfer/accounting redesign. Removing just one does not remove the other. Conditional preconditions and red-first fold gates are specified in report.md section 4; no fold is required for F1/F2. RT4 delivers an optional executable probe for the two fold-specific red assertions and the accepted-current-design control."
+    },
+    {
+      "id": "D2",
+      "marker_location": "audit target: structural_resolution",
+      "instruction": "Judge params-independent warm caching for blocked and unblocked routes.",
+      "response": "Yes for an immutable schema-certified blueprint, no for wholesale materialized/resolved programs. Numerical-payload-independent does not mean parameter-dependent schemas can be ignored. The minimal split, exact key categories, per-call rebinding, fresh admission and lifecycle tests are in plan steps 3-4 and report.md section 3."
+    }
+  ],
+  "failed_attacks": [
+    {
+      "attack": "Residual helper compile count grows once per preference code",
+      "where_it_would_enter": "invariant_blocks and selected view runtime operands",
+      "how_tested": "Read raw count outputs, helper implementations and shape/runtime bindings.",
+      "why_no_objection": "Current supplied counts identify select/write families per shape, not a per-code compile multiplier; the profile explicitly accepts them.",
+      "residual_uncertainty": "Current real-GPU helper count and runtime cost not measured by reviewer."
+    },
+    {
+      "attack": "Nonzero code is silently reindexed to zero or result cache aliases two types",
+      "where_it_would_enter": "block_state_action_space, selected_block_view, transfer_result_key",
+      "how_tested": "Read explicit start/code bindings, view structure/identity split and fresh per-solve generation wiring plus supplied tests.",
+      "why_no_objection": "The design keeps original codes as runtime data and result identity includes the selected coordinates. No supported collision found in this bounded audit.",
+      "residual_uncertainty": "Proposed structural cache is not implemented and needs its own stale-reuse tests."
+    },
+    {
+      "attack": "A selected block currently communicates the whole type axis",
+      "where_it_would_enter": "apply_value_transfer selection before device_put",
+      "how_tested": "Read ordered transfer stages, selection shapes, and supplied standalone HLO report.",
+      "why_no_objection": "The shipped explicit selected route slices before transport; neither proposed fold is already present.",
+      "residual_uncertainty": "Supplied forced-host evidence is not real multi-GPU production acceptance."
+    },
+    {
+      "attack": "Unsupported cross-type resets/gated/folded/reference routes are silently optimized",
+      "where_it_would_enter": "invariant_blocking and construction/processing gates",
+      "how_tested": "Read request validation, unsafe-analysis call and supported-route exclusions.",
+      "why_no_objection": "The target explicitly refuses these extensions; no objection imported from an unsupported path.",
+      "residual_uncertainty": "This does not certify all invariant-analysis internals outside the supplied delta."
+    },
+    {
+      "attack": "Old GPU warm regression proves the final overhead patch has the same measured regression",
+      "where_it_would_enter": "evidence attribution and final resource verdict",
+      "how_tested": "Read every arm revision in the supplied benchmark summary and report 02 rebase history.",
+      "why_no_objection": "The GPU arrays/timings belong to 9f03c34e, not ec882386. The known regression motivates caching but cannot be silently promoted to a current-head measurement.",
+      "residual_uncertainty": "Current-head matched GPU/resource suite remains required."
+    }
+  ],
+  "attack_ledger_updates": [
+    {
+      "dimension": "selected-view ownership vs transport layout",
+      "previous_status": "unknown",
+      "new_status": "finding",
+      "note": "F1: four remaining ALIGNED_LOCAL ownership/admission predicates."
+    },
+    {
+      "dimension": "blocked degenerate products",
+      "previous_status": "unknown",
+      "new_status": "finding",
+      "note": "F2: absent width axes must not suppress selected-read planning."
+    },
+    {
+      "dimension": "cold helper growth vs type count",
+      "previous_status": "unknown",
+      "new_status": "attacked_clean",
+      "note": "Supplied evidence and current profile accept per-shape select/write helpers; do not mistake them for a K-fold executable explosion."
+    }
+  ],
+  "defect_class_sweep": [
+    {
+      "class_id": "DC-1",
+      "result": "NOT_APPLICABLE",
+      "finding_ids": [],
+      "note": "Casebook cancellation-before-reduction class: no new cancellation/reduction arithmetic in the audited changes; no supported target witness established. This is not a repository-wide absence claim."
+    },
+    {
+      "class_id": "DC-2",
+      "result": "NOT_APPLICABLE",
+      "finding_ids": [],
+      "note": "Casebook single-rounded evaluation trusted for exact ordering: no new exact-order predicate or arithmetic-certificate decision in this delta. The representation/admission findings do not assert an arithmetic cancellation or near-tie defect."
+    },
+    {
+      "class_id": "DC-3",
+      "result": "NOT_APPLICABLE",
+      "finding_ids": [],
+      "note": "Casebook stabilized-primitive bypass: no new exact-affine/stable-primitive dispatch to audit; existing sealed corridors still need regeneration for source changes."
+    }
+  ],
+  "reference_implementations": [
+    {
+      "id": "OR1",
+      "language": "python",
+      "oracle_type": "structural",
+      "purpose": "Independent owner/block reservation equations and literal beta=1/2 scalar Bellman values, without pylcm/JAX.",
+      "related_finding": "F1",
+      "filename_hint": "selected_view_reference.py",
+      "artifact_ref": "OR1",
+      "package_path": "audit-oracles/selected_view_reference.py",
+      "independence_basis": "Counts distinct logical allocations arithmetically and evaluates one-action values with fractions.Fraction. It does not duplicate transfer classification or solver control flow. The C+2B pruned reservation is explicitly the existing conservative policy, not a measured allocator peak.",
+      "contamination_checked": true,
+      "run_command": "python audit-oracles/selected_view_reference.py",
+      "expected_result": "24 byte-accounting checks and literal values (3,6,9) pass; no production correctness assertion.",
+      "executed": true,
+      "observed_result": "PASS: 24 byte-accounting cases; exact one-action values = (Fraction(3, 1), Fraction(6, 1), Fraction(9, 1))\nThis checks independent equations only. No pylcm/JAX execution is claimed.",
+      "code": "\"\"\"Independent equations, not a pylcm execution or a model-runtime shim.\n\nA selected block is a fresh allocation. A transport with matching layouts is\nnot by itself evidence that an executable receives the stored owner.\n\"\"\"\nfrom dataclasses import dataclass\nfrom fractions import Fraction\n\n\n@dataclass(frozen=True, kw_only=True)\nclass SelectedRead:\n    types: int\n    cells_per_type: int\n    item_bytes: int\n\n    @property\n    def owner(self) -> int:\n        return self.types * self.cells_per_type * self.item_bytes\n\n    @property\n    def block(self) -> int:\n        return self.cells_per_type * self.item_bytes\n\n    def transfer_live_bytes(self) -> int:\n        \"\"\"One owner plus its fresh selection, without a communication copy.\"\"\"\n        return self.owner + self.block\n\n    def pruned_input_reservation(self) -> int:\n        \"\"\"The supplied planner's conservative policy, not an allocator measurement.\n\n        Fixed owner + unshared pruned selection + declared selection scratch.\n        The scratch is deliberately charged alongside the destination.\n        \"\"\"\n        return self.owner + 2 * self.block\n\n\ndef one_action_value(*, flow: tuple[int, ...], terminal: tuple[int, ...]) -> tuple[Fraction, ...]:\n    \"\"\"Independent one-step finite Bellman equation, with beta = 1/2.\"\"\"\n    if len(flow) != len(terminal):\n        raise ValueError(\"Each type needs its own terminal value.\")\n    return tuple(Fraction(f) + Fraction(t, 2) for f, t in zip(flow, terminal, strict=True))\n\n\ndef main() -> None:\n    checks = 0\n    for types in (1, 2, 3, 7):\n        for cells in (1, 8, 33):\n            for item_bytes in (4, 8):\n                read = SelectedRead(types=types, cells_per_type=cells, item_bytes=item_bytes)\n                assert read.transfer_live_bytes() - read.owner == read.block\n                assert read.pruned_input_reservation() - read.owner == 2 * read.block\n                checks += 1\n    values = one_action_value(flow=(1, 2, 3), terminal=(4, 8, 12))\n    assert values == (Fraction(3), Fraction(6), Fraction(9))\n    print(f\"PASS: {checks} byte-accounting cases; exact one-action values = {values}\")\n    print(\"This checks independent equations only. No pylcm/JAX execution is claimed.\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+      "delivered_as": "audit-oracles/selected_view_reference.py",
+      "delivered_sha256": "c1762d336c9322bdfa0093df9e1a93d92d58268fe709305e0cac53b1313f98b8"
+    }
+  ],
+  "reusable_tests": [
+    {
+      "id": "RT1",
+      "test_kind": "profile_budget",
+      "language": "python",
+      "purpose": "Public selected-owner-credit observation plus exact declared threshold, pruned/shared variants and unsliced control.",
+      "related_finding": "F1",
+      "profile": "any",
+      "filename_hint": "test_audit486_selected_view_admission.py",
+      "artifact_ref": "RT1",
+      "package_path": "tests/solution/test_audit486_selected_view_admission.py",
+      "run_command": "pixi run --as-is -e tests-cpu pytest tests/solution/test_audit486_selected_view_admission.py --precision=32 -n 0 -v --junitxml=/absolute/evidence/rt1-p32.xml",
+      "expected_result": "Specified assertions red on head and green after P1; repeat precision=64. Import/fixture errors do not count as reproducing the finding.",
+      "executed": false,
+      "observed_result": "not_run: mandated Python >=3.14 native environment unavailable. AST syntax and supplied-interface checks only.",
+      "code": "\"\"\"Regression candidates for audit R1. Run in the repository's native environment.\n\nThe public-path probes only observe normal solver calls; they do not forge or\nmodify model internals. The small synthetic case uses the same valid transfer\nand inventory interfaces as test_continuous_transfer_admission.py.\n\"\"\"\nimport dataclasses\nimport math\nfrom typing import Any\n\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nimport pytest\n\nfrom _lcm.execution.core_program import (\n    CoreExecutionDisposition, CoreExecutionRequirements, ProgramScope,\n    ResolvedCoreProgram, ValueRead,\n)\nfrom _lcm.execution.footprint import ResidentInventory\nfrom _lcm.execution.output_layout import VALUE\nfrom _lcm.execution.value_transfer import (\n    CoordinateSelection, ResolvedValueTransfer, ValueArtifactAddress,\n    ValueArtifactKind, ValueConsumerAddress, ValueInputChannel,\n    ValueTransferKind, ValueViewDescriptor, ValueViewLeaf,\n)\nfrom _lcm.execution.workspace_planning import compiler_memory_reservation, plan_workspace\nfrom _lcm.solution import backward_induction as bi\nfrom tests.solution.test_invariant_blocking import _independent_types_model\nfrom tests.test_models import independent_types\nfrom lcm import ExecutionConfig\nfrom lcm.exceptions import ExecutionPlanningError\n\n\ndef test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(\n    *, monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    \"\"\"A compiler-live compact input cannot cover its separate stored owner.\"\"\"\n    original = bi._candidate_resident_bytes\n    checked: list[tuple[int, int]] = []\n\n    def observe(**kwargs: Any) -> int:\n        got = original(**kwargs)\n        program = kwargs[\"program\"]\n        transfers = program.input_transfer_plan\n        # Isolate a normal unshared selected read, not a mixed/shared graph.\n        if transfers and all(\n            t.selects and t.kind is ValueTransferKind.ALIGNED_LOCAL\n            and not t.reused_by_several_consumers for t in transfers\n        ):\n            shardings = kwargs[\"compiled\"].input_shardings[1]\n            if all(bi._compiler_reads_source(shardings=shardings, source=t.source)\n                   for t in transfers):\n                expected = kwargs[\"inventory\"].resident_bytes(\n                    consumes=(), consumed_copies=frozenset(), temporary_bytes={},\n                )\n                checked.append((got, expected))\n                assert got == expected, (\n                    \"A selected argument is not the full stored owner; \"\n                    f\"got resident={got}, owner-preserving resident={expected}\"\n                )\n        return got\n\n    monkeypatch.setattr(bi, \"_candidate_resident_bytes\", observe)\n    model = _independent_types_model(execution_config=ExecutionConfig(\n        devices=(0,), device_memory_bytes=2**30,\n        invariant_block_widths={\"pref_type\": 1},\n    ))\n    model.solve(params=independent_types.get_params(), log_level=\"off\")\n    assert checked, \"The public witness must reach a compiler-live selected read.\"\n\n\ndef _shape_only(*, next_regime_to_V_arr: dict[str, jax.Array]) -> jax.Array:\n    value = next_regime_to_V_arr[\"terminal\"]\n    return jnp.arange(value.size, dtype=value.dtype).reshape(value.shape)\n\n\n@dataclasses.dataclass(frozen=True, kw_only=True)\nclass _Case:\n    program: ResolvedCoreProgram\n    compiled: Any\n    inventory: ResidentInventory\n    metadata: dict\n    owner: jax.Array\n    owner_bytes: int\n    block_bytes: int\n    compiler_bytes: int\n    device_id: int\n\n\ndef _case(*, axis: int, code: int, cells: int, shared: bool) -> _Case:\n    device = jax.devices()[0]\n    sharding = jax.sharding.SingleDeviceSharding(device)\n    dtype = np.dtype(\"float64\" if jax.config.jax_enable_x64 else \"float32\")\n    shape = (3, cells) if axis == 0 else (cells, 3)\n    names = (\"pref_type\", \"assets\") if axis == 0 else (\"assets\", \"pref_type\")\n    owner = jax.device_put(np.arange(math.prod(shape), dtype=dtype).reshape(shape), sharding)\n    target = ValueArtifactAddress(kind=ValueArtifactKind.REGIME_VALUE, period=1, regime=\"terminal\")\n    source = ValueConsumerAddress(\n        source_period=0, source_regime=\"working\", core_key=\"main\",\n        channel=ValueInputChannel.NEXT_REGIME_VALUE, path=(\"terminal\",),\n    )\n    view = ValueViewDescriptor(\n        artifact=target, leaf=ValueViewLeaf.SELECTED,\n        stored_axis_names=names, stored_shape=shape, dtype=dtype,\n        weak_type=False, consumer_shape=(cells,), required_sharding=sharding,\n        selections=(CoordinateSelection(state_name=\"pref_type\", start=code,\n                                        width=1, codes=(code,)),),\n    )\n    transfer = ResolvedValueTransfer(\n        target=target, source=source, kind=ValueTransferKind.ALIGNED_LOCAL,\n        stored_sharding=sharding, source_sharding=sharding,\n        expected_shape=shape, expected_dtype=dtype, view=view,\n        reused_by_several_consumers=shared,\n    )\n    args = {\"next_regime_to_V_arr\": {\"terminal\": jax.ShapeDtypeStruct((cells,), dtype, sharding=sharding)}}\n    compiled = jax.jit(_shape_only, out_shardings=sharding).lower(**args).compile()\n    assert all(x is None for x in compiled.input_shardings[1][\"next_regime_to_V_arr\"].values())\n    requirements = CoreExecutionRequirements(value_reads=(ValueRead(target=target, source=source, view=view),))\n    program = ResolvedCoreProgram(\n        name=\"main\", function=_shape_only, arguments=args, static_kwargs={},\n        requirements=requirements, output_roles=VALUE,\n        disposition=CoreExecutionDisposition.PLANNED, donation_candidates=(),\n        tile_widths={}, specialization_key=(), input_transfer_plan=(transfer,),\n    )\n    metadata = {(\"working\", 0, \"main\"): bi._ProgramExecutionMetadata(\n        requirements=requirements, disposition=program.disposition,\n        scope=ProgramScope.ANY, input_transfer_plan=(transfer,),\n    )}\n    if shared:\n        second_source = dataclasses.replace(source, source_regime=\"second\")\n        second_transfer = dataclasses.replace(transfer, source=second_source)\n        metadata[(\"second\", 0, \"main\")] = bi._ProgramExecutionMetadata(\n            requirements=CoreExecutionRequirements(value_reads=(ValueRead(\n                target=target, source=second_source, view=view,\n            ),)), disposition=program.disposition, scope=ProgramScope.ANY,\n            input_transfer_plan=(second_transfer,),\n        )\n    scratch = bi._period_transfer_scratch_reservations(\n        period=0, metadata=metadata, device_ids=(device.id,),\n    )\n    copies = bi._period_copy_reservations(period=0, metadata=metadata)\n    owner_bytes, block_bytes = 3 * cells * dtype.itemsize, cells * dtype.itemsize\n    inventory = ResidentInventory(\n        device_ids=(device.id,), live={}, peer_bytes={device.id: 0},\n        declared_inputs=(), fixed_bytes={device.id: owner_bytes},\n        shared_copies=copies, transfer_scratch_bytes=scratch,\n    )\n    return _Case(program=program, compiled=compiled, inventory=inventory,\n                 metadata=metadata, owner=owner, owner_bytes=owner_bytes,\n                 block_bytes=block_bytes, device_id=device.id,\n                 compiler_bytes=compiler_memory_reservation(compiled=compiled, widths={}).reservation_bytes)\n\n\ndef test_only_a_real_owner_pass_through_gets_aligned_input_credit() -> None:\n    case = _case(axis=0, code=2, cells=8, shared=False)\n    selected = case.metadata[(\"working\", 0, \"main\")]\n    assert bi._aligned_input_artifacts(metadata=selected) == ()\n    transfer = selected.input_transfer_plan[0]\n    whole = dataclasses.replace(transfer, view=None)\n    metadata = bi._ProgramExecutionMetadata(\n        requirements=CoreExecutionRequirements(value_reads=(ValueRead(target=whole.target, source=whole.source),)),\n        disposition=CoreExecutionDisposition.PLANNED, scope=ProgramScope.ANY,\n        input_transfer_plan=(whole,),\n    )\n    assert bi._aligned_input_artifacts(metadata=metadata) == (whole.target,)\n    assert not bi._period_transfer_scratch_reservations(\n        period=0, metadata={(\"working\", 0, \"main\"): metadata}, device_ids=(case.device_id,),\n    )\n\n\n@pytest.mark.parametrize(\"axis,code,cells\", [(0, 0, 8), (0, 2, 17), (1, 2, 8)])\n@pytest.mark.parametrize(\"shared\", [False, True])\ndef test_pruned_selected_view_has_the_exact_conservative_admission_threshold(\n    *, axis: int, code: int, cells: int, shared: bool,\n) -> None:\n    \"\"\"Owner + destination + stage scratch, deduplicated only for a shared view.\n\n    This is the existing planner's conservative reservation, not a claim that\n    these objects are the allocator's exact simultaneous peak.\n    \"\"\"\n    case = _case(axis=axis, code=code, cells=cells, shared=shared)\n    assert dict(case.inventory.transfer_scratch_bytes) == {case.device_id: case.block_bytes}\n    expected_resident = case.owner_bytes + 2 * case.block_bytes\n\n    def resident(inventory: ResidentInventory) -> int:\n        return bi._candidate_resident_bytes(\n            compiled=case.compiled, program=case.program, internal_arguments={}, inventory=inventory,\n        )\n\n    assert resident(case.inventory) == expected_resident\n    ceiling = case.compiler_bytes + expected_resident\n\n    def plan(*, budget: int, inventory: ResidentInventory) -> Any:\n        return plan_workspace(axes=(), compile_candidate=lambda _widths: case.compiled,\n                              budget_bytes=budget, resident_bytes_for=lambda _compiled: resident(inventory))\n\n    with pytest.raises(ExecutionPlanningError, match=\"No workspace-width candidate\"):\n        plan(budget=ceiling - 1, inventory=case.inventory)\n    assert plan(budget=ceiling, inventory=case.inventory).compiled is case.compiled\n    # Negative control: omitted selection scratch incorrectly admits that same ceiling.\n    omitted = dataclasses.replace(case.inventory, transfer_scratch_bytes={})\n    assert plan(budget=ceiling - 1, inventory=omitted).compiled is case.compiled\n    assert not case.owner.is_deleted()\n",
+      "delivered_as": "tests/solution/test_audit486_selected_view_admission.py",
+      "delivered_sha256": "9d5d780e25dc1d02382ddd6a3041f1aff1cc60a7dee00edf81ad60c6a2cc073b"
+    },
+    {
+      "id": "RT2",
+      "test_kind": "witness",
+      "language": "python",
+      "purpose": "No-axis bound graph still plans selected continuation and matches literal finite Bellman values.",
+      "related_finding": "F2",
+      "profile": "any",
+      "filename_hint": "test_audit486_scalar_block.py",
+      "artifact_ref": "RT2",
+      "package_path": "tests/solution/test_audit486_scalar_block.py",
+      "run_command": "pixi run --as-is -e tests-cpu pytest tests/solution/test_audit486_scalar_block.py --precision=32 -n 0 -v --junitxml=/absolute/evidence/rt2-p32.xml",
+      "expected_result": "PLANNED assertion red on head; literal outputs green with P2 at both precisions. Actual prepatch native error/value must be recorded rather than guessed.",
+      "executed": false,
+      "observed_result": "not_run: required native environment absent. Syntax parsed only.",
+      "code": "\"\"\"Audit R2: the one-cell/one-action boundary must still plan selected reads.\"\"\"\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nimport pytest\n\nfrom _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph\nfrom lcm import AgeGrid, Choose, DiscreteGrid, ExecutionConfig, Model, Regime, categorical, fixed_transition\nfrom lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt\n\n\n@categorical(ordered=False)\nclass _Types:\n    low: ScalarInt\n    middle: ScalarInt\n    high: ScalarInt\n\n\n@categorical(ordered=False)\nclass _OneAction:\n    only: ScalarInt\n\n\n@categorical(ordered=False)\nclass _RegimeId:\n    working: ScalarInt\n    terminal: ScalarInt\n\n\ndef _flow(*, pref_type: DiscreteState, choice: DiscreteAction, weights: FloatND) -> FloatND:\n    return weights[pref_type] + choice\n\n\ndef _terminal(*, pref_type: DiscreteState, weights: FloatND) -> FloatND:\n    return weights[pref_type]\n\n\ndef _to_terminal() -> ScalarInt:\n    return _RegimeId.terminal\n\n\ndef _model(*, blocked: bool) -> Model:\n    grid = DiscreteGrid(category_class=_Types)\n    return Model(\n        regimes={\n            \"working\": Regime(\n                states={\"pref_type\": grid},\n                state_transitions={\"pref_type\": fixed_transition(\"pref_type\")},\n                actions={\"choice\": DiscreteGrid(category_class=_OneAction)},\n                functions={\"utility\": _flow},\n                regime_transitions=Choose(func=_to_terminal, targets=(\"terminal\",)),\n            ),\n            \"terminal\": Regime(states={\"pref_type\": grid}, functions={\"utility\": _terminal}, regime_transitions=None),\n        },\n        ages=AgeGrid(start=0, stop=1, step=\"Y\"), regime_id_class=_RegimeId,\n        initial_regimes={0: \"working\"},\n        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=2**30,\n                                         invariant_block_widths={\"pref_type\": 1} if blocked else {}),\n    )\n\n\ndef test_no_axis_bound_program_still_declares_planned_value_reads() -> None:\n    model = _model(blocked=True)\n    graph = core_program_graph(kernel=model._regimes[\"working\"].solution.period_kernels[0])\n    assert len(graph) == 3\n    for core in graph.values():\n        assert core.invariant_binding is not None\n        assert not core.requirements.axes\n        assert core.requirements.value_reads\n        assert core.disposition is CoreExecutionDisposition.PLANNED\n\n\n@pytest.mark.parametrize(\"flow,terminal,expected\", [\n    ((1, 2, 3), (4, 8, 12), (3, 6, 9)),\n    ((3, 1, -2), (8, 2, 6), (7, 2, 1)),\n])\ndef test_scalar_block_equals_literal_typewise_bellman_equation(\n    *, flow: tuple, terminal: tuple, expected: tuple,\n) -> None:\n    dtype = np.dtype(\"float64\" if jax.config.jax_enable_x64 else \"float32\")\n    params = {\n        \"discount_factor\": 0.5,\n        \"working\": {\"utility\": {\"weights\": jnp.asarray(flow, dtype=dtype)}},\n        \"terminal\": {\"utility\": {\"weights\": jnp.asarray(terminal, dtype=dtype)}},\n    }\n    # The reference is the literal equation u[k] + V_terminal[k] / 2,\n    # not a second invocation of the blocked implementation.\n    oracle = np.asarray(expected, dtype=dtype)\n    for blocked in (False, True):\n        result = _model(blocked=blocked).solve(params=params, log_level=\"off\")\n        got = np.asarray(result.values[0][\"working\"])\n        assert got.shape == (3,)\n        assert got.dtype == oracle.dtype\n        assert got.tobytes() == oracle.tobytes()\n",
+      "delivered_as": "tests/solution/test_audit486_scalar_block.py",
+      "delivered_sha256": "0677007730fae89cd965b7c4a55090bacabb8bec79fb369d0286ad7e0dc5654d"
+    },
+    {
+      "id": "RT3",
+      "test_kind": "benchmark",
+      "language": "python",
+      "purpose": "Future immutable-blueprint cache skips expensive rebuilds on same-schema same/changed params in blocked and unblocked built-in GridSearch, while fresh-model byte equality holds.",
+      "related_finding": null,
+      "profile": "any",
+      "filename_hint": "test_audit486_structural_cache.py",
+      "artifact_ref": "RT3",
+      "package_path": "tests/solution/test_audit486_structural_cache.py",
+      "run_command": "pixi run --as-is -e tests-cpu pytest tests/solution/test_audit486_structural_cache.py --precision=32 -n 0 -v --junitxml=/absolute/evidence/rt3-p32.xml",
+      "expected_result": "Intentionally red on ec882386 and P1/P2 alone, green after the recommended cache split. If old names become cheap hit dispatchers, move spies to actual expensive builders rather than removing work-elimination assertions.",
+      "executed": false,
+      "observed_result": "not_run. This is a future optimization acceptance test, not a third current correctness finding.",
+      "code": "\"\"\"Red-first acceptance for the recommended future structural-blueprint cache.\n\nThis is intentionally expected to fail on ec882386 and after P1/P2 alone.\nIt is not a current correctness regression or an accepted cold-helper-count gate.\n\"\"\"\nimport copy\nfrom typing import Any\n\nimport jax\nimport numpy as np\nimport pytest\n\nfrom _lcm.solution import backward_induction as bi\nfrom lcm import ExecutionConfig\nfrom tests.solution.test_invariant_blocking import _workload\n\n\ndef _assert_values_identical(*, first: Any, second: Any) -> None:\n    assert set(first.values) == set(second.values)\n    for period, by_regime in first.values.items():\n        assert set(by_regime) == set(second.values[period])\n        for regime, value in by_regime.items():\n            left, right = np.asarray(value), np.asarray(second.values[period][regime])\n            assert (left.shape, left.dtype) == (right.shape, right.dtype)\n            assert left.tobytes() == right.tobytes()\n\n\n@pytest.mark.parametrize(\"blocked\", [False, True])\n@pytest.mark.parametrize(\"workload\", [\"independent_types\", \"sector_typed_terminal\", \"sector_type_free_terminal\"])\ndef test_same_schema_warm_calls_rebind_values_without_rebuilding_structure(\n    *, blocked: bool, workload: str, monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    config = ExecutionConfig(devices=(0,), device_memory_bytes=2**30,\n                             invariant_block_widths={\"pref_type\": 1} if blocked else {})\n    model, params = _workload(name=workload, execution_config=config)\n    for _ in range(3):\n        warmed = model.solve(params=params, log_level=\"off\")\n        for values in warmed.values.values():\n            jax.block_until_ready(tuple(values.values()))\n        del warmed\n    calls = {name: 0 for name in (\n        \"materialize_core_program\", \"_prepare_abstract_program\", \"resolve_core_program_candidates\",\n    )}\n    for name in calls:\n        original = getattr(bi, name)\n\n        def observe(*args: Any, _name=name, _original=original, **kwargs: Any) -> Any:\n            calls[_name] += 1\n            return _original(*args, **kwargs)\n\n        monkeypatch.setattr(bi, name, observe)\n    changed = copy.deepcopy(params)\n    changed[\"working\"][\"utility\"][\"weight\"] = changed[\"working\"][\"utility\"][\"weight\"] * 1.125\n    same = model.solve(params=params, log_level=\"off\")\n    different = model.solve(params=changed, log_level=\"off\")\n    # A hit in the specifically recommended blueprint/bind split skips these\n    # expensive constructors. Cheap dynamic schema checks and admission still run.\n    assert calls == dict.fromkeys(calls, 0), calls\n    monkeypatch.undo()\n    fresh_same, _ = _workload(name=workload, execution_config=config)\n    fresh_changed, _ = _workload(name=workload, execution_config=config)\n    _assert_values_identical(first=same, second=fresh_same.solve(params=params, log_level=\"off\"))\n    _assert_values_identical(first=different, second=fresh_changed.solve(params=changed, log_level=\"off\"))\n    assert any(\n        np.asarray(v).tobytes() != np.asarray(different.values[t][r]).tobytes()\n        for t, row in same.values.items() for r, v in row.items()\n    ), \"The changed-parameter control must actually change at least one value.\"\n",
+      "delivered_as": "tests/solution/test_audit486_structural_cache.py",
+      "delivered_sha256": "8b0bc8485c0968ebd67cc8f0ea6005f3cf69e33be537f0316d91b8159db66eec"
+    },
+    {
+      "id": "RT4",
+      "test_kind": "benchmark",
+      "language": "python",
+      "purpose": "Optional helper-specific red-first probe: accepted current-design control and separate select/write removal hypotheses. Not a new required fold or merge gate.",
+      "related_finding": null,
+      "profile": "any",
+      "filename_hint": "helper_fold_probe.py",
+      "artifact_ref": "RT4",
+      "package_path": "audit-tests/helper_fold_probe.py",
+      "run_command": "pixi run --as-is -e tests-cpu python /absolute/reply/audit-tests/helper_fold_probe.py --repo-root /absolute/full-checkout --expect-removed write",
+      "expected_result": "Current source is expected to fail the named write-removal assertion; select-removal is separately red; none observes the accepted two-helper design. A future authorized fold must pass its matching probe without relaxing numerical, ownership or layout gates.",
+      "executed": false,
+      "observed_result": "not_run. Native-only probe syntax parsed; helper-removal expectations are proposed, not measured.",
+      "code": "\"\"\"Optional red-first fold probe; not an additional required merge gate.\n\nRun in a fresh native process. `none` checks the accepted current design;\n`write` or `select` is expected to fail until that specific fold is implemented.\nCounts use the same JAX compile-log convention as the supplied count driver.\n\"\"\"\nimport argparse\nfrom collections import Counter\nimport json\nimport logging\nfrom pathlib import Path\nimport sys\n\n\ndef main() -> None:\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"--repo-root\", type=Path, required=True)\n    parser.add_argument(\"--expect-removed\", choices=(\"none\", \"write\", \"select\"), default=\"none\")\n    args = parser.parse_args()\n    if sys.version_info < (3, 14):\n        raise SystemExit(\"Run in the project's Python >=3.14 environment; no compatibility shim is provided.\")\n    root = args.repo_root.resolve(strict=True)\n    if not (root / \"tests/solution/test_invariant_blocking.py\").is_file():\n        raise SystemExit(\"--repo-root must name the full native checkout containing the Stage 3 tests.\")\n    sys.path.insert(0, str(root))\n    import jax\n    import lcm\n    from tests.solution.test_invariant_blocking import _workload\n\n    names: list[str] = []\n\n    class CompileLog(logging.Handler):\n        def emit(self, record: logging.LogRecord) -> None:\n            message = record.getMessage()\n            if message.startswith(\"Compiling \"):\n                names.append(message.split(\" with \")[0].removeprefix(\"Compiling \"))\n\n    logger = logging.getLogger(\"jax._src.interpreters.pxla\")\n    handler = CompileLog()\n    logger.addHandler(handler)\n    model, params = _workload(\n        name=\"independent_types\",\n        execution_config=lcm.ExecutionConfig(\n            devices=(0,), device_memory_bytes=None,\n            invariant_block_widths={\"pref_type\": 1},\n        ),\n    )\n\n    def solve() -> None:\n        result = model.solve(params=params, log_level=\"off\")\n        for row in result.values.values():\n            jax.block_until_ready(tuple(row.values()))\n\n    try:\n        jax.clear_caches()\n        names.clear()\n        with jax.log_compiles():\n            solve()\n        cold = Counter(names)\n        # Warm through any ordinary lazy setup, then count a later same-shape call.\n        solve()\n        solve()\n        names.clear()\n        with jax.log_compiles():\n            solve()\n        warm = Counter(names)\n    finally:\n        logger.removeHandler(handler)\n    helpers = {\"select\": \"jit(_select_view_blocks)\", \"write\": \"jit(_write_block)\"}\n    report = {\n        \"lcm_file\": lcm.__file__, \"jax_version\": jax.__version__,\n        \"devices\": [str(d) for d in jax.devices()],\n        \"expect_removed\": args.expect_removed,\n        \"cold_compile_requests\": dict(cold), \"later_warm_compile_requests\": dict(warm),\n    }\n    print(json.dumps(report, indent=2))\n    assert all(warm[name] == 0 for name in helpers.values()), \"A helper recompiled on a later same-shape call.\"\n    if args.expect_removed == \"none\":\n        assert all(cold[name] > 0 for name in helpers.values()), \"The current-design control must observe both helpers.\"\n    else:\n        chosen = helpers[args.expect_removed]\n        assert cold[chosen] == 0, f\"Expected {chosen} folded into its core; observed {cold[chosen]} cold requests.\"\n    # Deliberately no assertion that removing one helper makes total B == A.\n\n\nif __name__ == \"__main__\":\n    main()\n",
+      "delivered_as": "audit-tests/helper_fold_probe.py",
+      "delivered_sha256": "fe25f2dea5dae673053d4fc2c0323b9d56609183e2bf11b8332e32ccfb156468"
+    }
+  ],
+  "mutation_suites": [
+    {
+      "id": "MT2",
+      "language": "python",
+      "purpose": "Tiny type-label permutation and exact binary-scale family for the scalar bound-read defect.",
+      "related_root_cause": "R2",
+      "dimensions": [
+        "type permutation",
+        "binary scale",
+        "mixed-sign flow",
+        "nonzero type code"
+      ],
+      "filename_hint": "test_audit486_scalar_block_family.py",
+      "artifact_ref": "MT2",
+      "package_path": "tests/solution/test_audit486_scalar_block_family.py",
+      "run_command": "pixi run --as-is -e tests-cpu pytest tests/solution/test_audit486_scalar_block_family.py --precision=64 -n 0 -v --junitxml=/absolute/evidence/mt2-p64.xml",
+      "expected_result": "Six bounded cases agree byte-for-byte with independent dyadic equations; repeat fp32.",
+      "executed": false,
+      "observed_result": "not_run; AST syntax checked, no native execution.",
+      "code": "\"\"\"Tiny permutation/scale family for R2; no project execution by the reviewer.\"\"\"\nfrom fractions import Fraction\n\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nimport pytest\n\nfrom tests.solution.test_audit486_scalar_block import _model\n\n\n@pytest.mark.parametrize(\"order\", [(0, 1, 2), (2, 0, 1)])\n@pytest.mark.parametrize(\"scale\", [0.5, 1.0, 8.0])\ndef test_scalar_bound_reads_preserve_type_permutation_and_binary_scaling(\n    *, order: tuple[int, ...], scale: float,\n) -> None:\n    dtype = np.dtype(\"float64\" if jax.config.jax_enable_x64 else \"float32\")\n    flows = (3, 1, -2)\n    terminals = (8, 2, 6)\n    exact_scale = Fraction(scale)\n    expected = np.asarray([\n        float(exact_scale * (Fraction(flows[i]) + Fraction(terminals[i], 2)))\n        for i in order\n    ], dtype=dtype)\n    params = {\n        \"discount_factor\": 0.5,\n        \"working\": {\"utility\": {\"weights\": jnp.asarray([scale * flows[i] for i in order], dtype=dtype)}},\n        \"terminal\": {\"utility\": {\"weights\": jnp.asarray([scale * terminals[i] for i in order], dtype=dtype)}},\n    }\n    result = _model(blocked=True).solve(params=params, log_level=\"off\")\n    got = np.asarray(result.values[0][\"working\"])\n    assert (got.shape, got.dtype) == (expected.shape, expected.dtype)\n    assert got.tobytes() == expected.tobytes()\n",
+      "delivered_as": "tests/solution/test_audit486_scalar_block_family.py",
+      "delivered_sha256": "c9f769c27ec09ba0f98ab540307bb65fb4264b85438ed39892f02e637fd88cc1"
+    }
+  ],
+  "executions": [
+    {
+      "id": "E1",
+      "command": "Safe ZIP extraction, zipfile.testzip, manifest byte/SHA256/UTF8 and canonical manifest digest checks (see evidence/coverage.json and static-checks.json).",
+      "status": "passed",
+      "source": "reviewer_execution",
+      "exit_code": 0,
+      "establishes": "Input integrity and full static read surface, not numerical execution.",
+      "output_excerpt": "53/53 manifest entries match; 45 required paths present; manifest digest matches."
+    },
+    {
+      "id": "E2",
+      "command": "git apply --check P1-selected-owner-accounting.patch P2-plan-bound-scalar-reads.patch on the extracted head",
+      "status": "passed",
+      "source": "reviewer_execution",
+      "exit_code": 0,
+      "establishes": "Both source patches apply to the shipped snapshot.",
+      "output_excerpt": "Exit 0, no stderr. No project source was executed or certificate regenerated."
+    },
+    {
+      "id": "E3",
+      "command": "ast.parse on every delivered .py artifact",
+      "status": "passed",
+      "source": "reviewer_execution",
+      "exit_code": 0,
+      "establishes": "Syntax only, not imports, native JAX compatibility or tests.",
+      "output_excerpt": "6 Python artifacts parsed successfully."
+    },
+    {
+      "id": "E4",
+      "command": "python audit-oracles/selected_view_reference.py",
+      "status": "passed",
+      "source": "reviewer_execution",
+      "exit_code": 0,
+      "establishes": "Independent small allocation equations and one-step finite values.",
+      "output_excerpt": "PASS: 24 byte-accounting cases; exact one-action values = (Fraction(3, 1), Fraction(6, 1), Fraction(9, 1))\nThis checks independent equations only. No pylcm/JAX execution is claimed."
+    },
+    {
+      "id": "E5",
+      "command": "Native RT1/RT2/MT2 red-green and RT3 cache acceptance; native certificate/mutation and matched resource closure commands in evidence/commands.md",
+      "status": "not_run",
+      "source": "reviewer_execution",
+      "exit_code": null,
+      "establishes": "Required future native closure, not a reviewer pass.",
+      "output_excerpt": "Project requires >=3.14; reviewer Python 3.13.5; no shim, syntax rewrite or interpreter search."
+    },
+    {
+      "id": "E6",
+      "command": "Supplied Stage 3 CPU reports and historical Marvin arm summary (source paths/digests in resource-summary.json).",
+      "status": "passed",
+      "source": "supplied_evidence",
+      "exit_code": 0,
+      "establishes": "Only the reported fixture/run results at their stated revisions.",
+      "output_excerpt": "Reports state successful parity/regression runs; GPU metrics are at 9f03c34e, not the final audited head. No new-witness pass is inferred."
+    }
+  ],
+  "unresolved": [
+    {
+      "id": "U1",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "exact_question": "Do the delivered public/native regressions fail for their specified source defects at ec882386 and pass after P1/P2 at fp32/fp64?",
+      "required_artifact": "Native red/green JUnit XML and full logs for RT1, RT2 and MT2 with exact source/env identities.",
+      "why_blocking": "Required native validation of candidate repairs is not_run, not a missing input that requires repackaging."
+    },
+    {
+      "id": "U2",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "exact_question": "Do corrected ownership, transfers, output layouts and dense scalar planning preserve sealed corridors and actual 1/2/8-device admission?",
+      "required_artifact": "Native regenerated seal/corridor and mutation-self-test receipts plus ownership/liveness/transfer tests and real-GPU selected-layout evidence.",
+      "why_blocking": "Patched source is not covered by old certificate receipts. No full-type gather or budget fit may be inferred from source patch application."
+    },
+    {
+      "id": "U3",
+      "finding_ids": [],
+      "exact_question": "After repairs and optional blueprint caching, what is the same-head blocked/unblocked warm, cold, host/device peak and compile-family trade-off on required ACA lanes?",
+      "required_artifact": "Current-head matched A1 B1 B2 A2 resource ledger with three steady observations, exact per-arm source/environment, compile logs and memory peaks.",
+      "why_blocking": "Blocks performance/default-promotion closure, not the design decision or a source-audit finish. Historical 9f03c34e measurements cannot certify ec882386 or a future cached build."
+    }
+  ],
+  "next_action": "implement_plan",
+  "summary": "Keep select and write helpers for now; cache only immutable, schema-certified structural blueprints with current-data rebinding and fresh admission. Repair the two target-owned selected-read defects using P1/P2 and the delivered tests, then regenerate certificates and run matched native closure. No GPU speedup or native test pass is claimed by the reviewer.",
+  "evidence_files": [
+    {
+      "id": "EV-COVERAGE",
+      "kind": "FILE",
+      "path": "evidence/coverage.json",
+      "package_path": "evidence/coverage.json",
+      "content": "{\n  \"manifest_digest\": \"aad5686b9c73b03da0fce9f99b396a6e1b2a43c6a98e3f613b26dd2e753f90d6\",\n  \"manifest_files\": 53,\n  \"required_files\": 45,\n  \"fully_read_files\": 49,\n  \"required_unread\": [],\n  \"reference_paths\": [\n    \"project/.pre-commit-config.yaml\",\n    \"project/AGENTS.md\",\n    \"project/README.md\",\n    \"project/pyproject.toml\"\n  ],\n  \"unreadable_or_truncated\": [],\n  \"method_limitation\": \"Coverage records full-file static reading, including programmatic AST/token/JSON traversal of large source and generated artifacts. Direct semantic review is bounded to the authoritative delta and its dependency seams. It is not a claim of manual line-by-line certification of every unchanged function, native execution, or verification of unshipped raw benchmark arrays.\",\n  \"records\": [\n    {\n      \"path\": \"project/src/_lcm/execution/invariant_blocks.py\",\n      \"sha256\": \"9b0f2bfb8c109be0cfd1cb0fdae3e6067a09a4ed9dca2a60d718fa97f930db9a\",\n      \"bytes\": 6504,\n      \"lines\": 188,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 628\n    },\n    {\n      \"path\": \"project/src/_lcm/execution/value_transfer.py\",\n      \"sha256\": \"0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a\",\n      \"bytes\": 56415,\n      \"lines\": 1425,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 6642\n    },\n    {\n      \"path\": \"project/src/_lcm/execution/value_views.py\",\n      \"sha256\": \"dad9163615245d0cc063c6cf196ee5715abdbcbffcf7c0cdce725b4af52e38a0\",\n      \"bytes\": 5836,\n      \"lines\": 151,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 597\n    },\n    {\n      \"path\": \"project/src/_lcm/regime_building/invariant_blocking.py\",\n      \"sha256\": \"2d69525d9648710e2638588bf4c9c5b381c7a5f731a3d1d937cd362062c65807\",\n      \"bytes\": 6759,\n      \"lines\": 194,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 696\n    },\n    {\n      \"path\": \"project/src/_lcm/solution/backward_induction.py\",\n      \"sha256\": \"05a53fc4bb7f1660d33f71b5459674dd50f7702ac089cbab956b3bcd3d912ee6\",\n      \"bytes\": 289979,\n      \"lines\": 6806,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 27052\n    },\n    {\n      \"path\": \"project/tests/execution/test_value_views.py\",\n      \"sha256\": \"35d0cc605c7931495b4227fb43f0731e4e8e8d45a79397cfe3b5a9d8a37e3932\",\n      \"bytes\": 36575,\n      \"lines\": 1097,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 4969\n    },\n    {\n      \"path\": \"project/tests/test_continuous_transfer_admission.py\",\n      \"sha256\": \"a68cc6e357e0903fbd2e6d4677c9523a8079438b316c706ed631432bab7f7441\",\n      \"bytes\": 13415,\n      \"lines\": 369,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 2055\n    },\n    {\n      \"path\": \"project/tests/test_models/independent_types.py\",\n      \"sha256\": \"1d31a6057ec87e27ad71caee5e742333313582dcd2ae0cc4118b2d53e2c796b8\",\n      \"bytes\": 7177,\n      \"lines\": 233,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 898\n    },\n    {\n      \"path\": \"project/.pre-commit-config.yaml\",\n      \"sha256\": \"d6ffce7b8feca48288e94802f0deb33f5063221dc7710c9c1188dd57c165063f\",\n      \"bytes\": 11056,\n      \"lines\": 262,\n      \"role_in_reading\": \"reference\",\n      \"method\": \"byte integrity checked; content deliberately left as optional reference\"\n    },\n    {\n      \"path\": \"project/AGENTS.md\",\n      \"sha256\": \"263df2f5cd682c94b9b7141318a3abefee6490c4d362ea28af33fb5fe25c280c\",\n      \"bytes\": 6818,\n      \"lines\": 81,\n      \"role_in_reading\": \"reference\",\n      \"method\": \"byte integrity checked; content deliberately left as optional reference\"\n    },\n    {\n      \"path\": \"project/README.md\",\n      \"sha256\": \"61c43a832de39b4fcaf4d4167943182dd245ca379ed5a6438778e119573fe5b7\",\n      \"bytes\": 4007,\n      \"lines\": 87,\n      \"role_in_reading\": \"reference\",\n      \"method\": \"byte integrity checked; content deliberately left as optional reference\"\n    },\n    {\n      \"path\": \"project/pyproject.toml\",\n      \"sha256\": \"b3e781f474dc144dfeed1f98b86056b1d5e2a8408451a83b938799ff98bb2ccb\",\n      \"bytes\": 22383,\n      \"lines\": 524,\n      \"role_in_reading\": \"reference\",\n      \"method\": \"byte integrity checked; content deliberately left as optional reference\"\n    },\n    {\n      \"path\": \"project/tests/solution/test_invariant_blocking.py\",\n      \"sha256\": \"abbe57d25f468eec5a68927d5ecf1f21f934932549bf45dcf13a318e494bb881\",\n      \"bytes\": 24885,\n      \"lines\": 726,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 3437\n    },\n    {\n      \"path\": \"project/CHANGES.md\",\n      \"sha256\": \"488e6097117e5e7a7736a35ca578bf94bce85f7f2a521af08e33bbff07d2d8c2\",\n      \"bytes\": 71792,\n      \"lines\": 1079,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"project/docs/user_guide/tuning.md\",\n      \"sha256\": \"47bbba982b058bf819b40df025daf052512430a5259f47982065987d8e29c9a4\",\n      \"bytes\": 31686,\n      \"lines\": 590,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"project/src/_lcm/execution/core_program.py\",\n      \"sha256\": \"c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54\",\n      \"bytes\": 68438,\n      \"lines\": 1703,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 8821\n    },\n    {\n      \"path\": \"project/src/_lcm/execution/execution_plan.py\",\n      \"sha256\": \"81000dfcfbce40a6d9770c6558d5be29431e47111141c4060d462a06168f5522\",\n      \"bytes\": 33468,\n      \"lines\": 839,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 3004\n    },\n    {\n      \"path\": \"project/src/_lcm/regime_building/processing.py\",\n      \"sha256\": \"76d7f57677d18dcc75492b5a0ba4a769d439bf8758b3d1dc4d2bf9e2b7847a4e\",\n      \"bytes\": 379559,\n      \"lines\": 8634,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete unchanged raw source and token traversal; authoritative changes and dependency functions read directly; Python 3.14 exception syntax not rewritten or executed\",\n      \"tokens\": 39142,\n      \"local_ast_limitation\": \"multiple exception types must be parenthesized (<unknown>, line 3851)\"\n    },\n    {\n      \"path\": \"project/src/_lcm/solution/contract.py\",\n      \"sha256\": \"45ff7b3798e1ae733e68ae23434fe3b6f2b8944c7983db8fc096a4b2eea29f47\",\n      \"bytes\": 46917,\n      \"lines\": 1097,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 2071\n    },\n    {\n      \"path\": \"project/src/_lcm/solution/grid_search.py\",\n      \"sha256\": \"c810e463913f866efc4410abc4f2c9c278ed92da15c99642616d151ac411b053\",\n      \"bytes\": 35319,\n      \"lines\": 864,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 3279\n    },\n    {\n      \"path\": \"project/src/_lcm/solution/period_replay.py\",\n      \"sha256\": \"9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7\",\n      \"bytes\": 49159,\n      \"lines\": 1276,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 4886\n    },\n    {\n      \"path\": \"project/src/lcm/execution.py\",\n      \"sha256\": \"7a1127cf8784994cf823f4af4e7d34bb33393bbb264e0229aa1adbb52968f6e7\",\n      \"bytes\": 26143,\n      \"lines\": 571,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 1980\n    },\n    {\n      \"path\": \"project/src/lcm/model.py\",\n      \"sha256\": \"8e19b2687632fac1ed0dd1efdfcf88639dc48feee0d567ba5f8d5563b15f2fca\",\n      \"bytes\": 161915,\n      \"lines\": 3704,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 14167\n    },\n    {\n      \"path\": \"project/tests/candidate_certificate/direct_flow.py\",\n      \"sha256\": \"296380dd85e776a04e2a4bf2d7998680f0b87494a708e412363057a6b80db4c9\",\n      \"bytes\": 508007,\n      \"lines\": 11001,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 30901\n    },\n    {\n      \"path\": \"project/tests/candidate_certificate/sources.json\",\n      \"sha256\": \"2d9381481b7c35d344b44580e56013af05e13b1e83045107d05f2121425327d0\",\n      \"bytes\": 57561,\n      \"lines\": 1416,\n      \"role_in_reading\": \"fully_read\",\n      \"json_nodes\": 1060,\n      \"method\": \"complete structured parse/traversal; generated-data changes compared structurally; all relevant metric/identity records assessed\"\n    },\n    {\n      \"path\": \"project/tests/ci/ci-workloads.json\",\n      \"sha256\": \"3bf7480495df62ce816fd1d647e20ba14b7305106b87cf37161b3d3d89101d9c\",\n      \"bytes\": 632385,\n      \"lines\": 14366,\n      \"role_in_reading\": \"fully_read\",\n      \"json_nodes\": 13134,\n      \"method\": \"complete structured parse/traversal; generated-data changes compared structurally; all relevant metric/identity records assessed\"\n    },\n    {\n      \"path\": \"project/tests/test_continuous_assets_sharding.py\",\n      \"sha256\": \"8da7d3536590e10eacc302c9452215445f75c15d547fb6a6b0a8afcf6dbc2810\",\n      \"bytes\": 44243,\n      \"lines\": 1128,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 7778\n    },\n    {\n      \"path\": \"context/changes.diff\",\n      \"sha256\": \"cba7f45ee8912f97e79599eb87b2a64694482b3b31f87b7a03d13d3c37cb71bf\",\n      \"bytes\": 484418,\n      \"lines\": 10559,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/01-REPORT.md\",\n      \"sha256\": \"1dbf7d66db57772e7e348a99bc2fab72305a06427c3ac696dd6fb354cd78d7e8\",\n      \"bytes\": 8389,\n      \"lines\": 128,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/02-REPORT.md\",\n      \"sha256\": \"f54f9e7a63f75534fa3050cb2da7de184d6cf15c198fd9e27f8308b7d8119cbb\",\n      \"bytes\": 6697,\n      \"lines\": 74,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/03-REPORT.md\",\n      \"sha256\": \"41be0b3694f61619aa32c01c37eb353f55d214bb950933d3952eed03b45c8f8c\",\n      \"bytes\": 6074,\n      \"lines\": 80,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/04-REPORT.md\",\n      \"sha256\": \"9428c8723d457ffab3d17b87defbbaddbe3224175104ef9755ae1c9db503f696\",\n      \"bytes\": 10463,\n      \"lines\": 148,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/05-count_compiles_after.txt\",\n      \"sha256\": \"fd33cd93bbe31fc562bed7d3b83f86d106ce1c6ac8948184fffa9decbaa9ee42\",\n      \"bytes\": 434,\n      \"lines\": 4,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/06-count_compiles_base_9f03c34e.txt\",\n      \"sha256\": \"743033efcfe85aad975bd001406bf2b68ee77611e3b5c687e55dc56fd400d322\",\n      \"bytes\": 650,\n      \"lines\": 4,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/07-profile_sector.txt\",\n      \"sha256\": \"196043535df8e6f32787deb9e3f4581f5aab5519d4b15e726750fb091a86128a\",\n      \"bytes\": 10151,\n      \"lines\": 73,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/08-count_compiles.py\",\n      \"sha256\": \"38c3727fd946fb5d07c82516ad55e62dec07a840fd19baff105e30f432e8a2e1\",\n      \"bytes\": 1056,\n      \"lines\": 27,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 262\n    },\n    {\n      \"path\": \"context/evidence/09-probe2.py\",\n      \"sha256\": \"ade5d5750d4e617f1679fcb8ec4cfe01d1985625cbb546211d8bd1830ab3b4e7\",\n      \"bytes\": 617,\n      \"lines\": 13,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 170\n    },\n    {\n      \"path\": \"context/evidence/10-probe_jax.py\",\n      \"sha256\": \"435a6bef5f3bc9ec80554985cbf58edf7c339779a7127d0af913941857046df0\",\n      \"bytes\": 1238,\n      \"lines\": 25,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 350\n    },\n    {\n      \"path\": \"context/evidence/11-profile_warm.py\",\n      \"sha256\": \"55a08d8dd06b9764cc1a39b606d386ecbbf9c94b21daeb5b6e4af538ee417de1\",\n      \"bytes\": 1413,\n      \"lines\": 30,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 451\n    },\n    {\n      \"path\": \"context/evidence/12-warm_sector_typed_terminal_A.pstats.txt\",\n      \"sha256\": \"16033c0582ac62de116de31becd63ce92dcde881ee79cc80030ccb3df44cd803\",\n      \"bytes\": 13301,\n      \"lines\": 131,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/13-warm_sector_typed_terminal_B.pstats.txt\",\n      \"sha256\": \"f3deff16b4bb1a9a295215aff7fe1e2df0156438f02b4928c02d1139ac9c48ac\",\n      \"bytes\": 13295,\n      \"lines\": 131,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/14-rerun-28022853-report.txt\",\n      \"sha256\": \"0c45494a4f7fa1dbe44e40586e49791b220fd6dc7af6d3f4e5c6b6c760bf1cf9\",\n      \"bytes\": 22301,\n      \"lines\": 149,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/15-rerun-28022853-summary.json\",\n      \"sha256\": \"0efb5278d6ba488c9c313e56294342e74fd7bfe337ff8cf6fa2d8cfa18143fc4\",\n      \"bytes\": 120575,\n      \"lines\": 4204,\n      \"role_in_reading\": \"fully_read\",\n      \"json_nodes\": 3507,\n      \"method\": \"complete structured parse/traversal; generated-data changes compared structurally; all relevant metric/identity records assessed\"\n    },\n    {\n      \"path\": \"context/evidence/16-compare_rerun.py\",\n      \"sha256\": \"95aa75b71d19215a1d451d36f8f7ae155fcdd967784a7c17b851d8efc3e83303\",\n      \"bytes\": 6761,\n      \"lines\": 122,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 1724\n    },\n    {\n      \"path\": \"context/evidence/17-plan-summary-1gpu.txt\",\n      \"sha256\": \"6d12fd6c28330c22fbe1c97f8f73e1bd513703d086911cd1696b8edb3fcc4235\",\n      \"bytes\": 5268,\n      \"lines\": 30,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/18-plan_summary.py\",\n      \"sha256\": \"09afcdb62e7ab742d969744e782c3510476144b551d85629e75259bf88ff7e41\",\n      \"bytes\": 1703,\n      \"lines\": 22,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete source decoding and AST traversal; full-file base/head structural comparison where applicable, direct changed-symbol and runtime-dependency reading\",\n      \"ast_nodes\": 443\n    },\n    {\n      \"path\": \"context/evidence/19-logc-extra-compiles-LCB.txt\",\n      \"sha256\": \"b7472a0fd7cfa65971dfafc4524c0d0aa3b07457f51dbfa97ef7f4db139159dc\",\n      \"bytes\": 6609,\n      \"lines\": 24,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"context/evidence/20-fp64-A-vs-stage0-C64.txt\",\n      \"sha256\": \"b0f4233ece8039c7d9dbad9f49227dc751da9a7d7b9dd34af5c7cbbfeb17fa20\",\n      \"bytes\": 78,\n      \"lines\": 3,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"protocol/active-prompt.template.md\",\n      \"sha256\": \"aff0cf9acb55e9c46041d48734724a1675f7cfecfcc37d6e252c06610335e1ce\",\n      \"bytes\": 32911,\n      \"lines\": 360,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"protocol/return-schema.md\",\n      \"sha256\": \"9f53eedf2a19a1bb91695091524b2bb15cbf8ba985fd770cc750cb5185be805c\",\n      \"bytes\": 35092,\n      \"lines\": 452,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"protocol/extras/pylcm-defect-casebook.md\",\n      \"sha256\": \"0216ce88686f30856a15a70d9fb928a2256e671781f9b25024901149ce6511f2\",\n      \"bytes\": 18308,\n      \"lines\": 311,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"protocol/profile-contract.yaml\",\n      \"sha256\": \"486c5c43025d84d22cd553d638a1bb3956810f19357213f980c34322018e8fa1\",\n      \"bytes\": 6229,\n      \"lines\": 81,\n      \"role_in_reading\": \"fully_read\",\n      \"method\": \"complete text ingestion; protocol/evidence/changes read as source material\"\n    },\n    {\n      \"path\": \"protocol/profile-contract.policy.json\",\n      \"sha256\": \"463716119ac6d7eb46f9dc93bf1f2d33317b11add5b1bb7b2c453ae0216ff481\",\n      \"bytes\": 2250,\n      \"lines\": 25,\n      \"role_in_reading\": \"fully_read\",\n      \"json_nodes\": 21,\n      \"method\": \"complete structured parse/traversal; generated-data changes compared structurally; all relevant metric/identity records assessed\"\n    }\n  ]\n}\n",
+      "delivered_as": "evidence/coverage.json",
+      "delivered_sha256": "31ba0a2a8df3a775e2bed092a94a3de16471f8cb55da12ac3e13718d16dbc0ca"
+    },
+    {
+      "id": "EV-STATIC",
+      "kind": "PROVENANCE",
+      "path": "evidence/static-checks.json",
+      "package_path": "evidence/static-checks.json",
+      "content": "{\n  \"python\": \"3.13.5\",\n  \"native_project_execution\": \"not_run; prohibited compatibility workaround not attempted\",\n  \"patch_apply_check\": {\n    \"command\": [\n      \"git\",\n      \"-C\",\n      \"/mnt/data/audit486/bundle-round0/project\",\n      \"apply\",\n      \"--check\",\n      \"/mnt/data/audit486/reply/patches/P1-selected-owner-accounting.patch\",\n      \"/mnt/data/audit486/reply/patches/P2-plan-bound-scalar-reads.patch\"\n    ],\n    \"exit_code\": 0,\n    \"stdout\": \"\",\n    \"stderr\": \"\"\n  },\n  \"artifact_syntax_checked\": [\n    \"audit-oracles/selected_view_reference.py\",\n    \"audit-tests/helper_fold_probe.py\",\n    \"tests/solution/test_audit486_scalar_block.py\",\n    \"tests/solution/test_audit486_scalar_block_family.py\",\n    \"tests/solution/test_audit486_selected_view_admission.py\",\n    \"tests/solution/test_audit486_structural_cache.py\"\n  ],\n  \"complete_ci_comparison\": \"The entire new CI JSON equals its base after deleting occurrences of the new invariant-blocking test. No other structured changes.\",\n  \"available_sealed_source_digests_verified\": [\n    \"src/_lcm/execution/core_program.py\",\n    \"src/_lcm/execution/value_transfer.py\",\n    \"src/_lcm/regime_building/processing.py\",\n    \"src/_lcm/solution/backward_induction.py\",\n    \"src/_lcm/solution/contract.py\",\n    \"src/_lcm/solution/grid_search.py\",\n    \"src/_lcm/solution/period_replay.py\",\n    \"src/lcm/model.py\"\n  ],\n  \"certificate_limitation\": \"Digest comparisons of available sources only; certificate/corridor verifier and mutation self-test not_run. The bundle omits most sealed source files.\",\n  \"synthetic_git\": {\n    \"head\": \"179aefc052158856c4642717c333d56f050d0a20\",\n    \"base\": \"a86e372b9d5aa84d93280104c6ec7f59de953a2e\",\n    \"mapping\": \"Synthetic snapshot commit subjects bind the original audited SHAs; synthetic object IDs are not asserted equal to the originals.\"\n  },\n  \"zip_crc\": \"Input ZIP testzip returned None; all manifest bytes/hash/UTF8 checks passed during preflight.\"\n}\n",
+      "delivered_as": "evidence/static-checks.json",
+      "delivered_sha256": "1b90888a733f42037d3a69933c988586fdb1557553ef0c8d523ee023156822d8"
+    },
+    {
+      "id": "EV-RESOURCE",
+      "kind": "FILE",
+      "path": "evidence/resource-summary.json",
+      "package_path": "evidence/resource-summary.json",
+      "content": "{\n  \"source_path\": \"context/evidence/15-rerun-28022853-summary.json\",\n  \"source_sha256\": \"0efb5278d6ba488c9c313e56294342e74fd7bfe337ff8cf6fa2d8cfa18143fc4\",\n  \"native_reviewer_execution\": false,\n  \"current_head_gpu_metrics\": \"not_run / not supplied\",\n  \"historical_metrics\": [\n    {\n      \"workload\": \"reduced2\",\n      \"precision\": \"fp32\",\n      \"actual_revision\": \"9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7\",\n      \"source\": \"supplied evidence; reviewer recomputation of summary statistics only\",\n      \"arms\": {\n        \"A\": {\n          \"n_steady_samples\": 4,\n          \"warm_seconds_samples\": [\n            7.593948241323233,\n            7.795051381923258,\n            7.35122094117105,\n            7.567968645133078\n          ],\n          \"warm_seconds_median\": 7.580958443228155,\n          \"warm_seconds_range\": [\n            7.35122094117105,\n            7.795051381923258\n          ],\n          \"structural_seconds_median\": 0.454443,\n          \"solve_peak_bytes\": 760399104,\n          \"cold_public_seconds_median\": 247.0563492346555,\n          \"cold_compile_requests\": [\n            182,\n            182\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0,\n            0,\n            0,\n            0\n          ]\n        },\n        \"B\": {\n          \"n_steady_samples\": 4,\n          \"warm_seconds_samples\": [\n            8.759257295168936,\n            8.977728242054582,\n            9.092372053302824,\n            9.305178417824209\n          ],\n          \"warm_seconds_median\": 9.035050147678703,\n          \"warm_seconds_range\": [\n            8.759257295168936,\n            9.305178417824209\n          ],\n          \"structural_seconds_median\": 0.9491485,\n          \"solve_peak_bytes\": 738361600,\n          \"cold_public_seconds_median\": 247.72163419239223,\n          \"cold_compile_requests\": [\n            206,\n            206\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0,\n            0,\n            0,\n            0\n          ]\n        }\n      },\n      \"warm_delta_pct\": 19.180842572081968,\n      \"peak_delta_pct\": -2.8981496537902274,\n      \"protocol_notes\": \"Four steady observations across two isolated arms per mode; historical revision, not audit head.\"\n    },\n    {\n      \"workload\": \"reduced3\",\n      \"precision\": \"fp32\",\n      \"actual_revision\": \"9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7\",\n      \"source\": \"supplied evidence; reviewer recomputation of summary statistics only\",\n      \"arms\": {\n        \"A\": {\n          \"n_steady_samples\": 4,\n          \"warm_seconds_samples\": [\n            8.239428214728832,\n            8.428846581839025,\n            8.177851025015116,\n            8.394474900327623\n          ],\n          \"warm_seconds_median\": 8.316951557528228,\n          \"warm_seconds_range\": [\n            8.177851025015116,\n            8.428846581839025\n          ],\n          \"structural_seconds_median\": 0.4594425,\n          \"solve_peak_bytes\": 800288512,\n          \"cold_public_seconds_median\": 237.23303863685578,\n          \"cold_compile_requests\": [\n            181,\n            181\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0,\n            0,\n            0,\n            0\n          ]\n        },\n        \"B\": {\n          \"n_steady_samples\": 4,\n          \"warm_seconds_samples\": [\n            10.701599637977779,\n            10.88491000328213,\n            10.667807444930077,\n            10.910874360240996\n          ],\n          \"warm_seconds_median\": 10.793254820629954,\n          \"warm_seconds_range\": [\n            10.667807444930077,\n            10.910874360240996\n          ],\n          \"structural_seconds_median\": 1.3752925,\n          \"solve_peak_bytes\": 749662976,\n          \"cold_public_seconds_median\": 238.80240936391056,\n          \"cold_compile_requests\": [\n            206,\n            206\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0,\n            0,\n            0,\n            0\n          ]\n        }\n      },\n      \"warm_delta_pct\": 29.774169609780387,\n      \"peak_delta_pct\": -6.325910623592712,\n      \"protocol_notes\": \"Four steady observations across two isolated arms per mode; historical revision, not audit head.\"\n    },\n    {\n      \"workload\": \"reduced3\",\n      \"precision\": \"fp64\",\n      \"actual_revision\": \"9f03c34e0844d2e6da5fcf8bf3d79bfb8b1854a7\",\n      \"source\": \"supplied evidence; reviewer recomputation of summary statistics only\",\n      \"arms\": {\n        \"A\": {\n          \"n_steady_samples\": 2,\n          \"warm_seconds_samples\": [\n            9.143928436562419,\n            9.37452712468803\n          ],\n          \"warm_seconds_median\": 9.259227780625224,\n          \"warm_seconds_range\": [\n            9.143928436562419,\n            9.37452712468803\n          ],\n          \"structural_seconds_median\": 0.458401,\n          \"solve_peak_bytes\": 596628224,\n          \"cold_public_seconds_median\": 255.5310295848176,\n          \"cold_compile_requests\": [\n            181\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0\n          ]\n        },\n        \"B\": {\n          \"n_steady_samples\": 2,\n          \"warm_seconds_samples\": [\n            11.721298878081143,\n            11.949062699452043\n          ],\n          \"warm_seconds_median\": 11.835180788766593,\n          \"warm_seconds_range\": [\n            11.721298878081143,\n            11.949062699452043\n          ],\n          \"structural_seconds_median\": 1.406848,\n          \"solve_peak_bytes\": 371027456,\n          \"cold_public_seconds_median\": 255.22335567884147,\n          \"cold_compile_requests\": [\n            206\n          ],\n          \"later_warm_compile_requests\": [\n            0,\n            0,\n            0\n          ]\n        }\n      },\n      \"warm_delta_pct\": 27.820387068687367,\n      \"peak_delta_pct\": -37.812620812253094,\n      \"protocol_notes\": \"Two steady observations in one arm per mode; below the requested three repetitions, historical revision.\"\n    }\n  ],\n  \"current_overhead_patch_cpu_cold_counts\": {\n    \"source_path\": \"context/evidence/05-count_compiles_after.txt\",\n    \"source_sha256\": \"fd33cd93bbe31fc562bed7d3b83f86d106ce1c6ac8948184fffa9decbaa9ee42\",\n    \"independent_types\": {\n      \"A\": 12,\n      \"B\": 14\n    },\n    \"sector_typed_terminal\": {\n      \"A\": 13,\n      \"B\": 16\n    },\n    \"sector_type_free_terminal\": {\n      \"A\": 13,\n      \"B\": 15\n    }\n  },\n  \"parity_limit\": \"Summary reports 13 comparisons of three snapshots with 181/181 arrays, zero max ULP and equal panels. Raw arrays and full comparison helper dependencies are not shipped; no reviewer rerun is claimed.\",\n  \"compile_time_limit\": \"Cold public wall includes compilation, planning, validation and execution; not backend compile seconds.\"\n}\n",
+      "delivered_as": "evidence/resource-summary.json",
+      "delivered_sha256": "6ab8d4c27d8666cc06deb1227ce2aca506cb4f24d371dffab46b081e0ee9f62f"
+    },
+    {
+      "id": "EV-REFERENCE",
+      "kind": "LOG",
+      "path": "evidence/reference-check.log",
+      "package_path": "evidence/reference-check.log",
+      "content": "PASS: 24 byte-accounting cases; exact one-action values = (Fraction(3, 1), Fraction(6, 1), Fraction(9, 1))\nThis checks independent equations only. No pylcm/JAX execution is claimed.\n",
+      "delivered_as": "evidence/reference-check.log",
+      "delivered_sha256": "9972e3d93543e9456694cb489d7098202c7af3262e5b83e4edc7335cae389b9e"
+    },
+    {
+      "id": "EV-COMMANDS",
+      "kind": "FILE",
+      "path": "evidence/commands.md",
+      "package_path": "evidence/commands.md",
+      "content": "# Native validation commands and execution boundary\n\nAll commands below are **proposed native commands, not executions performed by this reviewer**. Use the full repository with Python >=3.14 and the bundle's pinned dependency stack. The partial reconstructed `project/` snapshot is for source comparison, not a runnable checkout.\n\nSet `REPO`, `REPLY` and `EVIDENCE` to absolute paths. Copy the delivered `tests/solution/test_audit486_*.py` files into the same repository-relative paths. Preserve the source identity and store `git status`, exact command, environment, exit status and complete JUnit/log files for every invocation. Use the project's required capped/subagent test route; serialize local batteries and keep existing cluster job owners.\n\n## Red before either source patch\n\nAt the original `ec882386ca8fe0717ed878b8eb8e7a74173c3df4` checkout, install the test files only. In the existing one-host-device `tests-cpu` environment run:\n\n```sh\npixi run --as-is -e tests-cpu pytest \\\n  tests/solution/test_audit486_selected_view_admission.py \\\n  tests/solution/test_audit486_scalar_block.py \\\n  tests/solution/test_audit486_scalar_block_family.py \\\n  --precision=32 -n 0 -v --junitxml=\"$EVIDENCE/red-p32.xml\"\n```\n\nRepeat with `--precision=64` and a distinct XML/log name. Red must be the specified ownership/admission or missing-PLANNED assertion, not an import, fixture, schema or environmental failure. Fix an invalid witness if its intended public path does not construct; do not report that as reproducing the source defect.\n\n## Candidate patch, then green\n\n```sh\ngit -C \"$REPO\" apply --check \\\n  \"$REPLY/patches/P1-selected-owner-accounting.patch\" \\\n  \"$REPLY/patches/P2-plan-bound-scalar-reads.patch\"\ngit -C \"$REPO\" apply \\\n  \"$REPLY/patches/P1-selected-owner-accounting.patch\" \\\n  \"$REPLY/patches/P2-plan-bound-scalar-reads.patch\"\n```\n\nRerun the first test selection at both precisions with `green-p32.xml` / `green-p64.xml`. These source edits intentionally invalidate affected seals. Regenerate pins and add new corridor/mutation tests using the project's normal native tooling; this package does not supply guessed generated hashes.\n\nRun the existing `test_invariant_blocking.py`, `test_continuous_assets_sharding.py`, `test_continuous_transfer_admission.py`, selected-view tests and scheduler/liveness/donation/footprint tests in their **existing** 1/2/8-host-device lanes. The supplied report uses `--full-suite` for topology lanes, not `--ci-policy=full`. Do not call a topology skip a pass. Then run real GPU lanes and the native certificate, seal, mutation-anchor and CI-manifest checks. The complete repository, not this partial bundle, owns their exact launcher commands.\n\n## Future cache acceptance (intentionally red before caching)\n\n```sh\npixi run --as-is -e tests-cpu pytest \\\n  tests/solution/test_audit486_structural_cache.py \\\n  --precision=32 -n 0 -v --junitxml=\"$EVIDENCE/cache-p32.xml\"\n```\n\nRepeat fp64. P1/P2 alone are not supposed to make this pass. If function names become cheap cache-hit dispatchers, place the probes on the actual expensive blueprint builders: preserve the work-elimination condition and fresh-model value checks. Add the schema/lifecycle/retained-owner/budget-change matrix in report.md before calling the cache validated.\n\n## Optional helper-fold red probe\n\nNo helper fold is recommended in this review. This separately invoked probe prevents the optional experiment from turning into a new required CI failure:\n\n```sh\npixi run --as-is -e tests-cpu python \\\n  \"$REPLY/audit-tests/helper_fold_probe.py\" --repo-root \"$REPO\" --expect-removed none\npixi run --as-is -e tests-cpu python \\\n  \"$REPLY/audit-tests/helper_fold_probe.py\" --repo-root \"$REPO\" --expect-removed write\npixi run --as-is -e tests-cpu python \\\n  \"$REPLY/audit-tests/helper_fold_probe.py\" --repo-root \"$REPO\" --expect-removed select\n```\n\nAt the current design, the first is expected green and the other two red at the named helper-count assertion. A future authorized fold must make its matching probe green while preserving all numerical, alias/admission and multi-device checks. This probe follows the supplied compile-log convention, not an independent backend instrumentation implementation. Log `lcm.__file__` and use a fresh isolated native process/cache configuration per experiment.\n\n## Resource closure\n\nThe contract requires same-head A/B, isolated A1 B1 B2 A2, synchronized public-call timing, three steady observations, compile logs and `peak_bytes_in_use`. Also compare the unblocked head with baseline `7e6fff631856572c63ac63cad43cfdf2e8c29c5c`. Record both repaired-parent and final-cache results; do not attribute cumulative stack changes to one patch.\n\nThe exact Marvin launcher for the historical runs is not shipped. The evidence calls it `stage3_arms.py`; do not treat that description as a reconstructed executable command. The existing cluster owner must use the original harness and provide its exact invocation and outputs. No job is released or cancelled by these instructions.\n\n## Reviewer-executed checks\n\n`evidence/static-checks.json` records patch applicability, syntax-only parsing, complete structured CI comparison and available-source digest checks. `evidence/reference-check.log` records the independent standard-library equations. None of these imports or executes pylcm. Native witnesses, hardware tests and certificate regeneration are explicitly `not_run`.\n",
+      "delivered_as": "evidence/commands.md",
+      "delivered_sha256": "4b3e267bf36115d4af896ee26c384a6e50b4767269fa8a0b339bc95f56e97cfc"
+    },
+    {
+      "id": "PK-tests-solution-test-audit486-scalar-block-py-da254de17b6e",
+      "kind": "REPRODUCER",
+      "path": "tests/solution/test_audit486_scalar_block.py",
+      "package_path": "tests/solution/test_audit486_scalar_block.py",
+      "adopted_from_package": true,
+      "content": "\"\"\"Audit R2: the one-cell/one-action boundary must still plan selected reads.\"\"\"\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nimport pytest\n\nfrom _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph\nfrom lcm import AgeGrid, Choose, DiscreteGrid, ExecutionConfig, Model, Regime, categorical, fixed_transition\nfrom lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt\n\n\n@categorical(ordered=False)\nclass _Types:\n    low: ScalarInt\n    middle: ScalarInt\n    high: ScalarInt\n\n\n@categorical(ordered=False)\nclass _OneAction:\n    only: ScalarInt\n\n\n@categorical(ordered=False)\nclass _RegimeId:\n    working: ScalarInt\n    terminal: ScalarInt\n\n\ndef _flow(*, pref_type: DiscreteState, choice: DiscreteAction, weights: FloatND) -> FloatND:\n    return weights[pref_type] + choice\n\n\ndef _terminal(*, pref_type: DiscreteState, weights: FloatND) -> FloatND:\n    return weights[pref_type]\n\n\ndef _to_terminal() -> ScalarInt:\n    return _RegimeId.terminal\n\n\ndef _model(*, blocked: bool) -> Model:\n    grid = DiscreteGrid(category_class=_Types)\n    return Model(\n        regimes={\n            \"working\": Regime(\n                states={\"pref_type\": grid},\n                state_transitions={\"pref_type\": fixed_transition(\"pref_type\")},\n                actions={\"choice\": DiscreteGrid(category_class=_OneAction)},\n                functions={\"utility\": _flow},\n                regime_transitions=Choose(func=_to_terminal, targets=(\"terminal\",)),\n            ),\n            \"terminal\": Regime(states={\"pref_type\": grid}, functions={\"utility\": _terminal}, regime_transitions=None),\n        },\n        ages=AgeGrid(start=0, stop=1, step=\"Y\"), regime_id_class=_RegimeId,\n        initial_regimes={0: \"working\"},\n        execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=2**30,\n                                         invariant_block_widths={\"pref_type\": 1} if blocked else {}),\n    )\n\n\ndef test_no_axis_bound_program_still_declares_planned_value_reads() -> None:\n    model = _model(blocked=True)\n    graph = core_program_graph(kernel=model._regimes[\"working\"].solution.period_kernels[0])\n    assert len(graph) == 3\n    for core in graph.values():\n        assert core.invariant_binding is not None\n        assert not core.requirements.axes\n        assert core.requirements.value_reads\n        assert core.disposition is CoreExecutionDisposition.PLANNED\n\n\n@pytest.mark.parametrize(\"flow,terminal,expected\", [\n    ((1, 2, 3), (4, 8, 12), (3, 6, 9)),\n    ((3, 1, -2), (8, 2, 6), (7, 2, 1)),\n])\ndef test_scalar_block_equals_literal_typewise_bellman_equation(\n    *, flow: tuple, terminal: tuple, expected: tuple,\n) -> None:\n    dtype = np.dtype(\"float64\" if jax.config.jax_enable_x64 else \"float32\")\n    params = {\n        \"discount_factor\": 0.5,\n        \"working\": {\"utility\": {\"weights\": jnp.asarray(flow, dtype=dtype)}},\n        \"terminal\": {\"utility\": {\"weights\": jnp.asarray(terminal, dtype=dtype)}},\n    }\n    # The reference is the literal equation u[k] + V_terminal[k] / 2,\n    # not a second invocation of the blocked implementation.\n    oracle = np.asarray(expected, dtype=dtype)\n    for blocked in (False, True):\n        result = _model(blocked=blocked).solve(params=params, log_level=\"off\")\n        got = np.asarray(result.values[0][\"working\"])\n        assert got.shape == (3,)\n        assert got.dtype == oracle.dtype\n        assert got.tobytes() == oracle.tobytes()\n",
+      "delivered_as": "tests/solution/test_audit486_scalar_block.py",
+      "delivered_sha256": "0677007730fae89cd965b7c4a55090bacabb8bec79fb369d0286ad7e0dc5654d"
+    },
+    {
+      "id": "PK-tests-solution-test-audit486-selected-view-admission-py-d21c9cf93f1e",
+      "kind": "REPRODUCER",
+      "path": "tests/solution/test_audit486_selected_view_admission.py",
+      "package_path": "tests/solution/test_audit486_selected_view_admission.py",
+      "adopted_from_package": true,
+      "content": "\"\"\"Regression candidates for audit R1. Run in the repository's native environment.\n\nThe public-path probes only observe normal solver calls; they do not forge or\nmodify model internals. The small synthetic case uses the same valid transfer\nand inventory interfaces as test_continuous_transfer_admission.py.\n\"\"\"\nimport dataclasses\nimport math\nfrom typing import Any\n\nimport jax\nimport jax.numpy as jnp\nimport numpy as np\nimport pytest\n\nfrom _lcm.execution.core_program import (\n    CoreExecutionDisposition, CoreExecutionRequirements, ProgramScope,\n    ResolvedCoreProgram, ValueRead,\n)\nfrom _lcm.execution.footprint import ResidentInventory\nfrom _lcm.execution.output_layout import VALUE\nfrom _lcm.execution.value_transfer import (\n    CoordinateSelection, ResolvedValueTransfer, ValueArtifactAddress,\n    ValueArtifactKind, ValueConsumerAddress, ValueInputChannel,\n    ValueTransferKind, ValueViewDescriptor, ValueViewLeaf,\n)\nfrom _lcm.execution.workspace_planning import compiler_memory_reservation, plan_workspace\nfrom _lcm.solution import backward_induction as bi\nfrom tests.solution.test_invariant_blocking import _independent_types_model\nfrom tests.test_models import independent_types\nfrom lcm import ExecutionConfig\nfrom lcm.exceptions import ExecutionPlanningError\n\n\ndef test_public_blocked_solve_never_credits_a_selected_input_as_its_owner(\n    *, monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    \"\"\"A compiler-live compact input cannot cover its separate stored owner.\"\"\"\n    original = bi._candidate_resident_bytes\n    checked: list[tuple[int, int]] = []\n\n    def observe(**kwargs: Any) -> int:\n        got = original(**kwargs)\n        program = kwargs[\"program\"]\n        transfers = program.input_transfer_plan\n        # Isolate a normal unshared selected read, not a mixed/shared graph.\n        if transfers and all(\n            t.selects and t.kind is ValueTransferKind.ALIGNED_LOCAL\n            and not t.reused_by_several_consumers for t in transfers\n        ):\n            shardings = kwargs[\"compiled\"].input_shardings[1]\n            if all(bi._compiler_reads_source(shardings=shardings, source=t.source)\n                   for t in transfers):\n                expected = kwargs[\"inventory\"].resident_bytes(\n                    consumes=(), consumed_copies=frozenset(), temporary_bytes={},\n                )\n                checked.append((got, expected))\n                assert got == expected, (\n                    \"A selected argument is not the full stored owner; \"\n                    f\"got resident={got}, owner-preserving resident={expected}\"\n                )\n        return got\n\n    monkeypatch.setattr(bi, \"_candidate_resident_bytes\", observe)\n    model = _independent_types_model(execution_config=ExecutionConfig(\n        devices=(0,), device_memory_bytes=2**30,\n        invariant_block_widths={\"pref_type\": 1},\n    ))\n    model.solve(params=independent_types.get_params(), log_level=\"off\")\n    assert checked, \"The public witness must reach a compiler-live selected read.\"\n\n\ndef _shape_only(*, next_regime_to_V_arr: dict[str, jax.Array]) -> jax.Array:\n    value = next_regime_to_V_arr[\"terminal\"]\n    return jnp.arange(value.size, dtype=value.dtype).reshape(value.shape)\n\n\n@dataclasses.dataclass(frozen=True, kw_only=True)\nclass _Case:\n    program: ResolvedCoreProgram\n    compiled: Any\n    inventory: ResidentInventory\n    metadata: dict\n    owner: jax.Array\n    owner_bytes: int\n    block_bytes: int\n    compiler_bytes: int\n    device_id: int\n\n\ndef _case(*, axis: int, code: int, cells: int, shared: bool) -> _Case:\n    device = jax.devices()[0]\n    sharding = jax.sharding.SingleDeviceSharding(device)\n    dtype = np.dtype(\"float64\" if jax.config.jax_enable_x64 else \"float32\")\n    shape = (3, cells) if axis == 0 else (cells, 3)\n    names = (\"pref_type\", \"assets\") if axis == 0 else (\"assets\", \"pref_type\")\n    owner = jax.device_put(np.arange(math.prod(shape), dtype=dtype).reshape(shape), sharding)\n    target = ValueArtifactAddress(kind=ValueArtifactKind.REGIME_VALUE, period=1, regime=\"terminal\")\n    source = ValueConsumerAddress(\n        source_period=0, source_regime=\"working\", core_key=\"main\",\n        channel=ValueInputChannel.NEXT_REGIME_VALUE, path=(\"terminal\",),\n    )\n    view = ValueViewDescriptor(\n        artifact=target, leaf=ValueViewLeaf.SELECTED,\n        stored_axis_names=names, stored_shape=shape, dtype=dtype,\n        weak_type=False, consumer_shape=(cells,), required_sharding=sharding,\n        selections=(CoordinateSelection(state_name=\"pref_type\", start=code,\n                                        width=1, codes=(code,)),),\n    )\n    transfer = ResolvedValueTransfer(\n        target=target, source=source, kind=ValueTransferKind.ALIGNED_LOCAL,\n        stored_sharding=sharding, source_sharding=sharding,\n        expected_shape=shape, expected_dtype=dtype, view=view,\n        reused_by_several_consumers=shared,\n    )\n    args = {\"next_regime_to_V_arr\": {\"terminal\": jax.ShapeDtypeStruct((cells,), dtype, sharding=sharding)}}\n    compiled = jax.jit(_shape_only, out_shardings=sharding).lower(**args).compile()\n    assert all(x is None for x in compiled.input_shardings[1][\"next_regime_to_V_arr\"].values())\n    requirements = CoreExecutionRequirements(value_reads=(ValueRead(target=target, source=source, view=view),))\n    program = ResolvedCoreProgram(\n        name=\"main\", function=_shape_only, arguments=args, static_kwargs={},\n        requirements=requirements, output_roles=VALUE,\n        disposition=CoreExecutionDisposition.PLANNED, donation_candidates=(),\n        tile_widths={}, specialization_key=(), input_transfer_plan=(transfer,),\n    )\n    metadata = {(\"working\", 0, \"main\"): bi._ProgramExecutionMetadata(\n        requirements=requirements, disposition=program.disposition,\n        scope=ProgramScope.ANY, input_transfer_plan=(transfer,),\n    )}\n    if shared:\n        second_source = dataclasses.replace(source, source_regime=\"second\")\n        second_transfer = dataclasses.replace(transfer, source=second_source)\n        metadata[(\"second\", 0, \"main\")] = bi._ProgramExecutionMetadata(\n            requirements=CoreExecutionRequirements(value_reads=(ValueRead(\n                target=target, source=second_source, view=view,\n            ),)), disposition=program.disposition, scope=ProgramScope.ANY,\n            input_transfer_plan=(second_transfer,),\n        )\n    scratch = bi._period_transfer_scratch_reservations(\n        period=0, metadata=metadata, device_ids=(device.id,),\n    )\n    copies = bi._period_copy_reservations(period=0, metadata=metadata)\n    owner_bytes, block_bytes = 3 * cells * dtype.itemsize, cells * dtype.itemsize\n    inventory = ResidentInventory(\n        device_ids=(device.id,), live={}, peer_bytes={device.id: 0},\n        declared_inputs=(), fixed_bytes={device.id: owner_bytes},\n        shared_copies=copies, transfer_scratch_bytes=scratch,\n    )\n    return _Case(program=program, compiled=compiled, inventory=inventory,\n                 metadata=metadata, owner=owner, owner_bytes=owner_bytes,\n                 block_bytes=block_bytes, device_id=device.id,\n                 compiler_bytes=compiler_memory_reservation(compiled=compiled, widths={}).reservation_bytes)\n\n\ndef test_only_a_real_owner_pass_through_gets_aligned_input_credit() -> None:\n    case = _case(axis=0, code=2, cells=8, shared=False)\n    selected = case.metadata[(\"working\", 0, \"main\")]\n    assert bi._aligned_input_artifacts(metadata=selected) == ()\n    transfer = selected.input_transfer_plan[0]\n    whole = dataclasses.replace(transfer, view=None)\n    metadata = bi._ProgramExecutionMetadata(\n        requirements=CoreExecutionRequirements(value_reads=(ValueRead(target=whole.target, source=whole.source),)),\n        disposition=CoreExecutionDisposition.PLANNED, scope=ProgramScope.ANY,\n        input_transfer_plan=(whole,),\n    )\n    assert bi._aligned_input_artifacts(metadata=metadata) == (whole.target,)\n    assert not bi._period_transfer_scratch_reservations(\n        period=0, metadata={(\"working\", 0, \"main\"): metadata}, device_ids=(case.device_id,),\n    )\n\n\n@pytest.mark.parametrize(\"axis,code,cells\", [(0, 0, 8), (0, 2, 17), (1, 2, 8)])\n@pytest.mark.parametrize(\"shared\", [False, True])\ndef test_pruned_selected_view_has_the_exact_conservative_admission_threshold(\n    *, axis: int, code: int, cells: int, shared: bool,\n) -> None:\n    \"\"\"Owner + destination + stage scratch, deduplicated only for a shared view.\n\n    This is the existing planner's conservative reservation, not a claim that\n    these objects are the allocator's exact simultaneous peak.\n    \"\"\"\n    case = _case(axis=axis, code=code, cells=cells, shared=shared)\n    assert dict(case.inventory.transfer_scratch_bytes) == {case.device_id: case.block_bytes}\n    expected_resident = case.owner_bytes + 2 * case.block_bytes\n\n    def resident(inventory: ResidentInventory) -> int:\n        return bi._candidate_resident_bytes(\n            compiled=case.compiled, program=case.program, internal_arguments={}, inventory=inventory,\n        )\n\n    assert resident(case.inventory) == expected_resident\n    ceiling = case.compiler_bytes + expected_resident\n\n    def plan(*, budget: int, inventory: ResidentInventory) -> Any:\n        return plan_workspace(axes=(), compile_candidate=lambda _widths: case.compiled,\n                              budget_bytes=budget, resident_bytes_for=lambda _compiled: resident(inventory))\n\n    with pytest.raises(ExecutionPlanningError, match=\"No workspace-width candidate\"):\n        plan(budget=ceiling - 1, inventory=case.inventory)\n    assert plan(budget=ceiling, inventory=case.inventory).compiled is case.compiled\n    # Negative control: omitted selection scratch incorrectly admits that same ceiling.\n    omitted = dataclasses.replace(case.inventory, transfer_scratch_bytes={})\n    assert plan(budget=ceiling - 1, inventory=omitted).compiled is case.compiled\n    assert not case.owner.is_deleted()\n",
+      "delivered_as": "tests/solution/test_audit486_selected_view_admission.py",
+      "delivered_sha256": "9d5d780e25dc1d02382ddd6a3041f1aff1cc60a7dee00edf81ad60c6a2cc073b"
+    }
+  ],
+  "package_roles": {
+    "audit-oracles/selected_view_reference.py": "artifact_payload",
+    "audit-result.json": "artifact_payload",
+    "audit-tests/helper_fold_probe.py": "artifact_payload",
+    "evidence/commands.md": "human_action_required",
+    "evidence/coverage.json": "supporting_evidence",
+    "evidence/reference-check.log": "supporting_evidence",
+    "evidence/resource-summary.json": "supporting_evidence",
+    "evidence/static-checks.json": "supporting_evidence",
+    "patches/P1-selected-owner-accounting.patch": "artifact_payload",
+    "patches/P2-plan-bound-scalar-reads.patch": "artifact_payload",
+    "report.md": "human_action_required",
+    "tests/solution/test_audit486_scalar_block.py": "artifact_payload",
+    "tests/solution/test_audit486_scalar_block_family.py": "artifact_payload",
+    "tests/solution/test_audit486_selected_view_admission.py": "artifact_payload",
+    "tests/solution/test_audit486_structural_cache.py": "artifact_payload"
+  },
+  "source_schema_version": "3.2",
+  "representability_demos": [],
+  "source_control_digest": "sha256:393c896bfd611dcb6385919d5b009e4702e7f1566b1ceeea58e341a0606ee461",
+  "ingested_at": "2026-10-02T07:57:08+00:00",
+  "source_report": "audit-result.json",
+  "ingested_control_digests": [
+    "sha256:393c896bfd611dcb6385919d5b009e4702e7f1566b1ceeea58e341a0606ee461"
+  ],
+  "artifact_blocks_ingested": 0,
+  "reply_package": {
+    "root": "/home/hmg/sciebo/pro-audits/pylcm-pr486/bundle-round0/reply/pylcm-486-stage3-round0-audit-reply",
+    "verified": true,
+    "manifest_digest": "sha256:09d6d5ebc95fb8f3c8386084f3aca7115b4e46b5b8dd9a9f7922fc6a939dd0fb",
+    "files_listed": 15,
+    "file_roles": {
+      "audit-oracles/selected_view_reference.py": "artifact_payload",
+      "audit-result.json": "protocol_furniture",
+      "audit-tests/helper_fold_probe.py": "artifact_payload",
+      "evidence/commands.md": "artifact_payload",
+      "evidence/coverage.json": "artifact_payload",
+      "evidence/reference-check.log": "artifact_payload",
+      "evidence/resource-summary.json": "artifact_payload",
+      "evidence/static-checks.json": "artifact_payload",
+      "patches/P1-selected-owner-accounting.patch": "artifact_payload",
+      "patches/P2-plan-bound-scalar-reads.patch": "artifact_payload",
+      "report.md": "human_action_required",
+      "tests/solution/test_audit486_scalar_block.py": "artifact_payload",
+      "tests/solution/test_audit486_scalar_block_family.py": "artifact_payload",
+      "tests/solution/test_audit486_selected_view_admission.py": "artifact_payload",
+      "tests/solution/test_audit486_structural_cache.py": "artifact_payload"
+    },
+    "artifacts_hydrated_from_package": [
+      "audit-oracles/selected_view_reference.py",
+      "audit-tests/helper_fold_probe.py",
+      "evidence/commands.md",
+      "evidence/coverage.json",
+      "evidence/reference-check.log",
+      "evidence/resource-summary.json",
+      "evidence/static-checks.json",
+      "patches/P1-selected-owner-accounting.patch",
+      "patches/P2-plan-bound-scalar-reads.patch",
+      "tests/solution/test_audit486_scalar_block.py",
+      "tests/solution/test_audit486_scalar_block_family.py",
+      "tests/solution/test_audit486_selected_view_admission.py",
+      "tests/solution/test_audit486_structural_cache.py"
+    ],
+    "outstanding_files": [],
+    "acknowledged_files": [
+      "report.md"
+    ],
+    "acknowledgement_path": "/home/hmg/sciebo/pro-audits/pylcm-pr486/bundle-round0/ingested/REPLY-FILES-READ.json",
+    "acknowledgement_digest": "sha256:783c8f8c11bcd80152973ca1a5d2561d11873c295e31d4bad6c060107f5888b9"
+  },
+  "bundle_manifest_digest": "aad5686b9c73b03da0fce9f99b396a6e1b2a43c6a98e3f613b26dd2e753f90d6",
+  "contract_policy": {
+    "contract_version": "1",
+    "target": "Design consultation with a bounded audit of the Stage 3 blocked route (ExecutionConfig(invariant_block_widths={\"pref_type\": 1}), commits 266927d9..ec882386 on 7e6fff63, PR #486): decide whether and how to remove the two residual cold-only helper compiles of the blocked solve -- one jit(_select_view_blocks) per distinct stored shape read through a selected view (value_transfer.py) and one jit(_write_block) per distinct blocked output shape (invariant_blocks.py), neither growing with the number of types -- choosing among Option 1 (write-back inside the bound core through a donated full-size accumulator plus a start-offset operand), Option 2 (selection inside the bound core, slicing the stored value by the code operand, which on several devices puts a resharding collective inside the core while keeping the no-full-type-gather rule, changes Stage 2's \"selection is a planned transfer stage\" contract and moves transfer_workspace_bytes into the compiler reservation), or neither; and judge whether structural_resolution (re-run for every program on every solve, about 2 ms host time per program, mostly code-dependent) should be cached across warm calls on a params-independent key for both the blocked and the unblocked route. Return a decision with reasons; the invariants the chosen design must preserve (bitwise parity blocked vs unblocked at fp32 and fp64, donation and liveness, admission and footprint, certified corridors, multi-device layouts); the minimal changeset outline; and the tests that would show the fold red first.",
+    "profiles": {
+      "fast": {
+        "applicability": "required",
+        "candidate_on_unavailable": null,
+        "candidate_assessed_by": null,
+        "candidate_max_regret": null,
+        "candidate_source": null,
+        "candidate_source_digest": null,
+        "structural_bound_value": null
+      },
+      "certified": {
+        "applicability": "required",
+        "candidate_on_unavailable": null,
+        "candidate_assessed_by": null,
+        "candidate_max_regret": null,
+        "candidate_source": null,
+        "candidate_source_digest": null,
+        "structural_bound_value": null
+      }
+    },
+    "digest": "486c5c43025d84d22cd553d638a1bb3956810f19357213f980c34322018e8fa1"
+  },
+  "coverage_blockers": [],
+  "binding_warnings": [],
+  "coverage_notes": [],
+  "ingest_warnings": [
+    "F1: blocking RESOURCE finding lacks a benchmark command"
+  ]
+}
