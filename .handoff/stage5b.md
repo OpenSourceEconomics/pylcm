@@ -69,8 +69,15 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
   "created: 96/96 workers" and was resubmitted. It's the second such hang today (the
   cache's 28031604 was the first).
 
+- **Isolated timing A/B** (job 28037985, one exclusive node, fp64, `-n 0`, 5
+  repetitions per block). Order: 5B 731e9fe8, then 5A 68f35d39, then 5B again.
+  - Both parametrizations passed every time: 15/15 `[dissolution]` and 15/15
+    `[multi_regime]`.
+  - Junit times per repetition are the same across blocks: 10.45–10.70 s on 5B and
+    10.41–10.69 s on 5A.
+  - The 1.53 seen in the battery is `-n 96` contention, not a 5B regression.
+
 ## Still to do
-- Isolated timing A/B (above).
 - The reduced3 GPU driver run.
 - Deferred:
   - budgeted block-major simulation;
