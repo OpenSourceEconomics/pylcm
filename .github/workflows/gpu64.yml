@@ -28,7 +28,7 @@ jobs:
           echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
       - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.80.0
+          pixi-version: v0.81.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
