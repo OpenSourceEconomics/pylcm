@@ -26,7 +26,7 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 | Blueprint cache (Pro R3) | 28030481/82 failures fixed in 11a4bbb (green locally); Marvin rerun pending | `perf/invariant-structural-blueprint-cache` (#490, draft) | 1d8c306 |
 | 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
-| 7 | in progress (subagent) | `feat/invariant-action-partitions` | based on 9b36adcb |
+| 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
 | 8A | not started; after 5B | — | — |
 | 8B | removed | — | — |
 
