@@ -24,10 +24,10 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
 | 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
 | Blueprint cache (Pro R3) | Marvin full suite green at 1d8c306f (28033850 / 28031605) | `perf/invariant-structural-blueprint-cache` (#490, draft) | see its `.handoff/blueprint-cache.md` |
-| 5B | implemented (WIP); design decisions pending; Marvin battery 28033547–49 running | `feat/invariant-block-major-lifetime` (no PR) | 731e9fe8 |
+| 5B | Marvin battery green (timing row cleared by isolated A/B); GPU driver requested | `feat/invariant-block-major-lifetime` (#494, draft, on #491) | 8691e767 |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
 | 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
-| 8A | not started; after 5B | — | — |
+| 8A | design starting (after 5B) | — | — |
 | 8B | removed | — | — |
 
 ## Pending HPC jobs (run by the aca session)
@@ -47,6 +47,9 @@ On Marvin:
 - the original handoff tarball is unpacked at `~/inv5a-handoff/`.
 
 Don't touch `~/pylcm-prod-inv` while the production pair runs.
+
+## Open decisions
+- Blocked-vs-unblocked ULP contract: see `reports/stage3-ulp.md` (FMA contraction; proposal: 8 ULP for values, exact structure).
 
 ## Next steps
 1. Fold the production-pair numbers into #486.
