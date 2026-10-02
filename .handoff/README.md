@@ -22,6 +22,9 @@ The user approved four macOS shards and that leg's measured-weight refresh.
 The isolated preparation retains the reviewed source/config/test bytes;
 native runtime acceptance remains outstanding after publication.
 
+Receipt fixture source-identity repair:
+[receipt-fixture-identity.md](receipt-fixture-identity.md).
+
 ## Stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |

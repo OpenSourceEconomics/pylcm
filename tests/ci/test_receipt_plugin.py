@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -313,11 +314,25 @@ def _collector(*, tmp_path: Path, **option: object) -> _ReceiptCollector:
 
 def _payload(*, collector: _ReceiptCollector) -> dict[str, Any]:
     """Assemble a record with the CI identity a real runner would supply."""
-    os.environ["GITHUB_SHA"] = "0" * 40
-    try:
+    with patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
         return collector.payload(exitstatus=0, junitxml_path="reports/junit.xml")
-    finally:
-        del os.environ["GITHUB_SHA"]
+
+
+@pytest.mark.parametrize("publisher", ["payload", "late_worker"])
+def test_receipt_fixture_preserves_inherited_source_identity(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publisher: str
+) -> None:
+    """Publishing a fixture receipt preserves the enclosing run's source SHA."""
+    source_sha = "bdc1926084f7ca728029082b4206a7e16eb13eea"
+    monkeypatch.setenv("GITHUB_SHA", source_sha)
+    if publisher == "payload":
+        _payload(collector=_collector(tmp_path=tmp_path))
+    else:
+        test_a_late_worker_record_cannot_add_itself_to_a_published_inventory(
+            tmp_path=tmp_path
+        )
+
+    assert os.environ.get("GITHUB_SHA") == source_sha
 
 
 def test_a_worker_that_never_reported_is_not_a_complete_inventory(
@@ -377,11 +392,8 @@ def test_a_late_worker_record_cannot_add_itself_to_a_published_inventory(
     """
     collector = _collector(tmp_path=tmp_path, numprocesses=2, dist="load")
     collector.on_worker_collection(worker_id="gw0", ids=["a.py::one"])
-    os.environ["GITHUB_SHA"] = "0" * 40
-    try:
+    with patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
         collector.on_sessionfinish(exitstatus=0, junitxml_path="reports/junit.xml")
-    finally:
-        del os.environ["GITHUB_SHA"]
     (tmp_path / "junit.linux-fp64.worker-gw1.receipt.json").write_text(
         json.dumps({"role": WORKER_ROLE, "worker_id": "gw1"}), encoding="utf-8"
     )
