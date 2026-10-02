@@ -2286,7 +2286,7 @@ jobs:
           activate-environment: true
           frozen: true
       - name: Download every lane's coverage data
-        uses: actions/download-artifact@v7.0.0
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: coverage-*
           path: coverage-data
@@ -2297,7 +2297,7 @@ jobs:
           pixi run -e tests-cpu python -m tests.ci.check_coverage_manifest \
             coverage-data
       - name: Upload the combined coverage to Codecov
-        uses: codecov/codecov-action@v7.0.0
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: cpu-python
