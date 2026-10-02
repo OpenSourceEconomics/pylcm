@@ -1,0 +1,21 @@
+lcm: /home/user/pylcm-486/src/lcm/__init__.py x64: False jax 0.11.1
+typed_dead=True extra=None
+  [td=True] period 4 dead: bitwise equal (18 cells, dtype float32)
+  [td=True] period 3 work: bitwise equal (36 cells, dtype float32)
+  [td=True] period 3 dead: bitwise equal (18 cells, dtype float32)
+  [td=True] period 2 work: bitwise equal (36 cells, dtype float32)
+  [td=True] period 2 dead: bitwise equal (18 cells, dtype float32)
+  [td=True] period 1 work: bitwise equal (36 cells, dtype float32)
+  [td=True] period 1 dead: bitwise equal (18 cells, dtype float32)
+  [td=True] period 0 work: bitwise equal (36 cells, dtype float32)
+typed_dead=False extra=None
+  [td=False] period 4 dead: bitwise equal (6 cells, dtype float32)
+  [td=False] period 3 work: bitwise equal (36 cells, dtype float32)
+  [td=False] period 3 dead: bitwise equal (6 cells, dtype float32)
+  [td=False] period 2 work shape (3, 2, 6): 1/36 differ, max ULP 1, max abs 2.384e-07
+     idx (2, 1, 2) blocked np.float32(2.0842586) unblocked np.float32(2.0842583) ulp 1
+  [td=False] period 2 dead: bitwise equal (6 cells, dtype float32)
+  [td=False] period 1 work: bitwise equal (36 cells, dtype float32)
+  [td=False] period 1 dead: bitwise equal (6 cells, dtype float32)
+  [td=False] period 0 work: bitwise equal (36 cells, dtype float32)
+TOTAL differing cells: 1
