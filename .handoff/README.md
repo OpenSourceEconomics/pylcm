@@ -16,6 +16,10 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
+Shared JUnit receipt identity repair: [receipt-junit-identity.md](receipt-junit-identity.md).
+This helper-only repair preserves parameter labels and is separate from pending
+CI shard/weight decisions; native collection-skip receipt gaps remain unresolved.
+
 ## Stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
