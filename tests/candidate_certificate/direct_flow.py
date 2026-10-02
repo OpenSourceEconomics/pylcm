@@ -4584,6 +4584,13 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_compile_all_functions": "7d53f2f339ec04f8a7459a68af13c50e5a49877447dacf6610c3b68266ff209e",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            # The structural blueprint is where every program is materialized
+            # and its top-ranked candidate resolved against abstract inputs; a
+            # warm solve binds the stored blueprint, so the recipe, its key and
+            # its per-call binding are one corridor with the resolver above.
+            "_build_structural_blueprint": "fd3b6f0018268e8c77142425acd86aef86c26dbf0b2105bb835c2712aa4d97b3",
+            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
+            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
@@ -4609,6 +4616,27 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_retained_base_space_arrays": "b1c98e73406bfce36a00dd3a398da0ecd893d2e52e6c3911de59962126800c7c",
             "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
         },
+    )
+    # A stored blueprint outlives its solve, so it may hold only abstract,
+    # immutable recipe facts: no ledger, donation, lowering key or cursor.
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="backward output-layout transport",
+            class_name="_StructuralBlueprint",
+            fields=(
+                "programs: tuple[CoreProgram, ...]",
+                "layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]",
+                "resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]",
+                "internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]",
+                "frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]",
+                "frontier_lengths: MappingProxyType[_CoreTriple, int]",
+                "transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]",
+                "representative_metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]",
+            ),
+            methods=(),
+            decorators=("dataclasses.dataclass(frozen=True, kw_only=True)",),
+        )
     )
     if (
         _transport_module_surface(tree)
@@ -6483,6 +6511,9 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
             "_compile_all_functions": "7d53f2f339ec04f8a7459a68af13c50e5a49877447dacf6610c3b68266ff209e",
             "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            "_build_structural_blueprint": "fd3b6f0018268e8c77142425acd86aef86c26dbf0b2105bb835c2712aa4d97b3",
+            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
+            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
