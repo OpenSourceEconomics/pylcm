@@ -25,7 +25,21 @@ Its prepared-state receipt remains historical; current cascade status follows.
 Receipt fixture source-identity repair:
 [receipt-fixture-identity.md](receipt-fixture-identity.md).
 
-## Current #495 checkpoint (2026-10-03)
+## Consolidated #491 checkpoint (2026-10-03)
+
+The user authorized merging and pushing. #495 and#494 are merged into#491 at
+`cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; #497 is based on#491. #496 is
+merged into#486 at `b1dc9d077ccd1289c41010615132be11df40a53d`. This root
+cascade preserves #491 source/tests/certificates/workflows/manifest/lock exactly
+atcb62; its only payload is the JUnit identity handoff note and link. The
+original #495 qualification below is historical. No new numerical or native
+acceptance is inferred from this documentation merge.
+
+Shared JUnit repair: [receipt-junit-identity.md](receipt-junit-identity.md).
+Direct SSH is authorized, superseding the historical ACA-owner-only route;
+production submission still waits for passing checks and authenticated access.
+
+## Historical #495 checkpoint (2026-10-03)
 
 - Incoming CI: published #494 `bc05375f8318d0a5522a46300258bac53744c829`,
   carrying #491 `5b898bb554ccca70dd621c01510639453749055b` and #486
