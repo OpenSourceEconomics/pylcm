@@ -112,8 +112,11 @@ checkpoint correction. It records published#497/base#495, qualified local195
 receipts, Mac subset/no new71 coverage, existing timing miss, this prepared
 refresh and still-local driver/unsubmitted24GPU owner gate. Historical stage
 table/decisions/plan remain intact; original cloud ownership is labeled historical.
-README SHA256 `aa981b3c4fe9fe782bbe07c38e6debd96363ba75a8a2d1aaee81677341257cbd`;
-complete tracked patch including checkpoint SHA256
+At the worker handback, README SHA256 was
+`aa981b3c4fe9fe782bbe07c38e6debd96363ba75a8a2d1aaee81677341257cbd`;
+the complete tracked patch including that checkpoint had SHA256
 `f516c6cae52826f334fff34153f1910fca65228db2c6cfa53b00945f1ea806a6`.
-No source/config/test change followed the129-case acceptance and no further
-Python/import/test/compute was run. Parent still owns normal commit/push hooks.
+These two identities precede the parent's publication wording edits. The PR
+and publication ledger record the committed identity and subsequent namespace
+checks. No source/config/test change followed the129-case acceptance within
+this worker chunk. Parent owns normal commit/push hooks.

@@ -12,8 +12,8 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Follow the plan meticulously and hand each chunk to a subagent. Workers return
   changes; the parent commits.
 - Explicit permission to push and open PRs.
-- Anything on the HPC (Marvin, GPU) is run through the aca session,
-  `session_01Hs8mfXPYyEa24KaAp6BwCW`; this session has no cluster access.
+- The user authorized direct SSH to Marvin, superseding the historical
+  aca-session-only route. Production submission waits for passing checks.
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
@@ -27,6 +27,13 @@ Receipt fixture source-identity repair:
 [receipt-fixture-identity.md](receipt-fixture-identity.md).
 
 ## Current #497 checkpoint (2026-10-03)
+
+The user authorized consolidation by merges and pushes. #495 was fast-forwarded
+into #494, then #494 into #491, both at the already tested commit
+`cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; normal push hooks passed. GitHub
+records both PRs merged and automatically retargeted #497 to #491. No main
+merge occurred. The source/check records below distinguish original core
+validation from subsequent CI refresh and production-driver validation.
 
 - Stage8A core is published as draft [PR #497](https://github.com/OpenSourceEconomics/pylcm/pull/497)
   at `3028a022e8156880d71c6733a47c43f20828283b`, based on published #495
@@ -53,11 +60,23 @@ Receipt fixture source-identity repair:
   gates are preserved. Publication identity and fresh measured Mac24/30 timing
   are tracked in PR #497 and the publication ledger. See [refresh report](reports/CI/MAC-ONE-WEIGHT-REFRESH.md)
   and [matching CSV](reports/CI/mac-one-weight-refresh.csv).
-- Production driver continuation remains local. Actual simultaneous
+- Published `0019faab26766a0bbffb24d786f873e05a16aa67` has completed refreshed
+  Mac intake: 12,305 cases, 11,990 pass/315 skip/zero failure or error, with
+  exactly the prior whole population and outcomes. Maximum payload12:32 and
+  whole-job13:43 meet24/30minutes for this sample. All four canonical and16
+  worker receipts bind tested merge `7635f58c47bca10054a245c856226b99d1755008`,
+  whose whole tree equals0019. This general subset still selects none of the
+  new71 component-job cases; it establishes neither native acceptance nor a
+  causal speedup. See [Mac intake](reports/CI/MAC-0019-INTAKE.md).
+- The production driver is prepared on this branch, with its bounded
+  qualification in [stage8a-production-driver.md](stage8a-production-driver.md).
+  Actual simultaneous
   **three nodes × eight GPUs each on mlgpu** with full canonicalACA inputs,
   matched fp32 reference and native correctness/performance/resource receipts
-  is unsubmitted. The designated ACA owner connection is unavailable here;
-  driver/local and source-review receipts do not establish this native gate.
+  is unsubmitted. Direct SSH authentication failed because the forwarded
+  agent socket is absent; alternative desktop-agent use awaits explicit
+  approval after automatic review rejected alternative-agent discovery.
+  Driver/local and source-review receipts do not establish this native gate.
 
 ## Historical stage status (2026-10-02)
 

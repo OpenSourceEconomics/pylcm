@@ -37,6 +37,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lcm import ExecutionConfig
 
 _CHANGED_PARAM = "bequest_shifter"
 _JAX_FLOOR = (0, 11, 1)
@@ -235,7 +239,13 @@ def _scaled(tree, factor: float):  # noqa: ANN001, ANN202
     return out
 
 
-def _build(*, workload: str, aca_slurm_src: Path | None, n_subjects: int):  # noqa: ANN202
+def _build(  # noqa: ANN202
+    *,
+    workload: str,
+    aca_slurm_src: Path | None,
+    n_subjects: int,
+    production_execution_config: ExecutionConfig | None = None,
+):
     """Return (model, params, initial_conditions, description)."""
     if workload == "production":
         sys.path.insert(0, str(aca_slurm_src))
@@ -255,9 +265,11 @@ def _build(*, workload: str, aca_slurm_src: Path | None, n_subjects: int):  # no
             make_execution_config,
         )
 
-        config = _blocked(
-            make_execution_config(solver="brute_force", continuous_sharding=True)
-        )
+        config = production_execution_config
+        if config is None:
+            config = _blocked(
+                make_execution_config(solver="brute_force", continuous_sharding=True)
+            )
         grid_config = _GRID_CONFIG_BY_GPU["nvidia_a100_sxm4_80gb"]
         model, params = build_aca_policy_model(
             policy=PolicyVariant.ACA,
