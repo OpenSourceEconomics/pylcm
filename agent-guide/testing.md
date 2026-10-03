@@ -47,7 +47,7 @@ context?** If not, rewrite it.
 
 Editing a file under `src/` can turn a `tests/test_*_certificate.py` battery red for a
 reason unrelated to whether the edit is correct: the candidate certificate pins every
-certified source by byte digest, and pins the callables and transport surfaces its nine
+certified source by byte digest, and pins the callables and transport surfaces its ten
 proved corridors depend on by AST digest. A moved callable stales a pin whether or not
 it changed behavior.
 

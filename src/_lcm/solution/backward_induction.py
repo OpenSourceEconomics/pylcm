@@ -253,6 +253,30 @@ class _GatherCheck:
 GatherChecks = dict[int, tuple[object, _GatherCheck]]
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ExecutableCache:
+    """Compiled programs that several solves of one model share, by lowering key.
+
+    A lowering key names everything an executable is specialized to — the
+    program's durable identity, its abstract arguments, output layout and
+    donations — and nothing it reads as an operand. Solves whose programs
+    lower to the same keys can therefore run each other's executables: the
+    components of a block-major solve differ only in the code their grids
+    hold, which every program reads as an operand.
+    """
+
+    compiled: dict[Hashable, jax.stages.Compiled] = dataclasses.field(
+        default_factory=dict
+    )
+    """Executable of every lowering key compiled so far."""
+    labels: dict[Hashable, str] = dataclasses.field(default_factory=dict)
+    """Readable name of every compiled lowering key."""
+    memory: dict[Hashable, CompilerMemoryReservation] = dataclasses.field(
+        default_factory=dict
+    )
+    """Compiler memory reservation of every lowering key admitted under a budget."""
+
+
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
@@ -275,6 +299,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
+    executable_cache: ExecutableCache | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -330,6 +355,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         gather_checks: Fusion verdicts that outlive this solve, keyed by the
             identity of the runtime executable they were read from. `None`
             keeps them for this solve only.
+        executable_cache: Executables compiled by earlier solves whose programs
+            lower to the same keys, extended by this solve's. `None` compiles
+            for this solve only.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -409,6 +437,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         process_grid_resolver=process_grid_resolver,
         call_id=call_id,
         gather_checks={} if gather_checks is None else gather_checks,
+        executable_cache=ExecutableCache()
+        if executable_cache is None
+        else executable_cache,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -1453,6 +1484,13 @@ def _run_dispatch_unit(
             f"{n_codes} codes; every code must be written."
         )
         raise ExecutionPlanningError(msg)
+    if n_codes == 1:
+        # One block covering a one-code value is that value: a whole-array
+        # write would only copy it.
+        return (
+            run_kernel(compiled_cores=compiled_cores, capture_target=None),
+            True,
+        )
     value: FloatND | None = None
     for name in bound:
         binding = cast("InvariantBinding", graph[name].invariant_binding)
@@ -2146,6 +2184,7 @@ def _iter_edge_topologies(
                         grids=target.solution.grids,
                         sharded_state_names=target.solution.sharded_state_names,
                         devices=devices,
+                        action_partitions=target.solution.action_partitions,
                     ),
                     state_order=tuple(target_states),
                     devices=devices,
@@ -3478,6 +3517,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
+    executable_cache: ExecutableCache | None = None,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3523,6 +3563,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         fixed_input_arrays: Already-built runtime space arrays retained by solve.
         gather_checks: Fusion verdicts shared with other solves of the same
             model; `None` keeps them for this solve only.
+        executable_cache: Executables, labels and compiler reservations shared
+            with other solves whose programs lower to the same keys; a key it
+            already holds is not lowered or compiled again. `None` keeps them
+            for this solve only.
 
     Returns:
         Executable mappings by regime-period, the resolved metadata used by
@@ -3742,9 +3786,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
-    compiled: dict[Hashable, jax.stages.Compiled] = {}
-    labels: dict[Hashable, str] = {}
-    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation] = {}
+    cache = ExecutableCache() if executable_cache is None else executable_cache
+    compiled = cache.compiled
+    labels = cache.labels
+    memory_by_lowering_key = cache.memory
     resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
     admission_keys: dict[_CoreCandidate, Hashable] = {}
     eligible = _triples_within_budget(
@@ -4032,7 +4077,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     else plan_workspace(
                         axes=representative.requirements.axes,
                         fixed_widths=execution.widths_for(regime_name=triple[0]),
-                        width_ceilings=execution.axis_width_ceilings,
+                        width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                         covered_axes=execution.covered_axes,
                         compile_candidate=_CompiledCandidateLookup(
                             compiled_by_width=compiled_by_width
@@ -4082,7 +4127,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     plan=plan,
                     axes=representative.requirements.axes,
                     fixed_widths=execution.widths_for(regime_name=triple[0]),
-                    width_ceilings=execution.axis_width_ceilings,
+                    width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                     frontier=frontier,
                     gather_checks=gather_checks,
                     compile_candidate=functools.partial(
@@ -4538,7 +4583,7 @@ def _bounded_candidate_source(
         selector = BoundedWidthSelector(
             axes=representative.requirements.axes,
             fixed_widths=execution.widths_for(regime_name=triple[0]),
-            width_ceilings=execution.axis_width_ceilings,
+            width_ceilings=execution.ceilings_for(regime_name=triple[0]),
             covered_axes=execution.covered_axes,
             policy=policy,
             hint=policy.hints.get(triple[0]),
@@ -5678,7 +5723,7 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
             width_candidates = workspace_width_candidates(
                 axes=materialized.requirements.axes,
                 fixed_widths=execution_widths.widths_for(regime_name=regime_name),
-                width_ceilings=execution_widths.axis_width_ceilings,
+                width_ceilings=execution_widths.ceilings_for(regime_name=regime_name),
                 covered_axes=execution_widths.covered_axes,
                 budget_bytes=budget_bytes,
             )

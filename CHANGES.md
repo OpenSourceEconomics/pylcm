@@ -5,6 +5,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Opt-in action-partitioned GridSearch
+
+- `ExecutionConfig(action_partitions={"<regime>": n})` shares a `GridSearch` regime's
+  action product over `n` devices. Each device reduces its own contiguous run of action
+  blocks with the exact hard maximum, and the devices exchange and merge one compact
+  accumulator per state cell instead of any value over actions. Ties, infinities, NaNs
+  and signed zeros keep the ordinary route's conventions; at the same action width the
+  tested workloads publish values bitwise equal to the ordinary route, alone, with a
+  sharded continuous state and with type-local blocks. The default `{}` and a count of
+  one leave the solve unchanged. Unsupported requests are refused at model
+  construction. See [Share a large action product over
+  devices](docs/user_guide/tuning.md).
+
 ### Opt-in type-local GridSearch
 
 - `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal
@@ -14,6 +27,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   publish values, policies and simulated panels bitwise equal to the unblocked solve's;
   the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
   [Solve one invariant code at a time](docs/user_guide/tuning.md).
+- When the simulate phase also keeps the state fixed, `simulate` groups subjects by their
+  starting code and reads each typed value through one code's block. Every subject keeps
+  its original random draws and output row, so the panel is unchanged; otherwise
+  simulation stays ungrouped.
+- `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)` solves
+  each code through all of its periods before the next code, simulates its subjects
+  while its values are still on the device, then copies them to the host and deletes the
+  device buffers, so the device holds one code's values at a time. Every code runs the
+  programs the first compiled. The result is complete: each value is assembled from the
+  retained codes when read, on the layout the period-major schedule publishes, saves
+  from the host, and simulates one code at a time; `values.materialize()` is refused
+  when every value cannot fit the device budget. Values and panels equal the default
+  period-major schedule's byte for byte. Unsupported requests (no blocked state, a
+  regime without it, budgeted or ungrouped simulation, `log_path`) are refused. See
+  [Solve, simulate and release one code at a time](docs/user_guide/tuning.md).
 
 ### Required starting problems and keyword-only age-indexed declarations
 

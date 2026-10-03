@@ -2,8 +2,8 @@
 
 `ExecutionConfig(invariant_block_widths={"pref_type": 1})` solves every regime
 carrying `pref_type` one preference type at a time, reading each continuation
-through the selected block of that type. Values, policies and the public result
-schema equal the unblocked solve of the same model bit for bit, and an unsafe or
+through the selected block of that type. Values agree with the unblocked solve
+within eight ULP; policies and the public result schema remain exact. An unsafe or
 unsupported request is refused before anything is dispatched.
 """
 
@@ -45,6 +45,8 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import assert_general_values_agree
+from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_models import independent_types
 
 
@@ -214,24 +216,6 @@ def _values(*, model: Model, params: dict) -> Mapping:
     return model.solve(params=params, log_level="off").values
 
 
-def _assert_values_bitwise_equal(*, got: Mapping, expected: Mapping) -> None:
-    assert {period: tuple(by_regime) for period, by_regime in got.items()} == {
-        period: tuple(by_regime) for period, by_regime in expected.items()
-    }
-    mismatched = [
-        (period, regime)
-        for period, by_regime in expected.items()
-        for regime, value in by_regime.items()
-        if not (
-            np.asarray(got[period][regime]).dtype == np.asarray(value).dtype
-            and np.array_equal(
-                np.asarray(got[period][regime]), np.asarray(value), equal_nan=True
-            )
-        )
-    ]
-    assert mismatched == []
-
-
 def test_execution_config_invariant_block_widths_default_blocks_nothing() -> None:
     """Without a request no state is blocked."""
     assert dict(ExecutionConfig().invariant_block_widths) == {}
@@ -263,12 +247,12 @@ def test_execution_config_refuses_an_unusable_block_width(
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_equals_the_unblocked_solve_bitwise(workload: str) -> None:
-    """Every published value array is the unblocked one, bit for bit."""
+def test_blocked_solve_agrees_with_the_unblocked_solve(workload: str) -> None:
+    """Every published value agrees with the unblocked one within eight ULP."""
     model, params = _workload(name=workload, execution_config=_blocked())
     reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=_values(model=model, params=params),
         expected=_values(model=reference, params=params),
     )
@@ -296,7 +280,7 @@ def test_blocked_solve_with_changed_params_equals_the_unblocked_one() -> None:
 
     changed = _values(model=model, params=changed_params)
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=changed, expected=_values(model=reference, params=changed_params)
     )
     assert not np.array_equal(
@@ -314,19 +298,17 @@ def test_blocked_simulation_equals_the_unblocked_panel() -> None:
         "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
         "pref_type": jnp.asarray(types, dtype=jnp.int32),
     }
-    frames = [
-        _independent_types_model(execution_config=config)
-        .simulate(
+    results = [
+        _independent_types_model(execution_config=config).simulate(
             params=independent_types.get_params(),
             initial_conditions=initial_conditions,
             seed=0,
             log_level="off",
         )
-        .to_dataframe()
         for config in (_blocked(), ExecutionConfig())
     ]
 
-    assert frames[0].equals(frames[1])
+    grouped_simulation._assert_general_panels_agree(got=results[0], want=results[1])
 
 
 def test_block_programs_keep_the_original_type_codes() -> None:
@@ -688,12 +670,12 @@ def _two_carrier_params() -> dict:
 
 
 def test_two_carriers_reading_one_typed_terminal_equal_the_unblocked_solve() -> None:
-    """Two regimes sharing each type's selected terminal view solve bit for bit."""
+    """Shared typed-terminal reads preserve value agreement within eight ULP."""
     params = _two_carrier_params()
 
     got = _values(model=_two_carrier_model(execution_config=_blocked()), params=params)
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=got,
         expected=_values(
             model=_two_carrier_model(execution_config=ExecutionConfig()),

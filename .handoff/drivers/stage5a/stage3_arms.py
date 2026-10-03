@@ -43,14 +43,19 @@ _JAX_FLOOR = (0, 11, 1)
 _OWN_UUIDS: set[str] = set()
 # Stage 3: set by --invariant-blocking; applied to every arm's ExecutionConfig.
 _BLOCK_WIDTHS: dict[str, int] = {}
+_ACTION_PARTITIONS: dict[str, int] = {}
+_SHARDED_STATES: tuple[str, ...] | None = None
 
 
 def _blocked(config):  # noqa: ANN001, ANN202
-    import dataclasses
-
-    if not _BLOCK_WIDTHS:
-        return config
-    return dataclasses.replace(config, invariant_block_widths=dict(_BLOCK_WIDTHS))
+    overrides = {}
+    if _BLOCK_WIDTHS:
+        overrides["invariant_block_widths"] = dict(_BLOCK_WIDTHS)
+    if _ACTION_PARTITIONS:
+        overrides["action_partitions"] = dict(_ACTION_PARTITIONS)
+    if _SHARDED_STATES is not None:
+        overrides["sharded_states"] = _SHARDED_STATES
+    return dataclasses.replace(config, **overrides) if overrides else config
 
 
 def _run(cmd: list[str]) -> str:
@@ -274,6 +279,8 @@ def _build(*, workload: str, aca_slurm_src: Path | None, n_subjects: int):  # no
             "builder": "aca_slurm._simulate.build_aca_policy_model(PolicyVariant.ACA, brute_force)",
             "grid_config": repr(grid_config),
             "execution_config": repr(config),
+            "action_partitions": dict(config.action_partitions),
+            "sharded_states": list(config.sharded_states),
             "initial_conditions": f"triple_initdist_by_pref_type + replicate_for_draws(n_draws={N_DRAWS_PER_INDIVIDUAL})",
             "pref_types": 3,
         }
@@ -345,12 +352,16 @@ def _build(*, workload: str, aca_slurm_src: Path | None, n_subjects: int):  # no
         "builder": f"aca_model.benchmark: create_model(BENCHMARK_GRID_CONFIG, benchmark fixed/wage params, pref_type=DiscreteGrid({category.__name__}))",
         "grid_config": repr(BENCHMARK_GRID_CONFIG),
         "execution_config": repr(config),
+        "action_partitions": dict(config.action_partitions),
+        "sharded_states": list(config.sharded_states),
         "initial_conditions": f"get_benchmark_initial_conditions(n_subjects={n_subjects}, seed=0)",
         "pref_types": len(DiscreteGrid(category_class=category).categories),
     }
 
 
-def main() -> None:  # noqa: C901, PLR0912, PLR0915
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the benchmark workload and execution-layout controls."""
+    global _SHARDED_STATES  # noqa: PLW0603
     parser = argparse.ArgumentParser()
     parser.add_argument("--workload", required=True, choices=("production", "reduced2", "reduced3"))
     parser.add_argument("--arm", required=True)
@@ -371,9 +382,45 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         action="store_true",
         help="ExecutionConfig(invariant_block_widths={'pref_type': 1}) (Stage 3 arm)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--action-partitions", action="append", default=[], metavar="REGIME=COUNT",
+        help="Share a named regime's actions over COUNT devices; repeat per regime",
+    )
+    parser.add_argument(
+        "--sharded-states", nargs="*", default=None, metavar="STATE",
+        help="Override state sharding; give no names for an action-only layout",
+    )
+    args = parser.parse_args(argv)
+    _BLOCK_WIDTHS.clear()
     if args.invariant_blocking:
         _BLOCK_WIDTHS["pref_type"] = 1
+    _ACTION_PARTITIONS.clear()
+    for request in args.action_partitions:
+        try:
+            name, raw_count = request.split("=")
+            count = int(raw_count)
+        except ValueError:
+            parser.error(f"--action-partitions expects REGIME=COUNT, got {request!r}")
+        if not name.strip() or count < 1:
+            parser.error(
+                f"--action-partitions requires a regime and positive count: {request!r}"
+            )
+        if name in _ACTION_PARTITIONS:
+            parser.error(f"--action-partitions repeats regime {name!r}")
+        _ACTION_PARTITIONS[name] = count
+    _SHARDED_STATES = (
+        None if args.sharded_states is None else tuple(args.sharded_states)
+    )
+    if _SHARDED_STATES is not None and (
+        any(not name.strip() for name in _SHARDED_STATES)
+        or len(set(_SHARDED_STATES)) != len(_SHARDED_STATES)
+    ):
+        parser.error("--sharded-states needs distinct non-empty state names")
+    return args
+
+
+def main() -> None:  # noqa: C901, PLR0912, PLR0915
+    args = parse_args()
 
     args.out.mkdir(parents=True)
     os.environ["JAX_COMPILATION_CACHE_DIR"] = f"/tmp/jax-cache-{os.environ.get('SLURM_JOB_ID', os.getpid())}-{args.arm}"
@@ -399,6 +446,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         raise SystemExit(f"jax {jax.__version__} is below the pyproject floor {_JAX_FLOOR}")
     sys.path.insert(0, str(Path.cwd()))
     import aca_model
+
     import lcm
     from benchmarks.asv._compile_counters import count_compile_requests
     from benchmarks.warm_solve_phases import parse_phase_records
@@ -419,6 +467,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     record: dict = {
         "arm": args.arm,
         "invariant_block_widths": dict(_BLOCK_WIDTHS),
+        "action_partitions": dict(_ACTION_PARTITIONS),
         "workload": args.workload,
         "argv": sys.argv,
         "pylcm_sha": git("rev-parse", "HEAD"),
@@ -477,6 +526,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     )
     record["construction_seconds"] = time.perf_counter() - start
     record["model"] = description
+    record["action_partitions"] = description["action_partitions"]
+    record["sharded_states"] = description["sharded_states"]
     record["params_sha256"] = _sha256_of(params)
     record["simulation_seed"] = 20_260_903
     dump()

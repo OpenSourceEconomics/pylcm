@@ -215,8 +215,11 @@ so the number of compiled programs does not grow with the number of codes. A
 continuation that carries the state is read through that code's block only, so a
 continuation replicated onto other devices, for example under a sharded continuous
 state, moves one code's share at a time. The blocked solve evaluates the same Bellman
-problem as the unblocked one and publishes values in the same layout; compare the two
-before relying on bitwise equality for your model. Terminal regimes are solved whole.
+problem as the unblocked one and publishes values in the same layout. Independently
+compiled blocked and unblocked values agree within eight ULP of the working float
+format; policies, states, actions, regimes, and public result structure remain exact.
+Routes dispatching the same compiled program retain their bitwise contract. Terminal
+regimes are solved whole.
 
 The request is checked at model construction. It is refused, naming every reason, when:
 
@@ -228,6 +231,132 @@ The request is checked at model construction. It is refused, naming every reason
   gated-edge reference value, or carries the state on a non-discrete grid.
 
 A blocked regime-period cannot be captured or replayed with the period-replay tools.
+
+### Grouped simulation
+
+When the forward phase provably never changes the state either, `simulate` groups the
+subjects by their starting code. Each code's subjects run in chunks of their own, and
+every stored value carrying the state is read through that code's block, so a device
+receives one code's share of each such value rather than all of them. Each subject keeps
+the random draws of its original row and its original row in the result, so the panel is
+the ungrouped panel. A subject that starts without the state, in a regime that does not
+carry it, joins the first code's group; an empty group dispatches nothing.
+
+Simulation falls back to the ungrouped route when the simulate phase can change the
+state, for example through a `Phased` law whose `simulate` branch moves it, or when a
+regime declares taste shocks or gated edges or replays a stored policy. The plan
+summary's `subject_grouping` names the grouping state, or is `None` on the ungrouped
+route.
+
+### Solve, simulate and release one code at a time
+
+By default the blocked solve is period-major: each period solves every code before the
+next period starts, and the device keeps every period's complete value until `solve`
+returns. When those retained values, rather than one period's working set, are what
+fills the device, solve each code through its whole lifetime instead:
+
+```python
+from lcm import ExecutionConfig, InvariantBlockSchedule, Model
+
+model = Model(
+    ...,
+    execution_config=ExecutionConfig(
+        invariant_block_widths={"pref_type": 1},
+        invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
+        device_memory_bytes=None,
+    ),
+)
+```
+
+Each code is solved through every period on the same compiled programs, then copied to
+the host, and its device buffers are deleted before the next code starts, so the device
+holds one code's values at a time. `simulate` without a `solution` simulates each code's
+subjects right after that code is solved, while its values are still on the device.
+
+The result keeps its usual contract. `solution.values` lists every period and regime,
+and inspecting it reads nothing. Reading a value assembles it from the retained codes on
+the layout the period-major solve publishes, and `SolutionResult.save` writes every
+value from the host. Simulating the result reads one code's values at a time. Values and
+simulated panels are those of the period-major schedule, byte for byte; where blocking
+itself places a value on a neighbouring float of the unblocked one, so does this
+schedule.
+
+What moves where:
+
+- every value crosses from the device to the host once, and each simulation from a saved
+  or returned result uploads one code's values at a time;
+- the host holds every value of the result for as long as the result is referenced;
+- `solution.values.materialize()` places every value on the device at once, and is
+  refused before anything is placed when they exceed the device budget. Read values one
+  at a time with `solution.value(period=..., regime=...)` instead.
+
+The schedule is refused at model construction unless a state is named in
+`invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
+block-major solution is refused when the simulate phase does not group subjects by the
+state, when the simulation is budgeted (pass `device_memory_bytes=None`), or when
+`log_path` asks for snapshots that would hold every value at once. A solution loaded
+from an archive is read whole, as on any other model.
+
+## Share a large action product over devices
+
+A regime with a small state grid and a large action product leaves most devices idle
+when only its states are spread. Name it in `ExecutionConfig(action_partitions=...)` to
+let several devices share its actions:
+
+```python
+from lcm import ExecutionConfig, Model
+
+model = Model(
+    ...,
+    execution_config=ExecutionConfig(action_partitions={"working": 4}),
+)
+```
+
+The canonical action product is cut into contiguous runs of whole action blocks, one run
+per device, with block counts that differ by at most one. Each device evaluates its own
+run with the unchanged `Q` and feasibility functions and keeps one exact hard-max
+accumulator per state cell: the best value, the winning action's canonical identity and
+whether any action was feasible. The devices exchange only these accumulators and every
+device merges them in device order. The published value is the same exact hard maximum
+the ordinary route computes:
+
+- equal values go to the lowest action identity;
+- a feasible `-inf` stays distinct from a cell without a feasible action;
+- a feasible NaN publishes NaN, and a `{-0, +0}` maximum publishes `+0`;
+- padded slots of the last block are infeasible and never become an action identity.
+
+At the same action block width the published values equal the ordinary route bit for
+bit. The route caps the action block at `n_actions // count` identities, so that every
+device owns at least one block; the ordinary route may pick a wider block, and a
+different width compiles a differently vectorized `Q`, so compare across routes at an
+action width fixed with `axis_widths` when you need bit equality.
+
+The regime's devices form a mesh of its sharded-state axes times the count, so the
+request composes with a sharded continuous state (states times actions) and with
+[type-local blocks](#solve-one-invariant-code-at-a-time):
+
+```python
+ExecutionConfig(
+    devices=(0, 1, 2, 3),
+    sharded_states=("assets",),
+    action_partitions={"working": 2},  # assets over 2 devices, actions over 2
+)
+```
+
+The count is never reduced: the state axis takes the largest shard count the remaining
+devices allow. Values stay sharded along the states and replicated along the action
+devices. The exchanged accumulators are temporaries of the compiled program, so the
+memory admission that charges each program's compiler reservation covers them. A count
+of one, or an empty mapping, runs the ordinary route unchanged.
+
+The request is checked at model construction. It is refused, naming every reason, when:
+
+- it names a regime the model does not declare, or more devices than the model may use;
+- the regime is terminal, is not solved by `GridSearch`, declares taste shocks,
+  stakeholders, gated edges or same-period references, folds a process, or carries a
+  discrete sharded state;
+- the action product has fewer than two actions or fewer actions than devices;
+- a fixed `action_product` width cuts the product into fewer blocks than devices.
 
 ## Distribute state work
 

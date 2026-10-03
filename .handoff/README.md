@@ -16,20 +16,73 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
-Approved macOS CI change, prepared for parent publication:
+Approved macOS CI change, historical preparation:
 [macos-four-shards-proposal.md](macos-four-shards-proposal.md).
 The user approved four macOS shards and that leg's measured-weight refresh.
-The isolated preparation retains the reviewed source/config/test bytes;
-native runtime acceptance remains outstanding after publication.
+The isolated preparation retains the reviewed source/config/test bytes.
+Its prepared-state receipt remains historical; current cascade status follows.
 
 Receipt fixture source-identity repair:
 [receipt-fixture-identity.md](receipt-fixture-identity.md).
 
-Shared JUnit receipt identity repair: [receipt-junit-identity.md](receipt-junit-identity.md).
-This helper-only repair preserves parameter labels. Its original native receipt
-observations are historical; it does not revise the approved CI decisions above.
+## Consolidated #491 checkpoint (2026-10-03)
 
-## Stage status (2026-10-02)
+The user authorized merging and pushing. #495 and#494 are merged into#491 at
+`cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; #497 is based on#491. #496 is
+merged into#486 at `b1dc9d077ccd1289c41010615132be11df40a53d`. This root
+cascade preserves #491 source/tests/certificates/workflows/manifest/lock exactly
+atcb62; its only payload is the JUnit identity handoff note and link. The
+original #495 qualification below is historical. No new numerical or native
+acceptance is inferred from this documentation merge.
+
+Shared JUnit repair: [receipt-junit-identity.md](receipt-junit-identity.md).
+Direct SSH is authorized, superseding the historical ACA-owner-only route;
+production submission still waits for passing checks and authenticated access.
+
+The latest #493 history is also incorporated by a plain merge. Its driver,
+budget and handoff payload already existed here by content. The conflict
+resolution retains the complete additional block-major value/panel/lifetime
+controls and the consolidated manifest; no definition is duplicated or dropped.
+Source, certificates, tests, workflow and manifest remain byte-identical to
+`82a9463c4bc4b61f4a9c57998e80cf7a77372243`. Maintained manifest check passed.
+This ancestry consolidation introduces no numerical implementation change.
+
+## Historical #495 checkpoint (2026-10-03)
+
+- Incoming CI: published #494 `bc05375f8318d0a5522a46300258bac53744c829`,
+  carrying #491 `5b898bb554ccca70dd621c01510639453749055b` and #486
+  `553050fdfa60f2116ee20301a56002670725a80d`. The isolated #495 merge preserves
+  production, certificates and the ordered-distance test contract exactly from
+  its pre-merge head `cc744450d30d4b12cc5b1b9ab6b923226f8ed340`.
+  The production source tree remains `babc7fa21e75dccee1894fec46c6f7089b3a4810`.
+  Parent publication is pending.
+- Local CI acceptance for this #495 merge: maintained manifest generation/check
+  and the 18-case workflow/manifest/parser/source-identity smoke passed, with
+  no failures, errors or skips, exact JUnit duration **0:00:00.340**. Normal
+  all-file hooks passed; parent publication remains pending. Earlier #494
+  receipts are not this step's acceptance. Fresh native #495 timing and
+  complete receipt identity remain required; the earlier #486 `bdc19260`
+  macOS result retains its supporting-worker source-identity qualification.
+- The general value-only eight-ULP contract is approved; its tests/documentation
+  are published on #495 at `cc744450d30d4b12cc5b1b9ab6b923226f8ed340`.
+  Structural and same-program byte gates remain exact.
+- Stage 8A has a four-case fp64 CPU receipt on a separate, uncommitted local
+  branch. The updated driver has three binding/plan cases only. These are
+  inherited local receipts, not native three-node execution or a current
+  Stage 8A certificate claim. Actual three nodes × eight full-model GPUs,
+  native correctness/performance/resource gates and authorized owner access
+  remain required. Cluster execution stays with the ACA owner; this CI
+  cascade has no cluster access or Stage 8A acceptance claim.
+
+## Historical stage status (2026-10-02)
+
+Live integration and rounding-contract acceptance are tracked in
+[`stages0-7-integration.md`](stages0-7-integration.md) and
+[`rounding-contract.md`](rounding-contract.md). The user approved value-only eight
+ULP for general blocked/unblocked comparisons and the macOS CI proposal; exact
+structural and same-program byte contracts remain binding. Stage 8A is required;
+the optional blueprint cache is deferred. The table below is the historical
+cloud-session checkpoint, not a fresh native execution receipt.
 
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|
@@ -75,6 +128,9 @@ Don't touch `~/pylcm-prod-inv` while the production pair runs.
 4. Still to write for the cache: a CPU host-time A B A2 ledger and a reduced3 driver.
 
 ## Layout
+- [`stages0-7-integration.md`](stages0-7-integration.md): the isolated 5A/5B + 7
+  source composition, fresh CPU gates, certificate controls and pending native
+  acceptance decisions. The enclosing reconciled handoff governs this chunk.
 - `plan.md`, `baseline-revisions.md`: the plan and its frozen revisions.
 - `reports/`: stage reports, Pro round 0, and the blueprint-cache work-in-progress
   report.

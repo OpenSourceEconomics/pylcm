@@ -1,6 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 import dataclasses
+import functools
 import logging
 import operator
 import threading
@@ -62,6 +63,10 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
 from _lcm.reachability import ModelReachability
+from _lcm.regime_building.action_partitioning import (
+    action_partition_width_ceilings,
+    fail_if_action_partition_route_is_unsupported,
+)
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
@@ -78,7 +83,7 @@ from _lcm.regime_building.fixed_components import (
 )
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
 from _lcm.regime_building.invariant_blocking import (
-    fail_if_invariant_blocking_is_unsafe_for_model,
+    admit_invariant_blocking,
     fail_if_invariant_blocking_route_is_unsupported,
 )
 from _lcm.regime_building.phases import project_onto_solve_phase
@@ -119,6 +124,7 @@ from _lcm.simulation.simulate import (
     _require_next_period_values,
     simulate,
 )
+from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
@@ -130,6 +136,12 @@ from _lcm.solution.backward_induction import (
     _build_base_state_action_spaces,
     _reject_edge_fold_state_param_collisions,
     solve,
+)
+from _lcm.solution.block_major import (
+    ComponentSchedule,
+    RetainedComponentValues,
+    SolvingComponentValues,
+    UploadedComponentValues,
 )
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.fingerprint import (
@@ -212,7 +224,7 @@ from lcm.exceptions import (
     ModelInitializationError,
     UnsupportedOperationError,
 )
-from lcm.execution import ExecutionConfig
+from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
@@ -443,6 +455,32 @@ def _materialize_artifact_projection(
             for period, regime_to_payload in sorted(projected.items())
         }
     )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SolutionPreparation:
+    """The authority and identities one solve's result is bound to."""
+
+    retention: ResultRetention
+    """Post-solve artifacts the result keeps."""
+    declared_authority: SolutionAuthority
+    """The model's declared solution authority for the solve's grid support."""
+    retain_all_persistable: bool
+    """Whether every independently persistable artifact is kept."""
+    persistable_artifact_refs: frozenset[ArtifactRef]
+    """Addresses the persistence-oriented retention selects."""
+    model_fingerprint: str
+    """Durable identity of the model and its solution parameters."""
+    program_fingerprint: str
+    """Identity of the model's programs, without solve-time parameter values."""
+
+
+# A block-major solve publishes no value array through the engine outputs: its
+# values are retained on the host, and no other artifact is published.
+_VALUES_RETAINED_ON_THE_HOST = BackwardInductionResult(
+    value_functions=MappingProxyType({}),
+    simulation_policies=MappingProxyType({}),
+)
 
 
 class Model:
@@ -776,6 +814,10 @@ class Model:
             user_regimes=self._engine_user_regimes,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
+            schedule=self._execution.invariant_block_schedule,
+        )
+        self._execution = _with_action_partition_ceilings(
+            execution=self._execution, user_regimes=self._engine_user_regimes
         )
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
@@ -815,7 +857,7 @@ class Model:
             prepared_structure=prepared_structure,
             execution=self._execution,
         )
-        fail_if_invariant_blocking_is_unsafe_for_model(
+        self._regimes = admit_invariant_blocking(
             user_regimes=self._engine_user_regimes,
             regimes=self._regimes,
             reachability=self.reachability,
@@ -823,6 +865,7 @@ class Model:
             ages=self.ages,
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
+            schedule=self._execution.invariant_block_schedule,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.
@@ -1137,6 +1180,13 @@ class Model:
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
         self._sealed_bindings.fail_if_moved()
+        if self._solves_block_major and log_path is not None:
+            msg = (
+                "log_path snapshots of a block-major solve would hold every value "
+                "at once. Omit log_path, or keep the default "
+                "InvariantBlockSchedule.PERIOD_MAJOR."
+            )
+            raise ExecutionPlanningError(msg)
         log = get_logger(log_level=log_level)
         call_id = new_call_id()
         with solve_phase(name="public_solve", logger=log, call_id=call_id):
@@ -1186,8 +1236,77 @@ class Model:
 
         The declared solution authority is the model's, shared across solves
         with the same grid support; the solve's generated replay facts are
-        bound into a copy that belongs to this result alone.
+        bound into a copy that belongs to this result alone. Under the
+        block-major schedule every component is solved and retained on the
+        host before the result is assembled.
         """
+        preparation = self._prepare_solution(
+            flat_params=flat_params,
+            log=log,
+            retention=retention,
+            process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
+        )
+        if self._solves_block_major:
+            retained = self._component_schedule(
+                preparation=preparation,
+                flat_params=flat_params,
+                log=log,
+                max_compilation_workers=max_compilation_workers,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+            ).run()
+            return self._finish_solution(
+                preparation=preparation,
+                internal_result=_VALUES_RETAINED_ON_THE_HOST,
+                flat_params=flat_params,
+                log=log,
+                call_id=call_id,
+                component_values=retained,
+            )
+        internal_result = self._solve_compiled(
+            flat_params=flat_params,
+            program_fingerprint=preparation.program_fingerprint,
+            params=params,
+            log=log,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+            max_compilation_workers=max_compilation_workers,
+            retain_dissolution_flags=preparation.retention.retains_replay,
+            retain_replay=preparation.retention is ResultRetention.VALUES_AND_REPLAY,
+            retain_all_artifacts=preparation.retain_all_persistable,
+            persistable_artifact_refs=preparation.persistable_artifact_refs,
+            collect_solver_diagnostics=True,
+            retained_input_arrays=retained_input_arrays,
+            process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
+        )
+        return self._finish_solution(
+            preparation=preparation,
+            internal_result=internal_result,
+            flat_params=flat_params,
+            log=log,
+            call_id=call_id,
+        )
+
+    @property
+    def _solves_block_major(self) -> bool:
+        """Whether this model solves one invariant component at a time."""
+        return (
+            self._execution.invariant_block_schedule
+            is InvariantBlockSchedule.BLOCK_MAJOR
+        )
+
+    def _prepare_solution(
+        self,
+        *,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        process_grid_resolver: ProcessGridResolver | None,
+        call_id: CallId | None,
+    ) -> _SolutionPreparation:
+        """Resolve the authority and identities one solve's result is bound to."""
         with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
             declared_authority = self._declared_solution_authority(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
@@ -1209,43 +1328,102 @@ class Model:
             model_fingerprint = self._model_fingerprint(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
-        internal_result = self._solve_compiled(
-            flat_params=flat_params,
+        return _SolutionPreparation(
+            retention=retention,
+            declared_authority=declared_authority,
+            retain_all_persistable=retain_all_persistable,
+            persistable_artifact_refs=persistable_artifact_refs,
+            model_fingerprint=model_fingerprint,
             program_fingerprint=self._program_fingerprint(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             ),
-            params=params,
-            log=log,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            max_compilation_workers=max_compilation_workers,
-            retain_dissolution_flags=retention.retains_replay,
-            retain_replay=retention is ResultRetention.VALUES_AND_REPLAY,
-            retain_all_artifacts=retain_all_persistable,
-            persistable_artifact_refs=persistable_artifact_refs,
-            collect_solver_diagnostics=True,
-            retained_input_arrays=retained_input_arrays,
-            process_grid_resolver=process_grid_resolver,
-            call_id=call_id,
         )
+
+    def _finish_solution(
+        self,
+        *,
+        preparation: _SolutionPreparation,
+        internal_result: BackwardInductionResult,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        call_id: CallId | None,
+        component_values: RetainedComponentValues | None = None,
+    ) -> SolutionResult:
+        """Assemble the public result of one solve's engine outputs."""
         with solve_phase(name="result_assembly", logger=log, call_id=call_id):
             authority = bind_generated_solution_authority(
-                authority=declared_authority,
+                authority=preparation.declared_authority,
                 internal_result=internal_result,
                 regimes=self._regimes,
                 flat_params=flat_params,
             )
             return build_solution_result(
                 internal_result=internal_result,
-                retention=retention,
+                retention=preparation.retention,
                 regimes=self._regimes,
                 user_regimes=self._engine_user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
-                model_fingerprint=model_fingerprint,
+                model_fingerprint=preparation.model_fingerprint,
                 authority=authority,
+                component_values=component_values,
             )
+
+    def _component_schedule(
+        self,
+        *,
+        preparation: _SolutionPreparation,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        max_compilation_workers: int | None,
+        process_grid_resolver: ProcessGridResolver | None,
+        call_id: CallId | None,
+    ) -> ComponentSchedule:
+        """Prepare the block-major schedule of one solve; nothing is solved yet.
+
+        Each component runs the solve engine with the arguments the
+        period-major solve passes, on the component view of the regimes. No
+        caller inputs are retained beside it: those belong to a budgeted
+        simulation, which the block-major schedule refuses.
+        """
+        with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
+            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_pareto_weights(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+                process_grid_resolver=process_grid_resolver,
+            )
+        (state_name,) = self._execution.invariant_block_widths
+        return ComponentSchedule(
+            regimes=self._regimes,
+            state_name=state_name,
+            flat_params=flat_params,
+            device_ids=self._execution.device_ids,
+            process_grid_resolver=process_grid_resolver,
+            budget_bytes=self._execution.device_memory_bytes,
+            solve=functools.partial(
+                solve,
+                flat_params=flat_params,
+                ages=self.ages,
+                program_fingerprint=preparation.program_fingerprint,
+                logger=log,
+                enable_jit=self.enable_jit,
+                execution=self._execution,
+                collect_solver_diagnostics=True,
+                max_compilation_workers=max_compilation_workers,
+                retain_dissolution_flags=preparation.retention.retains_replay,
+                retain_replay=preparation.retention
+                is ResultRetention.VALUES_AND_REPLAY,
+                retain_all_artifacts=preparation.retain_all_persistable,
+                persistable_artifact_refs=preparation.persistable_artifact_refs,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                gather_checks=self._gather_checks,
+            ),
+            logger=log,
+        )
 
     def _solve_compiled(
         self,
@@ -2582,6 +2760,14 @@ class Model:
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
                 self._fail_if_simulation_is_unsupported()
+                # A block-major result, or an automatic block-major solve, is
+                # read one code at a time; every other solution is read whole.
+                retained_components = self._owned_component_values(solution=solution)
+                reads_components = self._solves_block_major and (
+                    solution is None or retained_components is not None
+                )
+                if reads_components:
+                    self._fail_if_component_simulation_is_unsupported(log_path=log_path)
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
                 )
@@ -2762,7 +2948,42 @@ class Model:
                     producers=self._simulate_entry_operations,
                 )
                 padded_n_subjects = len(next(iter(initial_conditions.values())))
-            if solution is None:
+            component_values: (
+                SolvingComponentValues | UploadedComponentValues | None
+            ) = (
+                None
+                if retained_components is None
+                else UploadedComponentValues(
+                    retained=retained_components,
+                    store=cast("ValueStore", cast("SolutionResult", solution).values),
+                )
+            )
+            preparation: _SolutionPreparation | None = None
+            if solution is None and reads_components:
+                # Each component is solved as the simulation reaches its code,
+                # so no complete solution exists before the simulation runs.
+                preparation = self._prepare_solution(
+                    flat_params=flat_params,
+                    log=log,
+                    retention=ResultRetention.VALUES_AND_REPLAY,
+                    process_grid_resolver=process_grid_resolver,
+                    call_id=call_id,
+                )
+                component_values = SolvingComponentValues(
+                    schedule=self._component_schedule(
+                        preparation=preparation,
+                        flat_params=flat_params,
+                        log=log,
+                        max_compilation_workers=max_compilation_workers,
+                        process_grid_resolver=process_grid_resolver,
+                        call_id=call_id,
+                    )
+                )
+                period_to_regime_to_V_arr = MappingProxyType({})
+                period_to_regime_to_sim_policy = MappingProxyType({})
+                period_to_regime_to_dissolution_flags = MappingProxyType({})
+                period_to_regime_to_replay_reader = MappingProxyType({})
+            elif solution is None:
                 solve_params = (
                     flat_params
                     if entry_allocations is None
@@ -2825,6 +3046,27 @@ class Model:
                 # Values and replay artifacts retain their solve placement. The forward
                 # period owner acquires only the copies consumed by that period's units.
                 prepared_chunks = None
+                # Grouped by an invariant state, each code's subjects form chunks
+                # of their own, so no chunk spans more than the largest group and
+                # the population is not padded to a chunk multiple.
+                grouping = next(
+                    iter(self._regimes.values())
+                ).simulation.programs.grouping
+                sizes = (
+                    None
+                    if grouping is None
+                    else group_sizes(
+                        route=grouping,
+                        codes=(
+                            np.asarray(
+                                jax.device_get(initial_conditions[grouping.state_name])
+                            )
+                            if grouping.state_name in initial_conditions
+                            else None
+                        ),
+                        n_real=original_n_subjects,
+                    )
+                )
                 if entry_allocations is not None:
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
@@ -2844,22 +3086,29 @@ class Model:
                         log_level=log_level,
                         process_grid_resolver=process_grid_resolver,
                         max_compilation_workers=max_compilation_workers,
+                        group_sizes=sizes,
                     )
                     compile_batch_size = prepared_chunks.plan.profile.n_subjects
-                    initial_conditions, _ = entry_allocations.pad(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
-                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                    if sizes is None:
+                        initial_conditions, _ = entry_allocations.pad(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
+                        entry_allocations.publish(
+                            stage="initial", tree=initial_conditions
+                        )
                 else:
                     compile_batch_size = self._resolve_compile_batch_size(
                         subject_batch_size=subject_batch_size,
-                        padded_n_subjects=padded_n_subjects,
+                        padded_n_subjects=padded_n_subjects
+                        if sizes is None
+                        else grouped_extent(sizes=sizes, alignment=alignment),
                     )
-                    initial_conditions, _ = pad_initial_conditions_to_multiple(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
+                    if sizes is None:
+                        initial_conditions, _ = pad_initial_conditions_to_multiple(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
                     )
@@ -2890,7 +3139,17 @@ class Model:
                 ),
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
+                component_values=component_values,
             )
+            if isinstance(component_values, SolvingComponentValues):
+                solution = self._finish_solution(
+                    preparation=cast("_SolutionPreparation", preparation),
+                    internal_result=_VALUES_RETAINED_ON_THE_HOST,
+                    flat_params=flat_params,
+                    log=log,
+                    call_id=call_id,
+                    component_values=component_values.retained,
+                )
             with solve_phase(name="result_finalization", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.close()
@@ -2911,6 +3170,65 @@ class Model:
                         log_keep_n_latest=log_keep_n_latest,
                     )
             return result
+
+    def _owned_component_values(
+        self, *, solution: _SolutionResultBoundary | None
+    ) -> RetainedComponentValues | None:
+        """Return the host retention of a block-major result this model built.
+
+        `None` for every other solution, which is read whole.
+        """
+        if type(solution) is not SolutionResult:
+            return None
+        engine_view = solution._engine_view  # noqa: SLF001
+        if (
+            type(engine_view) is not OwnedSolutionView
+            or engine_view.model_instance_id != self._solution_model_instance_id
+        ):
+            return None
+        return cast("RetainedComponentValues | None", engine_view.component_values)
+
+    def _fail_if_component_simulation_is_unsupported(
+        self, *, log_path: str | Path | None
+    ) -> None:
+        """Refuse a block-major simulation the code-by-code route does not serve.
+
+        Every failed condition is named at once:
+
+        - the forward phase does not group subjects by the blocked state, so a
+          subject could read another code's values;
+        - the simulation is budgeted, and chunk admission does not yet charge
+          one code's values at a time;
+        - diagnostic snapshots are requested, which hold every value at once.
+
+        Raises:
+            ExecutionPlanningError: The simulation is not served.
+
+        """
+        failures = []
+        if next(iter(self._regimes.values())).simulation.programs.grouping is None:
+            failures.append(
+                "the simulate phase may change the blocked state, so subjects "
+                "cannot be grouped by its code"
+            )
+        if self._execution.device_memory_bytes is not None:
+            failures.append(
+                "the simulation is budgeted; set ExecutionConfig."
+                "device_memory_bytes=None to simulate without a budget"
+            )
+        if log_path is not None:
+            failures.append(
+                "log_path snapshots hold every value at once; omit log_path"
+            )
+        if failures:
+            msg = (
+                "A block-major solution is simulated one code at a time, which "
+                "is not possible here: "
+                + "; ".join(failures)
+                + ". Alternatively keep the default "
+                "InvariantBlockSchedule.PERIOD_MAJOR."
+            )
+            raise ExecutionPlanningError(msg)
 
     def lookup_policy(
         self,
@@ -3654,6 +3972,44 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
         return False
     process = cast("_ContinuousStochasticProcess", grid)
     return process.is_fully_specified and process.state_conditioned is None
+
+
+def _with_action_partition_ceilings(
+    *,
+    execution: ResolvedExecution,
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+) -> ResolvedExecution:
+    """Admit an `action_partitions` request and record its width ceilings.
+
+    Refuses, before anything is built, a request the action-partitioned
+    GridSearch route does not serve. An admitted request plans each
+    partitioned regime's action blocks narrow enough that every device of its
+    action group owns at least one.
+    """
+    if not execution.action_partitions:
+        return execution
+    fixed_widths_by_regime = MappingProxyType(
+        {
+            regime_name: execution.widths_for(regime_name=regime_name)
+            for regime_name in execution.action_partitions
+        }
+    )
+    fail_if_action_partition_route_is_unsupported(
+        user_regimes=user_regimes,
+        action_partitions=execution.action_partitions,
+        sharded_states=execution.sharded_states,
+        continuous_sharded_state=execution.continuous_sharded_state,
+        n_devices=len(execution.device_ids),
+        fixed_widths_by_regime=fixed_widths_by_regime,
+    )
+    return dataclasses.replace(
+        execution,
+        axis_width_ceilings_by_regime=action_partition_width_ceilings(
+            user_regimes=user_regimes,
+            action_partitions=execution.action_partitions,
+            fixed_widths_by_regime=fixed_widths_by_regime,
+        ),
+    )
 
 
 def _fail_if_a_sharded_state_is_pruned(

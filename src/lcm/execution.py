@@ -23,6 +23,20 @@ class WidthSearch(Enum):
     """Seed, shrink and refine within one evaluation budget per core."""
 
 
+class InvariantBlockSchedule(Enum):
+    """In which order a blocked solve visits periods and invariant codes."""
+
+    PERIOD_MAJOR = "period_major"
+    """Solve every code of a period before the next period; the default."""
+    BLOCK_MAJOR = "block_major"
+    """Solve each code through all of its periods before the next code.
+
+    Simulation of that code's subjects follows while its values are still on
+    the device; its values are then retained on the host and its device
+    buffers deleted.
+    """
+
+
 @dataclass(frozen=True, kw_only=True)
 class WidthSearchPolicy:
     """How a budgeted solve chooses a width when its first candidate is refused.
@@ -286,6 +300,69 @@ class ExecutionConfig:
     same-period references, edge-reference reads, folded processes and a
     non-discrete grid for the state. Terminal regimes, which read no
     continuation, are solved unblocked.
+
+    When the simulate phase provably keeps the state fixed too, and no regime
+    declares taste shocks, gated edges or a policy replay, `simulate` groups
+    subjects by their starting code: each code's subjects run in chunks of their
+    own and read each value carrying the state through that code's block. Each
+    subject keeps its original random keys and output row, so the panel is the
+    ungrouped one. Otherwise simulation is ungrouped.
+    """
+
+    invariant_block_schedule: InvariantBlockSchedule = (
+        InvariantBlockSchedule.PERIOD_MAJOR
+    )
+    """Order in which the blocked solve visits periods and codes.
+
+    - `PERIOD_MAJOR` (the default) solves every code of a period before the
+      next period and keeps every period's complete value on the device until
+      the solve returns.
+    - `BLOCK_MAJOR` solves one code through all of its periods, then the next
+      code. A combined `simulate` (no `solution` passed) runs that code's
+      subjects while its values are still on the device. The code's values are
+      then copied to the host and its device buffers deleted, so the device
+      holds one code's values at a time. The result is still complete: each
+      value is assembled from the retained codes, on the layout the
+      period-major solve publishes, when it is read, and `ValueStore.materialize`
+      refuses to place every value on a device whose budget they exceed.
+      Simulating a block-major result reads one code's values at a time.
+
+    `BLOCK_MAJOR` requires a blocked state in `invariant_block_widths` that
+    every regime carries; model construction refuses it otherwise. Simulating
+    from it requires the grouped forward route and an unbudgeted simulation
+    (`device_memory_bytes=None`); `simulate` refuses it otherwise. The
+    published values and simulated panels are those of the period-major route.
+    """
+
+    action_partitions: Mapping[RegimeName, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Regime name to the number of devices sharing its action product; empty
+    shares none.
+
+    Naming a regime here solves it on an action-parallel `GridSearch` route:
+    the canonical action product is cut into that many contiguous runs of
+    whole action blocks, each device of the regime's action group reduces its
+    own run with the exact hard maximum, and the devices exchange one compact
+    accumulator per state cell — best value, winning action identity and
+    feasibility — which every device merges in partition order. Values and
+    the winning actions equal the unpartitioned solve: ties go to the lowest
+    action identity, feasible `-inf` stays distinct from an all-infeasible
+    cell, and signed zeros and NaNs keep their usual conventions.
+
+    The regime's devices form a mesh of its sharded-state axes times this
+    count, so a regime without a sharded state uses exactly this many devices
+    and one with a sharded state uses the state's shards times this many.
+    The action block width is capped so that every device owns at least one
+    block where the product allows it.
+
+    A count of one is the ordinary route. Model construction refuses, before
+    anything is lowered, a count larger than the visible devices or the
+    action product, a regime that does not exist, and regimes the route does
+    not serve: terminal regimes, another solver, taste shocks, collective
+    regimes, gated edges, same-period references, folded processes, a
+    discrete sharded state, and a fixed action width that leaves a device
+    without a block.
     """
 
     devices: tuple[int, ...] | None = None
@@ -383,6 +460,11 @@ class ExecutionConfig:
             _normalized_invariant_block_widths(
                 invariant_block_widths=self.invariant_block_widths
             ),
+        )
+        object.__setattr__(
+            self,
+            "action_partitions",
+            _normalized_action_partitions(action_partitions=self.action_partitions),
         )
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
@@ -502,6 +584,22 @@ def _normalized_invariant_block_widths(
             raise TypeError(msg)
         _fail_if_width_invalid(label=f"invariant_block_widths[{name!r}]", width=width)
         validated[name] = width
+    return MappingProxyType(validated)
+
+
+def _normalized_action_partitions(
+    *, action_partitions: Mapping[RegimeName, int]
+) -> MappingProxyType[RegimeName, int]:
+    """Require non-empty regime names with positive exact counts, and freeze them."""
+    validated: dict[RegimeName, int] = {}
+    for name, count in action_partitions.items():
+        if type(name) is not str or not name:
+            msg = (
+                "ExecutionConfig.action_partitions keys must be non-empty regime names."
+            )
+            raise TypeError(msg)
+        _fail_if_width_invalid(label=f"action_partitions[{name!r}]", width=count)
+        validated[name] = count
     return MappingProxyType(validated)
 
 

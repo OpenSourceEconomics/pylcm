@@ -32,6 +32,7 @@ from _lcm.regime_building.schedules import (
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
+from lcm.tuning import _array_ulp_gap
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
@@ -246,6 +247,24 @@ def assert_agrees_to_ulp(
             f"{err_msg}"
         )
         raise AssertionError(msg)
+
+
+def assert_general_values_agree(*, got: Mapping, expected: Mapping) -> None:
+    """Require exact value coordinates and metadata, with at most eight ULP per cell."""
+    assert {period: tuple(regimes) for period, regimes in got.items()} == {
+        period: tuple(regimes) for period, regimes in expected.items()
+    }
+    for period, regimes in expected.items():
+        for regime, value in regimes.items():
+            got_array = np.asarray(got[period][regime])
+            expected_array = np.asarray(value)
+            assert (got_array.dtype, got_array.shape) == (
+                expected_array.dtype,
+                expected_array.shape,
+            )
+            gap = _array_ulp_gap(expected=expected_array, got=got_array)
+            assert gap is not None, (period, regime, gap)
+            assert gap <= 8, (period, regime, gap)
 
 
 def _general_shard_selection() -> frozenset[str] | None:

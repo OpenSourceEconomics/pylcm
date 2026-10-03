@@ -56,6 +56,48 @@ def slice_population(
     return result
 
 
+def take_population(
+    *, array: jax.Array, rows: np.ndarray, memory: SimulationMemory | None
+) -> jax.Array:
+    """Admit one grouped chunk's gather of original rows before it is allocated."""
+    if (
+        rows.ndim != 1
+        or not rows.size
+        or rows.min() < 0
+        or rows.max() >= array.shape[0]
+    ):
+        raise ExecutionPlanningError("Grouped population rows must lie inside it.")
+    if memory is None:
+        return _take_population(array=array, rows=rows)
+    devices = tuple(
+        device for device in memory.devices if device in array.sharding.device_set
+    )
+    if set(devices) != array.sharding.device_set:
+        raise ExecutionPlanningError(
+            "A population gather has an unbudgeted source device."
+        )
+    result = cast(
+        "jax.Array",
+        memory.operations.dispatch(
+            function=_take_population,
+            arguments={"array": array, "rows": rows},
+            subject_arg_names=("array",) if len(devices) > 1 else (),
+            subject_outputs=len(devices) > 1,
+            devices=devices,
+            live_footprint=memory.budget_snapshot,
+            budget_devices=memory.devices,
+            budget_bytes=memory.budget_bytes,
+        ),
+    )
+    memory.hold(tree=result)
+    return result
+
+
+def _take_population(*, array: jax.Array, rows: jax.Array | np.ndarray) -> jax.Array:
+    """Gather original rows in chunk order, with one compilation per width."""
+    return jnp.take(array, rows, axis=0)
+
+
 def _slice_population(*, array: jax.Array, start: jax.Array, width: int) -> jax.Array:
     """Use a dynamic start without changing the caller's validated slice range."""
     return jax.lax.dynamic_slice_in_dim(array, start, width, axis=0)
