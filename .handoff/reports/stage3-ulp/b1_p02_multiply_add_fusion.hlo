@@ -1,0 +1,658 @@
+%fused_computation.3 (param_0.12: f64[6], param_1.24: f64[4,4], param_2.36: f64[4], param_3.49: f64[4], param_4.53: s32[], param_5.50: s64[], param_6.54: s64[], param_7.63: s32[4], param_8.67: f64[], param_9.66: s32[4,1], param_10.81: f64[4,2], param_11.86: f64[], param_12.95: s32[1], param_13.103: f64[4,1], param_14.108: f64[2,1,6], param_15.117: s64[5], param_16.127: s32[], param_17.128: f64[4,1]) -> f64[4,4] {
+  %param_1.24 = f64[4,4]{1,0} parameter(1)
+  %param_9.66 = s32[4,1]{1,0} parameter(9)
+  %convert_element_type.1089 = f64[4,1]{1,0} convert(%param_9.66)
+  %constant.3071 = f64[] constant(0.2)
+  %broadcast.2810 = f64[4,1]{1,0} broadcast(%constant.3071), dimensions={}
+  %mul.323 = f64[4,1]{1,0} multiply(%convert_element_type.1089, %broadcast.2810)
+  %bitcast.69 = f64[4]{0} bitcast(%mul.323)
+  %add.1353 = f64[4,4]{1,0} broadcast(%bitcast.69), dimensions={0}
+  %add.1333 = f64[4,4]{1,0} add(%param_1.24, %add.1353)
+  %param_11.86 = f64[] parameter(11)
+  %mul.322 = f64[4,4]{1,0} broadcast(%param_11.86), dimensions={}
+  %param_15.117 = s64[5]{0} parameter(15)
+  %param_16.127 = s32[] parameter(16)
+  %param_4.53 = s32[] parameter(4)
+  %lt.1069 = pred[] compare(%param_16.127, %param_4.53), direction=LT
+  %constant.3074 = s32[] constant(5)
+  %add.1354 = s32[] add(%param_16.127, %constant.3074)
+  %select_n.2194 = s32[] select(%lt.1069, %add.1354, %param_16.127)
+  %dynamic_slice.18 = s64[1]{0} dynamic-slice(%param_15.117, %select_n.2194), dynamic_slice_sizes={1}
+  %constant.3070 = s64[1]{0} constant({0})
+  %eq.1037 = pred[1]{0} compare(%dynamic_slice.18, %constant.3070), direction=EQ
+  %bitcast.73 = pred[] bitcast(%eq.1037)
+  %select_n.2193 = pred[4,2]{1,0} broadcast(%bitcast.73), dimensions={}
+  %param_10.81 = f64[4,2]{1,0} parameter(10)
+  %select_n.2192 = f64[4,2]{1,0} select(%select_n.2193, %param_10.81, %param_10.81)
+  %slice.35 = f64[4,1]{1,0} slice(%select_n.2192), slice={[0:4], [1:2]}
+  %bitcast.68 = f64[4]{0} bitcast(%slice.35)
+  %bitcast_convert_type.1815 = s64[4]{0} bitcast-convert(%bitcast.68)
+  %param_6.54 = s64[] parameter(6)
+  %broadcast.2809 = s64[4]{0} broadcast(%param_6.54), dimensions={}
+  %and.2539 = s64[4]{0} and(%bitcast_convert_type.1815, %broadcast.2809)
+  %param_5.50 = s64[] parameter(5)
+  %broadcast.2808 = s64[4]{0} broadcast(%param_5.50), dimensions={}
+  %eq.1036 = pred[4]{0} compare(%and.2539, %broadcast.2808), direction=EQ
+  %not.518 = pred[4]{0} not(%eq.1036)
+  %constant.3067 = s64[] constant(4503599627370496)
+  %lt.1068 = s64[4]{0} broadcast(%constant.3067), dimensions={}
+  %lt.1067 = pred[4]{0} compare(%and.2539, %lt.1068), direction=LT
+  %and.2538 = pred[4]{0} and(%not.518, %lt.1067)
+  %and.2537 = pred[4,4]{1,0} broadcast(%and.2538), dimensions={0}
+  %param_8.67 = f64[] parameter(8)
+  %broadcast.2807 = f64[4,4]{1,0} broadcast(%param_8.67), dimensions={}
+  %param_13.103 = f64[4,1]{1,0} parameter(13)
+  %bitcast.71 = f64[4]{0} bitcast(%param_13.103)
+  %le.112 = f64[4,4]{1,0} broadcast(%bitcast.71), dimensions={0}
+  %param_17.128 = f64[4,1]{1,0} parameter(17)
+  %bitcast.74 = f64[4]{0} bitcast(%param_17.128)
+  %le.111 = f64[4,4]{1,0} broadcast(%bitcast.74), dimensions={1}
+  %sub.1152 = f64[4,4]{1,0} subtract(%le.112, %le.111)
+  %add.1332 = f64[4,4]{1,0} add(%sub.1152, %broadcast.2807)
+  %constant.3066 = f64[] constant(0.55555555555555558)
+  %broadcast.2806 = f64[4,4]{1,0} broadcast(%constant.3066), dimensions={}
+  %multiply.48 = f64[4,4]{1,0} multiply(%add.1332, %broadcast.2806)
+  %constant.3068 = f64[] constant(0)
+  %max.403 = f64[4,4]{1,0} broadcast(%constant.3068), dimensions={}
+  %floor.32 = f64[4,4]{1,0} floor(%multiply.48)
+  %constant.3065 = f64[] constant(4)
+  %min.414 = f64[4,4]{1,0} broadcast(%constant.3065), dimensions={}
+  %clamp.65 = f64[4,4]{1,0} clamp(%max.403, %floor.32, %min.414)
+  %convert_element_type.1071 = s32[4,4]{1,0} convert(%clamp.65)
+  %convert_element_type.1070 = f64[4,4]{1,0} convert(%convert_element_type.1071)
+  %sub.1151 = f64[4,4]{1,0} subtract(%multiply.48, %convert_element_type.1070)
+  %sub.1150 = f64[4,4]{1,0} subtract(%broadcast.2807, %sub.1151)
+  %bitcast_convert_type.1809 = s64[4,4]{1,0} bitcast-convert(%sub.1150)
+  %broadcast.2805 = s64[4,4]{1,0} broadcast(%param_6.54), dimensions={}
+  %and.2508 = s64[4,4]{1,0} and(%bitcast_convert_type.1809, %broadcast.2805)
+  %broadcast.2804 = s64[4,4]{1,0} broadcast(%param_5.50), dimensions={}
+  %eq.1021 = pred[4,4]{1,0} compare(%and.2508, %broadcast.2804), direction=EQ
+  %not.512 = pred[4,4]{1,0} not(%eq.1021)
+  %lt.1066 = s64[4,4]{1,0} broadcast(%constant.3067), dimensions={}
+  %lt.1058 = pred[4,4]{1,0} compare(%and.2508, %lt.1066), direction=LT
+  %and.2507 = pred[4,4]{1,0} and(%not.512, %lt.1058)
+  %param_0.12 = f64[6]{0} parameter(0)
+  %broadcast.2803 = s32[4,4]{1,0} broadcast(%param_4.53), dimensions={}
+  %lt.1057 = pred[4,4]{1,0} compare(%convert_element_type.1071, %broadcast.2803), direction=LT
+  %constant.3072 = s32[] constant(6)
+  %broadcast.2802 = s32[4,4]{1,0} broadcast(%constant.3072), dimensions={}
+  %add.1331 = s32[4,4]{1,0} add(%convert_element_type.1071, %broadcast.2802)
+  %select_n.2165 = s32[4,4]{1,0} select(%lt.1057, %add.1331, %convert_element_type.1071)
+  %bitcast.65 = s32[16,1]{0,1} bitcast(%select_n.2165)
+  %copy.16 = s32[16,1]{1,0} copy(%bitcast.65)
+  %gather.130 = f64[16,1]{1,0} gather(%param_0.12, %copy.16), offset_dims={1}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+  %bitcast.64 = f64[4,4]{1,0} bitcast(%gather.130)
+  %abs.332 = f64[4,4]{1,0} abs(%bitcast.64)
+  %constant.3064 = f64[] constant(inf)
+  %broadcast.2801 = f64[4,4]{1,0} broadcast(%constant.3064), dimensions={}
+  %eq.1020 = pred[4,4]{1,0} compare(%abs.332, %broadcast.2801), direction=EQ
+  %and.2506 = pred[4,4]{1,0} and(%and.2507, %eq.1020)
+  %constant.3063 = s64[] constant(63)
+  %broadcast.2800 = s64[4,4]{1,0} broadcast(%constant.3063), dimensions={}
+  %shift_right_arithmetic.420 = s64[4,4]{1,0} shift-right-arithmetic(%bitcast_convert_type.1809, %broadcast.2800)
+  %convert_element_type.1069 = pred[4,4]{1,0} compare(%shift_right_arithmetic.420, %broadcast.2804), direction=NE
+  %constant.3062 = f64[] constant(-2.2250738585072014e-308)
+  %broadcast_in_dim.1680 = f64[4,4]{1,0} broadcast(%constant.3062), dimensions={}
+  %constant.3061 = f64[] constant(2.2250738585072014e-308)
+  %broadcast_in_dim.1679 = f64[4,4]{1,0} broadcast(%constant.3061), dimensions={}
+  %select_n.2164 = f64[4,4]{1,0} select(%convert_element_type.1069, %broadcast_in_dim.1680, %broadcast_in_dim.1679)
+  %select_n.2163 = f64[4,4]{1,0} select(%and.2506, %select_n.2164, %sub.1150)
+  %is_finite.200 = pred[4,4]{1,0} is-finite(%bitcast.64)
+  %not.511 = pred[4,4]{1,0} not(%is_finite.200)
+  %and.2505 = pred[4,4]{1,0} and(%eq.1021, %not.511)
+  %select_n.2162 = f64[4,4]{1,0} select(%and.2505, %max.403, %bitcast.64)
+  %mul.320 = f64[4,4]{1,0} multiply(%select_n.2163, %select_n.2162)
+  %bitcast_convert_type.1808 = s64[4,4]{1,0} bitcast-convert(%sub.1151)
+  %and.2504 = s64[4,4]{1,0} and(%bitcast_convert_type.1808, %broadcast.2805)
+  %eq.1019 = pred[4,4]{1,0} compare(%and.2504, %broadcast.2804), direction=EQ
+  %not.510 = pred[4,4]{1,0} not(%eq.1019)
+  %lt.1056 = pred[4,4]{1,0} compare(%and.2504, %lt.1066), direction=LT
+  %and.2503 = pred[4,4]{1,0} and(%not.510, %lt.1056)
+  %constant.3073 = s32[] constant(1)
+  %broadcast.2799 = s32[4,4]{1,0} broadcast(%constant.3073), dimensions={}
+  %add.1330 = s32[4,4]{1,0} add(%convert_element_type.1071, %broadcast.2799)
+  %lt.1055 = pred[4,4]{1,0} compare(%add.1330, %broadcast.2803), direction=LT
+  %constant.3060 = s32[] constant(7)
+  %broadcast.2798 = s32[4,4]{1,0} broadcast(%constant.3060), dimensions={}
+  %add.1329 = s32[4,4]{1,0} add(%convert_element_type.1071, %broadcast.2798)
+  %select_n.2161 = s32[4,4]{1,0} select(%lt.1055, %add.1329, %add.1330)
+  %bitcast.63 = s32[16,1]{0,1} bitcast(%select_n.2161)
+  %copy.15 = s32[16,1]{1,0} copy(%bitcast.63)
+  %gather.129 = f64[16,1]{1,0} gather(%param_0.12, %copy.15), offset_dims={1}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+  %bitcast.62 = f64[4,4]{1,0} bitcast(%gather.129)
+  %abs.331 = f64[4,4]{1,0} abs(%bitcast.62)
+  %eq.1018 = pred[4,4]{1,0} compare(%abs.331, %broadcast.2801), direction=EQ
+  %and.2502 = pred[4,4]{1,0} and(%and.2503, %eq.1018)
+  %shift_right_arithmetic.419 = s64[4,4]{1,0} shift-right-arithmetic(%bitcast_convert_type.1808, %broadcast.2800)
+  %convert_element_type.1068 = pred[4,4]{1,0} compare(%shift_right_arithmetic.419, %broadcast.2804), direction=NE
+  %select_n.2160 = f64[4,4]{1,0} select(%convert_element_type.1068, %broadcast_in_dim.1680, %broadcast_in_dim.1679)
+  %select_n.2159 = f64[4,4]{1,0} select(%and.2502, %select_n.2160, %sub.1151)
+  %is_finite.199 = pred[4,4]{1,0} is-finite(%bitcast.62)
+  %not.509 = pred[4,4]{1,0} not(%is_finite.199)
+  %and.2501 = pred[4,4]{1,0} and(%eq.1019, %not.509)
+  %select_n.2158 = f64[4,4]{1,0} select(%and.2501, %max.403, %bitcast.62)
+  %mul.319 = f64[4,4]{1,0} multiply(%select_n.2159, %select_n.2158)
+  %add.1328 = f64[4,4]{1,0} add(%mul.320, %mul.319)
+  %abs.330 = f64[4,4]{1,0} abs(%add.1328)
+  %eq.1017 = pred[4,4]{1,0} compare(%abs.330, %broadcast.2801), direction=EQ
+  %and.2500 = pred[4,4]{1,0} and(%and.2537, %eq.1017)
+  %broadcast.2797 = s64[4]{0} broadcast(%constant.3063), dimensions={}
+  %shift_right_arithmetic.428 = s64[4]{0} shift-right-arithmetic(%bitcast_convert_type.1815, %broadcast.2797)
+  %convert_element_type.1087 = pred[4]{0} compare(%shift_right_arithmetic.428, %broadcast.2808), direction=NE
+  %broadcast_in_dim.1678 = f64[4]{0} broadcast(%constant.3062), dimensions={}
+  %broadcast_in_dim.1677 = f64[4]{0} broadcast(%constant.3061), dimensions={}
+  %select_n.2191 = f64[4]{0} select(%convert_element_type.1087, %broadcast_in_dim.1678, %broadcast_in_dim.1677)
+  %broadcast_in_dim.1676 = f64[4,4]{1,0} broadcast(%select_n.2191), dimensions={0}
+  %broadcast_in_dim.1675 = f64[4,4]{1,0} broadcast(%bitcast.68), dimensions={0}
+  %select_n.2157 = f64[4,4]{1,0} select(%and.2500, %broadcast_in_dim.1676, %broadcast_in_dim.1675)
+  %bitcast_convert_type.1807 = s64[4,4]{1,0} bitcast-convert(%select_n.2157)
+  %and.2499 = s64[4,4]{1,0} and(%bitcast_convert_type.1807, %broadcast.2805)
+  %eq.1016 = pred[4,4]{1,0} compare(%and.2499, %broadcast.2804), direction=EQ
+  %is_finite.198 = pred[4,4]{1,0} is-finite(%select_n.2157)
+  %not.508 = pred[4,4]{1,0} not(%is_finite.198)
+  %or.375 = pred[4,4]{1,0} or(%eq.1016, %not.508)
+  %sub.1149 = s64[4,4]{1,0} subtract(%bitcast_convert_type.1807, %and.2499)
+  %lt.1054 = pred[4,4]{1,0} compare(%and.2499, %lt.1066), direction=LT
+  %not.507 = pred[4,4]{1,0} not(%eq.1016)
+  %and.2498 = pred[4,4]{1,0} and(%lt.1054, %not.507)
+  %and.2536 = pred[4,4]{1,0} broadcast(%eq.1036), dimensions={0}
+  %is_finite.197 = pred[4,4]{1,0} is-finite(%add.1328)
+  %not.506 = pred[4,4]{1,0} not(%is_finite.197)
+  %and.2497 = pred[4,4]{1,0} and(%and.2536, %not.506)
+  %select_n.2156 = f64[4,4]{1,0} select(%and.2497, %max.403, %add.1328)
+  %is_finite.196 = pred[4,4]{1,0} is-finite(%select_n.2156)
+  %bitcast_convert_type.1806 = s64[4,4]{1,0} bitcast-convert(%select_n.2156)
+  %and.2496 = s64[4,4]{1,0} and(%bitcast_convert_type.1806, %broadcast.2805)
+  %eq.1015 = pred[4,4]{1,0} compare(%and.2496, %broadcast.2804), direction=EQ
+  %not.505 = pred[4,4]{1,0} not(%eq.1015)
+  %and.2495 = pred[4,4]{1,0} and(%is_finite.196, %not.505)
+  %clz.197 = s64[4,4]{1,0} count-leading-zeros(%and.2499)
+  %constant.3059 = s64[] constant(-11)
+  %broadcast.2796 = s64[4,4]{1,0} broadcast(%constant.3059), dimensions={}
+  %add.1327 = s64[4,4]{1,0} add(%clz.197, %broadcast.2796)
+  %select_n.2155 = s64[4,4]{1,0} select(%and.2498, %add.1327, %broadcast.2804)
+  %lt.1053 = pred[4,4]{1,0} compare(%and.2496, %lt.1066), direction=LT
+  %constant.3058 = s64[] constant(-1011)
+  %broadcast.2795 = s64[4,4]{1,0} broadcast(%constant.3058), dimensions={}
+  %clz.196 = s64[4,4]{1,0} count-leading-zeros(%and.2496)
+  %subtract.118 = s64[4,4]{1,0} subtract(%broadcast.2795, %clz.196)
+  %constant.3057 = s64[] constant(52)
+  %broadcast.2794 = s64[4,4]{1,0} broadcast(%constant.3057), dimensions={}
+  %shift_right_arithmetic.418 = s64[4,4]{1,0} shift-right-arithmetic(%and.2496, %broadcast.2794)
+  %constant.3056 = s64[] constant(-1023)
+  %broadcast.2793 = s64[4,4]{1,0} broadcast(%constant.3056), dimensions={}
+  %add.1326 = s64[4,4]{1,0} add(%shift_right_arithmetic.418, %broadcast.2793)
+  %select_n.2154 = s64[4,4]{1,0} select(%lt.1053, %subtract.118, %add.1326)
+  %convert_element_type.1067 = s32[4,4]{1,0} convert(%select_n.2154)
+  %constant.3055 = s32[] constant(1022)
+  %broadcast.2792 = s32[4,4]{1,0} broadcast(%constant.3055), dimensions={}
+  %add.1325 = s32[4,4]{1,0} add(%convert_element_type.1067, %broadcast.2792)
+  %max.400 = s32[4,4]{1,0} maximum(%add.1325, %broadcast.2803)
+  %convert_element_type.1066 = s64[4,4]{1,0} convert(%max.400)
+  %min.410 = s64[4,4]{1,0} minimum(%select_n.2155, %convert_element_type.1066)
+  %select_n.2153 = s64[4,4]{1,0} select(%and.2495, %min.410, %broadcast.2804)
+  %min.409 = s64[4,4]{1,0} minimum(%select_n.2153, %select_n.2155)
+  %constant.3054 = s64[] constant(53)
+  %min.413 = s64[4,4]{1,0} broadcast(%constant.3054), dimensions={}
+  %clamp.64 = s64[4,4]{1,0} clamp(%broadcast.2804, %min.409, %min.413)
+  %shift_left.310 = s64[4,4]{1,0} shift-left(%and.2499, %clamp.64)
+  %sub.1148 = s64[4,4]{1,0} subtract(%select_n.2153, %select_n.2155)
+  %max.399 = s64[4,4]{1,0} maximum(%sub.1148, %broadcast.2804)
+  %shift_left.309 = s64[4,4]{1,0} shift-left(%max.399, %broadcast.2794)
+  %add.1324 = s64[4,4]{1,0} add(%shift_left.310, %shift_left.309)
+  %shift_left.308 = s64[4,4]{1,0} shift-left(%select_n.2153, %broadcast.2794)
+  %add.1323 = s64[4,4]{1,0} add(%and.2499, %shift_left.308)
+  %select_n.2152 = s64[4,4]{1,0} select(%and.2498, %add.1324, %add.1323)
+  %or.374 = s64[4,4]{1,0} or(%sub.1149, %select_n.2152)
+  %select_n.2151 = s64[4,4]{1,0} select(%or.375, %bitcast_convert_type.1807, %or.374)
+  %bitcast_convert_type.1805 = f64[4,4]{1,0} bitcast-convert(%select_n.2151)
+  %sub.1147 = s64[4,4]{1,0} subtract(%bitcast_convert_type.1806, %shift_left.308)
+  %select_n.2150 = s64[4,4]{1,0} select(%and.2495, %sub.1147, %bitcast_convert_type.1806)
+  %bitcast_convert_type.1804 = f64[4,4]{1,0} bitcast-convert(%select_n.2150)
+  %mul.318 = f64[4,4]{1,0} multiply(%bitcast_convert_type.1805, %bitcast_convert_type.1804)
+  %ne.389 = pred[4,4]{1,0} compare(%mul.318, %mul.318), direction=NE
+  %slice.34 = f64[4,1]{1,0} slice(%select_n.2192), slice={[0:4], [0:1]}
+  %bitcast.67 = f64[4]{0} bitcast(%slice.34)
+  %bitcast_convert_type.1814 = s64[4]{0} bitcast-convert(%bitcast.67)
+  %and.2535 = s64[4]{0} and(%bitcast_convert_type.1814, %broadcast.2809)
+  %eq.1035 = pred[4]{0} compare(%and.2535, %broadcast.2808), direction=EQ
+  %not.517 = pred[4]{0} not(%eq.1035)
+  %lt.1065 = pred[4]{0} compare(%and.2535, %lt.1068), direction=LT
+  %and.2534 = pred[4]{0} and(%not.517, %lt.1065)
+  %and.2533 = pred[4,4]{1,0} broadcast(%and.2534), dimensions={0}
+  %iota.42 = s64[4,2]{1,0} iota(), iota_dimension=1
+  %convert_element_type.1086 = s64[4,1]{1,0} convert(%param_9.66)
+  %bitcast.66 = s64[4]{0} bitcast(%convert_element_type.1086)
+  %eq.1034 = s64[4,2]{1,0} broadcast(%bitcast.66), dimensions={0}
+  %eq.1033 = pred[4,2]{1,0} compare(%iota.42, %eq.1034), direction=EQ
+  %param_12.95 = s32[1]{0} parameter(12)
+  %bitcast.70 = s32[] bitcast(%param_12.95), frontend_attributes={xla.sdy.sharding="#sdy.sharding<@empty_mesh, [{}]>"}
+  %convert_element_type.1088 = f64[] convert(%bitcast.70)
+  %constant.3069 = f64[] constant(0.1)
+  %mul.321 = f64[] multiply(%convert_element_type.1088, %constant.3069)
+  %constant.3053 = f64[] constant(0.6)
+  %add.1352 = f64[] add(%mul.321, %constant.3053)
+  %broadcast_in_dim.1674 = f64[4,2]{1,0} broadcast(%add.1352), dimensions={}
+  %sub.1162 = f64[] subtract(%param_8.67, %add.1352)
+  %broadcast_in_dim.1673 = f64[4,2]{1,0} broadcast(%sub.1162), dimensions={}
+  %select_n.2190 = f64[4,2]{1,0} select(%eq.1033, %broadcast_in_dim.1674, %broadcast_in_dim.1673)
+  %bitcast_convert_type.1813 = s64[4,2]{1,0} bitcast-convert(%select_n.2190)
+  %broadcast.2791 = s64[4,2]{1,0} broadcast(%param_6.54), dimensions={}
+  %and.2532 = s64[4,2]{1,0} and(%bitcast_convert_type.1813, %broadcast.2791)
+  %broadcast.2790 = s64[4,2]{1,0} broadcast(%param_5.50), dimensions={}
+  %eq.1032 = pred[4,2]{1,0} compare(%and.2532, %broadcast.2790), direction=EQ
+  %is_finite.201 = pred[4,2]{1,0} is-finite(%select_n.2190)
+  %not.516 = pred[4,2]{1,0} not(%is_finite.201)
+  %or.384 = pred[4,2]{1,0} or(%eq.1032, %not.516)
+  %lt.1064 = pred[4,2]{1,0} compare(%bitcast_convert_type.1813, %broadcast.2790), direction=LT
+  %ne.393 = pred[4,2]{1,0} compare(%and.2532, %broadcast.2790), direction=NE
+  %and.2531 = pred[4,2]{1,0} and(%lt.1064, %ne.393)
+  %constant.3052 = s64[] constant(1)
+  %broadcast.2789 = s64[4,2]{1,0} broadcast(%constant.3052), dimensions={}
+  %select.31 = s64[4,2]{1,0} select(%and.2531, %broadcast.2789, %broadcast.2790)
+  %and.2530 = s64[4,2]{1,0} and(%select.31, %broadcast.2789)
+  %ne.392 = pred[4,2]{1,0} compare(%and.2530, %broadcast.2790), direction=LT
+  %ne.391 = pred[4,2]{1,0} compare(%and.2530, %broadcast.2790), direction=NE
+  %and.2529 = pred[4,2]{1,0} and(%ne.392, %ne.391)
+  %constant.3051 = s64[] constant(2)
+  %add.1351 = s64[4,2]{1,0} broadcast(%constant.3051), dimensions={}
+  %add.1350 = s64[4,2]{1,0} add(%and.2530, %add.1351)
+  %select_n.2189 = s64[4,2]{1,0} select(%and.2529, %add.1350, %and.2530)
+  %eq.1031 = pred[4,2]{1,0} compare(%select_n.2189, %broadcast.2789), direction=EQ
+  %broadcast.2788 = s64[4,2]{1,0} broadcast(%constant.3067), dimensions={}
+  %lt.1063 = pred[4,2]{1,0} compare(%and.2532, %broadcast.2788), direction=LT
+  %broadcast.2787 = s64[4,2]{1,0} broadcast(%constant.3058), dimensions={}
+  %clz.200 = s64[4,2]{1,0} count-leading-zeros(%and.2532)
+  %subtract.121 = s64[4,2]{1,0} subtract(%broadcast.2787, %clz.200)
+  %broadcast.2786 = s64[4,2]{1,0} broadcast(%constant.3057), dimensions={}
+  %shift_right_arithmetic.427 = s64[4,2]{1,0} shift-right-arithmetic(%and.2532, %broadcast.2786)
+  %broadcast.2785 = s64[4,2]{1,0} broadcast(%constant.3056), dimensions={}
+  %add.1349 = s64[4,2]{1,0} add(%shift_right_arithmetic.427, %broadcast.2785)
+  %select_n.2188 = s64[4,2]{1,0} select(%lt.1063, %subtract.121, %add.1349)
+  %convert_element_type.1085 = s32[4,2]{1,0} convert(%select_n.2188)
+  %convert_element_type.1084 = s64[4,2]{1,0} convert(%convert_element_type.1085)
+  %not.515 = pred[4,2]{1,0} not(%eq.1032)
+  %and.2528 = pred[4,2]{1,0} and(%lt.1063, %not.515)
+  %broadcast.2784 = s64[4,2]{1,0} broadcast(%constant.3059), dimensions={}
+  %add.1348 = s64[4,2]{1,0} add(%clz.200, %broadcast.2784)
+  %select_n.2187 = s64[4,2]{1,0} select(%and.2528, %add.1348, %broadcast.2790)
+  %shift_left.317 = s64[4,2]{1,0} shift-left(%and.2532, %select_n.2187)
+  %constant.3050 = s64[] constant(4503599627370495)
+  %broadcast.2783 = s64[4,2]{1,0} broadcast(%constant.3050), dimensions={}
+  %and.2527 = s64[4,2]{1,0} and(%shift_left.317, %broadcast.2783)
+  %and.2526 = s64[4,2]{1,0} and(%and.2532, %broadcast.2783)
+  %select_n.2186 = s64[4,2]{1,0} select(%lt.1063, %and.2527, %and.2526)
+  %constant.3049 = s64[] constant(4607182418800017408)
+  %broadcast.2782 = s64[4,2]{1,0} broadcast(%constant.3049), dimensions={}
+  %or.383 = s64[4,2]{1,0} or(%select_n.2186, %broadcast.2782)
+  %and.2525 = s64[4,2]{1,0} and(%or.383, %broadcast.2791)
+  %lt.1062 = pred[4,2]{1,0} compare(%and.2525, %broadcast.2788), direction=LT
+  %clz.199 = s64[4,2]{1,0} count-leading-zeros(%and.2525)
+  %subtract.120 = s64[4,2]{1,0} subtract(%broadcast.2787, %clz.199)
+  %shift_right_arithmetic.426 = s64[4,2]{1,0} shift-right-arithmetic(%and.2525, %broadcast.2786)
+  %add.1347 = s64[4,2]{1,0} add(%shift_right_arithmetic.426, %broadcast.2785)
+  %select_n.2185 = s64[4,2]{1,0} select(%lt.1062, %subtract.120, %add.1347)
+  %convert_element_type.1083 = s32[4,2]{1,0} convert(%select_n.2185)
+  %convert_element_type.1082 = s64[4,2]{1,0} convert(%convert_element_type.1083)
+  %add.1346 = s64[4,2]{1,0} add(%convert_element_type.1084, %convert_element_type.1082)
+  %constant.3048 = s64[] constant(-1022)
+  %broadcast.2781 = s64[4,2]{1,0} broadcast(%constant.3048), dimensions={}
+  %select_n.2184 = s64[4,2]{1,0} select(%or.384, %broadcast.2790, %add.1346)
+  %sub.1161 = s64[4,2]{1,0} subtract(%broadcast.2781, %select_n.2184)
+  %constant.3047 = s64[] constant(1023)
+  %broadcast.2780 = s64[4,2]{1,0} broadcast(%constant.3047), dimensions={}
+  %select_n.2183 = s64[4,2]{1,0} select(%or.384, %broadcast.2781, %add.1346)
+  %sub.1160 = s64[4,2]{1,0} subtract(%broadcast.2780, %select_n.2183)
+  %min.412 = s64[4,2]{1,0} minimum(%sub.1161, %sub.1160)
+  %max.402 = s64[4,2]{1,0} maximum(%min.412, %broadcast.2790)
+  %convert_element_type.1081 = s32[4,2]{1,0} convert(%max.402)
+  %convert_element_type.1080 = s64[4,2]{1,0} convert(%convert_element_type.1081)
+  %add.1345 = s64[4,2]{1,0} add(%add.1346, %convert_element_type.1080)
+  %gt.189 = pred[4,2]{1,0} compare(%add.1345, %broadcast.2780), direction=GT
+  %constant.3046 = s64[] constant(9218868437227405312)
+  %broadcast_in_dim.1672 = s64[4,2]{1,0} broadcast(%constant.3046), dimensions={}
+  %ge.12 = pred[4,2]{1,0} compare(%add.1345, %broadcast.2781), direction=GE
+  %eq.1030 = pred[4,2]{1,0} compare(%and.2525, %broadcast.2790), direction=EQ
+  %not.514 = pred[4,2]{1,0} not(%eq.1030)
+  %and.2524 = pred[4,2]{1,0} and(%lt.1062, %not.514)
+  %add.1344 = s64[4,2]{1,0} add(%clz.199, %broadcast.2784)
+  %select_n.2182 = s64[4,2]{1,0} select(%and.2524, %add.1344, %broadcast.2790)
+  %shift_left.316 = s64[4,2]{1,0} shift-left(%and.2525, %select_n.2182)
+  %and.2523 = s64[4,2]{1,0} and(%shift_left.316, %broadcast.2783)
+  %and.2522 = s64[4,2]{1,0} and(%and.2525, %broadcast.2783)
+  %select_n.2181 = s64[4,2]{1,0} select(%lt.1062, %and.2523, %and.2522)
+  %or.382 = s64[4,2]{1,0} or(%select_n.2181, %broadcast.2782)
+  %and.2521 = s64[4,2]{1,0} and(%or.382, %broadcast.2791)
+  %shift_left.315 = s64[4,2]{1,0} shift-left(%add.1345, %broadcast.2786)
+  %add.1343 = s64[4,2]{1,0} add(%and.2521, %shift_left.315)
+  %sub.1159 = s64[4,2]{1,0} subtract(%broadcast.2781, %add.1345)
+  %le.110 = pred[4,2]{1,0} compare(%sub.1159, %broadcast.2786), direction=LE
+  %and.2520 = s64[4,2]{1,0} and(%and.2521, %broadcast.2783)
+  %or.381 = s64[4,2]{1,0} or(%and.2520, %broadcast.2788)
+  %clamp.67 = s64[4,2]{1,0} clamp(%broadcast.2790, %sub.1159, %broadcast.2786)
+  %shift_right_arithmetic.425 = s64[4,2]{1,0} shift-right-arithmetic(%or.381, %clamp.67)
+  %select_n.2180 = s64[4,2]{1,0} select(%le.110, %shift_right_arithmetic.425, %broadcast.2790)
+  %select_n.2179 = s64[4,2]{1,0} select(%ge.12, %add.1343, %select_n.2180)
+  %select_n.2178 = s64[4,2]{1,0} select(%gt.189, %broadcast_in_dim.1672, %select_n.2179)
+  %constant.3045 = s64[] constant(-9223372036854775808)
+  %broadcast.2779 = s64[4,2]{1,0} broadcast(%constant.3045), dimensions={}
+  %or.380 = s64[4,2]{1,0} or(%select_n.2178, %broadcast.2779)
+  %select_n.2177 = s64[4,2]{1,0} select(%eq.1031, %or.380, %select_n.2178)
+  %bitcast_convert_type.1812 = f64[4,2]{1,0} bitcast-convert(%select_n.2177)
+  %select_n.2176 = f64[4,2]{1,0} select(%or.384, %select_n.2190, %bitcast_convert_type.1812)
+  %bitcast_convert_type.1811 = s64[4,2]{1,0} bitcast-convert(%select_n.2176)
+  %and.2519 = s64[4,2]{1,0} and(%bitcast_convert_type.1811, %broadcast.2791)
+  %eq.1029 = pred[4,2]{1,0} compare(%and.2519, %broadcast.2790), direction=EQ
+  %shift_right_arithmetic.424 = s64[4,2]{1,0} shift-right-arithmetic(%and.2519, %broadcast.2786)
+  %constant.3044 = s64[] constant(2047)
+  %broadcast.2778 = s64[4,2]{1,0} broadcast(%constant.3044), dimensions={}
+  %eq.1028 = pred[4,2]{1,0} compare(%shift_right_arithmetic.424, %broadcast.2778), direction=EQ
+  %or.379 = pred[4,2]{1,0} or(%eq.1029, %eq.1028)
+  %sub.1158 = s64[4,2]{1,0} subtract(%bitcast_convert_type.1811, %and.2519)
+  %convert_element_type.1079 = s32[4,2]{1,0} convert(%shift_right_arithmetic.424)
+  %param_7.63 = s32[4]{0} parameter(7)
+  %sub.1157 = s32[4,2]{1,0} broadcast(%param_7.63), dimensions={0}
+  %sub.1156 = s32[4,2]{1,0} subtract(%sub.1157, %convert_element_type.1081)
+  %lt.1061 = pred[4,2]{1,0} compare(%and.2519, %broadcast.2788), direction=LT
+  %broadcast_in_dim.1671 = s32[4,2]{1,0} broadcast(%param_4.53), dimensions={}
+  %clz.198 = s64[4,2]{1,0} count-leading-zeros(%and.2519)
+  %subtract.119 = s64[4,2]{1,0} subtract(%broadcast.2787, %clz.198)
+  %add.1342 = s64[4,2]{1,0} add(%shift_right_arithmetic.424, %broadcast.2785)
+  %select_n.2175 = s64[4,2]{1,0} select(%lt.1061, %subtract.119, %add.1342)
+  %convert_element_type.1078 = s32[4,2]{1,0} convert(%select_n.2175)
+  %broadcast.2777 = s32[4,2]{1,0} broadcast(%constant.3055), dimensions={}
+  %add.1341 = s32[4,2]{1,0} add(%convert_element_type.1078, %broadcast.2777)
+  %select_n.2174 = s32[4,2]{1,0} select(%lt.1061, %broadcast_in_dim.1671, %add.1341)
+  %neg.171 = s32[4,2]{1,0} negate(%select_n.2174)
+  %max.401 = s32[4,2]{1,0} maximum(%sub.1156, %neg.171)
+  %add.1340 = s32[4,2]{1,0} add(%convert_element_type.1079, %max.401)
+  %gt.188 = pred[4,2]{1,0} compare(%add.1340, %broadcast_in_dim.1671), direction=GT
+  %convert_element_type.1077 = s64[4,2]{1,0} convert(%max.401)
+  %shift_left.314 = s64[4,2]{1,0} shift-left(%convert_element_type.1077, %broadcast.2786)
+  %add.1339 = s64[4,2]{1,0} add(%and.2519, %shift_left.314)
+  %eq.1027 = pred[4,2]{1,0} compare(%shift_right_arithmetic.424, %broadcast.2790), direction=EQ
+  %neg.170 = s32[4,2]{1,0} negate(%max.401)
+  %broadcast.2776 = s32[4,2]{1,0} broadcast(%constant.3073), dimensions={}
+  %sub.1155 = s32[4,2]{1,0} subtract(%broadcast.2776, %add.1340)
+  %select_n.2173 = s32[4,2]{1,0} select(%eq.1027, %neg.170, %sub.1155)
+  %eq.1026 = pred[4,2]{1,0} compare(%select_n.2173, %broadcast_in_dim.1671), direction=EQ
+  %constant.3043 = s32[] constant(53)
+  %broadcast.2775 = s32[4,2]{1,0} broadcast(%constant.3043), dimensions={}
+  %gt.187 = pred[4,2]{1,0} compare(%select_n.2173, %broadcast.2775), direction=GT
+  %and.2518 = s64[4,2]{1,0} and(%and.2519, %broadcast.2783)
+  %or.378 = s64[4,2]{1,0} or(%and.2518, %broadcast.2788)
+  %select_n.2172 = s64[4,2]{1,0} select(%eq.1027, %and.2518, %or.378)
+  %clamp.66 = s32[4,2]{1,0} clamp(%broadcast.2776, %select_n.2173, %broadcast.2775)
+  %convert_element_type.1076 = s64[4,2]{1,0} convert(%clamp.66)
+  %shift_right_arithmetic.423 = s64[4,2]{1,0} shift-right-arithmetic(%select_n.2172, %convert_element_type.1076)
+  %shift_left.313 = s64[4,2]{1,0} shift-left(%broadcast.2789, %convert_element_type.1076)
+  %constant.3042 = s64[] constant(-1)
+  %broadcast.2774 = s64[4,2]{1,0} broadcast(%constant.3042), dimensions={}
+  %add.1338 = s64[4,2]{1,0} add(%shift_left.313, %broadcast.2774)
+  %and.2517 = s64[4,2]{1,0} and(%select_n.2172, %add.1338)
+  %add.1337 = s64[4,2]{1,0} add(%convert_element_type.1076, %broadcast.2774)
+  %shift_left.312 = s64[4,2]{1,0} shift-left(%broadcast.2789, %add.1337)
+  %gt.186 = pred[4,2]{1,0} compare(%and.2517, %shift_left.312), direction=GT
+  %eq.1025 = pred[4,2]{1,0} compare(%and.2517, %shift_left.312), direction=EQ
+  %and.2516 = s64[4,2]{1,0} and(%shift_right_arithmetic.423, %broadcast.2789)
+  %ne.390 = pred[4,2]{1,0} compare(%and.2516, %broadcast.2790), direction=NE
+  %and.2515 = pred[4,2]{1,0} and(%eq.1025, %ne.390)
+  %or.377 = pred[4,2]{1,0} or(%gt.186, %and.2515)
+  %convert_element_type.1075 = s64[4,2]{1,0} convert(%or.377)
+  %add.1336 = s64[4,2]{1,0} add(%shift_right_arithmetic.423, %convert_element_type.1075)
+  %select_n.2171 = s64[4,2]{1,0} select(%gt.187, %broadcast.2790, %add.1336)
+  %select_n.2170 = s64[4,2]{1,0} select(%eq.1026, %and.2519, %select_n.2171)
+  %select_n.2169 = s64[4,2]{1,0} select(%gt.188, %add.1339, %select_n.2170)
+  %or.376 = s64[4,2]{1,0} or(%sub.1158, %select_n.2169)
+  %select_n.2168 = s64[4,2]{1,0} select(%or.379, %bitcast_convert_type.1811, %or.376)
+  %and.2514 = s64[4,2]{1,0} and(%select_n.2168, %broadcast.2791)
+  %eq.1024 = pred[4,2]{1,0} compare(%and.2514, %broadcast.2790), direction=EQ
+  %not.513 = pred[4,2]{1,0} not(%eq.1024)
+  %lt.1060 = pred[4,2]{1,0} compare(%and.2514, %broadcast.2788), direction=LT
+  %and.2513 = pred[4,2]{1,0} and(%not.513, %lt.1060)
+  %and.2512 = pred[4,4,2]{2,1,0} broadcast(%and.2513), dimensions={0,2}
+  %and.2494 = pred[4,4,2]{2,1,0} broadcast(%and.2507), dimensions={0,1}
+  %param_14.108 = f64[2,1,6]{2,1,0} parameter(14)
+  %bitcast.72 = f64[2,6]{1,0} bitcast(%param_14.108)
+  %gather.128 = f64[16,2,1]{2,1,0} gather(%bitcast.72, %copy.16), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={1}, index_vector_dim=1, slice_sizes={2,1}
+  %bitcast.61 = f64[4,4,2]{2,1,0} bitcast(%gather.128)
+  %abs.329 = f64[4,4,2]{2,1,0} abs(%bitcast.61)
+  %eq.1023 = f64[4,4,2]{2,1,0} broadcast(%constant.3064), dimensions={}
+  %eq.1014 = pred[4,4,2]{2,1,0} compare(%abs.329, %eq.1023), direction=EQ
+  %and.2493 = pred[4,4,2]{2,1,0} and(%and.2494, %eq.1014)
+  %broadcast_in_dim.1662 = f64[4,4,2]{2,1,0} broadcast(%select_n.2164), dimensions={0,1}
+  %broadcast_in_dim.1661 = f64[4,4,2]{2,1,0} broadcast(%sub.1150), dimensions={0,1}
+  %select_n.2149 = f64[4,4,2]{2,1,0} select(%and.2493, %broadcast_in_dim.1662, %broadcast_in_dim.1661)
+  %and.2492 = pred[4,4,2]{2,1,0} broadcast(%eq.1021), dimensions={0,1}
+  %is_finite.195 = pred[4,4,2]{2,1,0} is-finite(%bitcast.61)
+  %not.504 = pred[4,4,2]{2,1,0} not(%is_finite.195)
+  %and.2491 = pred[4,4,2]{2,1,0} and(%and.2492, %not.504)
+  %broadcast_in_dim.1670 = f64[4,4,2]{2,1,0} broadcast(%constant.3068), dimensions={}
+  %select_n.2148 = f64[4,4,2]{2,1,0} select(%and.2491, %broadcast_in_dim.1670, %bitcast.61)
+  %mul.317 = f64[4,4,2]{2,1,0} multiply(%select_n.2149, %select_n.2148)
+  %and.2490 = pred[4,4,2]{2,1,0} broadcast(%and.2503), dimensions={0,1}
+  %gather.127 = f64[16,2,1]{2,1,0} gather(%bitcast.72, %copy.15), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={1}, index_vector_dim=1, slice_sizes={2,1}
+  %bitcast.60 = f64[4,4,2]{2,1,0} bitcast(%gather.127)
+  %abs.328 = f64[4,4,2]{2,1,0} abs(%bitcast.60)
+  %eq.1013 = pred[4,4,2]{2,1,0} compare(%abs.328, %eq.1023), direction=EQ
+  %and.2489 = pred[4,4,2]{2,1,0} and(%and.2490, %eq.1013)
+  %broadcast_in_dim.1660 = f64[4,4,2]{2,1,0} broadcast(%select_n.2160), dimensions={0,1}
+  %broadcast_in_dim.1659 = f64[4,4,2]{2,1,0} broadcast(%sub.1151), dimensions={0,1}
+  %select_n.2147 = f64[4,4,2]{2,1,0} select(%and.2489, %broadcast_in_dim.1660, %broadcast_in_dim.1659)
+  %and.2488 = pred[4,4,2]{2,1,0} broadcast(%eq.1019), dimensions={0,1}
+  %is_finite.194 = pred[4,4,2]{2,1,0} is-finite(%bitcast.60)
+  %not.503 = pred[4,4,2]{2,1,0} not(%is_finite.194)
+  %and.2487 = pred[4,4,2]{2,1,0} and(%and.2488, %not.503)
+  %select_n.2146 = f64[4,4,2]{2,1,0} select(%and.2487, %broadcast_in_dim.1670, %bitcast.60)
+  %mul.316 = f64[4,4,2]{2,1,0} multiply(%select_n.2147, %select_n.2146)
+  %add.1322 = f64[4,4,2]{2,1,0} add(%mul.317, %mul.316)
+  %abs.327 = f64[4,4,2]{2,1,0} abs(%add.1322)
+  %eq.1012 = pred[4,4,2]{2,1,0} compare(%abs.327, %eq.1023), direction=EQ
+  %and.2486 = pred[4,4,2]{2,1,0} and(%and.2512, %eq.1012)
+  %broadcast.2773 = s64[4,2]{1,0} broadcast(%constant.3063), dimensions={}
+  %shift_right_arithmetic.422 = s64[4,2]{1,0} shift-right-arithmetic(%select_n.2168, %broadcast.2773)
+  %convert_element_type.1074 = pred[4,2]{1,0} compare(%shift_right_arithmetic.422, %broadcast.2790), direction=NE
+  %broadcast_in_dim.1669 = f64[4,2]{1,0} broadcast(%constant.3062), dimensions={}
+  %broadcast_in_dim.1668 = f64[4,2]{1,0} broadcast(%constant.3061), dimensions={}
+  %select_n.2167 = f64[4,2]{1,0} select(%convert_element_type.1074, %broadcast_in_dim.1669, %broadcast_in_dim.1668)
+  %broadcast_in_dim.1667 = f64[4,4,2]{2,1,0} broadcast(%select_n.2167), dimensions={0,2}
+  %bitcast_convert_type.1810 = f64[4,2]{1,0} bitcast-convert(%select_n.2168)
+  %broadcast_in_dim.1666 = f64[4,4,2]{2,1,0} broadcast(%bitcast_convert_type.1810), dimensions={0,2}
+  %select_n.2145 = f64[4,4,2]{2,1,0} select(%and.2486, %broadcast_in_dim.1667, %broadcast_in_dim.1666)
+  %bitcast_convert_type.1803 = s64[4,4,2]{2,1,0} bitcast-convert(%select_n.2145)
+  %broadcast.2772 = s64[4,4,2]{2,1,0} broadcast(%param_6.54), dimensions={}
+  %and.2485 = s64[4,4,2]{2,1,0} and(%bitcast_convert_type.1803, %broadcast.2772)
+  %broadcast.2771 = s64[4,4,2]{2,1,0} broadcast(%param_5.50), dimensions={}
+  %eq.1011 = pred[4,4,2]{2,1,0} compare(%and.2485, %broadcast.2771), direction=EQ
+  %is_finite.193 = pred[4,4,2]{2,1,0} is-finite(%select_n.2145)
+  %not.502 = pred[4,4,2]{2,1,0} not(%is_finite.193)
+  %or.373 = pred[4,4,2]{2,1,0} or(%eq.1011, %not.502)
+  %sub.1146 = s64[4,4,2]{2,1,0} subtract(%bitcast_convert_type.1803, %and.2485)
+  %lt.1059 = s64[4,4,2]{2,1,0} broadcast(%constant.3067), dimensions={}
+  %lt.1052 = pred[4,4,2]{2,1,0} compare(%and.2485, %lt.1059), direction=LT
+  %not.501 = pred[4,4,2]{2,1,0} not(%eq.1011)
+  %and.2484 = pred[4,4,2]{2,1,0} and(%lt.1052, %not.501)
+  %and.2511 = pred[4,4,2]{2,1,0} broadcast(%eq.1024), dimensions={0,2}
+  %is_finite.192 = pred[4,4,2]{2,1,0} is-finite(%add.1322)
+  %not.500 = pred[4,4,2]{2,1,0} not(%is_finite.192)
+  %and.2483 = pred[4,4,2]{2,1,0} and(%and.2511, %not.500)
+  %select_n.2144 = f64[4,4,2]{2,1,0} select(%and.2483, %broadcast_in_dim.1670, %add.1322)
+  %is_finite.191 = pred[4,4,2]{2,1,0} is-finite(%select_n.2144)
+  %bitcast_convert_type.1802 = s64[4,4,2]{2,1,0} bitcast-convert(%select_n.2144)
+  %and.2482 = s64[4,4,2]{2,1,0} and(%bitcast_convert_type.1802, %broadcast.2772)
+  %eq.1010 = pred[4,4,2]{2,1,0} compare(%and.2482, %broadcast.2771), direction=EQ
+  %not.499 = pred[4,4,2]{2,1,0} not(%eq.1010)
+  %and.2481 = pred[4,4,2]{2,1,0} and(%is_finite.191, %not.499)
+  %clz.195 = s64[4,4,2]{2,1,0} count-leading-zeros(%and.2485)
+  %broadcast.2770 = s64[4,4,2]{2,1,0} broadcast(%constant.3059), dimensions={}
+  %add.1321 = s64[4,4,2]{2,1,0} add(%clz.195, %broadcast.2770)
+  %select_n.2143 = s64[4,4,2]{2,1,0} select(%and.2484, %add.1321, %broadcast.2771)
+  %lt.1051 = pred[4,4,2]{2,1,0} compare(%and.2482, %lt.1059), direction=LT
+  %broadcast.2769 = s64[4,4,2]{2,1,0} broadcast(%constant.3058), dimensions={}
+  %clz.194 = s64[4,4,2]{2,1,0} count-leading-zeros(%and.2482)
+  %subtract.117 = s64[4,4,2]{2,1,0} subtract(%broadcast.2769, %clz.194)
+  %broadcast.2768 = s64[4,4,2]{2,1,0} broadcast(%constant.3057), dimensions={}
+  %shift_right_arithmetic.417 = s64[4,4,2]{2,1,0} shift-right-arithmetic(%and.2482, %broadcast.2768)
+  %broadcast.2767 = s64[4,4,2]{2,1,0} broadcast(%constant.3056), dimensions={}
+  %add.1320 = s64[4,4,2]{2,1,0} add(%shift_right_arithmetic.417, %broadcast.2767)
+  %select_n.2142 = s64[4,4,2]{2,1,0} select(%lt.1051, %subtract.117, %add.1320)
+  %convert_element_type.1065 = s32[4,4,2]{2,1,0} convert(%select_n.2142)
+  %broadcast.2766 = s32[4,4,2]{2,1,0} broadcast(%constant.3055), dimensions={}
+  %add.1319 = s32[4,4,2]{2,1,0} add(%convert_element_type.1065, %broadcast.2766)
+  %broadcast.2765 = s32[4,4,2]{2,1,0} broadcast(%param_4.53), dimensions={}
+  %max.398 = s32[4,4,2]{2,1,0} maximum(%add.1319, %broadcast.2765)
+  %convert_element_type.1064 = s64[4,4,2]{2,1,0} convert(%max.398)
+  %min.408 = s64[4,4,2]{2,1,0} minimum(%select_n.2143, %convert_element_type.1064)
+  %select_n.2141 = s64[4,4,2]{2,1,0} select(%and.2481, %min.408, %broadcast.2771)
+  %min.407 = s64[4,4,2]{2,1,0} minimum(%select_n.2141, %select_n.2143)
+  %min.411 = s64[4,4,2]{2,1,0} broadcast(%constant.3054), dimensions={}
+  %clamp.63 = s64[4,4,2]{2,1,0} clamp(%broadcast.2771, %min.407, %min.411)
+  %shift_left.307 = s64[4,4,2]{2,1,0} shift-left(%and.2485, %clamp.63)
+  %sub.1145 = s64[4,4,2]{2,1,0} subtract(%select_n.2141, %select_n.2143)
+  %max.397 = s64[4,4,2]{2,1,0} maximum(%sub.1145, %broadcast.2771)
+  %shift_left.306 = s64[4,4,2]{2,1,0} shift-left(%max.397, %broadcast.2768)
+  %add.1318 = s64[4,4,2]{2,1,0} add(%shift_left.307, %shift_left.306)
+  %shift_left.305 = s64[4,4,2]{2,1,0} shift-left(%select_n.2141, %broadcast.2768)
+  %add.1317 = s64[4,4,2]{2,1,0} add(%and.2485, %shift_left.305)
+  %select_n.2140 = s64[4,4,2]{2,1,0} select(%and.2484, %add.1318, %add.1317)
+  %or.372 = s64[4,4,2]{2,1,0} or(%sub.1146, %select_n.2140)
+  %select_n.2139 = s64[4,4,2]{2,1,0} select(%or.373, %bitcast_convert_type.1803, %or.372)
+  %bitcast_convert_type.1801 = f64[4,4,2]{2,1,0} bitcast-convert(%select_n.2139)
+  %sub.1144 = s64[4,4,2]{2,1,0} subtract(%bitcast_convert_type.1802, %shift_left.305)
+  %select_n.2138 = s64[4,4,2]{2,1,0} select(%and.2481, %sub.1144, %bitcast_convert_type.1802)
+  %bitcast_convert_type.1800 = f64[4,4,2]{2,1,0} bitcast-convert(%select_n.2138)
+  %mul.315 = f64[4,4,2]{2,1,0} multiply(%bitcast_convert_type.1801, %bitcast_convert_type.1800)
+  %bitcast_convert_type.1799 = s64[4,4,2]{2,1,0} bitcast-convert(%mul.315)
+  %and.2480 = s64[4,4,2]{2,1,0} and(%bitcast_convert_type.1799, %broadcast.2772)
+  %eq.1009 = pred[4,4,2]{2,1,0} compare(%and.2480, %broadcast.2771), direction=EQ
+  %shift_right_arithmetic.416 = s64[4,4,2]{2,1,0} shift-right-arithmetic(%and.2480, %broadcast.2768)
+  %eq.1022 = s64[4,4,2]{2,1,0} broadcast(%constant.3044), dimensions={}
+  %eq.1008 = pred[4,4,2]{2,1,0} compare(%shift_right_arithmetic.416, %eq.1022), direction=EQ
+  %or.371 = pred[4,4,2]{2,1,0} or(%eq.1009, %eq.1008)
+  %sub.1143 = s64[4,4,2]{2,1,0} subtract(%bitcast_convert_type.1799, %and.2480)
+  %convert_element_type.1063 = s32[4,4,2]{2,1,0} convert(%shift_right_arithmetic.416)
+  %sub.1154 = s32[4,2]{1,0} subtract(%sub.1156, %max.401)
+  %add.1335 = s32[4,4,2]{2,1,0} broadcast(%sub.1154), dimensions={0,2}
+  %add.1316 = s32[4,4,2]{2,1,0} add(%convert_element_type.1063, %add.1335)
+  %gt.184 = pred[4,4,2]{2,1,0} compare(%add.1316, %broadcast.2765), direction=GT
+  %convert_element_type.1073 = s64[4,2]{1,0} convert(%sub.1154)
+  %shift_left.311 = s64[4,2]{1,0} shift-left(%convert_element_type.1073, %broadcast.2786)
+  %add.1334 = s64[4,4,2]{2,1,0} broadcast(%shift_left.311), dimensions={0,2}
+  %add.1315 = s64[4,4,2]{2,1,0} add(%and.2480, %add.1334)
+  %eq.1007 = pred[4,4,2]{2,1,0} compare(%shift_right_arithmetic.416, %broadcast.2771), direction=EQ
+  %neg.169 = s32[4,2]{1,0} negate(%sub.1154)
+  %broadcast_in_dim.1665 = s32[4,4,2]{2,1,0} broadcast(%neg.169), dimensions={0,2}
+  %sub.1153 = s32[4,4,2]{2,1,0} broadcast(%constant.3073), dimensions={}
+  %sub.1142 = s32[4,4,2]{2,1,0} subtract(%sub.1153, %add.1316)
+  %select_n.2137 = s32[4,4,2]{2,1,0} select(%eq.1007, %broadcast_in_dim.1665, %sub.1142)
+  %eq.1006 = pred[4,4,2]{2,1,0} compare(%select_n.2137, %broadcast.2765), direction=EQ
+  %gt.185 = s32[4,4,2]{2,1,0} broadcast(%constant.3043), dimensions={}
+  %gt.183 = pred[4,4,2]{2,1,0} compare(%select_n.2137, %gt.185), direction=GT
+  %and.2510 = s64[4,4,2]{2,1,0} broadcast(%constant.3050), dimensions={}
+  %and.2479 = s64[4,4,2]{2,1,0} and(%and.2480, %and.2510)
+  %or.370 = s64[4,4,2]{2,1,0} or(%and.2479, %lt.1059)
+  %select_n.2136 = s64[4,4,2]{2,1,0} select(%eq.1007, %and.2479, %or.370)
+  %clamp.62 = s32[4,4,2]{2,1,0} clamp(%sub.1153, %select_n.2137, %gt.185)
+  %convert_element_type.1062 = s64[4,4,2]{2,1,0} convert(%clamp.62)
+  %shift_right_arithmetic.415 = s64[4,4,2]{2,1,0} shift-right-arithmetic(%select_n.2136, %convert_element_type.1062)
+  %broadcast.2764 = s64[4,4,2]{2,1,0} broadcast(%constant.3052), dimensions={}
+  %shift_left.304 = s64[4,4,2]{2,1,0} shift-left(%broadcast.2764, %convert_element_type.1062)
+  %broadcast.2763 = s64[4,4,2]{2,1,0} broadcast(%constant.3042), dimensions={}
+  %add.1314 = s64[4,4,2]{2,1,0} add(%shift_left.304, %broadcast.2763)
+  %and.2478 = s64[4,4,2]{2,1,0} and(%select_n.2136, %add.1314)
+  %add.1313 = s64[4,4,2]{2,1,0} add(%convert_element_type.1062, %broadcast.2763)
+  %shift_left.303 = s64[4,4,2]{2,1,0} shift-left(%broadcast.2764, %add.1313)
+  %gt.182 = pred[4,4,2]{2,1,0} compare(%and.2478, %shift_left.303), direction=GT
+  %eq.1005 = pred[4,4,2]{2,1,0} compare(%and.2478, %shift_left.303), direction=EQ
+  %and.2477 = s64[4,4,2]{2,1,0} and(%shift_right_arithmetic.415, %broadcast.2764)
+  %ne.388 = pred[4,4,2]{2,1,0} compare(%and.2477, %broadcast.2771), direction=NE
+  %and.2476 = pred[4,4,2]{2,1,0} and(%eq.1005, %ne.388)
+  %or.369 = pred[4,4,2]{2,1,0} or(%gt.182, %and.2476)
+  %convert_element_type.1061 = s64[4,4,2]{2,1,0} convert(%or.369)
+  %add.1312 = s64[4,4,2]{2,1,0} add(%shift_right_arithmetic.415, %convert_element_type.1061)
+  %select_n.2135 = s64[4,4,2]{2,1,0} select(%gt.183, %broadcast.2771, %add.1312)
+  %select_n.2134 = s64[4,4,2]{2,1,0} select(%eq.1006, %and.2480, %select_n.2135)
+  %select_n.2133 = s64[4,4,2]{2,1,0} select(%gt.184, %add.1315, %select_n.2134)
+  %or.368 = s64[4,4,2]{2,1,0} or(%sub.1143, %select_n.2133)
+  %select_n.2132 = s64[4,4,2]{2,1,0} select(%or.371, %bitcast_convert_type.1799, %or.368)
+  %bitcast_convert_type.1798 = f64[4,4,2]{2,1,0} bitcast-convert(%select_n.2132)
+  %reduce_sum.37 = f64[4,4]{1,0} reduce(%bitcast_convert_type.1798, %constant.3068), dimensions={2}, to_apply=%region_52.313
+  %param_3.49 = f64[4]{0} parameter(3)
+  %broadcast.2762 = f64[4,4]{1,0} broadcast(%param_3.49), dimensions={0}
+  %multiply.47 = f64[4,4]{1,0} multiply(%reduce_sum.37, %broadcast.2762)
+  %abs.326 = f64[4,4]{1,0} abs(%multiply.47)
+  %eq.1004 = pred[4,4]{1,0} compare(%abs.326, %broadcast.2801), direction=EQ
+  %and.2475 = pred[4,4]{1,0} and(%and.2533, %eq.1004)
+  %shift_right_arithmetic.421 = s64[4]{0} shift-right-arithmetic(%bitcast_convert_type.1814, %broadcast.2797)
+  %convert_element_type.1072 = pred[4]{0} compare(%shift_right_arithmetic.421, %broadcast.2808), direction=NE
+  %select_n.2166 = f64[4]{0} select(%convert_element_type.1072, %broadcast_in_dim.1678, %broadcast_in_dim.1677)
+  %broadcast_in_dim.1664 = f64[4,4]{1,0} broadcast(%select_n.2166), dimensions={0}
+  %broadcast_in_dim.1663 = f64[4,4]{1,0} broadcast(%bitcast.67), dimensions={0}
+  %select_n.2131 = f64[4,4]{1,0} select(%and.2475, %broadcast_in_dim.1664, %broadcast_in_dim.1663)
+  %bitcast_convert_type.1797 = s64[4,4]{1,0} bitcast-convert(%select_n.2131)
+  %and.2474 = s64[4,4]{1,0} and(%bitcast_convert_type.1797, %broadcast.2805)
+  %eq.1003 = pred[4,4]{1,0} compare(%and.2474, %broadcast.2804), direction=EQ
+  %is_finite.190 = pred[4,4]{1,0} is-finite(%select_n.2131)
+  %not.498 = pred[4,4]{1,0} not(%is_finite.190)
+  %or.367 = pred[4,4]{1,0} or(%eq.1003, %not.498)
+  %sub.1141 = s64[4,4]{1,0} subtract(%bitcast_convert_type.1797, %and.2474)
+  %lt.1050 = pred[4,4]{1,0} compare(%and.2474, %lt.1066), direction=LT
+  %not.497 = pred[4,4]{1,0} not(%eq.1003)
+  %and.2473 = pred[4,4]{1,0} and(%lt.1050, %not.497)
+  %and.2509 = pred[4,4]{1,0} broadcast(%eq.1035), dimensions={0}
+  %is_finite.189 = pred[4,4]{1,0} is-finite(%multiply.47)
+  %not.496 = pred[4,4]{1,0} not(%is_finite.189)
+  %and.2472 = pred[4,4]{1,0} and(%and.2509, %not.496)
+  %select_n.2130 = f64[4,4]{1,0} select(%and.2472, %max.403, %multiply.47)
+  %is_finite.188 = pred[4,4]{1,0} is-finite(%select_n.2130)
+  %bitcast_convert_type.1796 = s64[4,4]{1,0} bitcast-convert(%select_n.2130)
+  %and.2471 = s64[4,4]{1,0} and(%bitcast_convert_type.1796, %broadcast.2805)
+  %eq.1002 = pred[4,4]{1,0} compare(%and.2471, %broadcast.2804), direction=EQ
+  %not.495 = pred[4,4]{1,0} not(%eq.1002)
+  %and.2470 = pred[4,4]{1,0} and(%is_finite.188, %not.495)
+  %clz.193 = s64[4,4]{1,0} count-leading-zeros(%and.2474)
+  %add.1311 = s64[4,4]{1,0} add(%clz.193, %broadcast.2796)
+  %select_n.2129 = s64[4,4]{1,0} select(%and.2473, %add.1311, %broadcast.2804)
+  %lt.1049 = pred[4,4]{1,0} compare(%and.2471, %lt.1066), direction=LT
+  %clz.192 = s64[4,4]{1,0} count-leading-zeros(%and.2471)
+  %subtract.116 = s64[4,4]{1,0} subtract(%broadcast.2795, %clz.192)
+  %shift_right_arithmetic.414 = s64[4,4]{1,0} shift-right-arithmetic(%and.2471, %broadcast.2794)
+  %add.1310 = s64[4,4]{1,0} add(%shift_right_arithmetic.414, %broadcast.2793)
+  %select_n.2128 = s64[4,4]{1,0} select(%lt.1049, %subtract.116, %add.1310)
+  %convert_element_type.1060 = s32[4,4]{1,0} convert(%select_n.2128)
+  %add.1309 = s32[4,4]{1,0} add(%convert_element_type.1060, %broadcast.2792)
+  %max.396 = s32[4,4]{1,0} maximum(%add.1309, %broadcast.2803)
+  %convert_element_type.1059 = s64[4,4]{1,0} convert(%max.396)
+  %min.406 = s64[4,4]{1,0} minimum(%select_n.2129, %convert_element_type.1059)
+  %select_n.2127 = s64[4,4]{1,0} select(%and.2470, %min.406, %broadcast.2804)
+  %min.405 = s64[4,4]{1,0} minimum(%select_n.2127, %select_n.2129)
+  %clamp.61 = s64[4,4]{1,0} clamp(%broadcast.2804, %min.405, %min.413)
+  %shift_left.302 = s64[4,4]{1,0} shift-left(%and.2474, %clamp.61)
+  %sub.1140 = s64[4,4]{1,0} subtract(%select_n.2127, %select_n.2129)
+  %max.395 = s64[4,4]{1,0} maximum(%sub.1140, %broadcast.2804)
+  %shift_left.301 = s64[4,4]{1,0} shift-left(%max.395, %broadcast.2794)
+  %add.1308 = s64[4,4]{1,0} add(%shift_left.302, %shift_left.301)
+  %shift_left.300 = s64[4,4]{1,0} shift-left(%select_n.2127, %broadcast.2794)
+  %add.1307 = s64[4,4]{1,0} add(%and.2474, %shift_left.300)
+  %select_n.2126 = s64[4,4]{1,0} select(%and.2473, %add.1308, %add.1307)
+  %or.366 = s64[4,4]{1,0} or(%sub.1141, %select_n.2126)
+  %select_n.2125 = s64[4,4]{1,0} select(%or.367, %bitcast_convert_type.1797, %or.366)
+  %bitcast_convert_type.1795 = f64[4,4]{1,0} bitcast-convert(%select_n.2125)
+  %sub.1139 = s64[4,4]{1,0} subtract(%bitcast_convert_type.1796, %shift_left.300)
+  %select_n.2124 = s64[4,4]{1,0} select(%and.2470, %sub.1139, %bitcast_convert_type.1796)
+  %bitcast_convert_type.1794 = f64[4,4]{1,0} bitcast-convert(%select_n.2124)
+  %mul.314 = f64[4,4]{1,0} multiply(%bitcast_convert_type.1795, %bitcast_convert_type.1794)
+  %ne.387 = pred[4,4]{1,0} compare(%mul.314, %mul.314), direction=NE
+  %min.404 = f64[4,4]{1,0} minimum(%mul.318, %mul.314)
+  %select_n.2123 = f64[4,4]{1,0} select(%ne.387, %mul.318, %min.404)
+  %select_n.2122 = f64[4,4]{1,0} select(%ne.389, %mul.314, %select_n.2123)
+  %max.394 = f64[4,4]{1,0} maximum(%mul.318, %mul.314)
+  %select_n.2121 = f64[4,4]{1,0} select(%ne.387, %mul.314, %max.394)
+  %select_n.2120 = f64[4,4]{1,0} select(%ne.389, %mul.318, %select_n.2121)
+  %add.1306 = f64[4,4]{1,0} add(%select_n.2122, %select_n.2120)
+  %param_2.36 = f64[4]{0} parameter(2)
+  %broadcast.2761 = f64[4,4]{1,0} broadcast(%param_2.36), dimensions={0}
+  %multiply.46 = f64[4,4]{1,0} multiply(%add.1306, %broadcast.2761)
+  %mul.313 = f64[4,4]{1,0} multiply(%mul.322, %multiply.46)
+  ROOT %add.1305 = f64[4,4]{1,0} add(%add.1333, %mul.313)
+}

@@ -1,4 +1,7 @@
 ---
+# `.handoff/` is a session-handoff working directory on work-in-progress branches;
+# `handoff-guard` keeps it out of main, and its copied files are not linted.
+exclude: ^\.handoff/
 repos:
   - repo: meta
     hooks:

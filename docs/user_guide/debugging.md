@@ -104,6 +104,29 @@ The general form: `"off"` and `"warning"` change which failures are *visible* an
 much of the failure survives into what you can inspect. A hypothesis formed from a
 degraded observation is a hypothesis about the log level as much as about the model.
 
+### Core plan records
+
+A compiled solve at `"debug"` writes one `core plan record` line per solved regime,
+period and core, after the widths are chosen. Each is a JSON object, and the log record
+also carries it as its `core_plan_record` attribute. It names:
+
+- the value's state axes and extents, its logical shape and the shard one device holds;
+- the devices it is laid out on;
+- each planner axis's extent, the selected width, and whether that axis is mapped as one
+  dense block or streamed;
+- the bytes admission charged: solve-lifetime owners, already-resident storage, the
+  compiler's raw peak and represented reservation;
+- what the core's value transfers place on each device, their operator scratch, and the
+  whole-value bytes they gather;
+- the collectives the selected executable's optimized program contains.
+
+The records are built from planning results and compile-time reports; writing them
+synchronizes no device. Gathered bytes and compiled collectives are what was planned and
+emitted, not observed communication, which only a profiler measures. Release and
+donation events are logged at `"debug"` too, each naming the artifact and the dispatch
+that closed it. `benchmarks/warm_solve_phases.py --plan-records <file>` collects the
+records of a run.
+
 ## Debug snapshots
 
 When `log_path` is provided, pylcm saves a **snapshot directory** containing all inputs

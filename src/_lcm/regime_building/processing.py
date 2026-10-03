@@ -141,6 +141,7 @@ from _lcm.regime_building.gated_edges import (
     get_edge_simulate_gate_evaluator,
     source_reads_folded_wbar,
 )
+from _lcm.regime_building.invariant_blocking import bound_state_names
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
 )
@@ -259,6 +260,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
@@ -727,6 +729,7 @@ def process_regimes(
         phased_specs=phased_specs,
         placement=placement,
         sharded_state_names_by_regime=sharded_state_names_by_regime,
+        invariant_block_widths=resolved_execution.invariant_block_widths,
         reachability=reachability,
         regime_names_to_ids=regime_names_to_ids,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -910,6 +913,9 @@ class _CanonicalRegimeBuilder:
     sharded_state_names_by_regime: MappingProxyType[RegimeName, frozenset[StateName]]
     """Immutable mapping of regime names to their states carrying a device axis."""
 
+    invariant_block_widths: MappingProxyType[StateName, int]
+    """States the solve evaluates one code at a time, with their block widths."""
+
     reachability: ModelReachability
     """The model's static solution and simulation regime graphs."""
 
@@ -1049,6 +1055,17 @@ class _CanonicalRegimeBuilder:
                 state_names=self.state_action_spaces[regime_name].state_names,
                 grids=self.all_grids[regime_name],
             )
+            invariant_bindings = bound_state_names(
+                user_regime=user_regime,
+                block_widths=self.invariant_block_widths,
+                state_names=self.state_action_spaces[regime_name].state_names,
+            )
+            _fail_if_blocked_regime_reads_unsupported_inputs(
+                regime_name=regime_name,
+                invariant_bindings=invariant_bindings,
+                fold_state_names=fold_state_names,
+                edge_reference_regimes=edge_reference_regimes,
+            )
             # Empty on the first build, and for every regime declaring no
             # gated edge.
             gated_continuations = MappingProxyType(
@@ -1098,6 +1115,7 @@ class _CanonicalRegimeBuilder:
                 edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=tuple(user_regime.gated_edges),
                 fold_state_names=fold_state_names,
+                invariant_bindings=invariant_bindings,
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
             )
@@ -3169,6 +3187,7 @@ def _build_solution_phase(  # noqa: PLR0915
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
+    invariant_bindings: tuple[StateName, ...] = (),
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
@@ -3219,6 +3238,10 @@ def _build_solution_phase(  # noqa: PLR0915
         value_aware_feasibility: The regime's value constraints and resolved
             same-period references, resolved once for both phases so the two
             apply the identical mask. Empty for a singleton regime.
+        invariant_bindings: Invariant states the solve evaluates one code at a
+            time. The solve `Q_and_F` reads each one's continuation at the
+            evaluated code, so its coordinate is dropped like a co-mapped
+            state's. Empty when nothing is blocked.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
@@ -3394,7 +3417,9 @@ def _build_solution_phase(  # noqa: PLR0915
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
-            co_map_state_names=co_map_state_names,
+            # A blocked program reads every continuation carrying a bound state
+            # through that code's block, which has the state's axis removed.
+            co_map_state_names=(*co_map_state_names, *invariant_bindings),
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
@@ -3484,6 +3509,7 @@ def _build_solution_phase(  # noqa: PLR0915
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+        invariant_bindings=invariant_bindings,
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
@@ -7568,6 +7594,39 @@ def _co_map_state_names(
         ):
             co_map.append(name)
     return tuple(co_map)
+
+
+def _fail_if_blocked_regime_reads_unsupported_inputs(
+    *,
+    regime_name: RegimeName,
+    invariant_bindings: tuple[StateName, ...],
+    fold_state_names: tuple[StateName, ...],
+    edge_reference_regimes: tuple[RegimeName, ...],
+) -> None:
+    """Refuse blocking a regime that folds a process or reads an edge reference.
+
+    Raises:
+        ExecutionPlanningError: The regime binds an invariant state and folds a
+            process or reads a gated-edge reference value.
+
+    """
+    if not invariant_bindings:
+        return
+    failures = [
+        *(f"folds the process {name!r}" for name in fold_state_names),
+        *(
+            f"reads the edge-reference value of {name!r}"
+            for name in edge_reference_regimes
+        ),
+    ]
+    if failures:
+        msg = (
+            f"ExecutionConfig.invariant_block_widths cannot block regime "
+            f"{regime_name!r}: it " + "; ".join(failures) + ". Remove "
+            f"{invariant_bindings[0]!r} from ExecutionConfig.invariant_block_widths "
+            "to solve it unblocked."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 def _fold_state_names(

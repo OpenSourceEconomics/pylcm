@@ -402,6 +402,16 @@ class SolverBuildContext:
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
     """
 
+    invariant_bindings: tuple[StateName, ...] = ()
+    """Invariant states this regime's solve evaluates one code at a time.
+
+    Set from `ExecutionConfig.invariant_block_widths` for a non-terminal regime
+    carrying a blocked state on a discrete grid. The solve-phase `Q_and_F`
+    reads the continuation of each such state at the evaluated code, so a
+    program bound to one code reads only that code's block of every
+    continuation carrying the state. Empty when nothing is blocked.
+    """
+
     stakeholders: tuple[str, ...] | None = None
     """Ordered stakeholder names for a collective regime, or `None` (singleton).
 

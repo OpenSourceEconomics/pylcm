@@ -83,6 +83,7 @@ from _lcm.solution.period_capture import (
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import KernelOutput
 
 # How faithfully a replay reproduced the captured run:
@@ -371,6 +372,12 @@ def _compile_cores_for_one_period(
         retain_replay=kernel_kwargs["retain_replay"],
         selected_artifact_keys=kernel_kwargs["selected_artifact_keys"],
     )
+    if any(program.invariant_binding is not None for program in graph.values()):
+        msg = (
+            f"Regime {kernel_kwargs['regime_name']!r} is solved one invariant code "
+            f"at a time in period {period}, and such a period cannot be replayed."
+        )
+        raise ExecutionPlanningError(msg)
     declared_widths: Mapping[str, int] = (
         MappingProxyType({}) if axis_widths is None else axis_widths
     )
