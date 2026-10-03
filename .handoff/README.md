@@ -29,7 +29,19 @@ Shared JUnit receipt identity repair: [receipt-junit-identity.md](receipt-junit-
 This helper-only repair preserves parameter labels. Its original native receipt
 observations are historical; it does not revise the approved CI decisions above.
 
-## Stage status (2026-10-02)
+## Current cache checkpoint (2026-10-03)
+
+The root CI and JUnit identity work is included by a plain merge from
+`b1dc9d077ccd1289c41010615132be11df40a53d`. Numerical source and certificates
+remain exactly the accepted `5cb24a1b3c8ebf075c218953a6cf1aa63009cd8f` bytes.
+The maintained generator registers the cache test without inventing weights
+or changing provenance, budgets, exclusions or the four-shard Mac layout.
+Cache certification and performance acceptance remain deferred; this branch
+is independent of the required Stage 8A cascade. Direct SSH is authorized,
+superseding the historical owner-only route. Production submission still waits
+for passing checks and authenticated access.
+
+## Historical stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|
