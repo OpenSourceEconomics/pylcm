@@ -151,12 +151,35 @@ def test_isolated_four_device_invocation_declares_the_cpu_hardware_profile(
 
 
 def test_gpu_suite_invocations_use_the_bounded_policy_launcher() -> None:
-    """Both GPU workflows activate their declared bounded policy."""
+    """Both GPU workflows retain one bounded suite and bounded scoped witnesses."""
     for name in ("gpu32.yml", "gpu64.yml"):
         commands = [
             str(step.get("run", "")) for _, _, step in _steps(_WORKFLOWS / name)
         ]
         policy_commands = [command for command in commands if " test --" in command]
-        assert len(policy_commands) == 1
-        assert "--ci-policy=pr" in policy_commands[0]
-        assert "--hardware-profile=gpu-small" in policy_commands[0]
+        suites = [
+            command
+            for command in policy_commands
+            if name != "gpu32.yml"
+            or "--report-dir=reports/public-replay-no-cache" not in command
+        ]
+        assert len(suites) == 1
+        for command in policy_commands:
+            assert "--ci-policy=pr" in command
+            assert "--hardware-profile=gpu-small" in command
+
+
+def test_public_period_gpu_witness_has_a_scoped_startup_disabled_cache() -> None:
+    """The extra GPU process runs only the declared public replay witnesses."""
+    witnesses = [
+        step
+        for _, _, step in _steps(_WORKFLOWS / "gpu32.yml")
+        if "--report-dir=reports/public-replay-no-cache" in str(step.get("run", ""))
+    ]
+    assert len(witnesses) == 1
+    step = witnesses[0]
+    assert step["env"]["JAX_ENABLE_COMPILATION_CACHE"] == "false"
+    command = str(step["run"])
+    assert "--precision=auto" in command
+    assert "-k 'public_solve_captures_adjacent_periods and False'" in command
+    assert command.rstrip().endswith("tests/solution/test_period_replay.py")

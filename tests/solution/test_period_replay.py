@@ -19,6 +19,7 @@ import cloudpickle
 import jax
 import numpy as np
 import pytest
+from jax.experimental.compilation_cache import compilation_cache
 
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
@@ -332,7 +333,7 @@ def test_malformed_captured_tile_widths_are_refused(
 
 
 @pytest.mark.parametrize("budget", [None, 32 * 1024**2])
-@pytest.mark.parametrize("persistent_compilation_cache", [True, False], indirect=True)
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     *,
@@ -417,11 +418,16 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
             )
 
 
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_public_interrupted_capture_has_inputs_without_a_reference(
-    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persistent_compilation_cache: bool,
 ) -> None:
     """An interruption after entry leaves readable inputs and no parity claim."""
+    assert persistent_compilation_cache is False
     capture = PeriodCapture(
         directory=tmp_path,
         periods=(("working_life", 0),),
@@ -462,15 +468,118 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     assert replay.in_context_seconds is None
 
 
+@pytest.mark.parametrize("operation", ["capture", "replay"])
+@pytest.mark.parametrize("persistent_compilation_cache", [True], indirect=True)
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
+def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
+    *,
+    operation: str,
+    persistent_compilation_cache: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real persistent hit cannot masquerade as complete compiler evidence."""
+    assert persistent_compilation_cache is True
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    capture = PeriodCapture(
+        directory=tmp_path / "fresh",
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    _reset_test_compilation_cache(enabled=False)
+    _make_public_capture_model().solve(
+        params=params, log_level="off", period_capture=capture
+    )
+    reference = load_period_capture(directory=capture.directory / "working_life@0")
+    assert reference.completed
+    hlo = reference.metadata["optimized_hlo"]
+    assert isinstance(hlo, dict)
+    module_names = {
+        name
+        for core in hlo.values()
+        for name in re.findall(r"^HloModule ([^,\s]+)", core["text"], re.MULTILINE)
+    }
+    assert module_names
+
+    _reset_test_compilation_cache(enabled=True)
+    _make_public_capture_model().solve(params=params, log_level="off")
+    # Model.solve owns its executable cache. Clear JAX's in-memory caches too,
+    # so the next fresh model cannot reuse those in-memory executables.
+    jax.clear_caches()
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="jax._src.compiler")
+    fresh = _make_public_capture_model()
+    cached_capture = PeriodCapture(
+        directory=tmp_path / "cached",
+        periods=capture.periods,
+        source_identity=capture.source_identity,
+    )
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    interrupt = _InterruptCapturedPeriod()
+    logger = logging.getLogger("lcm")
+    logger.addFilter(interrupt)
+    try:
+        if operation == "capture":
+            with pytest.raises(
+                ValueError, match="compiler memory metadata is unavailable"
+            ):
+                fresh.solve(
+                    params=params,
+                    log_level="off",
+                    period_capture=cached_capture,
+                )
+        else:
+            with pytest.raises(
+                ValueError, match="compiler memory metadata is unavailable"
+            ):
+                fresh.replay_period(
+                    directory=capture.directory / "working_life@0",
+                    params=params,
+                    source_identity=capture.source_identity,
+                )
+    finally:
+        logger.removeFilter(interrupt)
+    assert all(
+        any(
+            f"Persistent compilation cache hit for '{name}'" in record.getMessage()
+            for record in caplog.records
+            if record.name == "jax._src.compiler"
+        )
+        for name in module_names
+    )
+    assert not (tmp_path / "cached" / "working_life@0" / "entry.h5").exists()
+
+
 @pytest.fixture
-def persistent_compilation_cache(request: pytest.FixtureRequest) -> Iterator[bool]:
-    """Exercise public replay with both persistent-cache settings."""
-    original = jax.config.jax_enable_compilation_cache
-    jax.config.update("jax_enable_compilation_cache", request.param)
+def persistent_compilation_cache(
+    *, request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[bool]:
+    """Own an isolated test cache, including JAX's memoized enablement state."""
+    settings = {
+        "jax_enable_compilation_cache": request.param,
+        "jax_compilation_cache_dir": str(tmp_path / "jax-cache"),
+        "jax_persistent_cache_min_compile_time_secs": 0,
+        "jax_persistent_cache_min_entry_size_bytes": -1,
+    }
+    original = {name: getattr(jax.config, name) for name in settings}
+    for name, value in settings.items():
+        jax.config.update(name, value)
+    _reset_test_compilation_cache(enabled=request.param)
     try:
         yield request.param
     finally:
-        jax.config.update("jax_enable_compilation_cache", original)
+        for name, value in original.items():
+            jax.config.update(name, value)
+        _reset_test_compilation_cache(enabled=original["jax_enable_compilation_cache"])
+
+
+def _reset_test_compilation_cache(*, enabled: bool) -> None:
+    """Reset test-process caches through JAX's public APIs, never in production."""
+    jax.config.update("jax_enable_compilation_cache", enabled)
+    compilation_cache.reset_cache()
+    jax.clear_caches()
 
 
 @pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])
