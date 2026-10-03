@@ -79,6 +79,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.model import Model
+from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
@@ -147,6 +148,53 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
 
 
 _PARAMS = {"discount_factor": 0.95}
+
+
+@_skip_pytest_parallel
+def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restoring a capture never stages its value arrays on an excluded device."""
+    model = _make_three_type_model(distributed=False, devices=(1,))
+    fresh = _make_three_type_model(distributed=False, devices=(1,))
+    identity = {"model": "three-type-device-placement"}
+    result = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        period_capture=PeriodCapture(
+            directory=tmp_path,
+            periods=(("working", 0),),
+            source_identity=identity,
+        ),
+    )
+    original_put = jax.device_put
+    uploaded_devices: list[set[jax.Device]] = []
+
+    # keyword-only-exempt: library-callback=jax.device_put
+    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+        uploaded = original_put(value, device, **kwargs)
+        # Each persisted value has three types and twelve wealth points. Grid
+        # construction has smaller leaves; retain the real transfer in every case.
+        if isinstance(value, np.ndarray) and value.size == 36:
+            assert isinstance(uploaded, jax.Array)
+            uploaded_devices.append(uploaded.devices())
+        return uploaded
+
+    with monkeypatch.context() as probe:
+        probe.setattr(jax, "device_put", record_put)
+        replay = fresh.replay_period(
+            directory=tmp_path / "working@0",
+            params=_PARAMS,
+            source_identity=identity,
+        )
+    assert uploaded_devices
+    assert all(devices == {jax.devices()[1]} for devices in uploaded_devices)
+    assert replay.reference_matches is True
+    assert replay.optimized_hlo_matches is True
+    np.testing.assert_array_equal(
+        np.asarray(replay.value).view(np.uint8),
+        np.asarray(result.values[0]["working"]).view(np.uint8),
+    )
 
 
 def _ordered_eager_sharding(*, explicit: bool = False) -> jax.NamedSharding:
