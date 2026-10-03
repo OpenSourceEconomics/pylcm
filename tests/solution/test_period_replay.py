@@ -12,14 +12,16 @@ replayed is what ran — not a reconstruction that might differ from it.
 import logging
 import math
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import cloudpickle
+import jax
 import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
-from _lcm.solution import backward_induction, period_replay
+from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ResultRetention
@@ -330,6 +332,7 @@ def test_malformed_captured_tile_widths_are_refused(
 
 
 @pytest.mark.parametrize("budget", [None, 32 * 1024**2])
+@pytest.mark.parametrize("persistent_compilation_cache", [True, False], indirect=True)
 @pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     *,
@@ -337,8 +340,10 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     monkeypatch: pytest.MonkeyPatch,
     budget: int | None,
     caplog: pytest.LogCaptureFixture,
+    persistent_compilation_cache: bool,
 ) -> None:
     """A fresh public model reproduces completed captured values bit for bit."""
+    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
     capture = PeriodCapture(
         directory=tmp_path,
@@ -455,6 +460,34 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     )
     assert replay.reference_matches is None
     assert replay.in_context_seconds is None
+
+
+@pytest.fixture
+def persistent_compilation_cache(request: pytest.FixtureRequest) -> Iterator[bool]:
+    """Exercise public replay with both persistent-cache settings."""
+    original = jax.config.jax_enable_compilation_cache
+    jax.config.update("jax_enable_compilation_cache", request.param)
+    try:
+        yield request.param
+    finally:
+        jax.config.update("jax_enable_compilation_cache", original)
+
+
+@pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])
+def test_optimized_hlo_identity_preserves_backend_configuration_values(
+    *, nested_value: int, equal: bool
+) -> None:
+    """JSON member ordering is irrelevant while backend configuration values bind."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    original = (
+        'ROOT x = f32[] constant(1), backend_config={"z":1,"nested":{"b":2,"a":3}}\n'
+    )
+    reordered = (
+        'ROOT x = f32[] constant(1), backend_config={"nested":{"a":'
+        f'{nested_value},"b":2}},"z":1}}  \n\n'
+    )
+    assert (canonicalize(original) == canonicalize(reordered)) is equal
 
 
 class _InterruptCapturedPeriod(logging.Filter):
