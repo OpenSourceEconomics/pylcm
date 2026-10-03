@@ -12,6 +12,7 @@ replayed is what ran — not a reconstruction that might differ from it.
 import logging
 import math
 import re
+from pathlib import Path
 
 import cloudpickle
 import numpy as np
@@ -19,13 +20,14 @@ import pytest
 
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay
-from lcm import AgeGrid, ExecutionConfig, Model
+from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, persistence
 from lcm.persistence import replay_period
 from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
+from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
     get_model,
@@ -325,3 +327,59 @@ def test_malformed_captured_tile_widths_are_refused(
 
     with pytest.raises(error):
         replay_period(directory=tmp_path / "working_life@1")
+
+
+def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
+    tmp_path: Path,
+) -> None:
+    """A fresh public model reproduces completed captured values bit for bit."""
+    capture_type = getattr(persistence, "PeriodCapture", None)
+    assert capture_type is not None, "Public production period capture is required"
+    capture = capture_type(
+        directory=tmp_path,
+        periods=(("retirement", 1), ("working_life", 0)),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    base = retirement_model.get_model(n_periods=_N_PERIODS)
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    regimes = {
+        name: regime.replace(
+            states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+            actions={
+                **regime.actions,
+                "consumption": LinSpacedGrid(start=1, stop=4, n_points=5),
+            },
+        )
+        if name != "dead"
+        else regime
+        for name, regime in base.user_regimes.items()
+    }
+    model = Model(
+        regimes=regimes,
+        ages=base.ages,
+        regime_id_class=retirement_model.RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        initial_regimes=initial_regimes_of(model=base),
+    )
+    result = model.solve(
+        params=params,
+        log_level="off",
+        period_capture=capture,  # ty: ignore[unknown-argument] - test-first public seam
+    )
+    fresh = Model(
+        regimes=regimes,
+        ages=base.ages,
+        regime_id_class=retirement_model.RegimeId,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        initial_regimes=initial_regimes_of(model=base),
+    )
+    for regime_name, period in capture.periods:
+        replay = fresh.replay_period(  # ty: ignore[unresolved-attribute] - test-first public seam
+            directory=tmp_path / f"{regime_name}@{period}",
+            params=params,
+            source_identity={"model": "tiny-public-model-v1"},
+        )
+        np.testing.assert_array_equal(
+            np.asarray(replay.value).view(np.uint8),
+            np.asarray(result.values[period][regime_name]).view(np.uint8),
+        )
