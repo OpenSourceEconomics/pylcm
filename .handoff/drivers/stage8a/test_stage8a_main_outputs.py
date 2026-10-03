@@ -452,7 +452,7 @@ def test_worker_main_receipts_are_accepted_by_the_campaign_validator(
                 "SLURM_JOB_ID": "123",
                 "SLURM_STEP_ID": "2",
                 "SLURM_PROCID": str(job),
-                "SLURM_JOB_PARTITION": "mlgpu",
+                "SLURM_JOB_PARTITION": "mlgpu_short",
             },
             "gpu_uuids": [f"GPU-{job}-{index}" for index in range(8)],
             "gpu_exclusivity": {"exclusive": True},

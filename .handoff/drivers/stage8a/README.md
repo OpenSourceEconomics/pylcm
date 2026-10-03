@@ -5,7 +5,11 @@ existing ACA production builder. Local tests cover a tiny CPU campaign and
 explicit runtime recorders. They do not establish full ACA construction,
 native GPU readiness, memory fit or a submitted production job. The required
 owner-run signal remains simultaneous **three nodes, eight GPUs per node, on
-mlgpu**, following a separate matched one-node reference.
+mlgpu_short**, following a separate matched one-node reference.
+
+The three-code assignment and eight-GPU admission are fixed for this ACA
+campaign. The public component-job API accepts a caller-selected job count or
+assignment and uses the model's codes and configured devices.
 
 The final local matrix passes **124 cases** in exact JUnit time **0:00:29.697**.
 Explicit Ruff, Ty, format, keyword-only and shell checks pass for the new
@@ -108,11 +112,15 @@ export OUT_ROOT=/absolute/existing/owner/Lustre/workspace
 
 After owner resource/limit verification, the reference recipe requests one
 node × eight GPUs; production requests one allocation of three distinct nodes,
-one task per node and eight GPUs each. Both literally request **mlgpu**.
-The proposed 96 CPUs/task, 120G/node and eight-hour envelope require owner
-validation and are not measured fit evidence. Per-phase/per-rank JAX caches
+one task per node and eight GPUs each. Both request **mlgpu_short**.
+Marvin's partition advertises up to four nodes, 128 CPUs and eight A40s per node
+with an eight-hour limit. The 96 CPUs/task, 120G/node and eight-hour envelope
+fits those advertised limits; actual scheduler admission and measured memory
+fit remain required. Per-phase/per-rank JAX caches
 are node-local `/tmp` and set before heavy imports. Heavy outputs use Lustre,
 rather than home NFS.
+Both filesystem guards filter `findmnt` by `--types lustre`, admitting Lustre
+below an automount layer while refusing outputs without a Lustre mount.
 
 Run the separate reference first, retain its immutable receipt and bind its
 absolute directory/hash to the production recipe:
@@ -146,8 +154,9 @@ change numerical logging policy to manufacture them.
 The local full-production construction diagnostic stopped at the owner's
 unsupported local GPU hardware selection before Model construction or native
 probe. There is no bypass, fake hardware, model pruning or full-ACA CPU solve.
-Owner access is unavailable and neither reference nor the required 24-GPU job
-has been submitted. Native construction/compatibility, all input/source proofs,
+Direct SSH access succeeds through the user-authorized desktop agent. Neither
+reference nor the required 24-GPU job has been submitted. Native
+construction/compatibility, all input/source proofs,
 physical GPU exclusivity/overlap, memory fit and full matched output comparison
 remain acceptance gates. One production signal does not establish repeated
 paired medians or speedup. Exact local XML outcomes, hashes, commands and

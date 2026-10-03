@@ -11,7 +11,7 @@ import pytest
 
 @pytest.mark.parametrize("phase", ["production", "reference"])
 def test_recipe_requests_user_selected_partition(*, phase: str) -> None:
-    """Both full-production allocations request the user's mlgpu partition."""
+    """Both allocations request the actual eight-hour GPU partition."""
     recipe = Path(__file__).with_name(f"stage8a_{phase}.sbatch")
     partitions = [
         line
@@ -19,7 +19,7 @@ def test_recipe_requests_user_selected_partition(*, phase: str) -> None:
         if line.startswith("#SBATCH --partition=")
     ]
 
-    assert partitions == ["#SBATCH --partition=mlgpu"]
+    assert partitions == ["#SBATCH --partition=mlgpu_short"]
 
 
 @pytest.mark.parametrize("phase", ["production", "reference"])
@@ -135,12 +135,16 @@ def test_recipe_refuses_relative_owner_source_paths_before_external_commands(
 
 
 @pytest.mark.parametrize("phase", ["production", "reference"])
+@pytest.mark.parametrize(
+    "filesystem", ["lustre", "stacked", "ext4", "unknown", "absent"]
+)
 def test_recipe_forwards_immutable_receipts_without_installing_worker_environment(
     *,
     tmp_path: Path,
     phase: str,
+    filesystem: str,
 ) -> None:
-    """Actual recipes bind receipts and use a preinstalled prefix in every step.
+    """Lustre recipes bind receipts and use a preinstalled prefix in every step.
 
     External allocation/source commands are recording stand-ins. This checks
     shell routing and cannot certify a GPU allocation, checkout or environment.
@@ -171,7 +175,20 @@ def test_recipe_forwards_immutable_receipts_without_installing_worker_environmen
     slurm_commit = "2" * 40
     model_commit = "ad38653696ec366e318ac61b9a81b597a4ecb700"
     scripts = {
-        "findmnt": "#!/bin/sh\nprintf '%s\\n' lustre\n",
+        "findmnt": (
+            "#!/bin/sh\nfiltered=false\n"
+            'while [ "$#" -gt 0 ]; do\n'
+            '  if [ "$1" = --types ]; then\n'
+            '    shift; [ "${1:-}" = lustre ] || exit 97; filtered=true\n'
+            "  fi\n  shift\ndone\n"
+            'if "$filtered"; then\n'
+            '  case "$RECIPE_FILESYSTEM" in lustre|stacked) printf "%s\\n" lustre;;\n'
+            "    *) exit 1;; esac\n"
+            "else\n"
+            '  case "$RECIPE_FILESYSTEM" in stacked) printf "%s\\n" autofs lustre;;\n'
+            '    absent) exit 1;; *) printf "%s\\n" "$RECIPE_FILESYSTEM";; esac\n'
+            "fi\n"
+        ),
         "git": (
             "#!/bin/sh\n"
             'if [ "$3" = rev-parse ]; then\n'
@@ -210,6 +227,7 @@ def test_recipe_forwards_immutable_receipts_without_installing_worker_environmen
         "PATH": f"{commands}:{os.environ['PATH']}",
         "HOME": str(tmp_path / "home"),
         "TRACE_ROOT": str(traces),
+        "RECIPE_FILESYSTEM": filesystem,
         "PYLCM_DIR": str(checkout),
         "PYLCM_COMMIT": pylcm_commit,
         "ACA_MODEL_DIR": str(tmp_path / "aca-model"),
@@ -269,9 +287,20 @@ def test_recipe_forwards_immutable_receipts_without_installing_worker_environmen
             == environment["REFERENCE_RECEIPT_SHA256"]
         )
 
-    assert (result.returncode, len(steps), installed_runtime_only, bindings) == (
-        0,
-        3 if phase == "production" else 1,
+    assert (
+        result.returncode,
+        result.stderr.strip(),
+        len(steps),
+        installed_runtime_only,
+        bindings,
+    ) == (
+        0 if filesystem in {"lustre", "stacked"} else 98,
+        ""
+        if filesystem in {"lustre", "stacked"}
+        else "OUT_ROOT must be an absolute path to an existing owner Lustre workspace",
+        (3 if phase == "production" else 1)
+        if filesystem in {"lustre", "stacked"}
+        else 0,
         True,
         True,
     )

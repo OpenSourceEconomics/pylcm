@@ -93,7 +93,7 @@ and local publication ledger; the receipts above retain their prepublication ide
 No native GPU/production completion is claimed.
 
 Mandatory native signal remains one simultaneous three-node allocation with eight
-GPUs per node on mlgpu, full canonicalACA grids/types/params/population/seed/retention,
+GPUs per node on mlgpu_short, full canonicalACA grids/types/params/population/seed/retention,
 explicit fp32 and matched single-process fp32 reference. ACA session owns submission;
 configured SSH is unavailable. No HPC call/job here. Driver integration, remaining
 native hardware/precision matrix, profiling and production performance are open.

@@ -324,7 +324,7 @@ def _validate_worker_receipts(
         intervals = observed.get("numeric_intervals", [])
         if (
             allocation.get("SLURM_PROCID") != str(job)
-            or allocation.get("SLURM_JOB_PARTITION") != "mlgpu"
+            or allocation.get("SLURM_JOB_PARTITION") != "mlgpu_short"
             or not allocation.get("SLURM_JOB_ID")
             or not allocation.get("SLURM_STEP_ID")
             or not observed.get("host")

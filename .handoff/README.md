@@ -81,11 +81,12 @@ validation from subsequent CI refresh and production-driver validation.
 - The production driver is prepared on this branch, with its bounded
   qualification in [stage8a-production-driver.md](stage8a-production-driver.md).
   Actual simultaneous
-  **three nodes × eight GPUs each on mlgpu** with full canonicalACA inputs,
+  **three nodes × eight GPUs each on mlgpu_short** with full canonicalACA inputs,
   matched fp32 reference and native correctness/performance/resource receipts
-  is unsubmitted. Direct SSH authentication failed because the forwarded
-  agent socket is absent; alternative desktop-agent use awaits explicit
-  approval after automatic review rejected alternative-agent discovery.
+  is unsubmitted. The user authorized any available direct SSH connection;
+  access through the existing desktop agent succeeds. Isolated frozen sources
+  and production inputs are staged; native installation and admission remain
+  required before submission.
   Driver/local and source-review receipts do not establish this native gate.
 
 ## Historical stage status (2026-10-02)

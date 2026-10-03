@@ -1,11 +1,28 @@
 # Stage 8A production driver
 
-The component engine is published in draft PR497, currently
+The component engine and production driver are published in draft PR497.
+The original worker qualification below freezes
 `0019faab26766a0bbffb24d786f873e05a16aa67`. This branch has
 locally qualified production routing, persistence, comparison and refusal
 checks; its publication checks are recorded separately from this worker receipt.
 Native ACA construction and the
-required simultaneous three-node × eight-GPU run on **mlgpu** remain pending.
+required simultaneous three-node × eight-GPU run on **mlgpu_short** remain pending.
+
+The exact partition binding is `mlgpu_short` in both owner recipes and collected
+worker admission. Local partition detectors first failed three cases in
+0:00:03.515, then the bounded affected-protocol set passed37/37 with zero
+fail/error/skip in 0:00:03.846. Literal `mlgpu`, unknown and `sgpu_short`
+worker receipts remain refused. Direct driver Ruff/Ty and both recipe syntax
+checks pass. Recorded receipt fixtures establish protocol behavior, not physical
+GPU admission or measured fit. Raw receipts are in
+`stage8a-driver/partition-short/`; core source and certificates are unchanged.
+
+Both output filesystem guards select `findmnt --types lustre`. Recorded stacked
+autofs/Lustre mounts first failed both recipe flows with exit98 in 0:00:00.052;
+the affected recipe module then passed21/21, zero fail/error/skip, in
+0:00:00.286. Plain ext4, unknown and absent mounts return98 before any `srun`.
+Direct driver Ruff/Ty and recipe syntax checks pass. Receipts are in
+`stage8a-driver/lustre-mount/`; this is shell admission proof, not physical I/O evidence.
 
 Post-port verification on this actual branch passed124/124, zero fail/error/skip,
 exact JUnit0:00:29.634. All18 explicit Python gates and both shell syntax checks

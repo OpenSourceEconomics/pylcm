@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=ag_iame_gaudecker
-#SBATCH --partition=mlgpu
+#SBATCH --partition=mlgpu_short
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=8
@@ -23,7 +23,7 @@ export PATH="$HOME/.pixi/bin:$PATH"
   echo 'OUT_ROOT must be an absolute path to an existing owner Lustre workspace' >&2
   exit 98
 }
-[[ "$(findmnt -n -o FSTYPE --target "$OUT_ROOT")" == lustre ]] || {
+[[ "$(findmnt -n -o FSTYPE --target "$OUT_ROOT" --types lustre)" == lustre ]] || {
   echo 'OUT_ROOT must be an absolute path to an existing owner Lustre workspace' >&2
   exit 98
 }

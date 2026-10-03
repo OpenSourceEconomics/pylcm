@@ -62,7 +62,20 @@ def test_numeric_intervals_use_stamped_engine_edges(
 
 @pytest.mark.parametrize(
     "change",
-    ["none", "host", "step", "rank", "uuid", "overlap", "input", "fragment", "failure"],
+    [
+        "none",
+        "host",
+        "step",
+        "rank",
+        "uuid",
+        "overlap",
+        "input",
+        "fragment",
+        "failure",
+        "partition_literal",
+        "partition_unknown",
+        "partition_other",
+    ],
 )
 # Keep the complete concrete protocol and its negative controls adjacent.
 def test_worker_admission_requires_complete_matching_overlapping_receipts(  # noqa: C901
@@ -102,7 +115,7 @@ def test_worker_admission_requires_complete_matching_overlapping_receipts(  # no
                     "SLURM_JOB_ID": "123",
                     "SLURM_STEP_ID": "2",
                     "SLURM_PROCID": str(job),
-                    "SLURM_JOB_PARTITION": "mlgpu",
+                    "SLURM_JOB_PARTITION": "mlgpu_short",
                 },
                 "gpu_uuids": [f"GPU-{job}-{index}" for index in range(8)],
                 "gpu_exclusivity": {"exclusive": True},
@@ -136,6 +149,12 @@ def test_worker_admission_requires_complete_matching_overlapping_receipts(  # no
                 payload["fragment_sha256"] = "0" * 64
             elif change == "failure":
                 (directory / "receipt.failed.json").write_text('{"status":"failed"}')
+            elif change.startswith("partition_"):
+                payload["observations"]["allocation"]["SLURM_JOB_PARTITION"] = {
+                    "partition_literal": "mlgpu",
+                    "partition_unknown": "unknown",
+                    "partition_other": "sgpu_short",
+                }[change]
         fragment_helpers.write_json_atomically(
             path=directory / "receipt.json", payload=payload
         )
