@@ -1,10 +1,11 @@
 """Validate a numerical capture against a fresh model and replay one adapter."""
 
+import difflib
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import numpy as np
@@ -142,6 +143,28 @@ def replay_public_period(
             "[DEBUG-public-period-admission] optimized HLO identities: "
             f"captured={captured_hlo!r}; replay={replay_hlo!r}"
         )
+        replay_inputs = {
+            name: repr(cast("jax.stages.Compiled", core.compiled).in_avals)
+            for name, core in cores.items()
+        }
+        error.add_note(
+            "[DEBUG-public-period-admission] compiled input abstracts: "
+            f"captured={metadata['diagnostic_compiler_inputs']!r}; "
+            f"replay={replay_inputs!r}"
+        )
+        for name, item in hlo.items():
+            error.add_note(
+                "[DEBUG-public-period-admission] optimized HLO diff "
+                f"for {name}:\n"
+                + "\n".join(
+                    difflib.unified_diff(
+                        metadata["optimized_hlo"][name]["text"].splitlines(),
+                        item["text"].splitlines(),
+                        fromfile="captured",
+                        tofile="replay",
+                    )
+                )
+            )
         raise
     if hlo != metadata["optimized_hlo"]:
         raise ValueError(

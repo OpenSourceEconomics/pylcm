@@ -8,7 +8,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jaxlib
@@ -198,6 +198,10 @@ def capture_public_entry(
         },
         "admission": plain_metadata(admission),
         "optimized_hlo": optimized_hlo_records(compiled_cores=compiled_cores),
+        "diagnostic_compiler_inputs": {
+            name: repr(cast("jax.stages.Compiled", core.compiled).in_avals)
+            for name, core in compiled_cores.items()
+        },
         "retain_replay": kernel_kwargs["retain_replay"],
     }
     arrays = {
