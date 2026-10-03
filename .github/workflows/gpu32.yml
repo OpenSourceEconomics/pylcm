@@ -101,7 +101,9 @@ jobs:
           pixi run -e tests-cuda12 test -- \
             --ci-policy=pr --hardware-profile=gpu-small --precision=auto \
             --environment=tests-cuda12 --report-dir=reports/public-replay-no-cache \
-            -k 'public_solve_captures_adjacent_periods and False' \
+            -k '(public_solve_captures_adjacent_periods and False) or
+            public_interrupted_capture or
+            public_period_refuses_unsupported_cache_mode' \
             tests/solution/test_period_replay.py
       - name: Upload policy and native reports
         if: always()

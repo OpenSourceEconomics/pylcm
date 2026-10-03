@@ -181,5 +181,8 @@ def test_public_period_gpu_witness_has_a_scoped_startup_disabled_cache() -> None
     assert step["env"]["JAX_ENABLE_COMPILATION_CACHE"] == "false"
     command = str(step["run"])
     assert "--precision=auto" in command
-    assert "-k 'public_solve_captures_adjacent_periods and False'" in command
+    assert (
+        "-k '(public_solve_captures_adjacent_periods and False) or "
+        "public_interrupted_capture or public_period_refuses_unsupported_cache_mode'"
+    ) in " ".join(command.split())
     assert command.rstrip().endswith("tests/solution/test_period_replay.py")

@@ -174,7 +174,11 @@ from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
 )
-from _lcm.solution.public_period_capture import CaptureContext, prepare_period_capture
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    prepare_period_capture,
+    validate_period_capture_cache,
+)
 from _lcm.solution.public_period_replay import replay_public_period
 from _lcm.solution.replay_validation import (
     validate_egm_sim_policy,
@@ -1180,12 +1184,16 @@ class Model:
             log_path: Optional directory for diagnostic snapshots.
             log_keep_n_latest: Maximum snapshots to retain on disk.
             period_capture: Optional atomic selected-period inputs and references.
+                Requires ``JAX_ENABLE_COMPILATION_CACHE=false`` before process
+                startup and JAX initialization.
 
         Returns:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
         self._sealed_bindings.fail_if_moved()
+        if period_capture is not None:
+            validate_period_capture_cache()
         if self._solves_block_major and log_path is not None:
             msg = (
                 "log_path snapshots of a block-major solve would hold every value "
@@ -1250,8 +1258,11 @@ class Model:
         agree before compilation. Recorded layouts, widths, optimized HLO and
         compiler admission must agree before dispatch. An entry-only capture
         requires `require_reference=False` and cannot establish parity.
+        Set ``JAX_ENABLE_COMPILATION_CACHE=false`` before process startup and
+        JAX initialization. Cached execution is unsupported.
         """
         self._sealed_bindings.fail_if_moved()
+        validate_period_capture_cache()
         flat_params = self._process_params(params)
         return replay_public_period(
             directory=Path(directory),

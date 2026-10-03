@@ -31,6 +31,19 @@ from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
 
 
+def validate_period_capture_cache() -> None:
+    """Require the caller's explicit startup-disabled persistent cache contract."""
+    if (
+        os.environ.get("JAX_ENABLE_COMPILATION_CACHE", "").lower() != "false"
+        or jax.config.jax_enable_compilation_cache is not False
+    ):
+        raise ValueError(
+            "Public period capture/replay requires JAX_ENABLE_COMPILATION_CACHE=false "
+            "before process startup and JAX initialization. Enabled or undeclared "
+            "persistent compilation cache modes are unsupported."
+        )
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class CaptureContext:
     """Carry validated selection and identities through the ordinary solve chain."""

@@ -150,11 +150,16 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
 _PARAMS = {"discount_factor": 0.95}
 
 
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
 @_skip_pytest_parallel
 def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
-    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persistent_compilation_cache: bool,
 ) -> None:
     """Restoring a capture never stages its value arrays on an excluded device."""
+    assert persistent_compilation_cache is False
     model = _make_three_type_model(distributed=False, devices=(1,))
     fresh = _make_three_type_model(distributed=False, devices=(1,))
     identity = {"model": "three-type-device-placement"}

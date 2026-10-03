@@ -35,6 +35,9 @@ separate atomic `completed.h5` binds the completed value, nonfinite masks and
 synchronized dispatch time to that entry. The archives contain numerical arrays and JSON
 metadata, without a pickled model, callable or executable.
 
+Launch the following example in a fresh process with
+`JAX_ENABLE_COMPILATION_CACHE=false` set in its environment before importing JAX or lcm.
+
 ```python
 from pathlib import Path
 
@@ -80,11 +83,16 @@ records are unsupported, including layouts with empty device outputs. A cached
 executable can expose its HLO and positive allocation sizes while reporting a zero raw
 peak. That inconsistent report is refused before entry publication or replay dispatch;
 the peak is never synthesized from allocation sizes. The serialized buffer-assignment
-proto need not be exposed by the GPU runtime. Start the process with
-`JAX_ENABLE_COMPILATION_CACHE=false` and retain compiler debug/HLO metadata when
-acquiring or replaying GPU periods. A late cache-configuration change is not a reliable
-bypass of an already initialized persistent cache. The check validates the executable's
-metadata, not the global cache flag, and never changes cache settings.
+proto need not be exposed by the GPU runtime.
+
+Public capture and replay require `JAX_ENABLE_COMPILATION_CACHE=false` before process
+startup and JAX initialization on every backend. Enabled or undeclared cache modes are
+rejected at the public entry point, before parameter processing or archive access. The
+library checks both the environment declaration and the effective JAX flag; it never
+changes either. These checks cannot establish when a caller changed the settings: a late
+toggle does not satisfy the startup contract. Use a fresh process, and retain compiler
+debug/HLO metadata. The independent executable metadata and strict recorded admission
+checks still apply with caching disabled.
 
 `record.metadata` exposes identities, input shapes/dtypes, layouts, widths, optimized
 HLO text and hashes, and per-core compiler reservation, raw peak and external production

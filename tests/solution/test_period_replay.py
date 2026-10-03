@@ -12,17 +12,13 @@ replayed is what ran — not a reconstruction that might differ from it.
 import logging
 import math
 import re
-from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any
 
 import cloudpickle
 import jax
 import numpy as np
 import pytest
-from jax.experimental.compilation_cache import compilation_cache
 
-from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
@@ -516,157 +512,6 @@ def test_public_period_refuses_unsupported_cache_mode(
     assert not capture.directory.exists()
 
 
-@pytest.mark.parametrize("operation", ["capture", "replay"])
-@pytest.mark.parametrize("persistent_compilation_cache", [True], indirect=True)
-@pytest.mark.requires(device="gpu")
-@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
-def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
-    *,
-    operation: str,
-    persistent_compilation_cache: bool,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A real persistent hit cannot masquerade as complete compiler evidence."""
-    assert persistent_compilation_cache is True
-    params = retirement_model.get_params(n_periods=_N_PERIODS)
-    capture = PeriodCapture(
-        directory=tmp_path / "fresh",
-        periods=(("working_life", 0),),
-        source_identity={"model": "tiny-public-model-v1"},
-    )
-    _reset_test_compilation_cache(enabled=False)
-    module_names: set[str] = set()
-    original_hlo_records = public_period_capture.optimized_hlo_records
-
-    def observe_hlo_records(
-        *, compiled_cores: Mapping[str, PlannedCore]
-    ) -> dict[str, Any]:
-        records = original_hlo_records(compiled_cores=compiled_cores)
-        for core in compiled_cores.values():
-            assert isinstance(core.compiled, jax.stages.Compiled)
-            executable = core.compiled.runtime_executable()
-            assert executable is not None
-            module_names.update(module.name for module in executable.hlo_modules())
-        return records
-
-    # Observe the real selected native executable; leave every capture check,
-    # publication step and numerical dispatch in the public solve path intact.
-    with monkeypatch.context() as observer:
-        observer.setattr(
-            public_period_capture, "optimized_hlo_records", observe_hlo_records
-        )
-        _make_public_capture_model().solve(
-            params=params, log_level="off", period_capture=capture
-        )
-    assert len(module_names) == 1
-    reference = load_period_capture(directory=capture.directory / "working_life@0")
-    assert reference.completed
-    _reset_test_compilation_cache(enabled=True)
-    caplog.clear()
-    caplog.set_level(logging.DEBUG, logger="jax._src.compilation_cache")
-    warmed = _make_public_capture_model().replay_period(
-        directory=capture.directory / "working_life@0",
-        params=params,
-        source_identity=capture.source_identity,
-    )
-    assert warmed.reference_matches is True
-    # Canonical HLO intentionally omits module names. Warming only the selected
-    # period identifies its numerical core by the exact persistent cache key;
-    # other periods can use the same function name with different inputs.
-    cache_keys = {
-        match.groups()
-        for record in caplog.records
-        if record.name == "jax._src.compilation_cache"
-        and (
-            match := re.fullmatch(
-                r"Writing (\S+) to persistent compilation cache "
-                r"with key '([^']+)'",
-                record.getMessage(),
-            )
-        )
-        and match.group(1) in module_names
-    }
-    assert len(cache_keys) == 1
-    # Model.solve owns its executable cache. Clear JAX's in-memory caches too,
-    # so the next fresh model cannot reuse those in-memory executables.
-    jax.clear_caches()
-    caplog.clear()
-    caplog.set_level(logging.DEBUG, logger="jax._src.compiler")
-    fresh = _make_public_capture_model()
-    cached_capture = PeriodCapture(
-        directory=tmp_path / "cached",
-        periods=capture.periods,
-        source_identity=capture.source_identity,
-    )
-    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
-    interrupt = _InterruptCapturedPeriod()
-    logger = logging.getLogger("lcm")
-    logger.addFilter(interrupt)
-    try:
-        if operation == "capture":
-            with pytest.raises(
-                ValueError, match="compiler memory metadata is unavailable"
-            ):
-                fresh.solve(
-                    params=params,
-                    log_level="off",
-                    period_capture=cached_capture,
-                )
-        else:
-            with pytest.raises(
-                ValueError, match="compiler memory metadata is unavailable"
-            ):
-                fresh.replay_period(
-                    directory=capture.directory / "working_life@0",
-                    params=params,
-                    source_identity=capture.source_identity,
-                )
-    finally:
-        logger.removeFilter(interrupt)
-    assert all(
-        any(
-            record.getMessage() == f"Persistent compilation cache hit for '{name}' "
-            f"with key {key!r}"
-            for record in caplog.records
-            if record.name == "jax._src.compiler"
-        )
-        for name, key in cache_keys
-    )
-    assert not (tmp_path / "cached" / "working_life@0" / "entry.h5").exists()
-
-
-@pytest.fixture
-def persistent_compilation_cache(
-    *, request: pytest.FixtureRequest, tmp_path: Path
-) -> Iterator[bool]:
-    """Own an isolated test cache, including JAX's memoized enablement state."""
-    settings = {
-        "jax_enable_compilation_cache": request.param,
-        "jax_compilation_cache_dir": str(tmp_path / "jax-cache"),
-        "jax_persistent_cache_min_compile_time_secs": 0,
-        "jax_persistent_cache_min_entry_size_bytes": -1,
-    }
-    original = {name: getattr(jax.config, name) for name in settings}
-    for name, value in settings.items():
-        jax.config.update(name, value)
-    _reset_test_compilation_cache(enabled=request.param)
-    try:
-        yield request.param
-    finally:
-        for name, value in original.items():
-            jax.config.update(name, value)
-        _reset_test_compilation_cache(enabled=original["jax_enable_compilation_cache"])
-
-
-def _reset_test_compilation_cache(*, enabled: bool) -> None:
-    """Reset test-process caches through JAX's public APIs, never in production."""
-    jax.config.update("jax_enable_compilation_cache", enabled)
-    compilation_cache.reset_cache()
-    jax.clear_caches()
-
-
 @pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])
 def test_optimized_hlo_identity_preserves_backend_configuration_values(
     *, nested_value: int, equal: bool
@@ -684,12 +529,42 @@ def test_optimized_hlo_identity_preserves_backend_configuration_values(
     assert (canonicalize(original) == canonicalize(reordered)) is equal
 
 
-def test_optimized_hlo_identity_refuses_malformed_backend_configuration() -> None:
+@pytest.mark.parametrize(
+    ("configuration", "message"),
+    [
+        ('{"missing":', "Expecting value"),
+        ('{"x":1,"x":2}', "Duplicate"),
+        ('{"x":NaN}', "Nonstandard"),
+        ('{"x":Infinity}', "Nonstandard"),
+        ('{"x":-Infinity}', "Nonstandard"),
+    ],
+)
+def test_optimized_hlo_identity_refuses_malformed_backend_configuration(
+    *, configuration: str, message: str
+) -> None:
     """Malformed backend JSON must not disappear during canonicalization."""
     canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
     assert canonicalize is not None
-    with pytest.raises(ValueError, match="Expecting value"):
-        canonicalize('ROOT x = f32[] constant(1), backend_config={"missing":')
+    with pytest.raises(ValueError, match=message):
+        canonicalize(f"ROOT x = f32[] constant(1), backend_config={configuration}")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("0.123456789012345678901", "0.123456789012345678902"),
+        ("1e10000", "2e10000"),
+        ("-0", "0"),
+    ],
+)
+def test_optimized_hlo_identity_preserves_numeric_tokens(
+    *, left: str, right: str
+) -> None:
+    """Ordering normalization cannot erase numeric distinctions or spelling."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    prefix = 'ROOT x = f32[] constant(1), backend_config={"x":'
+    assert canonicalize(prefix + left + "}") != canonicalize(prefix + right + "}")
 
 
 class _InterruptCapturedPeriod(logging.Filter):
