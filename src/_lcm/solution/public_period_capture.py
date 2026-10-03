@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Never
+from typing import Any, NoReturn
 
 import jax
 import jaxlib
@@ -351,7 +351,7 @@ def _backend_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _reject_backend_json_constant(value: str) -> Never:
+def _reject_backend_json_constant(value: str) -> NoReturn:
     """Refuse constants outside the JSON grammar."""
     raise ValueError(f"Nonstandard backend JSON constant: {value}")
 
