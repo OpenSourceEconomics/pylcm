@@ -91,6 +91,31 @@ Stage 3 ULP finding is in `reports/stage5b-findings/`.
 
 ## Local receipt intake
 
+### Fixed parameter binding in streamed simulation (2026-10-03)
+
+Type-local decision functions receive the same nested fixed parameter bindings as
+decision, transition and route functions. The public simulation regression checks
+the complete expected panel for interleaved type codes, including terminal values,
+split and combined calls, all supported JIT modes, and the available lifetime
+schedules with subject sharding.
+
+The genuine red test failed with the missing nested fixed parameter in
+0:00:02.397. Both precision runs then passed **28 tests, 0 failures, 0 errors,
+0 skips**: fp64 in **0:01:33.957**, fp32 in **0:01:27.464**. The source gate
+passed 9 tests in 0:00:14.330 and the CI gate passed 18 tests in 0:00:00.333.
+All **600 mutation controls** were rejected in **0:08:56.930**. Control names,
+counts, AST obligations and other source seals are unchanged; only the reviewed
+model-processing byte hash and its aggregate inventory were renewed. Type,
+format, source-inventory, seal and anchor checks passed.
+
+These CPU checks use this worktree's source and private environment. Its installed
+distribution/version namespace is stale; they do not establish fresh native GPU
+identity. Exact commands, JUnits, runtime identities, reviewed byte changes and
+receipts are retained in
+`/home/hmg/econ/aca-dev/.task-evidence/pylcm-handoff/stage8a-streamed-fixed-param/backport-491-execution/REPORT.md`.
+The separate full native campaign is pinned to the published Stage 8A head
+`e870bcd38189c6310cbdceeceb6a31c0b329ca6e`; no production result is implied here.
+
 Queued native arm receipts must be checked with the hardened
 `drivers/stage5b/compare_stage5b.py` before acceptance. The comparator requires
 three distinct arms, four distinct call labels, valid nonempty matching value
