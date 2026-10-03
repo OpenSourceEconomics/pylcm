@@ -11,6 +11,7 @@ module does not repeat; both files identify the exemption through the same
 `is_isolated_four_device_invocation` predicate, so they agree by construction.
 """
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -151,12 +152,41 @@ def test_isolated_four_device_invocation_declares_the_cpu_hardware_profile(
 
 
 def test_gpu_suite_invocations_use_the_bounded_policy_launcher() -> None:
-    """Both GPU workflows activate their declared bounded policy."""
+    """Both GPU workflows retain one bounded suite and bounded scoped witnesses."""
     for name in ("gpu32.yml", "gpu64.yml"):
         commands = [
             str(step.get("run", "")) for _, _, step in _steps(_WORKFLOWS / name)
         ]
-        policy_commands = [command for command in commands if " test --" in command]
-        assert len(policy_commands) == 1
-        assert "--ci-policy=pr" in policy_commands[0]
-        assert "--hardware-profile=gpu-small" in policy_commands[0]
+        policy_commands = [
+            shlex.split(line)
+            for command in commands
+            for line in command.replace("\\\n", " ").splitlines()
+            if " test --" in line
+        ]
+        suites = [command for command in policy_commands if "tests" in command]
+        assert len(suites) == 1
+        for command in policy_commands:
+            assert "--ci-policy=pr" in command
+            assert "--hardware-profile=gpu-small" in command
+
+
+def test_public_period_gpu_witness_has_a_scoped_startup_disabled_cache() -> None:
+    """The extra GPU process runs only the declared public replay witnesses."""
+    witnesses = [
+        step
+        for _, _, step in _steps(_WORKFLOWS / "gpu32.yml")
+        if "reports/public-replay-no-cache/fp$precision" in str(step.get("run", ""))
+    ]
+    assert len(witnesses) == 1
+    step = witnesses[0]
+    assert step["env"]["JAX_ENABLE_COMPILATION_CACHE"] == "false"
+    command = str(step["run"])
+    assert "for precision in 64 32; do" in command
+    assert '--precision="$precision"' in command
+    assert step["env"]["PUBLIC_REPLAY_TESTS"] == (
+        "(public_solve_captures_adjacent_periods and False) or "
+        "public_interrupted_capture"
+    )
+    assert '-k "$PUBLIC_REPLAY_TESTS"' in command
+    assert "tests/solution/test_period_replay.py; then" in command
+    assert command.rstrip().endswith('exit "$result"')

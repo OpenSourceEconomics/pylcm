@@ -174,6 +174,11 @@ from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
 )
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    prepare_period_capture,
+)
+from _lcm.solution.public_period_replay import replay_public_period
 from _lcm.solution.replay_validation import (
     validate_egm_sim_policy,
     validate_nested_egm_sim_policy,
@@ -227,6 +232,7 @@ from lcm.exceptions import (
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -1147,6 +1153,7 @@ class Model:
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
+        period_capture: PeriodCapture | None = None,
     ) -> SolutionResult:
         """Solve the model into a labelled, model-authoritative result.
 
@@ -1175,6 +1182,9 @@ class Model:
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
             log_keep_n_latest: Maximum snapshots to retain on disk.
+            period_capture: Optional atomic selected-period inputs and references.
+                Requires actual GPU buffer-assignment metadata before publishing
+                the selected entry; unsupported runtime metadata is refused.
 
         Returns:
             An immutable labelled result containing values, metadata, retained replay
@@ -1210,6 +1220,18 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
                 process_grid_resolver=None,
                 call_id=call_id,
+                period_capture=None
+                if period_capture is None
+                else prepare_period_capture(
+                    request=period_capture,
+                    regimes=self._regimes,
+                    execution=self._execution,
+                    enable_jit=self.enable_jit,
+                    model_fingerprint=self._model_fingerprint(flat_params=flat_params),
+                    params_fingerprint=self._params_fingerprint(
+                        flat_params=flat_params
+                    ),
+                ),
             )
             # Device work dispatched by backward induction can still be in flight
             # here; its completion belongs to a named phase, not the residual.
@@ -1218,6 +1240,38 @@ class Model:
                 if isinstance(solved, ValueStore):
                     solved._block_until_ready()  # noqa: SLF001
         return result
+
+    def replay_period(
+        self,
+        *,
+        directory: Path,
+        params: UserParams,
+        source_identity: Mapping[str, str],
+        require_reference: bool = True,
+    ) -> CapturedPeriodReplay:
+        """Replay one captured period after binding it to this fresh public model.
+
+        Model, grids, parameters, source, runtime and execution identities must
+        agree before compilation. Recorded layouts, widths, optimized HLO and
+        compiler admission must agree before dispatch. An entry-only capture
+        requires `require_reference=False` and cannot establish parity.
+        GPU replay requires actual serialized buffer-assignment metadata.
+        Missing runtime metadata is refused before selected-period dispatch.
+        """
+        self._sealed_bindings.fail_if_moved()
+        flat_params = self._process_params(params)
+        return replay_public_period(
+            directory=Path(directory),
+            flat_params=flat_params,
+            regimes=self._regimes,
+            ages=self.ages,
+            execution=self._execution,
+            enable_jit=self.enable_jit,
+            source_identity=source_identity,
+            model_fingerprint=self._model_fingerprint(flat_params=flat_params),
+            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+            require_reference=require_reference,
+        )
 
     def _solve_from_flat_params(
         self,
@@ -1232,6 +1286,7 @@ class Model:
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
@@ -1281,6 +1336,7 @@ class Model:
             retained_input_arrays=retained_input_arrays,
             process_grid_resolver=process_grid_resolver,
             call_id=call_id,
+            period_capture=period_capture,
         )
         return self._finish_solution(
             preparation=preparation,
@@ -1451,6 +1507,7 @@ class Model:
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1498,6 +1555,7 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
+                period_capture=period_capture,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:

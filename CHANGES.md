@@ -5,6 +5,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Public production period capture
+
+- `Model.solve(period_capture=PeriodCapture(...))` atomically records selected
+  ordinary GridSearch entry inputs and appends completed references. A fresh
+  `Model.replay_period` binds model/grid/parameter/source identities and validates
+  recorded layout, widths, optimized HLO and admission before dispatch. Entry-only
+  captures remain inspectable and cannot claim reference parity. See
+  [period capture](docs/reference/runtime_and_results.md#api-period-capture).
+
 ### Opt-in action-partitioned GridSearch
 
 - `ExecutionConfig(action_partitions={"<regime>": n})` shares a `GridSearch` regime's

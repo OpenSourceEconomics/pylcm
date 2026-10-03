@@ -188,6 +188,11 @@ from _lcm.solution.period_capture import (
     capture_kernel_inputs,
     resolve_capture_target,
 )
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    capture_public_entry,
+    complete_public_capture,
+)
 from _lcm.solution.solve_inputs import (
     SolveInputMappings,
     locate_artifact,
@@ -300,6 +305,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
+    period_capture: CaptureContext | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -422,6 +428,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         execution=resolved_execution,
+        capture_periods=()
+        if period_capture is None
+        else period_capture.request.periods,
         retain_replay=retain_replay,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -751,6 +760,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             capture_target=capture_target,
                             run_kernel=functools.partial(
                                 _run_period_kernel,
+                                period_capture=period_capture,
+                                captured_admission=compiled_programs.capture_admission.get(
+                                    (regime_name, period), MappingProxyType({})
+                                ),
                                 regime=regime,
                                 regime_name=regime_name,
                                 period=period,
@@ -1306,6 +1319,8 @@ def _run_period_kernel(
     period_solution: Mapping[RegimeName, FloatND],
     retain_replay: bool,
     selected_artifact_keys: frozenset[ArtifactKey],
+    period_capture: CaptureContext | None = None,
+    captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1341,26 +1356,35 @@ def _run_period_kernel(
 
     # Captured before the period-specific state axes are substituted below. Replay
     # re-enters this funnel with capture explicitly disabled.
+    kernel_kwargs = {
+        "regime_name": regime_name,
+        "period": period,
+        "state_action_space": state_action_space,
+        "flat_params": flat_params,
+        "ages": ages,
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        "next_regime_to_continuation": next_regime_to_continuation,
+        "logger": logger,
+        "next_edge_to_V_arr": next_edge_to_V_arr,
+        "period_solution": period_solution,
+        "retain_replay": retain_replay,
+        "selected_artifact_keys": selected_artifact_keys,
+    }
+    entry = capture_public_entry(
+        context=period_capture,
+        regime=regime,
+        period=period,
+        kernel_kwargs=kernel_kwargs,
+        compiled_cores=compiled_cores,
+        admission=captured_admission,
+    )
     capture_kernel_inputs(
         capture_target=capture_target,
         regime=regime,
         regime_name=regime_name,
         period=period,
         compiled_cores=compiled_cores,
-        kernel_kwargs={
-            "regime_name": regime_name,
-            "period": period,
-            "state_action_space": state_action_space,
-            "flat_params": flat_params,
-            "ages": ages,
-            "next_regime_to_V_arr": next_regime_to_V_arr,
-            "next_regime_to_continuation": next_regime_to_continuation,
-            "logger": logger,
-            "next_edge_to_V_arr": next_edge_to_V_arr,
-            "period_solution": period_solution,
-            "retain_replay": retain_replay,
-            "selected_artifact_keys": selected_artifact_keys,
-        },
+        kernel_kwargs=kernel_kwargs,
     )
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
@@ -1418,7 +1442,8 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    return period_kernel(
+    started = time.perf_counter() if entry is not None else None
+    output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1429,6 +1454,11 @@ def _run_period_kernel(
         logger=logger,
         **same_period_kwargs,
     )
+    if entry is not None and started is not None:
+        jax.block_until_ready(output.value)
+        seconds = time.perf_counter() - started
+        complete_public_capture(entry=entry, value=output.value, seconds=seconds)
+    return output
 
 
 def _run_dispatch_unit(
@@ -2288,6 +2318,11 @@ class _CompiledPrograms:
         default_factory=lambda: MappingProxyType({})
     )
     """Admitted ordinary alternatives at exactly the selected donating widths."""
+
+    capture_admission: Mapping[
+        tuple[str, int], Mapping[str, Mapping[str, int | None]]
+    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    """Selected non-donating reservation and residency for requested captures."""
 
 
 def _select_runtime_donation_cores(
@@ -3518,6 +3553,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     process_grid_resolver: ProcessGridResolver | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
+    capture_periods: tuple[tuple[str, int], ...] = (),
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -4192,8 +4228,38 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                 )
 
+    capture_admission: dict[tuple[str, int], dict[str, Mapping[str, int | None]]] = {}
+    for triple, core in selected_cores.items():
+        if triple[:2] not in capture_periods:
+            continue
+        if core.donated_arguments:
+            raise ValueError("Public period capture does not support donated inputs.")
+        candidate = (triple, _width_key(widths=core.tile_widths))
+        reservation = compiler_memory_reservation(
+            compiled=core.compiled, widths=core.tile_widths
+        )
+        resident = (
+            None
+            if budget_bytes is None
+            else _candidate_resident_bytes(
+                compiled=compiled[lowering_keys[candidate]],
+                program=selected_programs[triple],
+                internal_arguments=internal_templates[candidate],
+                inventory=resident_inventory[triple],
+            )
+        )
+        capture_admission.setdefault(triple[:2], {})[triple[2]] = MappingProxyType(
+            {
+                "budget_bytes": budget_bytes,
+                "resident_bytes": resident,
+                "reservation_bytes": reservation.reservation_bytes,
+                "peak_bytes": reservation.peak_bytes,
+            }
+        )
+
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
+        capture_admission=MappingProxyType(capture_admission),
         metadata=_execution_metadata(programs=selected_programs),
         input_liveness=input_liveness,
         donations=MappingProxyType(

@@ -16,6 +16,7 @@ Optional arguments:
 - `max_compilation_workers` caps parallel XLA compilation;
 - `log_path` and `log_keep_n_latest` control diagnostic snapshots;
 - `retention` selects which post-solve artifacts remain available.
+- `period_capture` records selected production entries and completed references.
 
 Hardware-local controls are declared on the model instead, through
 [`Model(execution_config=...)`](#execution-configuration), so both phases run under one
@@ -23,6 +24,105 @@ resolved configuration.
 
 There are no flag-selected tuple returns. Pass the complete result to
 `model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
+
+(api-period-capture)=
+
+### Capturing and replaying one production period
+
+`PeriodCapture` from `lcm.persistence` selects ordinary, JIT-compiled GridSearch periods
+in a normal full solve. Each target receives an atomic `entry.h5` before execution. A
+separate atomic `completed.h5` binds the completed value, nonfinite masks and
+synchronized dispatch time to that entry. The archives contain numerical arrays and JSON
+metadata, without a pickled model, callable or executable.
+
+Launch the following example in a fresh process with
+`JAX_ENABLE_COMPILATION_CACHE=false` set in its environment before importing JAX or lcm.
+
+```python
+from pathlib import Path
+
+from lcm import Model
+from lcm.persistence import PeriodCapture, load_period_capture
+from lcm_examples.iskhakov_et_al_2017 import RegimeId, get_model, get_params
+
+source = {"model": "my-recorded-model-revision"}
+params = get_params(n_periods=3)
+capture = PeriodCapture(
+    directory=Path("period-captures"),
+    periods=(("working_life", 0),),
+    source_identity=source,
+)
+template = get_model(n_periods=3)
+solution = template.solve(params=params, log_level="off", period_capture=capture)
+directory = capture.directory / "working_life@0"
+record = load_period_capture(directory=directory)
+fresh = Model(
+    regimes=template.user_regimes,
+    ages=template.ages,
+    regime_id_class=RegimeId,
+    initial_regimes={template.ages.exact_values[0]: "working_life"},
+)
+replay = fresh.replay_period(directory=directory, params=params, source_identity=source)
+assert record.completed and replay.reference_matches
+```
+
+The fresh model independently binds its model and grid fingerprint and canonical
+solution-parameter fingerprint. Caller-supplied source identities supplement the
+installed Python source digest, native build and library hashes, JAX/JAXlib versions,
+precision, devices and resolved execution configuration. Incompatible identities are
+refused before compilation. Replay compiles and runs only the selected period, with the
+recorded widths, mesh, input/output placements and transfer plan. It checks the
+canonical optimized HLO, compiler reservation and recorded admission budget before
+dispatch. HLO canonicalization normalizes backend JSON member order while retaining its
+configuration values, constants and layouts. Existing target directories are refused
+rather than overwritten.
+
+Backend JSON numbers retain their exact tokens, without floating-point conversion.
+Duplicate members, nonstandard constants and malformed JSON are rejected. Array order
+and all configuration values remain part of the HLO identity.
+
+GPU capture and replay qualify nonempty numeric outputs only, and require every compiler
+memory record to report positive output allocation and positive raw peak. Zero-output
+records are unsupported, including layouts with empty device outputs. A cached
+executable can expose its HLO and positive allocation sizes while reporting a zero raw
+peak. That inconsistent report is refused before entry publication or replay dispatch;
+the peak is never synthesized from allocation sizes.
+
+GPU capture and replay also require a nonempty
+`memory_analysis().serialized_buffer_assignment_proto` from each actual compiled core.
+Missing analysis or missing/empty serialized metadata is refused before entry
+publication or selected-period replay dispatch. Positive numeric statistics do not
+replace this requirement. Missing metadata does not by itself identify a
+persistent-cache hit: a runtime can omit it even after fresh compilation.
+
+For acquisition and replay, start a fresh process with
+`JAX_ENABLE_COMPILATION_CACHE=false` before importing JAX or pylcm, and retain compiler
+debug/HLO metadata. Those settings do not guarantee that the runtime exposes the
+required metadata. A runtime that omits it is unsupported for GPU public capture/replay.
+The library never changes cache settings; the actual executable evidence determines
+acceptance, together with all strict recorded layout and admission checks.
+
+`record.metadata` exposes identities, input shapes/dtypes, layouts, widths, optimized
+HLO text and hashes, and per-core compiler reservation, raw peak and external production
+residency. `record.reference` exposes the exact completed host array; its NaN and
+signed-infinity masks are verified against the archived masks.
+`replay.reference_matches` compares exact bytes and those masks. The recorded and replay
+dispatch times both include output synchronization and exclude serialization, loading
+and compilation. Their difference remains a measurement to inspect; timing equivalence
+or a speedup is not implied by numerical equality.
+
+If interrupted after entry publication, `record.completed` is false. Replay then
+requires explicit `require_reference=False`, and returns `reference_matches=None` and
+`in_context_seconds=None`. Those inputs cannot establish reference parity.
+
+Admission preserves the production planner's represented-allocation charge: the same
+compiler reservation plus the recorded external residency must fit the same effective
+budget and headroom. It does not recreate unrelated production buffers, allocator state,
+cache pressure or physical peak memory. The initial public route excludes invariant
+blocks, donated inputs, continuation payloads, collective/gated kernels and selected
+artifacts. Capture never changes the model's economic support, horizon, precision or
+result retention to make a route fit. Private environment-selected pickle captures
+retain their separate legacy format.
 
 (execution-configuration)=
 

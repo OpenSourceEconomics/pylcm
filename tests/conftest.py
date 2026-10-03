@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import config as jax_config
+from jax.experimental.compilation_cache import compilation_cache
 from numpy.typing import ArrayLike
 
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
@@ -778,3 +779,37 @@ def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
                     )
                 )
             )
+
+
+@pytest.fixture
+def persistent_compilation_cache(
+    *,
+    request: pytest.FixtureRequest,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[bool]:
+    """Own an isolated test cache, including JAX's memoized enablement state."""
+    monkeypatch.setenv("JAX_ENABLE_COMPILATION_CACHE", str(request.param).lower())
+    settings = {
+        "jax_enable_compilation_cache": request.param,
+        "jax_compilation_cache_dir": str(tmp_path / "jax-cache"),
+        "jax_persistent_cache_min_compile_time_secs": 0,
+        "jax_persistent_cache_min_entry_size_bytes": -1,
+    }
+    original = {name: getattr(jax.config, name) for name in settings}
+    for name, value in settings.items():
+        jax.config.update(name, value)
+    _reset_test_compilation_cache(enabled=request.param)
+    try:
+        yield request.param
+    finally:
+        for name, value in original.items():
+            jax.config.update(name, value)
+        _reset_test_compilation_cache(enabled=original["jax_enable_compilation_cache"])
+
+
+def _reset_test_compilation_cache(*, enabled: bool) -> None:
+    """Reset test-process caches through JAX's public APIs, never in production."""
+    jax.config.update("jax_enable_compilation_cache", enabled)
+    compilation_cache.reset_cache()
+    jax.clear_caches()
