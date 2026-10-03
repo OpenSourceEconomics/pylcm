@@ -58,6 +58,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import choose_among, until_exit
 
 N_WEALTH = 12
@@ -424,11 +425,11 @@ def build_model(
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
-        initial_regimes={20: ("alive", "dead")},
+        initial_nodes={20: ("alive", "dead")},
     )

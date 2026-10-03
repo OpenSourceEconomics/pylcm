@@ -45,7 +45,7 @@ def _memory(*, inputs: object, budget: int) -> SimulationMemory:
 def test_starting_periods_are_admitted_before_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ages = AgeGrid(start=18, stop=20, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=20, step="Y")
     initial = jnp.asarray([18.0, 20.0, 19.0])
     memory = _memory(inputs=(initial, ages.values), budget=1)
     with monkeypatch.context() as guard:

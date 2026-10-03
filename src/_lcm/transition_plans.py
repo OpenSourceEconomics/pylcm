@@ -26,6 +26,7 @@ class SupportOrigin(Enum):
 
     TARGET_GRID = auto()
     DECLARED = auto()
+    SOURCE_PROCESS = auto()
 
 
 class LotteryLifetime(Enum):

@@ -2,24 +2,27 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     TauchenAR1Process,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -61,11 +64,11 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
     transition = (
-        Choose(func=_next_target, targets=("target",))
+        _SupportedDeterministicTransition(func=_next_target, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(func=_one_probability)}
+        else {"target": StochasticTransition(func=_one_probability)}
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -80,11 +83,11 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -92,10 +95,12 @@ def _target_only_process_model(
     process: TauchenAR1Process | NormalIIDProcess,
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -104,11 +109,11 @@ def _target_only_process_model(
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -206,11 +211,11 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     )
 
     def _process_only_model() -> Model:
-        return Model(
+        return with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions={
-                        "target": MarkovTransition(func=_one_probability)
+                        "target": StochasticTransition(func=_one_probability)
                     },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
@@ -221,11 +226,11 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_utility},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
     def _shock_and_inert_utility(
@@ -234,11 +239,11 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return shock + jnp.float32(0) * extra
 
     def _process_and_inert_law_model() -> Model:
-        return Model(
+        return with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions={
-                        "target": MarkovTransition(func=_one_probability)
+                        "target": StochasticTransition(func=_one_probability)
                     },
                     states={"shock": process},
                     state_transitions={
@@ -255,11 +260,11 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_and_inert_utility},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
     process_only = _process_only_model()
@@ -287,10 +292,12 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
 
 def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     """Build a source that enters its target's process at the value `0.0`."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
                 },
@@ -302,11 +309,11 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -353,11 +360,11 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        Model(
+        with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions={
-                        "target": MarkovTransition(func=_one_probability)
+                        "target": StochasticTransition(func=_one_probability)
                     },
                     functions={"utility": _zero_utility},
                 ),
@@ -369,11 +376,11 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
                     functions={"utility": _shock_utility},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
 
@@ -401,13 +408,13 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        Model(
+        with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions=ByAge(
                         cases={
-                            AgeRange(start=20, stop=22): {
-                                "target": MarkovTransition(func=_one_probability)
+                            AgeRange(start=20, exclusive_stop=22): {
+                                "target": StochasticTransition(func=_one_probability)
                             }
                         }
                     ),
@@ -415,7 +422,7 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                 ),
                 "target": Regime(
                     regime_transitions={
-                        "terminal": MarkovTransition(func=_one_probability)
+                        "terminal": StochasticTransition(func=_one_probability)
                     },
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
@@ -429,11 +436,11 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                     functions={"utility": _zero_utility},
                 ),
             },
-            ages=AgeGrid(start=20, stop=23, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=23, step="Y"),
             regime_id_class=_ThreeRegimeId,
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
 
@@ -443,10 +450,12 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     def _enter_shock() -> ScalarFloat:
         return jnp.float32(0.5)
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
@@ -458,11 +467,11 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
@@ -470,7 +479,7 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
 
 
 def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
-    """A `MarkovTransition` entry law enters a target-only discrete state.
+    """A `StochasticTransition` entry law enters a target-only discrete state.
 
     The source carries no `shock`, so its entry law states the whole
     distribution over the target's two nodes. The source's value is that
@@ -488,12 +497,14 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={
-                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                    "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
@@ -503,11 +514,11 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
                 functions={"utility": _outcome_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
@@ -540,12 +551,14 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={
-                    "shock": {"target": MarkovTransition(func=_entry_probs)}
+                    "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
@@ -555,11 +568,11 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
                 functions={"utility": _outcome_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={(20, 21): "source"},
+        initial_nodes={(20, 21): "source"},
     )
 
     solution = model.solve(

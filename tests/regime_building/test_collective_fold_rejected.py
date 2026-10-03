@@ -22,11 +22,12 @@ regime declaring the identical process keeps solving.
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
-    Model,
     Regime,
     ValueDependentConstraint,
 )
@@ -43,6 +44,7 @@ from tests.collective_fixtures import (
     make_folding_singleton_model,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @pytest.mark.parametrize("required_name", ["couple", "wage_shock"])
@@ -56,11 +58,11 @@ def test_collective_regime_declaring_a_folded_state_is_rejected(
     tell which declaration to drop.
     """
     with pytest.raises(ModelInitializationError, match=required_name):
-        Model(
+        with_fixture_graph(
             regimes=make_folding_collective_regimes(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
-            initial_regimes={0: "couple"},
+            initial_nodes={0: "couple"},
         )
 
 
@@ -73,11 +75,11 @@ def test_the_fold_refusal_reads_as_a_limit_rather_than_as_pending_work() -> None
     household's scale for quadrature to average.
     """
     with pytest.raises(ModelInitializationError) as excinfo:
-        Model(
+        with_fixture_graph(
             regimes=make_folding_collective_regimes(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
-            initial_regimes={0: "couple"},
+            initial_nodes={0: "couple"},
         )
 
     assert "defer" not in str(excinfo.value).lower()
@@ -92,11 +94,11 @@ def test_collective_fold_under_a_participation_constraint_is_rejected() -> None:
     shock's five nodes and would be stored as dissolving at all of them.
     """
     with pytest.raises(ModelInitializationError, match="wage_shock"):
-        Model(
+        with_fixture_graph(
             regimes=_folding_collective_regimes_with_participation(),
             ages=AGES,
             regime_id_class=CoupleRegimeId,
-            initial_regimes={0: "couple"},
+            initial_nodes={0: "couple"},
         )
 
 
@@ -128,7 +130,7 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
     space is the only one with no sustainable action.
     """
     couple = Regime(
-        regime_transitions=Choose(
+        regime_transitions=_SupportedDeterministicTransition(
             func=_next_couple_regime, targets=("couple_terminal",)
         ),
         states={"wage": WAGE_GRID, "wage_shock": FOLDED_SHOCK},

@@ -333,11 +333,11 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "9644d462fbd637cd7fa2623df580632fb68723a0a4e9ddff826ca74ee7bc8740",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
-    SUPPORT_FINGERPRINT_SOURCE: "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677",
+    SUPPORT_FINGERPRINT_SOURCE: "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114",
     UNIFORM_PROCESS_GRID_SOURCE: "03d7ac9a101a1c39c19b44df40d7bbc59203d361ca313b8b8812b1db392dcf96",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
@@ -368,7 +368,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e",
+    NBEGM_SOURCE: "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
-    PROCESSING_SOURCE: "76d7f57677d18dcc75492b5a0ba4a769d439bf8758b3d1dc4d2bf9e2b7847a4e",
+    PROCESSING_SOURCE: "dd1e5bc8693138f5dc3a506c29c385b014d450c2d9bedb65589120ec6a55f95a",
     GRID_SEARCH_SOURCE: "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -411,30 +411,30 @@ _SOURCE_SEALS = {
     DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
-    ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
+    ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
-    PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "2df29da38df9135b80a27e8669aae1c3ec6c96d5bb6bf12ae60839c9b3a00df5",
+    PROBABILITY_SOURCE: "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0",
+    ENGINE_SOURCE: "a0fcc4136674db9f254cbc3e50c4a3dcf4864f8a7b2390bbeac85f75ebe583e6",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "396ebb67694c96b6d2e6bcddc03f61a0e00e0b4de2ea12b3c53fb1365062f6dd",
     SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "8e19b2687632fac1ed0dd1efdfcf88639dc48feee0d567ba5f8d5563b15f2fca",
+    MODEL_SOURCE: "1dc0e3acce450a88d2ace8a9001a9a8cff01c8f8881c6068bdf91d92f94adf4e",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "93709e36e1156ef53bf905f4a4c63cbc5e0de43f665a6a11c73c49f30aed12d7",
     PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
-    INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
+    INITIAL_CONDITIONS_SOURCE: "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90",
     RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "996469acb62c086b619f2696b8d81599e5bd198f537d3e2fc2d05648c6dd3472",
-    FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
+    FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
     SOLUTION_CONTRACT_SOURCE: "45ff7b3798e1ae733e68ae23434fe3b6f2b8944c7983db8fc096a4b2eea29f47",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
-    DISCRETE_GRID_SOURCE: "eae40c1da0344d222768fe42cc905bde6e79b86c186b13c86bfc1605e6727ebe",
+    DISCRETE_GRID_SOURCE: "b3bda092808d4a42f94a372e28d569eb95d330c6f6a05aae64eb9353b38c13df",
     CONTINUOUS_GRID_SOURCE: "8c395b9388f9f040656ac5303e25b20caa33ea6bebe1b5b41b7b5e01d551b5b7",
     PIECEWISE_GRID_SOURCE: "dd4f5444c3186c40973e4b2d9a283f240cf54ff2cda3ed14172b96d653dce5b5",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
@@ -442,12 +442,12 @@ _SOURCE_SEALS = {
     PROCESS_IID_SOURCE: "2023a7010fc720877c176bffa70f846e8eae260c649af8bb994c484a52b4e8c1",
     PROCESS_AR1_SOURCE: "ea9235cfde4494f962f015fcbf443328b1802f6b97e9afab807c1bf160f59171",
     VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095",
     PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58",
-    MODEL_PROCESSING_SOURCE: "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227",
+    PANDAS_UTILS_SOURCE: "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c",
+    MODEL_PROCESSING_SOURCE: "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3324,12 +3324,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
+            "83e2817e057934ab0f8d1f72a0494d5bc4af08019f2aeb3399f137a469e7e638",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
+                "Model.__init__": "cfa5a38f209603288b44cb48d374b56e3c3d3ea4217202d16e74ba4225e103a6",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3375,9 +3375,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # admitted writer used by ordinary inputs. Recursion keeps that writer and
     # completed leaves stay owned until the complete mapping is published.
     PANDAS_UTILS_SOURCE: (
-        "598502e34b44650f31bd20b497e6bf99657d01d15c9d47d50f8f04ebbd66a098",
+        "62dd02e0fcac92fbc04c37d56668bc4d5670902703a9aefedc7db67a7803245c",
         {
-            "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
+            "initial_conditions_from_dataframe": "c51e33317040628594886e078c77fd87a9d1d86c20b05f1d7d9921cf3741de17",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
             "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
             "convert_series_in_params": "30530b016415924c609dd56f200289643f3ea9dd506d104742a2e30e1889f78c",
@@ -3977,12 +3977,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
+        "83e2817e057934ab0f8d1f72a0494d5bc4af08019f2aeb3399f137a469e7e638",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
+            "Model.__init__": "cfa5a38f209603288b44cb48d374b56e3c3d3ea4217202d16e74ba4225e103a6",
             "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
         },
     ),
@@ -4350,12 +4350,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
+        "83e2817e057934ab0f8d1f72a0494d5bc4af08019f2aeb3399f137a469e7e638",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
+            "Model.__init__": "cfa5a38f209603288b44cb48d374b56e3c3d3ea4217202d16e74ba4225e103a6",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4498,7 +4498,7 @@ _FINITE_REPLAY_CONTRACTS = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "bc99d81cbc3fcc129306b1391376fa723750ad749fcece8df5067ecedeca0dcd",
+        "d702d3decb3c9cb93f9d7728cf942e1b4007caba688afc5c044d567fb58dbe2a",
         {
             "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
         },
@@ -4536,7 +4536,7 @@ def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "7f989d5232660b19c428cc2cd1ed7c0d5528c7d39228ee8f6a5527cc7a82f96a"
+        != "33bd091672a3e7e08d08a9f7b169ceb1d7fe37e8be08243b1b0bba3cf8a5fc4e"
     ):
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors
@@ -6495,7 +6495,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/fingerprint.py": (
-        "71eda0631daebb0cd5a39f4cbe1504c74bf9080539ce34eebbd0e272fbf62719",
+        "b50c56824dd6de1000c1861477941ca829d164de6896de6237286a36d53336e0",
         {
             "fingerprint_solution_support": "7ccac4755a555ca12f935e9d9f039f0ab4aa5ba4b1c198d3873fac016294ddd7",
             "fingerprint_model": "4ef219fa9a2379a7586f35808b39b5acb30936d49f1bb18a81161ad3ddc33c83",
@@ -6545,22 +6545,22 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "16d1d58e5403b86b103cc368ddedf19c6b6c040fc098e4f509b8fde148e8bc88",
+            "_validate_state_transition_single": "ec73e10371dbdcf60ca1a443116c2e1bbf379291ed1df1856c3c6b7a16c55eb0",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
             "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",
             "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
             "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
-            "_check_state_probs": "06eeaf665f584431c94681be57a943ebb0a58a55c9e81a8dbf91bebf31701d58",
+            "_check_state_probs": "95af24958448e8ba5d8c7d385eb998c9d0597063c6f5157a2bee1af963a37608",
         },
     ),
     "src/lcm/model.py": (
-        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
+        "83e2817e057934ab0f8d1f72a0494d5bc4af08019f2aeb3399f137a469e7e638",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
+            "Model.__init__": "cfa5a38f209603288b44cb48d374b56e3c3d3ea4217202d16e74ba4225e103a6",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",

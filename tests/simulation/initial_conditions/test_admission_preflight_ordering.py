@@ -14,6 +14,9 @@ import pytest
 
 import _lcm.simulation.initial_conditions as initial_module
 from _lcm.params.processing import process_params
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -22,7 +25,14 @@ from _lcm.typing import (
     InitialConditions,
 )
 from _lcm.utils.logging import LogLevel, get_logger
-from lcm import AgeGrid, AgeRange, ByAge, Choose, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    ByAge,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -41,6 +51,7 @@ from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constrained_asymmetric_model,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_transition_checks import _model_with_state_probs
 
 
@@ -316,7 +327,9 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         name: UserRegime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(start=0, stop=1): Choose(
+                    AgeRange(
+                        start=0, exclusive_stop=1
+                    ): _SupportedDeterministicTransition(
                         func=next_regime, targets=("dead",)
                     )
                 }
@@ -337,11 +350,11 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         states=states,
         functions={"utility": terminal_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: ("first", "second")},
+        initial_nodes={0: ("first", "second")},
     )
     armed = True
     with pytest.raises(InvalidInitialConditionsError) as caught:

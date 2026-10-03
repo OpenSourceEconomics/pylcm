@@ -16,7 +16,7 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
-from lcm import ByAge, Choose
+from lcm import ByAge, DeterministicTransition
 
 from . import _gpu_mem
 
@@ -132,7 +132,7 @@ def _make_model_and_params(
     def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
         return 1.0 / marginal_continuation
 
-    ages = AgeGrid(start=40, stop=40 + _N_PERIODS - 1, step="Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + _N_PERIODS - 1, step="Y")
     last_age = ages.exact_values[-1]
 
     wealth_grid = LinSpacedGrid(start=1, stop=400, n_points=wealth_n_points)
@@ -148,11 +148,8 @@ def _make_model_and_params(
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(
-                func=next_regime_from_working,
-                targets=("working_life", "retirement", "dead"),
-            ),
-            then=Choose(func=next_regime_from_working, targets=("dead",)),
+            law=DeterministicTransition(func=next_regime_from_working),
+            then=DeterministicTransition(func=next_regime_from_working),
         ),
         functions={
             "utility": utility_working,
@@ -165,10 +162,8 @@ def _make_model_and_params(
     retirement = Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(
-                func=next_regime_from_retirement, targets=("retirement", "dead")
-            ),
-            then=Choose(func=next_regime_from_retirement, targets=("dead",)),
+            law=DeterministicTransition(func=next_regime_from_retirement),
+            then=DeterministicTransition(func=next_regime_from_retirement),
         ),
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},
@@ -231,6 +226,17 @@ def _make_model_and_params(
     )
 
     model = Model(
+        edges={
+            "working_life": {
+                "dead": tuple(ages.exact_values[:-1]),
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            },
+            "retirement": {
+                "dead": tuple(ages.exact_values[:-1]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            },
+        },
         regimes={
             "working_life": working_life,
             "retirement": retirement,
@@ -238,7 +244,7 @@ def _make_model_and_params(
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
         **_gpu_mem.default_budget_execution_kwargs(),
     )
 

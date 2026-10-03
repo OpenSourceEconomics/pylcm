@@ -18,15 +18,15 @@ import numpy as np
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _LOW_PAYOFF = 1.0
@@ -53,8 +53,8 @@ def _solve_with_geometric_certainty_equivalent():
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "low": MarkovTransition(func=lambda: jnp.array(0.5)),
-                "high": MarkovTransition(func=lambda: jnp.array(0.5)),
+                "low": StochasticTransition(func=lambda: jnp.array(0.5)),
+                "high": StochasticTransition(func=lambda: jnp.array(0.5)),
             },
             exits=("low", "high"),
         ),
@@ -72,11 +72,11 @@ def _solve_with_geometric_certainty_equivalent():
     high = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "low": low, "high": high},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {

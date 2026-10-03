@@ -16,31 +16,49 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
-Approved macOS CI change, prepared for parent publication:
-[macos-four-shards-proposal.md](macos-four-shards-proposal.md).
-The user approved four macOS shards and that leg's measured-weight refresh.
-The isolated preparation retains the reviewed source/config/test bytes;
-native runtime acceptance remains outstanding after publication.
+## Interface consolidation checkpoint (2026-10-03)
 
-Receipt fixture source-identity repair:
-[receipt-fixture-identity.md](receipt-fixture-identity.md).
+The user authorized merges and pushes to consolidate the stack. The #489
+draw-reading state changes are merged into #488 without rewriting either
+history. Numerical source and both certificate files are exactly the accepted
+`a37267e7220db9763fc51f149836b079780b3713` bytes; the #488 top-first simulation
+fixture remains intact. No certificate pin or gate was regenerated. The
+continuation conflict adds the required draw-dependency import; certificate
+conflicts retain the seals already tested with that exact source. The generic
+handoff exclusion comment is retained because the proposed guard is historical.
+The original #489 note is preserved in
+[keep-draw-read-states.md](keep-draw-read-states.md).
 
-Shared JUnit receipt identity repair: [receipt-junit-identity.md](receipt-junit-identity.md).
-This helper-only repair preserves parameter labels. Its original native receipt
-observations are historical; it does not revise the approved CI decisions above.
+The #492 NumPy-dispatcher fingerprint change is incorporated by a second plain
+merge. Its four incoming source/test/certificate blobs matchc56537e0 exactly;
+the complete source and certificate trees match that accepted tip. Earlier
+#489 slow markers and the #488 top-first fixture remain intact. Its additional
+dispatcher threat tests use one expectation per case. No seal was regenerated.
 
-## Stage status (2026-10-02)
+The user approved direct SSH, superseding the historical owner-only route,
+and approved the Mac4 CI work. The root CI and JUnit identity work is included
+by a plain merge from `b1dc9d077ccd1289c41010615132be11df40a53d`. Its maintained
+generator registers the three interface test files without inventing weights
+or changing provenance, budgets, exclusions or the four-shard Mac layout.
+Shared receipt details: [receipt-junit-identity.md](receipt-junit-identity.md).
+The user explicitly declined separate ACA-model ports for older
+interface PRs; their pinned-ACA import failure contains no benchmark timing.
+Submission of the full simultaneous3nodes×8GPUs mlgpu ACA job still waits for
+passing checks and authenticated access. No main merge or native submission
+occurred here. Shared instructions are pinned to the approved4a44a464 revision.
+
+## Historical stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
-| 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
-| Blueprint cache (Pro R3) | Marvin full suite green at 1d8c306f (28033850 / 28031605) | `perf/invariant-structural-blueprint-cache` (#490, draft) | see its `.handoff/blueprint-cache.md` |
-| 5B | Marvin battery green (timing row cleared by isolated A/B); GPU driver requested | `feat/invariant-block-major-lifetime` (#494, draft, on #491) | 8691e767 |
+| 5A | implemented; Marvin gates pending | `feat/invariant-type-aware-simulation` (no PR) | 9dc2145a (merged with F1/F2) |
+| Blueprint cache (Pro R3) | green locally; Marvin battery pending | `perf/invariant-structural-blueprint-cache` (no PR) | b7c87690 |
+| 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
-| 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
-| 8A | design starting (after 5B) | — | — |
+| 7 | in progress (subagent) | `feat/invariant-action-partitions` | based on 9b36adcb |
+| 8A | not started; after 5B | — | — |
 | 8B | removed | — | — |
 
 ## Pending HPC jobs (run by the aca session)
@@ -49,7 +67,7 @@ observations are historical; it does not revise the approved CI decisions above.
 |---|---|---|
 | 28028091 / 28028092 | production pair fp32, blocked vs unblocked | 9b36adcb |
 | 28028093 / 28028094 | production pair fp64, blocked vs unblocked | 9b36adcb |
-| 28031402 / 28031403 | 5A battery main rerun, fp64 / fp32, `-n 96`: green | 12be1db9 |
+| 28029942 / 28029943 | 5A battery main, fp64 / fp32, `-n 96` | 9dc2145a |
 | 28029944 | 5A topology set | 9dc2145a |
 | 28029945 | 5A GPU simulate driver, reduced3, A100, fp64 | 9dc2145a |
 | 28030481 / 28030482 | blueprint-cache full suite, fp64 / fp32, `-n 96` | b7c87690 |
@@ -61,16 +79,9 @@ On Marvin:
 
 Don't touch `~/pylcm-prod-inv` while the production pair runs.
 
-## Recorded decisions
-- The user approved the blocked-vs-unblocked ULP contract: see
-  `reports/stage3-ulp.md` (FMA contraction; 8 ULP for values, exact structure).
-  Numerical implementation and native acceptance are separate from this CI change.
-- The authorized endpoint is Stage 8A. This macOS CI preparation makes no
-  Stage 8A implementation or acceptance claim.
-
 ## Next steps
 1. Fold the production-pair numbers into #486.
-2. 5A (#491) and the cache (#490) are open as drafts stacked on #486.
+2. Once their batteries are green, open PRs for 5A and the cache, stacked on #486.
 3. Then 5B, then 8A (8A depends on 5B).
 4. Still to write for the cache: a CPU host-time A B A2 ledger and a reduced3 driver.
 

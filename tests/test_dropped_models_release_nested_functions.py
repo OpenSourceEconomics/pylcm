@@ -34,6 +34,7 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _ENGINE_SOURCE_ROOTS = (
     Path(_lcm.__file__).resolve().parent,
@@ -77,7 +78,7 @@ def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
 
 def _grid_search_model() -> Model:
     """Build the smallest one-period grid-search model."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(last_age=START_AGE + 1),
@@ -90,9 +91,9 @@ def _grid_search_model() -> Model:
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=START_AGE + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=START_AGE + 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={START_AGE: "working_life"},
+        initial_nodes={START_AGE: "working_life"},
     )
 
 

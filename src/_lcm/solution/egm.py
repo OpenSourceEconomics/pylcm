@@ -37,6 +37,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
+from _lcm.probability import is_negative, regime_mass_is_a_distribution
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
     published_continuation_template,
@@ -840,12 +841,8 @@ class _EGMArgumentBuilder:
         probability must be a distribution on its own, under the same tolerance
         and sign test the grid-search continuation applies, at every liquid node.
         """
-        from _lcm.probability import is_negative  # noqa: PLC0415
         from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
             resolve_periodized_node,
-        )
-        from _lcm.regime_building.Q_and_F import (  # noqa: PLC0415
-            _regime_mass_is_a_distribution,
         )
 
         pool = {
@@ -877,7 +874,7 @@ class _EGMArgumentBuilder:
 
         prob = jax.vmap(target_probability)(liquid)
         return jnp.all(
-            _regime_mass_is_a_distribution(
+            regime_mass_is_a_distribution(
                 probability_mass=prob, has_negative_probability=is_negative(prob)
             )
         )

@@ -52,6 +52,10 @@ N_INCOME_NODES = 5
 # brute oracle at the top liquid nodes.
 INCOME_SCALE = 0.5
 
+# Distribution of the income process when the liquid law reads its draw.
+DRAW_INCOME_MU = 0.0
+DRAW_INCOME_SIGMA = 0.2
+
 
 @lcm.piecewise_affine(
     output="tax",
@@ -116,6 +120,20 @@ def next_liquid_from_savings(
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income)
 
 
+def next_liquid_from_savings_and_draw(
+    *,
+    savings: FloatND,
+    next_income: ContinuousState,
+    return_liquid: float,
+) -> ContinuousState:
+    """Liquid law reading the income drawn for next period, not the current one.
+
+    Toward `alive` the draw persists as next period's `income`; `dead` carries no
+    income, so toward `dead` it is drawn inside the transition and discarded.
+    """
+    return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(next_income)
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -130,6 +148,7 @@ def build_model(
     savings_max: float = 28.0,
     with_kind: bool = False,
     distributed_kind: bool = False,
+    income_timing: str = "current",
 ) -> Model:
     """Create the (alive, dead) tax toy with a stochastic ride-along income node.
 
@@ -148,12 +167,26 @@ def build_model(
         liquid_max: Upper bound of the liquid grid.
         n_savings: Post-decision savings grid size (NBEGM only).
         savings_max: Upper bound of the savings grid (NBEGM only).
+        income_timing: `"current"` adds this period's income node to next
+            liquid; `"draw"` adds the income drawn for next period, with the
+            process's distribution fixed at construction.
 
     Returns:
         The assembled `Model`.
 
     """
-    income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
+    # A law reading the draw is resolved on the draw's nodes, so they are fixed
+    # at construction; otherwise the distribution params arrive at runtime.
+    income_grid = (
+        NormalIIDProcess(
+            n_points=N_INCOME_NODES,
+            gauss_hermite=True,
+            mu=DRAW_INCOME_MU,
+            sigma=DRAW_INCOME_SIGMA,
+        )
+        if income_timing == "draw"
+        else NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
+    )
 
     tax_func = tax if tax_kind == "kink" else tax_cliff
     resources_func = coh_per_kind if with_kind else resources
@@ -168,7 +201,11 @@ def build_model(
         envelope_arithmetic=envelope_arithmetic,
     )
     alive_functions = {**alive_functions, "savings": savings}
-    liquid_law = next_liquid_from_savings
+    liquid_law = (
+        next_liquid_from_savings_and_draw
+        if income_timing == "draw"
+        else next_liquid_from_savings
+    )
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     extra_states: dict[str, Grid] = {"income": income_grid}
@@ -223,6 +260,7 @@ def build_params(
     final_age_alive: float = 3.0,
     with_kind: bool = False,
     base_income_hi: float = 4.0,
+    income_timing: str = "current",
 ) -> dict:
     """Get parameters for the stochastic-node tax toy.
 
@@ -241,7 +279,11 @@ def build_params(
                 if with_kind
                 else base_income
             },
-            "income": {"mu": income_mu, "sigma": income_sigma},
+            **(
+                {}
+                if income_timing == "draw"
+                else {"income": {"mu": income_mu, "sigma": income_sigma}}
+            ),
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
             "final_age_alive": final_age_alive,

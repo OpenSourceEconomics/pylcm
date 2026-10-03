@@ -35,11 +35,10 @@ from lcm import (
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
-    MarkovTransition,
-    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
 )
@@ -52,12 +51,13 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 DISCOUNT_FACTOR = 0.95
 
 # Three ages, so the source regimes are active at age 0 and the terminals from
 # age 1 on.
-AGES = AgeGrid(start=0, stop=2, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The gated-edge branch's only state, shared by all three of its regimes.
 WEALTH_GRID = LinSpacedGrid(start=0.0, stop=4.0, n_points=3)
@@ -98,11 +98,11 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     gated-edge branch, so `mover`'s value function is the one the gated-edge
     branch produces on its own.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_mixed_regimes(),
         ages=AGES,
         regime_id_class=MixedRegimeId,
-        initial_regimes={0: "mover"},
+        initial_nodes={0: "mover"},
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"
@@ -120,11 +120,11 @@ def test_gated_edge_source_solves_on_its_own():
     Fixes the value the mixed model has to reproduce, and shows the gate is
     genuinely closed at the two low-wealth nodes.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_gated_regimes(),
         ages=AGES,
         regime_id_class=GatedRegimeId,
-        initial_regimes={0: "mover"},
+        initial_nodes={0: "mover"},
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"
@@ -141,9 +141,9 @@ def _make_gated_regimes() -> dict[str, Regime]:
     mover = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "moved_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_move_gate,
                         routes={
                             "own": StakeholderRoute(
@@ -192,7 +192,9 @@ def _make_mixed_regimes() -> dict[str, Regime]:
     saver = ConsumptionSavingsRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"saver_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "saver_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"assets": ASSET_GRID},

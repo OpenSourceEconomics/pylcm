@@ -28,6 +28,9 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
 from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
@@ -37,7 +40,6 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -50,7 +52,8 @@ from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
 from tests.test_continuous_assets_aca_vocabulary import _model as _process_model
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 @categorical(ordered=False)
@@ -106,8 +109,12 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
     return Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=2,
-            law=MarkovTransition(func=probabilities, targets=("r0", "r1")),
-            then=MarkovTransition(func=probabilities, targets=("terminal",)),
+            law=_SupportedStochasticTransition(
+                func=probabilities, targets=("r0", "r1")
+            ),
+            then=_SupportedStochasticTransition(
+                func=probabilities, targets=("terminal",)
+            ),
         ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={
@@ -139,7 +146,7 @@ def _model(
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
 ) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
             "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
@@ -161,7 +168,7 @@ def _model(
             "pref_type": DiscreteGrid(_Three),
             "spousal_income": DiscreteGrid(_Three),
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(
             devices=devices,
@@ -177,7 +184,7 @@ def _model(
             invariant_block_widths=invariant_block_widths or {},
         ),
         # The tests start subjects in both living regimes at both living ages.
-        initial_regimes={(0, 1): ("r0", "r1")},
+        initial_nodes={(0, 1): ("r0", "r1")},
     )
 
 
@@ -752,7 +759,7 @@ def _renamed_public_model(*, original: Model) -> Model:
         states={},
         functions=_renamed_functions(regime=terminal),
     )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
         states={
             "liquid" if key == "assets" else key: grid
@@ -766,7 +773,7 @@ def _renamed_public_model(*, original: Model) -> Model:
             axis_widths={"action_product": 3, "cell": 9, "subject": 432},
             device_memory_bytes=2**30,
         ),
-        initial_regimes=initial_regimes_of(model=original),
+        initial_nodes=initial_nodes_of(model=original),
     )
 
 

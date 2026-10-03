@@ -5,7 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 
 from _lcm.params.regime_template import create_regime_params_template
-from lcm import JointTransition, MarkovTransition, Phased
+from lcm import JointTransition, Phased, StochasticTransition
 from lcm.regime import Regime
 from lcm.typing import FloatND
 
@@ -42,7 +42,7 @@ def _kernel(probabilities: object) -> JointTransition:
 def test_joint_kernel_params_follow_role_and_output_ownership() -> None:
     """Support/probability params live under the kernel; outputs keep `next_` paths."""
     regime = Regime(
-        regime_transitions={"target": MarkovTransition(func=_target_probability)},
+        regime_transitions={"target": StochasticTransition(func=_target_probability)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {

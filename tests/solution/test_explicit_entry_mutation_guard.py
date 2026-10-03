@@ -27,15 +27,16 @@ from _lcm.regime_building import processing
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _RISK_AVERSION = 2.0
@@ -68,12 +69,12 @@ def _enter_between_nodes() -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_one_probability)},
+                    law={"target": StochasticTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 state_transitions={"shock": {"target": _enter_between_nodes}},
@@ -90,11 +91,11 @@ def _build_model() -> Model:
                 functions={"utility": _squared_shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

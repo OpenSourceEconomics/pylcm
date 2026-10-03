@@ -36,13 +36,16 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     NormalIIDProcess,
@@ -56,7 +59,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
@@ -84,7 +87,7 @@ def _utility(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (10.0 + wage_shock)
 
 
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 _REGIME_NAMES_TO_IDS = MappingProxyType(
     {"period0": jnp.int32(0), "terminal": jnp.int32(1)}
 )
@@ -122,7 +125,11 @@ def _make_regimes(
     """
     period0 = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
         ),
         states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -213,7 +220,11 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
     """
     period0 = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
         ),
         states={
             "wage_shock": NormalIIDProcess(
@@ -262,7 +273,11 @@ def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
 
     period0 = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
         ),
         states={
             "a": _shock(fold=fold, n_points=3, sigma=1.0),
@@ -371,7 +386,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     Regime(
         regime_transitions={
             "some_target": ValueDependentTransition(
-                probability=MarkovTransition(func=lambda: jnp.asarray(1.0)),
+                probability=StochasticTransition(func=lambda: jnp.asarray(1.0)),
                 gate=lambda wage_shock: wage_shock > 0.0,
                 routes={
                     "only": StakeholderRoute(
@@ -446,7 +461,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
     the shock, one step earlier than the continuation would have.
     """
     from lcm import LinSpacedGrid  # noqa: PLC0415
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     def _utility_with_wealth(
         *, wage_shock: FloatND, work: DiscreteAction, wealth: FloatND
@@ -457,7 +472,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law={"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))},
+            law={"terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))},
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
@@ -736,12 +751,12 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
     branch keeps it in the continuation graph; dropping it would price the
     source's route into it as worthless.
     """
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law={"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))},
+            law={"terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))},
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -805,7 +820,9 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     period0 = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("period0", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("period0", "terminal")
+            ),
             exits=("terminal",),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -852,7 +869,11 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
     fold_name = "source_shock" if shared else "target_shock"
     period0 = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=_next_regime, targets=("terminal",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
         ),
         states={"source_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -946,7 +967,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
     continuation; instead `stay` is admitted and appears as its own transition
     target.
     """
-    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ages3 = AgeGrid(start=0, inclusive_stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
     params = MappingProxyType(
         {
@@ -965,7 +986,11 @@ def test_coarse_self_transition_retains_the_self_continuation():
 
     stay = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_self, targets=("stay", "done")), exits=("done",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_self, targets=("stay", "done")
+            ),
+            exits=("done",),
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1023,7 +1048,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
     `stay` is active for two periods and redraws the shock in each, so its own
     continuation reads a value whose shock axis is already integrated out.
     """
-    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ages3 = AgeGrid(start=0, inclusive_stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
 
     def _next_self() -> ScalarInt:
@@ -1031,7 +1056,11 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
 
     stay = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_self, targets=("stay", "done")), exits=("done",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_self, targets=("stay", "done")
+            ),
+            exits=("done",),
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1065,7 +1094,7 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
     Its probability is zero and it carries no continuation edge either way, so
     nothing about it has to be decided at build time.
     """
-    ages3 = AgeGrid(start=0, stop=3, step="Y")
+    ages3 = AgeGrid(start=0, inclusive_stop=3, step="Y")
     ids = MappingProxyType(
         {"src": jnp.int32(0), "stay": jnp.int32(1), "alt": jnp.int32(2)}
     )
@@ -1076,7 +1105,9 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
     src = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_always_stay, targets=("src", "stay", "alt")),
+            law=_SupportedDeterministicTransition(
+                func=_always_stay, targets=("src", "stay", "alt")
+            ),
             exits=("stay", "alt"),
         ),
         states={"wage_shock": _shock(fold=False)},
@@ -1122,7 +1153,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
     that dropped `terminal` entirely would leave an empty `period0` bundle and a
     zero continuation; instead it equals the per-target form.
     """
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     def _terminal() -> Regime:
         return Regime(
@@ -1133,10 +1164,10 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
         )
 
     def _period0(
-        transition: Choose | Mapping[str, MarkovTransition],
+        transition: DeterministicTransition | Mapping[str, StochasticTransition],
     ) -> Regime:
         return Regime(
-            regime_transitions=ByAge(cases={AgeRange(stop=1): transition}),
+            regime_transitions=ByAge(cases={AgeRange(exclusive_stop=1): transition}),
             states={"wage_shock": _shock(fold=False)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
@@ -1144,14 +1175,18 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
 
     coarse = _solve(
         {
-            "period0": _period0(Choose(func=_next_regime, targets=("terminal",))),
+            "period0": _period0(
+                _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            ),
             "terminal": _terminal(),
         }
     )
     per_target = _solve(
         {
             "period0": _period0(
-                {"terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))}
+                {"terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))}
             ),
             "terminal": _terminal(),
         }
@@ -1201,7 +1236,7 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
     policy. `src` has no states, so its stored V is a single scalar equal to
     the value of the chosen action.
     """
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     def _route_to_B(work: DiscreteAction) -> FloatND:
         return jnp.asarray(work, dtype=float)
@@ -1221,9 +1256,9 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "folded_B": MarkovTransition(func=_route_to_B),
-                    "dead_C": MarkovTransition(func=_route_to_C),
+                AgeRange(exclusive_stop=1): {
+                    "folded_B": StochasticTransition(func=_route_to_B),
+                    "dead_C": StochasticTransition(func=_route_to_C),
                 }
             }
         ),
@@ -1379,7 +1414,7 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
     carry into `folded_B`, so `src`'s transition bundle to `folded_B` is still empty.
     """
     from lcm import LinSpacedGrid, fixed_transition  # noqa: PLC0415
-    from lcm.transition import MarkovTransition  # noqa: PLC0415
+    from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     def _route_to_B(work: DiscreteAction) -> FloatND:
         return jnp.asarray(work, dtype=float)
@@ -1397,9 +1432,9 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "folded_B": MarkovTransition(func=_route_to_B),
-                    "dead_C": MarkovTransition(func=_route_to_C),
+                AgeRange(exclusive_stop=1): {
+                    "folded_B": StochasticTransition(func=_route_to_B),
+                    "dead_C": StochasticTransition(func=_route_to_C),
                 }
             }
         ),

@@ -57,7 +57,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(

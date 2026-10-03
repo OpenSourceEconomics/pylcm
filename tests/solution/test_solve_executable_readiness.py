@@ -18,9 +18,9 @@ from lcm import (
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.solver_api import KernelOutput, ResultRetention, SolverExecutionCapabilities
@@ -41,7 +41,8 @@ from lcm.solvers import (
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_solver_api_out_of_tree import _WEALTH
 from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
 
@@ -187,13 +188,15 @@ class _TwoProgramSolver(Solver):
 
 def _model(*, budget: int | None) -> Model:
     grid = LinSpacedGrid(start=1, stop=2, n_points=2)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=0, stop=1): {
-                            "terminal": MarkovTransition(func=lambda: jnp.asarray(1.0))
+                        AgeRange(start=0, exclusive_stop=1): {
+                            "terminal": StochasticTransition(
+                                func=lambda: jnp.asarray(1.0)
+                            )
                         }
                     }
                 ),
@@ -208,10 +211,10 @@ def _model(*, budget: int | None) -> Model:
                 functions={"utility": lambda wealth: wealth},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=budget),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -310,11 +313,12 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         self_looping=True,
     )
     model = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=CounterRegimeId,
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=_BUDGET),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     call = jax.stages.Compiled.__call__
     bind = backward_induction._cores_with_transfer_cache

@@ -5,13 +5,14 @@ import inspect
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     categorical,
     fixed_transition,
 )
@@ -24,6 +25,7 @@ from lcm.typing import (
     IntND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Shared building blocks: a stripped-down couples problem, in which the two
@@ -117,7 +119,9 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     married = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime_widowed, targets=("married", "widowed")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime_widowed, targets=("married", "widowed")
+            ),
             exits=("widowed",),
         ),
         states={"wealth": _WEALTH},
@@ -144,11 +148,11 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     )
 
     with pytest.raises(ModelInitializationError, match="per-stakeholder utility"):
-        Model(
+        with_fixture_graph(
             regimes={"married": married, "widowed": widowed},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_CoupleRegimeId,
-            initial_regimes={0: "married"},
+            initial_nodes={0: "married"},
         )
 
 

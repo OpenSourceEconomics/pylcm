@@ -132,7 +132,7 @@ The red related run already fails on the base:
    - `stored_axis_names`: the target V state order;
    - one `CoordinateSelection`, with `keep_axis=False` at width 1;
    - `required_sharding`: taken from the consumer's planned layout. Do **not** take it from `contract.place_on_regime_devices`, which matches templates by leading shape.
-   
+
    Shared dependencies use `ValueViewLeaf.SHARED`.
 2. **Use the same descriptor on both sides**: `ValueRead.view` and `resolve_value_transfer(..., view=...)`. Core resolution refuses a mismatch.
 3. **In `backward_induction.py`**, key caches, consumer counts and shared-copy footprints by `transfer_result_key(transfer=..., generation=G)` and `transfer.consumer_shape`. Construct `PeriodTransferCache(generation=G)` with the same token.

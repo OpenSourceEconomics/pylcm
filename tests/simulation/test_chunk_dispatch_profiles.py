@@ -9,17 +9,27 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.artifacts import OwnedSolutionView
-from lcm import Choose, DiscreteGrid, ExecutionConfig, Model, Regime, categorical
+from lcm import (
+    DiscreteGrid,
+    ExecutionConfig,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.typing import ScalarInt
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 @categorical(ordered=False)
@@ -48,10 +58,12 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same-kind integer updates retain the carrier's canonical integer storage."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(func=_finish_regime, targets=("done",)),
+                regime_transitions=_SupportedDeterministicTransition(
+                    func=_finish_regime, targets=("done",)
+                ),
                 functions={"utility": _flag_utility},
             ),
             "done": Regime(
@@ -62,10 +74,10 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         state_transitions={
             "flag": _promote_flag if jax.config.x64_enabled else _keep_flag
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off")
@@ -184,13 +196,14 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=2**32
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")

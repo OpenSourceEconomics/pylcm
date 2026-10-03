@@ -32,9 +32,9 @@ from lcm import (
     AgeGrid,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.solver_api import (
@@ -57,6 +57,7 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
+from tests.test_models.graph import with_fixture_graph
 from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
@@ -255,13 +256,13 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
     Each acting regime stays in itself until the last acting age, where it
     moves into the terminal `dead`.
     """
-    return Model(
+    return with_fixture_graph(
         regimes={
             name: Regime(
                 regime_transitions=ByAge.until(
                     stop_age_exclusive=_N_PERIODS,
-                    law={name: MarkovTransition(func=_stay)},
-                    then={"dead": MarkovTransition(func=_stay)},
+                    law={name: StochasticTransition(func=_stay)},
+                    then={"dead": StochasticTransition(func=_stay)},
                 ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
@@ -278,9 +279,9 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
                 solver=TerminalPublisher(parent=solver_class()),
             )
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: _ACTING_REGIMES},
+        initial_nodes={0: _ACTING_REGIMES},
     )
 
 

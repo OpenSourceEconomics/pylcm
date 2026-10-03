@@ -20,10 +20,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
-    Choose,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -34,6 +36,7 @@ from lcm import (
 from lcm.typing import ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.negm_kinked_toy import (
     N_PERIODS,
     NEGM_SOLVER,
@@ -122,7 +125,9 @@ def _build_model(*, helper_name: str, override) -> Model:
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + _AGE_STEP,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions=functions,
@@ -144,16 +149,16 @@ def _build_model(*, helper_name: str, override) -> Model:
             no_adjustment=no_adjustment,
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": build_dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(
             start=_MIN_AGE,
-            stop=_MIN_AGE + (N_PERIODS - 1) * _AGE_STEP,
+            inclusive_stop=_MIN_AGE + (N_PERIODS - 1) * _AGE_STEP,
             step=f"{_AGE_STEP}Y",
         ),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

@@ -35,7 +35,7 @@ from aca_model.environment.social_security import ClaimedSS
 from aca_slurm._simulate import _assemble, _load_inputs
 from aca_slurm.config import A40_GRID_CONFIG
 
-from lcm import DiscreteGrid, MarkovTransition
+from lcm import DiscreteGrid, StochasticTransition
 
 
 @pytest.fixture(scope="module")
@@ -153,7 +153,7 @@ def test_health_transition_changes_from_three_source_states_to_two_targets(
     np.testing.assert_array_equal(source["health"].to_jax(), [0, 1, 2])
     np.testing.assert_array_equal(target["health"].to_jax(), [0, 1])
     law = build_state_transitions(REGIME_SPECS[before])["health"][after]
-    assert isinstance(law, MarkovTransition)
+    assert isinstance(law, StochasticTransition)
     probabilities = jnp.array([[[0.25, 0.75], [0.5, 0.5], [0.875, 0.125]]])
     for health in range(3):
         np.testing.assert_array_equal(

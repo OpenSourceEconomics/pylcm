@@ -16,8 +16,18 @@ short form an agent needs before editing.
 - `Phased(solve=..., simulate=...)`: phase-specific variants of a regime-slot value
   (functions, states, state transitions, the regime transition). A bare value broadcasts
   to both phases.
-- Models must have at least one terminal regime and one non-terminal regime
-- Models support transitions between multiple regimes
+- `Model.edges` is mandatory topology: source → destination → source-age selector,
+  optionally `Phased(solve=..., simulate=...)`. Each edge lands at the next grid age.
+- `initial_nodes` is mandatory; explicit tuples of `(age, regime)` pairs are preferred.
+  Selector-to-regime mappings remain a convenience. These admissible starts are
+  normalized to immutable exact pairs and carry no probability weights.
+- Targetless `DeterministicTransition` / `StochasticTransition` and their decorator
+  factories mark numerical laws shared by state and regime transitions. Plain functions
+  are deterministic. `ByAge` selects laws, while graph edges own support.
+- `model.graph` snapshots immutable declared phase edges, effective period-indexed
+  `.solution` / `.simulation` graphs, valued `.nodes`, realized `.visited_nodes`, and
+  phase-specific `.pruned_edges` with fixed-zero proof reasons. There is no public graph
+  constructor. Fixed-zero pruning retains declared edges for inspection.
 
 **Canonical Processing (`src/_lcm/engine.py`)**
 
@@ -40,8 +50,8 @@ short form an agent needs before editing.
   target-granular form `Mapping[RegimeName, law]` over exactly the reachable targets
   carrying the state in that phase — bare laws broadcast, per-target dicts pass through,
   `fixed_transition` entries desugar into per-target identities. Reachability has a
-  single source of truth — the regime transition (per-target dict ⇒ its key set; coarse
-  ⇒ all regimes) — and is resolved here, once; the engine-side extraction is a pure
+  single source of truth — each phase's resolved `Model.edges` declaration —
+  and is resolved once; the engine-side extraction is a pure
   transpose. Rule: the params template reads the user (finalized) spec, the engine reads
   the canonical spec.
 - `Regime` (from `_lcm.engine`): Canonical representation produced by `process_regimes`
@@ -66,8 +76,10 @@ short form an agent needs before editing.
   applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
   explicitly:
   - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
-    laws of motion); `regime_transitions` accepts `Phased` with matching forms (and, for
-    per-target dicts, identical key sets).
+    laws of motion); `regime_transitions` accepts `Phased` with matching forms.
+    Ordinary per-target mappings may have different target sets. Each phase
+    supplies probabilities and handoffs for its own edges; gated value-dependent
+    targets retain shared gates, routes and references.
   - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
     (no grid axis) during backward induction, a genuine seeded-and-evolved state in
     simulation, with its law of motion in the regular `state_transitions` slot. All
@@ -76,6 +88,15 @@ short form an agent needs before editing.
     `Phased` is rejected there with an explanation. `Phased` is outermost-only (never
     inside a per-target dict) and never nested.
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
+- Physical demand follows simulate edges from admitted roots. Each visited node
+  is solved using its solve edges and value reads; value-only nodes recursively
+  contribute solve dependencies without creating realized visits.
+- `prune_fixed_regime_support` removes ordinary scalar per-target cells proved
+  exactly zero through construction-fixed dependency provenance before demand
+  and lowering. State/action/time/free and coordinate-indexed fixed dependencies
+  retain edges. Removed explicit handoffs and consumed fixed-key provenance are
+  handled together; mass is never renormalized. Invalid and all-zero laws retain
+  their probability validation obligations.
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
 
 **Koopmans Aggregation (`src/lcm/koopmans_aggregation.py`)**
@@ -163,12 +184,12 @@ is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
 inherit directly from ContinuousGrid. `_ContinuousStochasticProcess(ContinuousGrid)` is
 the base for the stochastic process classes. `DiscreteGrid` supports stochastic
-transitions via `MarkovTransition`-wrapped callables in `state_transitions`.
+transitions via `StochasticTransition`-wrapped callables in `state_transitions`.
 
 Grids are pure outcome-space definitions — they define what values a variable can take.
 **State transitions** live on the `Regime` via the `state_transitions` field, which maps
 state names to transition functions (`fixed_transition(state_name)` for fixed states).
-Wrap in `MarkovTransition` for stochastic transitions. Per-target dicts map target
+Wrap in `StochasticTransition` for stochastic transitions. Per-target dicts map target
 regime names to transition functions for target-dependent transitions.
 
 ### Processing Pipeline

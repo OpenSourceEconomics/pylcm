@@ -1,9 +1,9 @@
-"""A `MarkovTransition` law is rejected when its state's grid is continuous.
+"""A `StochasticTransition` law is rejected when its state's grid is continuous.
 
-`MarkovTransition` declares a probability vector over a discrete outcome space. A
+`StochasticTransition` declares a probability vector over a discrete outcome space. A
 continuous stochastic process owns its own transition mechanism, so wrapping an entry
-law into one in `MarkovTransition` names no meaningful object; it is rejected at model
-build with the state, the regime and the target named.
+law into one in `StochasticTransition` names no meaningful object; it is rejected
+at model build with the state, the regime and the target named.
 """
 
 import jax.numpy as jnp
@@ -11,14 +11,15 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -45,16 +46,16 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 state_transitions={
-                    "shock": {"target": MarkovTransition(func=_shock_probs)}
+                    "shock": {"target": StochasticTransition(func=_shock_probs)}
                 },
                 functions={"utility": _no_utility},
             ),
@@ -68,9 +69,9 @@ def _build_model() -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -86,6 +87,6 @@ def test_markov_law_on_continuous_process_names_state_regime_and_target() -> Non
 
 
 def test_markov_law_on_continuous_process_names_the_wrapper() -> None:
-    """The rejection names `MarkovTransition`, so the offending law is findable."""
-    with pytest.raises(ModelInitializationError, match="MarkovTransition"):
+    """The rejection names `StochasticTransition`, so the offending law is findable."""
+    with pytest.raises(ModelInitializationError, match="StochasticTransition"):
         _build_model()

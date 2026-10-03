@@ -19,9 +19,11 @@ covered in `tests/test_carried_states.py`.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     Model,
     Phased,
@@ -32,6 +34,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -82,7 +85,11 @@ def _last_regime() -> Regime:
 def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("live", "last")
+            ),
+            exits=("last",),
         ),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
@@ -90,12 +97,12 @@ def _model(*, live_functions, state_transitions, constraints) -> Model:
         functions=live_functions,
         constraints=constraints,
     ).replace()
-    return Model(
+    return with_fixture_graph(
         regimes={"live": live, "last": _last_regime()},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="constraint phase-invariance",
-        initial_regimes={0: "live"},
+        initial_nodes={0: "live"},
     )
 
 

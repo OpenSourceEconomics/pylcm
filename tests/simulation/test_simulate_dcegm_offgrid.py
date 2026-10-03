@@ -31,6 +31,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
+from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.slow
 
@@ -51,7 +52,7 @@ def _closed_form_model() -> Model:
     # the intended stress case because its segment sweep is closest to the
     # required crossing-complete representation.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
-    return Model(
+    return with_fixture_graph(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(last_age=50),
@@ -59,9 +60,9 @@ def _closed_form_model() -> Model:
             ),
             "dead": bequest_dead,
         },
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
 
 
@@ -206,11 +207,11 @@ def _skill_model() -> Model:
         },
         functions={"utility": _skill_bequest_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": alive, "dead": bequest_dead},
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
 
 
@@ -287,11 +288,11 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"retirement": alive, "dead": bequest_dead},
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
     params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 
