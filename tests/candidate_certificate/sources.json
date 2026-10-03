@@ -98,7 +98,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+            "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "db1a408d8977f3de622f49ad8aefb5dc6cb620d5eb4e28bc33538f00f6fcc206"
+        "source_inventory_sha256": "1c7efeac4c1ec8830564786e04e9e023772c9ed01aa697a099a4342bc74fcea6"
       },
       "fast": {
         "candidate_sources": [
@@ -568,7 +568,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+            "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "db1a408d8977f3de622f49ad8aefb5dc6cb620d5eb4e28bc33538f00f6fcc206"
+        "source_inventory_sha256": "1c7efeac4c1ec8830564786e04e9e023772c9ed01aa697a099a4342bc74fcea6"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "db1a408d8977f3de622f49ad8aefb5dc6cb620d5eb4e28bc33538f00f6fcc206",
+  "source_inventory_sha256": "1c7efeac4c1ec8830564786e04e9e023772c9ed01aa697a099a4342bc74fcea6",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1042,7 +1042,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "8b7dacb91bbbb0addd2a6e6266ca07725d90589354061ada47eada67d242d227"
+      "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
     },
     {
       "path": "src/_lcm/pandas_utils.py",

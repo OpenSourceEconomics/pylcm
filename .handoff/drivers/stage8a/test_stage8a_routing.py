@@ -53,7 +53,14 @@ def test_plan_cli_routes_full_owner_population_and_configuration(
         },
         index=[90, 80, 10, 30],
     )
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
     directory = tmp_path / "plan"
     source = tmp_path / "owner/src"

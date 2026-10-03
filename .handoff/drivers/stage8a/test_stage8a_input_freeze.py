@@ -1,6 +1,8 @@
 """Production receipts bind maintained inputs without changing their contents."""
 
 import hashlib
+import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -100,6 +102,18 @@ def test_production_inputs_authenticates_owner_modules_and_all_eleven_files(
         check=True,
         capture_output=True,
     )
+    core_commit = subprocess.run(  # noqa: S603 - read the authenticated clone's exact source
+        ["/usr/bin/git", "-C", str(core), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    driver_path = core / ".handoff/drivers/stage8a/stage8a_production.py"
+    spec = importlib.util.spec_from_file_location("stage8a_input_driver", driver_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("The committed input-guard driver cannot be loaded")
+    committed_driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(committed_driver)
     model = Path(os.environ["STAGE8A_ACA_MODEL_GIT"])
     slurm = model.parent / "aca-slurm"
     source = slurm / "src"
@@ -126,12 +140,10 @@ def test_production_inputs_authenticates_owner_modules_and_all_eleven_files(
         sys.modules["aca_model.simulation"],
         raising=False,
     )
-    helper = (
-        Path(str(owner_driver.__file__)).resolve().parents[1] / "stage5b/stage3_arms.py"
-    )
+    helper = driver_path.parents[1] / "stage5b/stage3_arms.py"
     for name, value in {
         "PYLCM_DIR": str(core),
-        "PYLCM_COMMIT": "0019faab26766a0bbffb24d786f873e05a16aa67",
+        "PYLCM_COMMIT": core_commit,
         "ACA_MODEL_DIR": str(model),
         "ACA_MODEL_COMMIT": "ad38653696ec366e318ac61b9a81b597a4ecb700",
         "ACA_SLURM_DIR": str(slurm),
@@ -139,20 +151,24 @@ def test_production_inputs_authenticates_owner_modules_and_all_eleven_files(
         "PIXI_LOCK_SHA256": hashlib.sha256(
             (core / "pixi.lock").read_bytes()
         ).hexdigest(),
-        "DRIVER_SHA256": hashlib.sha256(
-            Path(str(owner_driver.__file__)).read_bytes()
-        ).hexdigest(),
+        "DRIVER_SHA256": hashlib.sha256(driver_path.read_bytes()).hexdigest(),
         "BENCHMARK_HELPER_SHA256": hashlib.sha256(helper.read_bytes()).hexdigest(),
     }.items():
         monkeypatch.setenv(name, value)
     record = None
     caught = None
     try:
-        record = owner_driver._production_inputs(aca_slurm_src=source)
+        record = committed_driver._production_inputs(aca_slurm_src=source)
     except AttributeError as error:
         caught = str(error)
 
-    assert (caught, None if record is None else record["inputs"]) == (
+    assert (
+        inspect.getsource(committed_driver._production_inputs)
+        == inspect.getsource(owner_driver._production_inputs),
+        caught,
+        None if record is None else record["inputs"],
+    ) == (
+        True,
         None,
         {
             key: {

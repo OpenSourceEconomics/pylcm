@@ -23,6 +23,7 @@ def initial() -> pd.DataFrame:
             "regime_name": ["work", "work", "work", "work"],
             "pref_type": [2, 0, 0, 1],
             "assets": [7, 8, 9, 11],
+            "claimed_ss": [False, True, True, False],
         },
         index=[90, 80, 10, 30],
     )
@@ -56,7 +57,14 @@ def test_worker_passes_full_canonical_population_to_its_original_component_job(
     directory = tmp_path / "plan"
     published = directory / "fragments/job-0002.h5"
     calls: list[tuple[str, Any]] = []
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
 
     def load_component_job_plan(*, directory: Path) -> object:
@@ -128,7 +136,13 @@ def test_reference_uses_owner_adapter_seed_and_original_id_order(
         return simulation
 
     model = SimpleNamespace(
-        initial_nodes=((50, "work"), (51, "work")), simulate=simulate
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+        simulate=simulate,
     )
 
     result, original_ids = owner_driver._reference(
