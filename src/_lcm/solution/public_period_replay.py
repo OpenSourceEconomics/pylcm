@@ -126,10 +126,23 @@ def replay_public_period(
         directory=directory,
         devices=devices,
     )
-    _validate_recorded_admission(
-        cores=cores, records=metadata["admission"], budget=execution.device_memory_bytes
-    )
     hlo = optimized_hlo_records(compiled_cores=cores)
+    try:
+        _validate_recorded_admission(
+            cores=cores,
+            records=metadata["admission"],
+            budget=execution.device_memory_bytes,
+        )
+    except ValueError as error:
+        captured_hlo = {
+            name: item["sha256"] for name, item in metadata["optimized_hlo"].items()
+        }
+        replay_hlo = {name: item["sha256"] for name, item in hlo.items()}
+        error.add_note(
+            "[DEBUG-public-period-admission] optimized HLO identities: "
+            f"captured={captured_hlo!r}; replay={replay_hlo!r}"
+        )
+        raise
     if hlo != metadata["optimized_hlo"]:
         raise ValueError(
             "Replayed optimized HLO identity is incompatible "
@@ -298,7 +311,11 @@ def _validate_recorded_admission(
             )
         ):
             raise ValueError(
-                "Captured admission is incompatible with the replay executable."
+                "Captured admission is incompatible with the replay executable: "
+                f"core={name!r}, captured={record!r}, "
+                f"replay_budget={budget!r}, "
+                f"replay_reservation={memory.reservation_bytes!r}, "
+                f"replay_peak={memory.peak_bytes!r}."
             )
         if (
             budget is not None
