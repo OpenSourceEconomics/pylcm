@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 import cloudpickle
 import jax
 import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as ocp
 import pandas as pd
 
@@ -77,6 +78,9 @@ class SimulationResult:
         self._subject_batch_size = subject_batch_size
         self._solution: object | None = None
         self._plan_summary: SimulationPlanSummary | None = None
+        # The original rows of a simulation of selected codes, which holds
+        # those rows alone; `None` for a simulation of the whole population.
+        self._subject_rows: np.ndarray | None = None
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
