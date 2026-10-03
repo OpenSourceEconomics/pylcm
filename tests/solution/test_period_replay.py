@@ -22,6 +22,7 @@ import cloudpickle
 import jax
 import numpy as np
 import pytest
+from jax._src import compilation_cache as jax_compilation_cache
 
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
@@ -489,32 +490,29 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
     assert jax.config.jax_persistent_cache_min_entry_size_bytes == -1
     caplog.set_level(logging.DEBUG, logger="jax._src.compilation_cache")
     caplog.set_level(logging.DEBUG, logger="jax._src.compiler")
-    params = retirement_model.get_params(n_periods=_N_PERIODS)
     if stage == "warm":
-        _make_public_capture_model().solve(params=params, log_level="off")
-        writes = [
-            match.groups()
-            for record in caplog.records
-            if record.name == "jax._src.compilation_cache"
-            and (
-                match := re.fullmatch(
-                    r"Writing (\S+) to persistent compilation cache "
-                    r"with key '([^']+)'",
-                    record.getMessage(),
-                )
-            )
-        ]
-        assert writes
-        (root / "warm.json").write_text(
-            json.dumps({"pid": os.getpid(), "writes": writes})
-        )
-        (root / "warm.log").write_text(caplog.text)
+        _record_public_cache_warmup(root=root, caplog=caplog)
         return
 
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
     warmed = json.loads((root / "warm.json").read_text())
     assert warmed["pid"] != os.getpid()
     observed: dict[str, Any] = {}
+    # Distinct period cores can share an HLO module name. Bind cache keys to the
+    # actual loaded objects, retaining them until the selected core is observed.
+    loaded_executables: list[tuple[object, str]] = []
+    original_cache_read = jax_compilation_cache.get_executable_and_time
     original = public_period_capture.optimized_hlo_records
+
+    def observe_cache_read(*args: Any, **kwargs: Any) -> Any:
+        result = original_cache_read(*args, **kwargs)
+        if result[0] is not None:
+            loaded_executables.append((result[0], args[0]))
+        return result
+
+    monkeypatch.setattr(
+        jax_compilation_cache, "get_executable_and_time", observe_cache_read
+    )
 
     def observe(*, compiled_cores: Mapping[str, PlannedCore]) -> dict[str, Any]:
         for name, core in compiled_cores.items():
@@ -525,8 +523,12 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
             proto = getattr(memory, "serialized_buffer_assignment_proto", None)
             observed[name] = {
                 "modules": [module.name for module in executable.hlo_modules()],
+                "cache_keys": sorted(
+                    {key for loaded, key in loaded_executables if loaded is executable}
+                ),
                 "proto_type": type(proto).__name__,
                 "proto_bytes": len(proto) if isinstance(proto, bytes) else None,
+                "raw_peak_bytes": getattr(memory, "peak_memory_in_bytes", None),
                 "memory": str(memory),
             }
         return original(compiled_cores=compiled_cores)
@@ -552,21 +554,9 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
             json.dumps({"pid": os.getpid(), "observed": observed})
         )
         (root / "capture.log").write_text(caplog.text)
-    assert observed
-    for record in observed.values():
-        assert record["proto_bytes"] in {None, 0}
-        assert record["modules"]
-        for name in record["modules"]:
-            assert any(
-                module == name
-                and any(
-                    log.getMessage()
-                    == f"Persistent compilation cache hit for '{name}' with key {key!r}"
-                    for log in caplog.records
-                    if log.name == "jax._src.compiler"
-                )
-                for module, key in warmed["writes"]
-            )
+    _assert_selected_cache_evidence(
+        observed=observed, warm_writes=warmed["writes"], records=caplog.records
+    )
     assert not (capture.directory / "working_life@0" / "entry.h5").exists()
 
 
@@ -644,6 +634,53 @@ def test_optimized_hlo_identity_preserves_numeric_tokens(
     assert canonicalize is not None
     prefix = 'ROOT x = f32[] constant(1), backend_config={"x":'
     assert canonicalize(prefix + left + "}") != canonicalize(prefix + right + "}")
+
+
+def _record_public_cache_warmup(
+    *, root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Persist the actual cache writes from the ordinary public solve."""
+    _make_public_capture_model().solve(
+        params=retirement_model.get_params(n_periods=_N_PERIODS), log_level="off"
+    )
+    writes = [
+        match.groups()
+        for record in caplog.records
+        if record.name == "jax._src.compilation_cache"
+        and (
+            match := re.fullmatch(
+                r"Writing (\S+) to persistent compilation cache "
+                r"with key '([^']+)'",
+                record.getMessage(),
+            )
+        )
+    ]
+    assert writes
+    (root / "warm.json").write_text(json.dumps({"pid": os.getpid(), "writes": writes}))
+    (root / "warm.log").write_text(caplog.text)
+
+
+def _assert_selected_cache_evidence(
+    *,
+    observed: dict[str, Any],
+    warm_writes: list[list[str]],
+    records: list[logging.LogRecord],
+) -> None:
+    """Match each selected native executable to its own warmed cache entry."""
+    assert observed
+    for record in observed.values():
+        assert record["proto_bytes"] in {None, 0}
+        assert record["modules"]
+        assert len(record["cache_keys"]) == 1
+        key = record["cache_keys"][0]
+        for name in record["modules"]:
+            assert [name, key] in warm_writes
+            assert any(
+                log.getMessage()
+                == f"Persistent compilation cache hit for '{name}' with key {key!r}"
+                for log in records
+                if log.name == "jax._src.compiler"
+            )
 
 
 class _InterruptCapturedPeriod(logging.Filter):

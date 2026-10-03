@@ -11,6 +11,7 @@ module does not repeat; both files identify the exemption through the same
 `is_isolated_four_device_invocation` predicate, so they agree by construction.
 """
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -156,13 +157,13 @@ def test_gpu_suite_invocations_use_the_bounded_policy_launcher() -> None:
         commands = [
             str(step.get("run", "")) for _, _, step in _steps(_WORKFLOWS / name)
         ]
-        policy_commands = [command for command in commands if " test --" in command]
-        suites = [
-            command
-            for command in policy_commands
-            if name != "gpu32.yml"
-            or "--report-dir=reports/public-replay-no-cache" not in command
+        policy_commands = [
+            shlex.split(line)
+            for command in commands
+            for line in command.replace("\\\n", " ").splitlines()
+            if " test --" in line
         ]
+        suites = [command for command in policy_commands if "tests" in command]
         assert len(suites) == 1
         for command in policy_commands:
             assert "--ci-policy=pr" in command
