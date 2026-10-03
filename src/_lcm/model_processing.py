@@ -883,7 +883,12 @@ def _partial_fixed_params_into_regimes(
                             ).items()
                         }
                     )
-                    for family in ("decision", "transition", "route")
+                    for family in (
+                        "decision",
+                        "type_local_decision",
+                        "transition",
+                        "route",
+                    )
                 },
             ),
             Q_and_F=MappingProxyType(

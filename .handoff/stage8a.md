@@ -122,3 +122,49 @@ module/helper hashes, preserving real clean-source and eleven-file guards.
 Evidence is under the parent's `stage8a-driver/population-projection/` directory.
 Fresh native admission, matched reference and successful simultaneous three-node
 production collection are required for this changed canonical-input digest.
+
+## Fixed parameters in type-local simulation decisions (2026-10-03)
+
+Fresh native28088571 atfdff005d completed on eight A40s with actual CPU host
+offload readiness, exact source/installed/SCM versions, all nineteen regimes and
+the unchanged full projected population. Reference28088572 completed the first
+type's backward induction in0:03:32.718, then failed during first-chunk decision
+compilation because `fixed_cost_of_work__reference_age` was missing. The failed
+receipt and complete trace remain archived; no full reference or three-node
+production success is claimed.
+
+Diagnosis reproduced the same public Model.simulate failure on two actual CPU
+devices. Both the action-value signature and streamed cell already declared the
+parameter. The fixed-parameter binding loop rebuilt ordinary decision,
+transition and route programs but omitted the type-local decision family selected
+by blocked simulation. The repair binds that family through the same existing
+mechanism; no solver, reducer, stream filter, DAG or frozen ACA source changes.
+
+The original regression fails before repair in0:00:02.202 and passes after repair
+in0:00:02.753. Supported execution coverage passes at both precisions:
+
+| Selection | fp32 passed / duration | fp64 passed / duration |
+| --- | --- | --- |
+| Eager/single-device JIT/subject JIT, split/combined, three schedules | 18 / 0:00:27.325 | 18 / 0:00:31.802 |
+| Existing fixed-param, dispatch, typed/block and component parity | 11 / 0:01:06.196 | 11 / 0:01:09.607 |
+
+Every row has zero failures/errors/skips and asserts concrete complete panel
+values. Unsupported eager subject sharding remains refused. The small matrix
+uses actual two-device CPU subject sharding; it does not establish GPU speed.
+Evidence is in the parent's `stage8a-streamed-fixed-param/` ledger.
+
+Only model_processing.py changes in production source. Its reviewed family-list
+addition changes no certified AST corridor pin. The two byte seals and aggregate
+inventory digest are refreshed for that file; all116 inventory paths, mutation
+names/counts, declarations and rejection gates remain unchanged. Complete
+certificate/mutation verification is required before publication, followed by
+fresh installed-version/native admission and the full matched production run.
+
+Final serial gates pass: all600 mutation controls rejected, normal verifier/seals/
+anchors/repin/CI-generator checks exit0; source/portability9 cases pass in
+0:00:14.153 and maintained CI smoke18 cases pass in0:00:00.332, with zero
+failures/errors/skips. Whole Ty, direct Ruff/format and keyword-only checks pass.
+The verifier preserves all320 production-source bytes throughout its run. Local
+CPU proofs use the actual candidate imports with an honestly reused older
+distribution/generated-version namespace; committed native metadata admission
+must come from the fresh isolated Marvin prebuild.
