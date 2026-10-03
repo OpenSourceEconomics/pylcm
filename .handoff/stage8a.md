@@ -94,6 +94,31 @@ No native GPU/production completion is claimed.
 
 Mandatory native signal remains one simultaneous three-node allocation with eight
 GPUs per node on mlgpu_short, full canonicalACA grids/types/params/population/seed/retention,
-explicit fp32 and matched single-process fp32 reference. ACA session owns submission;
-configured SSH is unavailable. No HPC call/job here. Driver integration, remaining
-native hardware/precision matrix, profiling and production performance are open.
+explicit fp32 and matched single-process fp32 reference. The user authorized direct
+SSH; the parent drives the isolated Marvin campaign. Remaining native
+hardware/precision matrix, profiling and production performance are open.
+
+## Production admission and initial-input projection (2026-10-03)
+
+At published head `53cdc582feb6ad27503c9e75089d95c1e214387f`, native setup
+28087149 and eight-A40 admission 28086882 completed with exit0. Native admission
+constructed all19 frozen ACA regimes and retained the full owner-admitted187104
+subjects,62368 per type, with original IDs and seed20260903. This establishes
+native readiness and construction only; it contains no solve or simulation.
+
+Matched reference28087064 failed before numerical execution because the frozen
+raw builder frame includes `claimed_ss`, which belongs to later regimes but not
+the initial-regime state union. Failed receipts and accounting remain archived.
+The common plan/run/reference adapter projects columns to initial-regime states
+plus `age` and `regime_name`, preserving every admitted row, its order, original
+ID, dtype and required initial-state value. The frozen raw files and owner code
+remain unchanged; the core unknown-column validator remains strict.
+
+The regression failed for the retained legacy column before repair. The bounded
+driver matrix passes136 cases with zero failures/errors/skips in0:00:29.101;
+the existing missing-initial-state refusal separately passes1 case in0:00:00.247.
+The authenticated input fixture derives its committed clone's actual HEAD and
+module/helper hashes, preserving real clean-source and eleven-file guards.
+Evidence is under the parent's `stage8a-driver/population-projection/` directory.
+Fresh native admission, matched reference and successful simultaneous three-node
+production collection are required for this changed canonical-input digest.
