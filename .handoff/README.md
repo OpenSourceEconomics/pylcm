@@ -29,6 +29,12 @@ handoff exclusion comment is retained because the proposed guard is historical.
 The original #489 note is preserved in
 [keep-draw-read-states.md](keep-draw-read-states.md).
 
+The #492 NumPy-dispatcher fingerprint change is incorporated by a second plain
+merge. Its four incoming source/test/certificate blobs matchc56537e0 exactly;
+the complete source and certificate trees match that accepted tip. Earlier
+#489 slow markers and the #488 top-first fixture remain intact. Its additional
+dispatcher threat tests use one expectation per case. No seal was regenerated.
+
 The user approved direct SSH, superseding the historical owner-only route,
 and approved the Mac4 CI work. Root CI updates will cascade after this merge's
 checks. The user explicitly declined separate ACA-model ports for older

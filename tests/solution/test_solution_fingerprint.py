@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 import pytest
+from numpy._core.overrides import array_function_dispatch
 
 import _lcm.grids.continuous as grid_declarations
 import lcm.model as lcm_model
@@ -575,6 +576,17 @@ def _uses_jnp_logaddexp(value: float):
 
 def _uses_np_exp(value: float):
     return np.exp(value)
+
+
+_NUMPY_LINSPACE_ALIAS = np.linspace
+
+
+def _uses_np_linspace() -> np.ndarray:
+    return np.linspace(0.0, 1.0, 3)
+
+
+def _uses_np_linspace_alias() -> np.ndarray:
+    return _NUMPY_LINSPACE_ALIAS(0.0, 1.0, 3)
 
 
 def _uses_jnp_int32(value: float):
@@ -1498,6 +1510,8 @@ def test_solver_with_dynamic_instance_lookup_fails_closed() -> None:
         _uses_jnp_maximum,
         _uses_jnp_logaddexp,
         _uses_np_exp,
+        _uses_np_linspace,
+        _uses_np_linspace_alias,
         _uses_jnp_int32,
         _uses_jnp_where,
         _uses_jnp_linalg_norm,
@@ -1530,6 +1544,83 @@ def test_jax_ops_numeric_function_allowlist_is_identity_sealed(*, monkeypatch) -
     )
     monkeypatch.setattr(jax.ops, "segment_sum", nominal_segment_sum)
     assert fingerprints._native_numeric_callable_kind(nominal_segment_sum) is None
+
+
+def test_numpy_dispatcher_alias_has_the_same_native_identity() -> None:
+    assert fingerprints._semantic_fingerprint(np.linspace) == (
+        fingerprints._semantic_fingerprint(_NUMPY_LINSPACE_ALIAS)
+    )
+
+
+def test_numpy_dispatcher_rebinding_changes_the_fingerprint(*, monkeypatch) -> None:
+    baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
+    monkeypatch.setattr(np, "linspace", np.logspace)
+    assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
+
+
+def test_numpy_dispatcher_version_participates_in_the_fingerprint(
+    *, monkeypatch
+) -> None:
+    baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
+    monkeypatch.setattr(np, "__version__", "changed-numpy-version")
+    assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
+
+
+def test_numpy_dispatcher_implementation_defaults_participate(*, monkeypatch) -> None:
+    implementation = cast("Any", np.linspace)._implementation
+    baseline = fingerprints._semantic_fingerprint(_uses_np_linspace)
+    monkeypatch.setattr(implementation, "__defaults__", (4,))
+    assert fingerprints._semantic_fingerprint(_uses_np_linspace) != baseline
+
+
+@pytest.mark.parametrize("check", ["specimen-type", "native-identity", "fingerprint"])
+def test_numpy_dispatcher_type_and_name_do_not_grant_native_identity(
+    check: str,
+) -> None:
+    def dispatcher(*args: object, **kwargs: object) -> tuple:  # noqa: ARG001
+        return ()
+
+    def implementation(*args: object, **kwargs: object) -> int:  # noqa: ARG001
+        return 1
+
+    nominal = array_function_dispatch(dispatcher)(implementation)
+    nominal.__module__ = np.linspace.__module__
+    nominal.__name__ = np.linspace.__name__
+    nominal.__qualname__ = np.linspace.__qualname__
+    if check == "specimen-type":
+        assert type(nominal) is type(np.linspace)
+    elif check == "native-identity":
+        assert fingerprints._native_numeric_callable_kind(nominal) is None
+    else:
+        with pytest.raises(TypeError, match="non-Python __call__"):
+            fingerprints._semantic_fingerprint(nominal)
+
+
+def test_numpy_dispatcher_changed_implementation_code_fails_closed(
+    *, monkeypatch
+) -> None:
+    def replacement(*args: object, **kwargs: object) -> int:  # noqa: ARG001
+        return 1
+
+    implementation = cast("Any", np.linspace)._implementation
+    fingerprints._semantic_fingerprint(_uses_np_linspace)
+    monkeypatch.setattr(implementation, "__code__", replacement.__code__)
+    with pytest.raises(TypeError, match="direct object dependency"):
+        fingerprints._semantic_fingerprint(_uses_np_linspace)
+
+
+def test_numpy_dispatcher_unknown_state_fails_closed(*, monkeypatch) -> None:
+    monkeypatch.setattr(np.linspace, "semantic_offset", 1, raising=False)
+    with pytest.raises(TypeError, match="unknown state"):
+        fingerprints._semantic_fingerprint(_uses_np_linspace)
+
+
+def test_numpy_dispatcher_changed_wrapped_implementation_fails_closed(
+    *, monkeypatch
+) -> None:
+    monkeypatch.setattr(np.linspace, "__wrapped__", lambda: 1)
+    with pytest.raises(TypeError, match="changed wrapped implementation"):
+        fingerprints._semantic_fingerprint(_uses_np_linspace)
 
 
 def test_dataclasses_missing_terminal_support_is_identity_sealed(
