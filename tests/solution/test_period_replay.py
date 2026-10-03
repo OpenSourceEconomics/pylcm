@@ -20,8 +20,8 @@ import pytest
 
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, persistence
-from lcm.persistence import replay_period
+from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
@@ -329,22 +329,153 @@ def test_malformed_captured_tile_widths_are_refused(
         replay_period(directory=tmp_path / "working_life@1")
 
 
+@pytest.mark.parametrize("budget", [None, 32 * 1024**2])
 def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
+    *,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: int | None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A fresh public model reproduces completed captured values bit for bit."""
-    capture_type = getattr(persistence, "PeriodCapture", None)
-    assert capture_type is not None, "Public production period capture is required"
-    capture = capture_type(
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    capture = PeriodCapture(
         directory=tmp_path,
         periods=(("retirement", 1), ("working_life", 0)),
         source_identity={"model": "tiny-public-model-v1"},
     )
-    base = retirement_model.get_model(n_periods=_N_PERIODS)
     params = retirement_model.get_params(n_periods=_N_PERIODS)
+    model = _make_public_capture_model(budget=budget)
+    result = model.solve(
+        params=params,
+        log_level="off",
+        period_capture=capture,
+    )
+    fresh = _make_public_capture_model(budget=budget)
+    for regime_name, period in capture.periods:
+        caplog.clear()
+        replay = fresh.replay_period(
+            directory=tmp_path / f"{regime_name}@{period}",
+            params=params,
+            source_identity={"model": "tiny-public-model-v1"},
+        )
+        np.testing.assert_array_equal(
+            np.asarray(replay.value).view(np.uint8),
+            np.asarray(result.values[period][regime_name]).view(np.uint8),
+        )
+        assert replay.reference_matches is True
+        assert replay.optimized_hlo_matches is True
+        assert replay.in_context_seconds is not None
+        assert replay.in_context_seconds > 0
+        assert replay.replay_seconds > 0
+        executed = [
+            record.getMessage()
+            for record in caplog.records
+            if re.search(r"\[attr\] \S+ age", record.getMessage())
+        ]
+        assert len(executed) == 1
+        assert f"[attr] {regime_name} age" in executed[0]
+        assert f"period {period}:" in executed[0]
+        for mask in (np.isnan, np.isposinf, np.isneginf):
+            np.testing.assert_array_equal(
+                mask(np.asarray(replay.value)),
+                mask(np.asarray(result.values[period][regime_name])),
+            )
+    assert not tuple(tmp_path.rglob("*.pkl"))
+
+    def reject_compilation(**_kwargs: object) -> None:
+        raise AssertionError("An incompatible capture reached compilation")
+
+    monkeypatch.setattr(
+        period_replay, "_compile_cores_for_one_period", reject_compilation
+    )
+    for incompatible_model, incompatible_params, source in (
+        (fresh, {**params, "discount_factor": 0.9}, capture.source_identity),
+        (
+            _make_public_capture_model(wealth_stop=5, budget=budget),
+            params,
+            capture.source_identity,
+        ),
+        (
+            _make_public_capture_model(axis_widths={"cell": 1}, budget=budget),
+            params,
+            capture.source_identity,
+        ),
+        (fresh, params, {"model": "different-source"}),
+    ):
+        with pytest.raises(ValueError, match=r"identity|incompatible"):
+            incompatible_model.replay_period(
+                directory=tmp_path / "working_life@0",
+                params=incompatible_params,
+                source_identity=source,
+            )
+
+
+def test_public_interrupted_capture_has_inputs_without_a_reference(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interruption after entry leaves readable inputs and no parity claim."""
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    interrupt = _InterruptCapturedPeriod()
+    logger = logging.getLogger("lcm")
+    logger.addFilter(interrupt)
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    try:
+        with pytest.raises(RuntimeError, match="Interrupted captured entry"):
+            _make_public_capture_model().solve(
+                params=params,
+                log_level="off",
+                period_capture=capture,
+            )
+    finally:
+        logger.removeFilter(interrupt)
+    directory = tmp_path / "working_life@0"
+    record = load_period_capture(directory=directory)
+    assert record.completed is False
+    assert record.reference is None
+    fresh = _make_public_capture_model()
+    with pytest.raises(ValueError, match="completed reference"):
+        fresh.replay_period(
+            directory=directory,
+            params=params,
+            source_identity=capture.source_identity,
+        )
+    replay = fresh.replay_period(
+        directory=directory,
+        params=params,
+        source_identity=capture.source_identity,
+        require_reference=False,
+    )
+    assert replay.reference_matches is None
+    assert replay.in_context_seconds is None
+
+
+class _InterruptCapturedPeriod(logging.Filter):
+    """Interrupt the real public solve immediately before the selected dispatch."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "[attr] working_life age" in message and "period 0:" in message:
+            raise RuntimeError("Interrupted captured entry")
+        return True
+
+
+def _make_public_capture_model(
+    *,
+    wealth_stop: float = 4,
+    axis_widths: dict[str, int] | None = None,
+    budget: int | None = None,
+) -> Model:
+    """Build the public retirement fixture on a small complete candidate grid."""
+    base = retirement_model.get_model(n_periods=_N_PERIODS)
     regimes = {
         name: regime.replace(
-            states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+            states={"wealth": LinSpacedGrid(start=1, stop=wealth_stop, n_points=4)},
             actions={
                 **regime.actions,
                 "consumption": LinSpacedGrid(start=1, stop=4, n_points=5),
@@ -354,32 +485,12 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
         else regime
         for name, regime in base.user_regimes.items()
     }
-    model = Model(
+    return Model(
         regimes=regimes,
         ages=base.ages,
         regime_id_class=retirement_model.RegimeId,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
+        execution_config=ExecutionConfig(
+            device_memory_bytes=budget, axis_widths=axis_widths or {}
+        ),
         initial_regimes=initial_regimes_of(model=base),
     )
-    result = model.solve(
-        params=params,
-        log_level="off",
-        period_capture=capture,  # ty: ignore[unknown-argument] - test-first public seam
-    )
-    fresh = Model(
-        regimes=regimes,
-        ages=base.ages,
-        regime_id_class=retirement_model.RegimeId,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes=initial_regimes_of(model=base),
-    )
-    for regime_name, period in capture.periods:
-        replay = fresh.replay_period(  # ty: ignore[unresolved-attribute] - test-first public seam
-            directory=tmp_path / f"{regime_name}@{period}",
-            params=params,
-            source_identity={"model": "tiny-public-model-v1"},
-        )
-        np.testing.assert_array_equal(
-            np.asarray(replay.value).view(np.uint8),
-            np.asarray(result.values[period][regime_name]).view(np.uint8),
-        )

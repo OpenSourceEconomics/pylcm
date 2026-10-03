@@ -423,10 +423,10 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "08d1ba1d7ac76fb4addd48ad4ff2cd0ced963ea83e5bd0602de58420927540a5",
+    MODEL_SOURCE: "a098e7630836ea0d2f995cfd4d08128517c713b094e8a9b12975c0a045df1298",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "8f56c5c77178859e8fd5e6c3628d5f667f7a26c262692826206f00baeec6312e",
-    PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
+    BACKWARD_INDUCTION_SOURCE: "67156f44fcd9830247796d7eaa8ac4fb4d6cf09d1b1e0d0d7963c6f99c0be18b",
+    PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
     INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
     RESULT_SOURCE: "21e62cb05e567351ff04621bab8fdb147df722309fc41ceb88ca66b676daec3c",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -3348,7 +3348,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "2984285eb369400430bd039e322e0b16db7bb64fe794a48e1006a65ad6b160ae",
+            "c8d118d060f7444cbd4beeda444025a78dbcbd10e3551db66f35e53e9305d7a9",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -3358,8 +3358,8 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model.simulate": "39ce7d42cf3e374881d09bc35274389dcbc21dcb02c4a28e4ea82e24a458fdd9",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
-                "Model._solve_from_flat_params": "802a7d2907b02efdd1366c2aee6a914a8a0f2256434d58c22bde07315a6da02b",
-                "Model._solve_compiled": "37846e0cab7a2276e014c25aa7a89de66624d5450114c1b0780b9d8208182f6e",
+                "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
+                "Model._solve_compiled": "40fd81f73833f9c017f6ca9ed8041dd9844ed62b169c82dedb0f61f7a5035be1",
                 "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "955131a77406adb4e76ff4ebf53cddcd14f7c4063051c80b3eb874001db6147a",
@@ -4001,7 +4001,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "2984285eb369400430bd039e322e0b16db7bb64fe794a48e1006a65ad6b160ae",
+        "c8d118d060f7444cbd4beeda444025a78dbcbd10e3551db66f35e53e9305d7a9",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -4038,11 +4038,11 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "3673d99b70bc9f281310533bbbc5c1bf7595f6fd44702a06778de6ad9751b303",
+        "1ce453499876ca7fc076904af9a9c675414ef783238c8c3000059943ee528727",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
+            "_compile_all_functions": "bb31f5b040ac9ca3147084639cac6b6bad23b20aa38ec8efeb6194fb7153433f",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -4122,11 +4122,11 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "3673d99b70bc9f281310533bbbc5c1bf7595f6fd44702a06778de6ad9751b303",
+        "1ce453499876ca7fc076904af9a9c675414ef783238c8c3000059943ee528727",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "2f9e903e6bbd6d7bda7fa4d9bc30ff862964300000ff5304b66e829ce3ebdd96",
+            "solve": "d79ef1f946e4fe935d4d15c8fdc5c1793e7e4007f866a96b77cc355240fdd47f",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
@@ -4374,7 +4374,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "2984285eb369400430bd039e322e0b16db7bb64fe794a48e1006a65ad6b160ae",
+        "c8d118d060f7444cbd4beeda444025a78dbcbd10e3551db66f35e53e9305d7a9",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -4394,7 +4394,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "3673d99b70bc9f281310533bbbc5c1bf7595f6fd44702a06778de6ad9751b303",
+        "1ce453499876ca7fc076904af9a9c675414ef783238c8c3000059943ee528727",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4601,11 +4601,11 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "CompilationWave.__exit__": "21bd9016dd0ef6fd3879487d7667dabf3cf89fd27188eb914e2a78d4daf45f9d",
             "CompilationWave._raise_first_compile_error": "787b7683440a2b26449c59bab1bd7986ff983e5210d3bff3d07be5135f5bc527",
             "_compile_and_log": "6c2e773eaf54f547353e2734fefa2429d266a05279d94e99c8f8e596b916f74d",
-            "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
+            "_run_period_kernel": "47a038258d573a3314235f49cc89bdac46eabb1f2ef0da488d1973f6cb5aa6c1",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
+            "_compile_all_functions": "bb31f5b040ac9ca3147084639cac6b6bad23b20aa38ec8efeb6194fb7153433f",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
             "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
@@ -4636,7 +4636,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "3673d99b70bc9f281310533bbbc5c1bf7595f6fd44702a06778de6ad9751b303"
+        != "1ce453499876ca7fc076904af9a9c675414ef783238c8c3000059943ee528727"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -4701,7 +4701,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "c17bbbf82a14ffdb4d88ef171d48eef7d4a5d205668310b278eff7273e026d1e"
+        expected = "a4cee1b42742def4634b2c087305aaaf927d12e839f9a72b2795cbb79a6836aa"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -6524,15 +6524,15 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "3673d99b70bc9f281310533bbbc5c1bf7595f6fd44702a06778de6ad9751b303",
+        "1ce453499876ca7fc076904af9a9c675414ef783238c8c3000059943ee528727",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "2f9e903e6bbd6d7bda7fa4d9bc30ff862964300000ff5304b66e829ce3ebdd96",
+            "solve": "d79ef1f946e4fe935d4d15c8fdc5c1793e7e4007f866a96b77cc355240fdd47f",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "1f00ea1efc353c24b0709e83b46dd417118147f9a7e7a6079d6a57e8132150ed",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "fe0bf6ee9e7036d65322a800cb93de749eeeecdeb560aad17a8f51a1b5034bd6",
+            "_compile_all_functions": "bb31f5b040ac9ca3147084639cac6b6bad23b20aa38ec8efeb6194fb7153433f",
             "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
         },
     ),
@@ -6606,7 +6606,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "2984285eb369400430bd039e322e0b16db7bb64fe794a48e1006a65ad6b160ae",
+        "c8d118d060f7444cbd4beeda444025a78dbcbd10e3551db66f35e53e9305d7a9",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -6614,9 +6614,9 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
-            "Model.solve": "84dd777e739317d9645398633d51b0a7e03750a4cc44d43dbed68cb012669113",
-            "Model._solve_from_flat_params": "802a7d2907b02efdd1366c2aee6a914a8a0f2256434d58c22bde07315a6da02b",
-            "Model._solve_compiled": "37846e0cab7a2276e014c25aa7a89de66624d5450114c1b0780b9d8208182f6e",
+            "Model.solve": "cfa8328580957529d792cb6ecbdf0106f3c6458f56ec03b25e2f700d605f6a32",
+            "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
+            "Model._solve_compiled": "40fd81f73833f9c017f6ca9ed8041dd9844ed62b169c82dedb0f61f7a5035be1",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",

@@ -572,6 +572,28 @@ def replay_period_on_recorded_layout(
 
     """
     payload = _load_capture_payload(directory=directory)
+    kernel_kwargs, compiled_cores = prepare_recorded_period(
+        payload=payload, directory=directory, devices=devices
+    )
+    output = _run_period_kernel(
+        regime=payload["regime"],
+        capture_target=None,
+        compiled_cores=compiled_cores,
+        **kernel_kwargs,
+    )
+    return PeriodReplay(
+        regime_name=kernel_kwargs["regime_name"],
+        period=payload["period"],
+        age=float(kernel_kwargs["ages"].values[payload["period"]]),
+        output=output,
+        scope="layout",
+    )
+
+
+def prepare_recorded_period(
+    *, payload: Mapping[str, Any], directory: Path, devices: Sequence[jax.Device]
+) -> tuple[dict[str, Any], MappingProxyType[str, PlannedCore]]:
+    """Restore and check the recorded layout without executing the period."""
     layouts = _require_period_layouts(payload=payload, directory=directory)
     recorded_cores = _require_recorded_cores(layouts=layouts, directory=directory)
 
@@ -615,19 +637,7 @@ def replay_period_on_recorded_layout(
         compiled_cores=compiled_cores, recorded=recorded_cores
     )
 
-    output = _run_period_kernel(
-        regime=regime,
-        capture_target=None,
-        compiled_cores=compiled_cores,
-        **kernel_kwargs,
-    )
-    return PeriodReplay(
-        regime_name=kernel_kwargs["regime_name"],
-        period=period,
-        age=float(kernel_kwargs["ages"].values[period]),
-        output=output,
-        scope="layout",
-    )
+    return kernel_kwargs, compiled_cores
 
 
 def _require_period_layouts(

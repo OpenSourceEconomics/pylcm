@@ -96,6 +96,13 @@ documentation and tests.
 
 ## Explicit public submodule surfaces
 
+| Public name                                                                         | Canonical documentation             |
+| ----------------------------------------------------------------------------------- | ----------------------------------- |
+| [`lcm.persistence.PeriodCapture`](runtime_and_results.md#api-period-capture)        | Selected production period capture  |
+| [`lcm.persistence.PeriodCaptureRecord`](runtime_and_results.md#api-period-capture)  | Completed or entry-only evidence    |
+| [`lcm.persistence.CapturedPeriodReplay`](runtime_and_results.md#api-period-capture) | Strict replay qualification         |
+| [`lcm.persistence.load_period_capture`](runtime_and_results.md#api-period-capture)  | Inspect verified numerical captures |
+
 Most user-facing names are re-exported from `lcm`. These deliberately public submodule
 surfaces remain outside that top-level namespace:
 
