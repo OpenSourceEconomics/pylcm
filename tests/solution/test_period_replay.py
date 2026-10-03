@@ -12,8 +12,9 @@ replayed is what ran — not a reconstruction that might differ from it.
 import logging
 import math
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import Any
 
 import cloudpickle
 import jax
@@ -21,6 +22,7 @@ import numpy as np
 import pytest
 from jax.experimental.compilation_cache import compilation_cache
 
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
@@ -489,9 +491,30 @@ def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
         source_identity={"model": "tiny-public-model-v1"},
     )
     _reset_test_compilation_cache(enabled=False)
-    _make_public_capture_model().solve(
-        params=params, log_level="off", period_capture=capture
-    )
+    module_names: set[str] = set()
+    original_hlo_records = public_period_capture.optimized_hlo_records
+
+    def observe_hlo_records(
+        *, compiled_cores: Mapping[str, PlannedCore]
+    ) -> dict[str, Any]:
+        records = original_hlo_records(compiled_cores=compiled_cores)
+        for core in compiled_cores.values():
+            assert isinstance(core.compiled, jax.stages.Compiled)
+            executable = core.compiled.runtime_executable()
+            assert executable is not None
+            module_names.update(module.name for module in executable.hlo_modules())
+        return records
+
+    # Observe the real selected native executable; leave every capture check,
+    # publication step and numerical dispatch in the public solve path intact.
+    with monkeypatch.context() as observer:
+        observer.setattr(
+            public_period_capture, "optimized_hlo_records", observe_hlo_records
+        )
+        _make_public_capture_model().solve(
+            params=params, log_level="off", period_capture=capture
+        )
+    assert len(module_names) == 1
     reference = load_period_capture(directory=capture.directory / "working_life@0")
     assert reference.completed
     _reset_test_compilation_cache(enabled=True)
@@ -507,16 +530,17 @@ def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
     # period identifies its numerical core by the exact persistent cache key;
     # other periods can use the same function name with different inputs.
     cache_keys = {
-        match.group(1)
+        match.groups()
         for record in caplog.records
         if record.name == "jax._src.compilation_cache"
         and (
             match := re.fullmatch(
-                r"Writing jit_max_Q_over_a to persistent compilation cache "
+                r"Writing (\S+) to persistent compilation cache "
                 r"with key '([^']+)'",
                 record.getMessage(),
             )
         )
+        and match.group(1) in module_names
     }
     assert len(cache_keys) == 1
     # Model.solve owns its executable cache. Clear JAX's in-memory caches too,
@@ -557,13 +581,12 @@ def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
         logger.removeFilter(interrupt)
     assert all(
         any(
-            record.getMessage()
-            == "Persistent compilation cache hit for 'jit_max_Q_over_a' "
+            record.getMessage() == f"Persistent compilation cache hit for '{name}' "
             f"with key {key!r}"
             for record in caplog.records
             if record.name == "jax._src.compiler"
         )
-        for key in cache_keys
+        for name, key in cache_keys
     )
     assert not (tmp_path / "cached" / "working_life@0" / "entry.h5").exists()
 
