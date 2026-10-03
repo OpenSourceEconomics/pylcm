@@ -28,6 +28,16 @@ Receipt fixture source-identity repair:
 
 ## Current #497 checkpoint (2026-10-03)
 
+#491 is published at `3a214d11988b1c88cbf18667bfb43aa580781450`, incorporating
+#494, #495 and the complete #493 history. #493 is closed as incorporated:
+GitHub refused retargeting because no new commits remained against #491.
+#496 is merged into #486 at `b1dc9d077ccd1289c41010615132be11df40a53d`.
+The plain #491 merge into this branch carries the shared
+[JUnit identity note](receipt-junit-identity.md) and this checkpoint; source,
+tests, certificates, workflow, manifest and lock match the qualified production
+driver commit `d9da850a96261a698c8ffdc52c1e485335b2dc78` exactly. It introduces
+no numerical implementation change or native acceptance.
+
 The user authorized consolidation by merges and pushes. #495 was fast-forwarded
 into #494, then #494 into #491, both at the already tested commit
 `cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; normal push hooks passed. GitHub
