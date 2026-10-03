@@ -8,6 +8,7 @@ from typing import Any
 
 import jax
 import numpy as np
+from jax._src.lax.lax import _convert_element_type
 
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
@@ -93,6 +94,9 @@ def replay_public_period(
         period=period,
         ages=ages,
         retain_replay=metadata["retain_replay"],
+    )
+    kernel_kwargs = _restore_weak_types(
+        kernel_kwargs=kernel_kwargs, leaves=layouts.leaves
     )
     observed_leaves = describe_array_leaves(tree=kernel_kwargs)
     if tuple(
@@ -200,7 +204,11 @@ def _restore_public_inputs(
         )[name],
         "flat_params": flat_params,
         "ages": ages,
-        "next_regime_to_V_arr": MappingProxyType(values["next_regime_to_V_arr"]),
+        # MappingProxyType's pytree children retain insertion order. The archive
+        # sorts JSON keys, so reconstruct the production topology's order here.
+        "next_regime_to_V_arr": MappingProxyType(
+            {key: values["next_regime_to_V_arr"][key] for key in topology}
+        ),
         "next_regime_to_continuation": MappingProxyType({}),
         "next_edge_to_V_arr": MappingProxyType({}),
         "period_solution": values["period_solution"],
@@ -208,6 +216,35 @@ def _restore_public_inputs(
         "retain_replay": retain_replay,
         "selected_artifact_keys": frozenset(),
     }
+
+
+def _restore_weak_types(
+    *, kernel_kwargs: dict[str, Any], leaves: tuple[LeafLayoutDescriptor, ...]
+) -> dict[str, Any]:
+    """Restore abstract weak typing that a NumPy payload cannot represent."""
+    descriptors = {leaf.tree_path: leaf for leaf in leaves}
+    flat, treedef = jax.tree_util.tree_flatten_with_path(kernel_kwargs)
+    restored = []
+    for path, value in flat:
+        descriptor = descriptors.get(jax.tree_util.keystr(path))
+        if (
+            isinstance(value, jax.Array)
+            and descriptor is not None
+            and value.weak_type != descriptor.weak_type
+        ):
+            # JAX's public conversion forces strong typing. Its internal
+            # conversion preserves the dtype and values while restoring this
+            # abstract property; the runtime identity pins the JAX version.
+            restored.append(
+                _convert_element_type(
+                    operand=value,
+                    new_dtype=value.dtype,
+                    weak_type=descriptor.weak_type,
+                )
+            )
+        else:
+            restored.append(value)
+    return jax.tree_util.tree_unflatten(treedef, restored)
 
 
 def _validate_recorded_admission(

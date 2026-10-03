@@ -38,8 +38,9 @@ metadata, without a pickled model, callable or executable.
 ```python
 from pathlib import Path
 
+from lcm import Model
 from lcm.persistence import PeriodCapture, load_period_capture
-from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
+from lcm_examples.iskhakov_et_al_2017 import RegimeId, get_model, get_params
 
 source = {"model": "my-recorded-model-revision"}
 params = get_params(n_periods=3)
@@ -48,14 +49,17 @@ capture = PeriodCapture(
     periods=(("working_life", 0),),
     source_identity=source,
 )
-solution = get_model(n_periods=3).solve(
-    params=params, log_level="off", period_capture=capture
-)
+template = get_model(n_periods=3)
+solution = template.solve(params=params, log_level="off", period_capture=capture)
 directory = capture.directory / "working_life@0"
 record = load_period_capture(directory=directory)
-replay = get_model(n_periods=3).replay_period(
-    directory=directory, params=params, source_identity=source
+fresh = Model(
+    regimes=template.user_regimes,
+    ages=template.ages,
+    regime_id_class=RegimeId,
+    initial_regimes={template.ages.exact_values[0]: "working_life"},
 )
+replay = fresh.replay_period(directory=directory, params=params, source_identity=source)
 assert record.completed and replay.reference_matches
 ```
 
