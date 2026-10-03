@@ -74,6 +74,35 @@ jobs:
           --ci-policy=pr --hardware-profile=gpu-small --precision=auto
           --environment=tests-cuda12 --report-dir=reports/policy
           --log-cli-level=INFO tests
+      - name: Diagnose public replay with cache disabled from process startup
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          JAX_ENABLE_COMPILATION_CACHE: 'false'
+        run: |
+          pixi run -e tests-cuda12 python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import jax
+          root = Path(jax.__file__).parent
+          names = ("compilation_cache.py", "compiler.py", "config.py", "cache_key.py")
+          record = {
+              "jax_version": jax.__version__,
+              "cache_enabled_at_startup": jax.config.jax_enable_compilation_cache,
+              "source_sha256": {
+                  name: hashlib.sha256((root / "_src" / name).read_bytes()).hexdigest()
+                  for name in names
+              },
+          }
+          Path("reports/public-replay-jax-source.json").write_text(json.dumps(record))
+          assert record["cache_enabled_at_startup"] is False
+          PY
+          pixi run -e tests-cuda12 test -- \
+            --ci-policy=pr --hardware-profile=gpu-small --precision=auto \
+            --environment=tests-cuda12 --report-dir=reports/public-replay-no-cache \
+            -k 'public_solve_captures_adjacent_periods and False' \
+            tests/solution/test_period_replay.py
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1
