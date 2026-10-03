@@ -5,6 +5,7 @@ import enum
 import hashlib
 import json
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -285,7 +286,9 @@ def optimized_hlo_records(
         if executable is None:
             raise ValueError(f"Core {name!r} exposes no runtime executable.")
         modules = executable.hlo_modules()
-        canonical = "\n".join(module.to_string(options) for module in modules)
+        canonical = _canonicalize_optimized_hlo(
+            "\n".join(module.to_string(options) for module in modules)
+        )
         if not canonical:
             raise ValueError(f"Core {name!r} exposes no optimized HLO.")
         records[name] = {
@@ -293,6 +296,27 @@ def optimized_hlo_records(
             "text": canonical,
         }
     return records
+
+
+def _canonicalize_optimized_hlo(text: str) -> str:
+    """Normalize backend JSON ordering without discarding configuration values.
+
+    XLA can reorder JSON members when deserializing the same executable. Skip
+    quoted HLO strings when finding configuration fields, and retain everything
+    outside their JSON values except insignificant trailing whitespace.
+    """
+    decoder = json.JSONDecoder()
+    pieces = []
+    cursor = 0
+    for match in re.finditer(r'"(?:\\.|[^"\\])*"|backend_config=', text):
+        if match.group() != "backend_config=" or match.start() < cursor:
+            continue
+        value, end = decoder.raw_decode(text, match.end())
+        pieces.append(text[cursor : match.end()])
+        pieces.append(json.dumps(value, sort_keys=True, separators=(",", ":")))
+        cursor = end
+    pieces.append(text[cursor:])
+    return "\n".join(line.rstrip() for line in "".join(pieces).splitlines()).rstrip()
 
 
 def plain_metadata(value: Any) -> Any:  # noqa: ANN401

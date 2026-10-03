@@ -70,7 +70,9 @@ precision, devices and resolved execution configuration. Incompatible identities
 refused before compilation. Replay compiles and runs only the selected period, with the
 recorded widths, mesh, input/output placements and transfer plan. It checks the
 canonical optimized HLO, compiler reservation and recorded admission budget before
-dispatch. Existing target directories are refused rather than overwritten.
+dispatch. HLO canonicalization normalizes backend JSON member order while retaining its
+configuration values, constants and layouts. Existing target directories are refused
+rather than overwritten.
 
 `record.metadata` exposes identities, input shapes/dtypes, layouts, widths, optimized
 HLO text and hashes, and per-core compiler reservation, raw peak and external production
