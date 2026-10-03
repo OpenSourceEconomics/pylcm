@@ -39,6 +39,14 @@ Shared JUnit repair: [receipt-junit-identity.md](receipt-junit-identity.md).
 Direct SSH is authorized, superseding the historical ACA-owner-only route;
 production submission still waits for passing checks and authenticated access.
 
+The latest #493 history is also incorporated by a plain merge. Its driver,
+budget and handoff payload already existed here by content. The conflict
+resolution retains the complete additional block-major value/panel/lifetime
+controls and the consolidated manifest; no definition is duplicated or dropped.
+Source, certificates, tests, workflow and manifest remain byte-identical to
+`82a9463c4bc4b61f4a9c57998e80cf7a77372243`. Maintained manifest check passed.
+This ancestry consolidation introduces no numerical implementation change.
+
 ## Historical #495 checkpoint (2026-10-03)
 
 - Incoming CI: published #494 `bc05375f8318d0a5522a46300258bac53744c829`,
