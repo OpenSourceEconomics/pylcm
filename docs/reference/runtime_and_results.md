@@ -77,6 +77,10 @@ dispatch. HLO canonicalization normalizes backend JSON member order while retain
 configuration values, constants and layouts. Existing target directories are refused
 rather than overwritten.
 
+Backend JSON numbers retain their exact tokens, without floating-point conversion.
+Duplicate members, nonstandard constants and malformed JSON are rejected. Array order
+and all configuration values remain part of the HLO identity.
+
 GPU capture and replay qualify nonempty numeric outputs only, and require every compiler
 memory record to report positive output allocation and positive raw peak. Zero-output
 records are unsupported, including layouts with empty device outputs. A cached

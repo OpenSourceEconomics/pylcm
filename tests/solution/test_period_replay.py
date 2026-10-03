@@ -529,14 +529,35 @@ def test_optimized_hlo_identity_preserves_backend_configuration_values(
     assert (canonicalize(original) == canonicalize(reordered)) is equal
 
 
+def test_optimized_hlo_identity_preserves_arrays_and_following_attributes() -> None:
+    """JSON normalization retains arrays, literal strings and other HLO fields."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    prefix = 'ROOT x = f32[] constant(1), metadata={op_name="backend_config=01"}, '
+    suffix = ', frontend_attributes={"keep":"yes"}'
+    original = (
+        prefix
+        + 'backend_config={"z":[true, null, "01", {"b":2,"a":1}], "a":0.1}'
+        + suffix
+    )
+    expected = (
+        prefix + 'backend_config={"a":0.1,"z":[true,null,"01",{"a":1,"b":2}]}' + suffix
+    )
+    assert canonicalize(original) == expected
+
+
 @pytest.mark.parametrize(
     ("configuration", "message"),
     [
         ('{"missing":', "Expecting value"),
         ('{"x":1,"x":2}', "Duplicate"),
+        ('{"x":1,"\\u0078":2}', "Duplicate"),
         ('{"x":NaN}', "Nonstandard"),
         ('{"x":Infinity}', "Nonstandard"),
         ('{"x":-Infinity}', "Nonstandard"),
+        ("01", "Malformed backend JSON boundary"),
+        ("1e", "Malformed backend JSON boundary"),
+        ('{"x":1}garbage', "Malformed backend JSON boundary"),
     ],
 )
 def test_optimized_hlo_identity_refuses_malformed_backend_configuration(

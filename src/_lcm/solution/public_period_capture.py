@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Never
 
 import jax
 import jaxlib
@@ -335,6 +335,42 @@ def optimized_hlo_records(
     return records
 
 
+class _BackendJsonNumber(str):
+    """Retain a JSON numeric token without rounding or changing its spelling."""
+
+    __slots__ = ()
+
+
+def _backend_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject ambiguous members, including differently escaped duplicate keys."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate backend JSON member: {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_backend_json_constant(value: str) -> Never:
+    """Refuse constants outside the JSON grammar."""
+    raise ValueError(f"Nonstandard backend JSON constant: {value}")
+
+
+def _encode_backend_json(value: object) -> str:
+    """Order members while retaining numeric tokens and array order."""
+    if isinstance(value, _BackendJsonNumber):
+        return str(value)
+    if isinstance(value, dict):
+        members = (
+            f"{json.dumps(key)}:{_encode_backend_json(value[key])}"
+            for key in sorted(value)
+        )
+        return "{" + ",".join(members) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_encode_backend_json(item) for item in value) + "]"
+    return json.dumps(value)
+
+
 def _canonicalize_optimized_hlo(text: str) -> str:
     """Normalize backend JSON ordering without discarding configuration values.
 
@@ -342,15 +378,25 @@ def _canonicalize_optimized_hlo(text: str) -> str:
     quoted HLO strings when finding configuration fields, and retain everything
     outside their JSON values except insignificant trailing whitespace.
     """
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(
+        parse_int=_BackendJsonNumber,
+        parse_float=_BackendJsonNumber,
+        parse_constant=_reject_backend_json_constant,
+        object_pairs_hook=_backend_json_object,
+    )
     pieces = []
     cursor = 0
     for match in re.finditer(r'"(?:\\.|[^"\\])*"|backend_config=', text):
         if match.group() != "backend_config=" or match.start() < cursor:
             continue
         value, end = decoder.raw_decode(text, match.end())
+        boundary = end
+        while boundary < len(text) and text[boundary] in " \t":
+            boundary += 1
+        if boundary < len(text) and text[boundary] not in ",\n\r":
+            raise ValueError("Malformed backend JSON boundary in optimized HLO.")
         pieces.append(text[cursor : match.end()])
-        pieces.append(json.dumps(value, sort_keys=True, separators=(",", ":")))
+        pieces.append(_encode_backend_json(value))
         cursor = end
     pieces.append(text[cursor:])
     return "\n".join(line.rstrip() for line in "".join(pieces).splitlines()).rstrip()
