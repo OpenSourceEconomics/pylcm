@@ -13,6 +13,7 @@ The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 import jax.numpy as jnp
@@ -32,7 +33,7 @@ from lcm import (
     ValueDependentTransition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,
@@ -189,16 +190,11 @@ def _utility_categorical_fallback(
     return 12.0 * category + shock
 
 
-def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
-    """Categorical fallback values change which gated action is optimal.
-
-    Saving 1 closes the gate and pays 12 * category - 2 at shock zero.
-    Saving 1.5 opens it and pays 11.5 - 3 = 8.5. Thus category zero
-    chooses the open branch (8.5), while category one chooses the closed
-    branch (10). These values do not depend on the source's x coordinate.
-    """
+def _make_categorical_process_fallback_model(
+    category_projection: Callable[[DiscreteState], DiscreteState],
+) -> Model:
     categories = DiscreteGrid(category_class=FallbackCategory)
-    model = Model(
+    return Model(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
@@ -212,7 +208,7 @@ def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
                                     fallback=ProjectedRegimeValue(
                                         regime="fallback",
                                         projection={
-                                            "category": _project_category,
+                                            "category": category_projection,
                                             "shock": _project_zero_shock,
                                         },
                                     )
@@ -253,6 +249,19 @@ def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
         regime_id_class=RegimeId,
         initial_regimes={0: "source"},
     )
+
+
+def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
+    """Categorical fallback values change which gated action is optimal.
+
+    Saving 1 closes the gate and pays 12 * category - 2 at shock zero.
+    Saving 1.5 opens it and pays 11.5 - 3 = 8.5. Thus category zero
+    chooses the open branch (8.5), while category one chooses the closed
+    branch (10). These values do not depend on the source's x coordinate.
+    """
+    model = _make_categorical_process_fallback_model(
+        category_projection=_project_category
+    )
     solution = model.solve(params=_params(), log_level="debug")
 
     np.testing.assert_array_almost_equal(
@@ -260,6 +269,20 @@ def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
         np.array([[8.5, 8.5, 8.5], [10.0, 10.0, 10.0]]),
         decimal=DECIMAL_PRECISION,
     )
+
+
+def _project_unknown_category(category: DiscreteState) -> DiscreteState:
+    return category + jnp.int32(2)
+
+
+def test_solve_rejects_unknown_categories_in_a_process_fallback() -> None:
+    """Codes outside the categorical domain cannot publish a finite value."""
+    model = _make_categorical_process_fallback_model(
+        category_projection=_project_unknown_category
+    )
+
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        model.solve(params=_params(), log_level="debug")
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
