@@ -86,17 +86,21 @@ memory record to report positive output allocation and positive raw peak. Zero-o
 records are unsupported, including layouts with empty device outputs. A cached
 executable can expose its HLO and positive allocation sizes while reporting a zero raw
 peak. That inconsistent report is refused before entry publication or replay dispatch;
-the peak is never synthesized from allocation sizes. The serialized buffer-assignment
-proto need not be exposed by the GPU runtime.
+the peak is never synthesized from allocation sizes.
 
-Public capture and replay require `JAX_ENABLE_COMPILATION_CACHE=false` before process
-startup and JAX initialization on every backend. Enabled or undeclared cache modes are
-rejected at the public entry point, before parameter processing or archive access. The
-library checks both the environment declaration and the effective JAX flag; it never
-changes either. These checks cannot establish when a caller changed the settings: a late
-toggle does not satisfy the startup contract. Use a fresh process, and retain compiler
-debug/HLO metadata. The independent executable metadata and strict recorded admission
-checks still apply with caching disabled.
+GPU capture and replay also require a nonempty
+`memory_analysis().serialized_buffer_assignment_proto` from each actual compiled core.
+Missing analysis or missing/empty serialized metadata is refused before entry
+publication or selected-period replay dispatch. Positive numeric statistics do not
+replace this requirement. Missing metadata does not by itself identify a
+persistent-cache hit: a runtime can omit it even after fresh compilation.
+
+For acquisition and replay, start a fresh process with
+`JAX_ENABLE_COMPILATION_CACHE=false` before importing JAX or pylcm, and retain compiler
+debug/HLO metadata. Those settings do not guarantee that the runtime exposes the
+required metadata. A runtime that omits it is unsupported for GPU public capture/replay.
+The library never changes cache settings; the actual executable evidence determines
+acceptance, together with all strict recorded layout and admission checks.
 
 `record.metadata` exposes identities, input shapes/dtypes, layouts, widths, optimized
 HLO text and hashes, and per-core compiler reservation, raw peak and external production

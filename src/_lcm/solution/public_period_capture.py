@@ -31,19 +31,6 @@ from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
 
 
-def validate_period_capture_cache() -> None:
-    """Require the caller's explicit startup-disabled persistent cache contract."""
-    if (
-        os.environ.get("JAX_ENABLE_COMPILATION_CACHE", "").lower() != "false"
-        or jax.config.jax_enable_compilation_cache is not False
-    ):
-        raise ValueError(
-            "Public period capture/replay requires JAX_ENABLE_COMPILATION_CACHE=false "
-            "before process startup and JAX initialization. Enabled or undeclared "
-            "persistent compilation cache modes are unsupported."
-        )
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class CaptureContext:
     """Carry validated selection and identities through the ordinary solve chain."""
@@ -306,6 +293,18 @@ def optimized_hlo_records(
                 raise ValueError(
                     f"Core {name!r}: GPU period capture/replay requires a nonempty "
                     "numeric output."
+                )
+            analysis = core.compiled.memory_analysis()
+            assignment = getattr(analysis, "serialized_buffer_assignment_proto", None)
+            if not isinstance(assignment, bytes) or not assignment:
+                raise ValueError(
+                    f"Core {name!r}: GPU memory_analysis."
+                    "serialized_buffer_assignment_proto is unavailable. Public "
+                    "period capture/replay requires actual buffer-assignment "
+                    "metadata. Start a fresh process with "
+                    "JAX_ENABLE_COMPILATION_CACHE=false and retain compiler "
+                    "debug/HLO metadata. Cache-off does not guarantee that the "
+                    "runtime exposes this metadata."
                 )
             memory = compiler_memory_reservation(
                 compiled=core.compiled, widths=core.tile_widths

@@ -16,8 +16,9 @@ class PeriodCapture:
     Each target gets a new `regime@period` directory. Existing targets are refused.
     The caller's source identity complements the model, grid, parameter, installed
     source and runtime identities computed by pylcm. No model or callable is pickled.
-    Public capture and replay require ``JAX_ENABLE_COMPILATION_CACHE=false`` before
-    process startup and JAX initialization; enabled or undeclared modes are refused.
+    GPU capture and replay require actual serialized buffer-assignment metadata.
+    Missing runtime metadata is refused before entry publication or replay dispatch.
+    Startup cache-off and compiler debug metadata do not guarantee runtime support.
     """
 
     directory: Path

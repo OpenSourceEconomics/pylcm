@@ -508,6 +508,7 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
         (root / "warm.json").write_text(
             json.dumps({"pid": os.getpid(), "writes": writes})
         )
+        (root / "warm.log").write_text(caplog.text)
         return
 
     warmed = json.loads((root / "warm.json").read_text())
@@ -567,52 +568,6 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
                 for module, key in warmed["writes"]
             )
     assert not (capture.directory / "working_life@0" / "entry.h5").exists()
-
-
-@pytest.mark.parametrize("operation", ["capture", "replay"])
-@pytest.mark.parametrize(
-    ("persistent_compilation_cache", "cache_environment"),
-    [(True, "false"), (False, None)],
-    indirect=["persistent_compilation_cache"],
-)
-@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
-def test_public_period_refuses_unsupported_cache_mode(
-    *,
-    operation: str,
-    persistent_compilation_cache: bool,
-    cache_environment: str | None,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Reject unsupported modes before capture preparation or archive loading."""
-    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
-    if cache_environment is None:
-        monkeypatch.delenv("JAX_ENABLE_COMPILATION_CACHE", raising=False)
-    else:
-        monkeypatch.setenv("JAX_ENABLE_COMPILATION_CACHE", cache_environment)
-    model = _make_public_capture_model()
-    params = retirement_model.get_params(n_periods=_N_PERIODS)
-    capture = PeriodCapture(
-        directory=tmp_path / "absent",
-        periods=(("working_life", 0),),
-        source_identity={"model": "tiny-public-model-v1"},
-    )
-
-    def reject_preparation(**_kwargs: object) -> None:
-        raise AssertionError("Unsupported cache mode reached capture preparation")
-
-    monkeypatch.setattr(public_period_capture, "period_identity", reject_preparation)
-    if operation == "capture":
-        with pytest.raises(ValueError, match="JAX_ENABLE_COMPILATION_CACHE=false"):
-            model.solve(params=params, log_level="off", period_capture=capture)
-    else:
-        with pytest.raises(ValueError, match="JAX_ENABLE_COMPILATION_CACHE=false"):
-            model.replay_period(
-                directory=capture.directory,
-                params=params,
-                source_identity=capture.source_identity,
-            )
-    assert not capture.directory.exists()
 
 
 @pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])

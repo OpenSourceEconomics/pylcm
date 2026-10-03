@@ -115,7 +115,7 @@ jobs:
           JAX_ENABLE_COMPILATION_CACHE: 'false'
           PUBLIC_REPLAY_TESTS: >-
             (public_solve_captures_adjacent_periods and False) or
-            public_interrupted_capture or public_period_refuses_unsupported_cache_mode
+            public_interrupted_capture
         run: |
           pixi run -e tests-cuda12 python - <<'PY'
           import hashlib
@@ -135,11 +135,22 @@ jobs:
           Path("reports/public-replay-jax-source.json").write_text(json.dumps(record))
           assert record["cache_enabled_at_startup"] is False
           PY
-          pixi run -e tests-cuda12 test -- \
-            --ci-policy=pr --hardware-profile=gpu-small --precision=auto \
-            --environment=tests-cuda12 --report-dir=reports/public-replay-no-cache \
-            -k "$PUBLIC_REPLAY_TESTS" \
-            tests/solution/test_period_replay.py
+          result=0
+          for precision in 64 32; do
+            if pixi run -e tests-cuda12 test -- \
+              --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+              --environment=tests-cuda12 \
+              --report-dir="reports/public-replay-no-cache/fp$precision" \
+              -k "$PUBLIC_REPLAY_TESTS" \
+              tests/solution/test_period_replay.py; then
+              status=0
+            else
+              status=$?
+              result=1
+            fi
+            printf '%s\n' "$status" > "reports/public-replay-no-cache/fp$precision.exit"
+          done
+          exit "$result"
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1

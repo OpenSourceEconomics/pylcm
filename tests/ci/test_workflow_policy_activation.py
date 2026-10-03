@@ -174,16 +174,18 @@ def test_public_period_gpu_witness_has_a_scoped_startup_disabled_cache() -> None
     witnesses = [
         step
         for _, _, step in _steps(_WORKFLOWS / "gpu32.yml")
-        if "--report-dir=reports/public-replay-no-cache" in str(step.get("run", ""))
+        if "reports/public-replay-no-cache/fp$precision" in str(step.get("run", ""))
     ]
     assert len(witnesses) == 1
     step = witnesses[0]
     assert step["env"]["JAX_ENABLE_COMPILATION_CACHE"] == "false"
     command = str(step["run"])
-    assert "--precision=auto" in command
+    assert "for precision in 64 32; do" in command
+    assert '--precision="$precision"' in command
     assert step["env"]["PUBLIC_REPLAY_TESTS"] == (
         "(public_solve_captures_adjacent_periods and False) or "
-        "public_interrupted_capture or public_period_refuses_unsupported_cache_mode"
+        "public_interrupted_capture"
     )
     assert '-k "$PUBLIC_REPLAY_TESTS"' in command
-    assert command.rstrip().endswith("tests/solution/test_period_replay.py")
+    assert "tests/solution/test_period_replay.py; then" in command
+    assert command.rstrip().endswith('exit "$result"')
