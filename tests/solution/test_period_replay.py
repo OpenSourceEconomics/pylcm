@@ -330,6 +330,7 @@ def test_malformed_captured_tile_widths_are_refused(
 
 
 @pytest.mark.parametrize("budget", [None, 32 * 1024**2])
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     *,
     tmp_path: Path,
@@ -411,6 +412,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
             )
 
 
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
 def test_public_interrupted_capture_has_inputs_without_a_reference(
     *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
