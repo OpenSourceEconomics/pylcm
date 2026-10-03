@@ -494,17 +494,31 @@ def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
     )
     reference = load_period_capture(directory=capture.directory / "working_life@0")
     assert reference.completed
-    hlo = reference.metadata["optimized_hlo"]
-    assert isinstance(hlo, dict)
-    module_names = {
-        name
-        for core in hlo.values()
-        for name in re.findall(r"^HloModule ([^,\s]+)", core["text"], re.MULTILINE)
-    }
-    assert module_names
-
     _reset_test_compilation_cache(enabled=True)
-    _make_public_capture_model().solve(params=params, log_level="off")
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="jax._src.compilation_cache")
+    warmed = _make_public_capture_model().replay_period(
+        directory=capture.directory / "working_life@0",
+        params=params,
+        source_identity=capture.source_identity,
+    )
+    assert warmed.reference_matches is True
+    # Canonical HLO intentionally omits module names. Warming only the selected
+    # period identifies its numerical core by the exact persistent cache key;
+    # other periods can use the same function name with different inputs.
+    cache_keys = {
+        match.group(1)
+        for record in caplog.records
+        if record.name == "jax._src.compilation_cache"
+        and (
+            match := re.fullmatch(
+                r"Writing jit_max_Q_over_a to persistent compilation cache "
+                r"with key '([^']+)'",
+                record.getMessage(),
+            )
+        )
+    }
+    assert len(cache_keys) == 1
     # Model.solve owns its executable cache. Clear JAX's in-memory caches too,
     # so the next fresh model cannot reuse those in-memory executables.
     jax.clear_caches()
@@ -543,11 +557,13 @@ def test_public_cached_gpu_period_refuses_missing_compiler_memory_metadata(
         logger.removeFilter(interrupt)
     assert all(
         any(
-            f"Persistent compilation cache hit for '{name}'" in record.getMessage()
+            record.getMessage()
+            == "Persistent compilation cache hit for 'jit_max_Q_over_a' "
+            f"with key {key!r}"
             for record in caplog.records
             if record.name == "jax._src.compiler"
         )
-        for name in module_names
+        for key in cache_keys
     )
     assert not (tmp_path / "cached" / "working_life@0" / "entry.h5").exists()
 
