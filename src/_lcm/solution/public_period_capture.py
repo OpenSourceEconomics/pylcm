@@ -285,13 +285,30 @@ def optimized_hlo_records(
             memory = core.compiled.memory_analysis()
             assignment = getattr(memory, "serialized_buffer_assignment_proto", None)
             if not isinstance(assignment, bytes) or not assignment:
-                raise ValueError(
+                error = ValueError(
                     f"Core {name!r}: compiler memory metadata is unavailable. "
                     "Public period capture/replay requires GPU buffer-assignment "
                     "metadata. Start a fresh process with "
                     "JAX_ENABLE_COMPILATION_CACHE=false and retain compiler "
                     "debug/HLO metadata."
                 )
+                assignment_length = (
+                    len(assignment) if isinstance(assignment, (bytes, str)) else None
+                )
+                error.add_note(
+                    "[DEBUG-public-period-memory-evidence] "
+                    f"memory_type={type(memory).__qualname__!r}; "
+                    f"assignment_type={type(assignment).__qualname__!r}; "
+                    f"assignment_length={assignment_length!r}; "
+                    f"raw_peak={getattr(memory, 'peak_memory_in_bytes', None)!r}; "
+                    "argument_bytes="
+                    f"{getattr(memory, 'argument_size_in_bytes', None)!r}; "
+                    f"output_bytes={getattr(memory, 'output_size_in_bytes', None)!r}; "
+                    "temporary_bytes="
+                    f"{getattr(memory, 'temp_size_in_bytes', None)!r}; "
+                    f"cache_enabled={jax.config.jax_enable_compilation_cache!r}"
+                )
+                raise error
         modules = executable.hlo_modules()
         canonical = _canonicalize_optimized_hlo(
             "\n".join(module.to_string(options) for module in modules)
