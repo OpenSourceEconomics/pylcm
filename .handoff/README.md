@@ -16,6 +16,42 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
+## Current #493 cascade checkpoint (2026-10-03)
+
+The published #486 source `553050fdfa60f2116ee20301a56002670725a80d`
+is being merged into #493 target `87126269c862c124916ef67c9f81b77247f8d4eb`
+with a plain no-commit merge in an isolated checkout. Incoming approved macOS
+four-shard workflow, leg map and provenance are retained; the four target-only
+Stage 7 files remain registered and unweighted. Source, certificates, non-CI
+tests and [action-partitions.md](action-partitions.md) remain exactly the target.
+The maintained generator/check, local 18-case CI smoke and normal all-file hooks
+pass. The smoke has zero failures/errors/skips, exact JUnit 0:00:00.330.
+Parent commit and committed-tree type/locked-CUDA12/native gates remain before
+publication. No current #493 native timing or receipt intake is claimed.
+
+The first three cascade steps are published: #491 `5b898bb5`, #494 `bc05375f`
+and #495 `cb62c3d9`. Fresh #491 four macOS XML and20supporting receipts reconcile:
+12274distinct cases,11959passed/315skipped/zero failures or errors. Tested merge
+`6220d089` has the exact published `5b898bb5` Git tree. Maximum payload/job
+0:22:46/0:24:18 meets the 24/30-minute budgets for that one run/source.
+The earlier #486 `bdc19260` intake retains its qualified 19/20 source identity
+result. The approved value-only eight-ULP contract is on #495 `cc744450` and is
+not introduced into this Stage 7 source by the CI cascade; strict structural
+and same-program contracts and the existing Stage 7 exception are unchanged.
+Stage 8A work is separate: actual three-node, eight-GPU full-model execution and
+native acceptance still require the authorized cluster owner/access.
+
+## Historical handoff and proposal (2026-10-02)
+
+Approved macOS CI change, then prepared for parent publication:
+[macos-four-shards-proposal.md](macos-four-shards-proposal.md).
+The user approved four macOS shards and that leg's measured-weight refresh.
+The isolated preparation retains the reviewed source/config/test bytes;
+native runtime acceptance remains outstanding after publication.
+
+Receipt fixture source-identity repair:
+[receipt-fixture-identity.md](receipt-fixture-identity.md).
+
 ## Stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
@@ -23,11 +59,11 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 | 0–3 | done | `feat/invariant-state-execution` (#486, draft) | 9b36adcb + this guard |
 | 4 | skipped (3 types don't divide a 4×A100 node) | — | — |
 | 5A | Marvin battery green (28031402/03); GPU driver pending | `feat/invariant-type-aware-simulation` (#491, draft) | e58b466 |
-| Blueprint cache (Pro R3) | 28030481/82 failures fixed in 11a4bbb (green locally); Marvin rerun pending | `perf/invariant-structural-blueprint-cache` (#490, draft) | 1d8c306 |
-| 5B | in progress (subagent, design first) | `feat/invariant-block-major-lifetime` | based on 9dc2145a |
+| Blueprint cache (Pro R3) | Marvin full suite green at 1d8c306f (28033850 / 28031605) | `perf/invariant-structural-blueprint-cache` (#490, draft) | see its `.handoff/blueprint-cache.md` |
+| 5B | Marvin battery green (timing row cleared by isolated A/B); GPU driver requested | `feat/invariant-block-major-lifetime` (#494, draft, on #491) | 8691e767 |
 | 6 | closed, not warranted (user decision) | — | evidence in #486 comment 5950352511 |
-| 7 | in progress (subagent) | `feat/invariant-action-partitions` | based on 9b36adcb |
-| 8A | not started; after 5B | — | — |
+| 7 | Marvin full + certificate batteries green; GPU §12 benchmark pending | `feat/invariant-action-partitions` (#493, draft); see its `.handoff/action-partitions.md` | 71c902d |
+| 8A | design starting (after 5B) | — | — |
 | 8B | removed | — | — |
 
 ## Pending HPC jobs (run by the aca session)
@@ -47,6 +83,13 @@ On Marvin:
 - the original handoff tarball is unpacked at `~/inv5a-handoff/`.
 
 Don't touch `~/pylcm-prod-inv` while the production pair runs.
+
+## Recorded decisions
+- The user approved the blocked-vs-unblocked ULP contract: see
+  `reports/stage3-ulp.md` (FMA contraction; 8 ULP for values, exact structure).
+  Numerical implementation and native acceptance are separate from this CI change.
+- The authorized endpoint is Stage 8A. This macOS CI preparation makes no
+  Stage 8A implementation or acceptance claim.
 
 ## Next steps
 1. Fold the production-pair numbers into #486.

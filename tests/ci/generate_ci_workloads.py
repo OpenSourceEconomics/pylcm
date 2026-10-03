@@ -21,9 +21,9 @@ What it changes, and nothing else:
 
 What it leaves alone: `frozen_head`, the observed weights, the exclusion list,
 the guardrail budgets, the shard *counts*, and every other lane.
-`frozen_head` names the commit the per-file weights were measured at, not the
-commit the manifest was last edited at, so registering a file does not advance
-it. Re-measuring the weights does.
+`frozen_head` binds the root cross-leg CSV weights; per-leg `junit_source`
+records each leg's measurement provenance. Registering files or refreshing one
+leg does not advance the root freeze. Re-measuring the root CSV weights does.
 
 Exit codes:
 
