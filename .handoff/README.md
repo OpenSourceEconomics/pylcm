@@ -36,8 +36,12 @@ the complete source and certificate trees match that accepted tip. Earlier
 dispatcher threat tests use one expectation per case. No seal was regenerated.
 
 The user approved direct SSH, superseding the historical owner-only route,
-and approved the Mac4 CI work. Root CI updates will cascade after this merge's
-checks. The user explicitly declined separate ACA-model ports for older
+and approved the Mac4 CI work. The root CI and JUnit identity work is included
+by a plain merge from `b1dc9d077ccd1289c41010615132be11df40a53d`. Its maintained
+generator registers the three interface test files without inventing weights
+or changing provenance, budgets, exclusions or the four-shard Mac layout.
+Shared receipt details: [receipt-junit-identity.md](receipt-junit-identity.md).
+The user explicitly declined separate ACA-model ports for older
 interface PRs; their pinned-ACA import failure contains no benchmark timing.
 Submission of the full simultaneous3nodes×8GPUs mlgpu ACA job still waits for
 passing checks and authenticated access. No main merge or native submission
