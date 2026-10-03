@@ -16,7 +16,28 @@ Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
-## Stage status (2026-10-02)
+## Interface consolidation checkpoint (2026-10-03)
+
+The user authorized merges and pushes to consolidate the stack. The #489
+draw-reading state changes are merged into #488 without rewriting either
+history. Numerical source and both certificate files are exactly the accepted
+`a37267e7220db9763fc51f149836b079780b3713` bytes; the #488 top-first simulation
+fixture remains intact. No certificate pin or gate was regenerated. The
+continuation conflict adds the required draw-dependency import; certificate
+conflicts retain the seals already tested with that exact source. The generic
+handoff exclusion comment is retained because the proposed guard is historical.
+The original #489 note is preserved in
+[keep-draw-read-states.md](keep-draw-read-states.md).
+
+The user approved direct SSH, superseding the historical owner-only route,
+and approved the Mac4 CI work. Root CI updates will cascade after this merge's
+checks. The user explicitly declined separate ACA-model ports for older
+interface PRs; their pinned-ACA import failure contains no benchmark timing.
+Submission of the full simultaneous3nodes×8GPUs mlgpu ACA job still waits for
+passing checks and authenticated access. No main merge or native submission
+occurred here. Shared instructions are pinned to the approved4a44a464 revision.
+
+## Historical stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
 |---|---|---|---|

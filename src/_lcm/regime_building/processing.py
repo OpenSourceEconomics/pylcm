@@ -12,7 +12,7 @@ import functools
 import inspect
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Collection, Hashable, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from itertools import product
@@ -5500,6 +5500,29 @@ def _process_regime_core(
         }
     )
 
+    # A law toward a target may read the draw of a process the source carries
+    # but the target does not. The draw then exists only inside the transition:
+    # it is taken from the source's process at the source's current value,
+    # consumed by the target's laws, and not persisted, because the target has
+    # no axis to store it on.
+    source_draw_grids = _source_draws_read_by_target_laws(
+        flat_nested_transitions=flat_nested_transitions,
+        functions=processed_functions,
+        source_process_grids={
+            process: grid
+            for process, grid in state_grids[source_regime_name].items()
+            if process in carried_processes
+            and isinstance(grid, _ContinuousStochasticProcess)
+        },
+        state_grids=state_grids,
+        continuation_targets=continuation_targets,
+    )
+    source_draw_keys = _add_source_draw_functions(
+        processed_functions=processed_functions,
+        source_draw_grids=source_draw_grids,
+        source_grids=all_grids[source_regime_name],
+    )
+
     # Bundle insertion order fixes the continuation's lottery reduction axes.
     # Preserve the declared process order independently of Python's hash seed.
     process_transition_keys = tuple(
@@ -5516,7 +5539,7 @@ def _process_regime_core(
         for func_name in flat_nested_transitions
     } | {
         key: processed_functions[key]
-        for key in (*process_transition_keys, *joint_transition_keys)
+        for key in (*process_transition_keys, *joint_transition_keys, *source_draw_keys)
     }
 
     all_constraint_functions: ConstraintFunctionsMapping = MappingProxyType(
@@ -5530,6 +5553,7 @@ def _process_regime_core(
         | set(constraints)
         | set(process_transition_keys)
         | set(joint_transition_keys)
+        | set(source_draw_keys)
     )
     phase_functions = MappingProxyType(
         {
@@ -5570,6 +5594,7 @@ def _process_regime_core(
         joint_transitions=joint_transitions,
         phase_name=phase_name,
         original_lottery_layouts=original_lottery_layouts,
+        source_draws=frozenset(source_draw_grids),
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -5657,6 +5682,123 @@ def _process_joint_transitions(
     return tuple(transition_keys)
 
 
+def _source_draws_read_by_target_laws(
+    *,
+    flat_nested_transitions: Mapping[str, UserFunction],
+    functions: Mapping[str, UserFunction],
+    source_process_grids: Mapping[ProcessName, _ContinuousStochasticProcess],
+    state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
+    continuation_targets: Collection[RegimeName],
+) -> dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess]:
+    """Find the source processes whose draw a law toward a non-carrier reads.
+
+    A target that carries the process receives its draw as a persisted lottery,
+    and a target with its own law for `next_<process>` names the value itself;
+    neither needs a draw here. Every other target whose laws read
+    `next_<process>`, directly or through regime functions, needs the draw
+    taken from the source's process inside the transition.
+
+    Returns:
+        The source process grid, keyed by `(target, process)`.
+
+    """
+    draws: dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess] = {}
+    for target in sorted(continuation_targets):
+        laws = {
+            name: law
+            for name, law in flat_nested_transitions.items()
+            if tree_path_from_qname(name)[0] == target
+        }
+        reads = _names_read_by(roots=laws.values(), functions=functions)
+        for process, grid in source_process_grids.items():
+            if (
+                process not in state_grids.get(target, {})
+                and f"{target}__next_{process}" not in flat_nested_transitions
+                and f"next_{process}" in reads
+            ):
+                draws[(target, process)] = grid
+    return draws
+
+
+def _add_source_draw_functions(
+    *,
+    processed_functions: dict[str, EconFunction],
+    source_draw_grids: Mapping[
+        tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
+    ],
+    source_grids: Mapping[StateOrActionName, Grid],
+) -> tuple[str, ...]:
+    """Add each transition-local draw's node axis, support and weights.
+
+    The axis enumerates the source process's nodes, the support provider gives
+    their values, and the weights are the source process's row at the source's
+    current value. Returns the keys of the axis and support functions, which
+    belong to the target's transition bundle.
+    """
+    keys: list[str] = []
+    for (target, process), grid in source_draw_grids.items():
+        axis_name = f"{target}__next_{process}"
+        support_name = f"{target}__support_next_{process}"
+        processed_functions[axis_name] = _joint_support_indices(grid.n_points)
+        processed_functions[support_name] = _get_source_process_nodes(
+            name=process, grid=grid
+        )
+        processed_functions[f"weight_{axis_name}"] = _get_weights_func_for_process(
+            name=process, grid=grid, grids=source_grids
+        )
+        keys += [axis_name, support_name]
+    return tuple(keys)
+
+
+def _names_read_by(
+    *, roots: Iterable[UserFunction], functions: Mapping[str, UserFunction]
+) -> frozenset[str]:
+    """Collect every argument name `roots` read, through `functions`."""
+    reads: set[str] = set()
+    frontier = list(roots)
+    while frontier:
+        for arg in get_annotations(frontier.pop()):
+            if arg == "return" or arg in reads:
+                continue
+            reads.add(arg)
+            if arg in functions:
+                frontier.append(functions[arg])
+    return frozenset(reads)
+
+
+def _get_source_process_nodes(
+    *, name: ProcessName, grid: _ContinuousStochasticProcess
+) -> UserFunction:
+    """Get the provider of a source process's nodes, the support of its draw."""
+    if grid.params_to_pass_at_runtime:
+        fixed_params = dict(grid.params)
+        runtime_param_names = {
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
+        }
+
+        @with_signature(
+            args=dict.fromkeys(runtime_param_names, "FloatND"),
+            return_annotation="ContinuousState",
+            enforce=False,
+        )
+        def nodes_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+            process_kw: dict[str, FloatND | IntND] = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            return grid.compute_gridpoints(**process_kw)
+
+        return nodes_runtime
+
+    gridpoints = grid.get_gridpoints()
+
+    @with_signature(args={}, return_annotation="ContinuousState", enforce=False)
+    def nodes(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        return gridpoints
+
+    return nodes
+
+
 def _joint_support_indices(support_size: int) -> EconFunction:
     """Return the internal node-index axis of one finite joint support."""
 
@@ -5727,8 +5869,15 @@ def _build_transition_plans(
     original_lottery_layouts: Mapping[str, OriginalLotteryLayout] = MappingProxyType(
         {}
     ),
+    source_draws: frozenset[tuple[RegimeName, ProcessName]] = frozenset(),
 ) -> TargetTransitionPlans:
-    """Lower ordinary and joint declarations into complete target-edge plans."""
+    """Lower ordinary and joint declarations into complete target-edge plans.
+
+    `source_draws` names the `(target, process)` pairs whose draw is taken from
+    the source's process inside the transition: a law toward `target` reads it,
+    and `target` does not carry the process. Each is a transition-local lottery
+    on the source's process nodes.
+    """
     plans: dict[RegimeName, TargetTransitionPlan] = {}
     for target, bundle in transitions.items():
         lotteries: dict[str, TransitionLotteryInfo] = {}
@@ -5778,6 +5927,38 @@ def _build_transition_plans(
             if (
                 next_state_name.startswith("support_")
                 and next_state_name.removeprefix("support_") in joint_kernels
+            ):
+                continue
+            source_draw = (target, next_state_name.removeprefix("next_"))
+            if source_draw in source_draws:
+                qualified_name = qname_from_tree_path((target, next_state_name))
+                support_provider_name = f"support_{next_state_name}"
+                weight_name = f"weight_{qualified_name}"
+                lotteries[next_state_name] = TransitionLotteryInfo(
+                    name=next_state_name,
+                    qualified_name=qualified_name,
+                    support_provider=bundle[support_provider_name],
+                    support_signature=SupportSignature(
+                        size=cast(
+                            "_ContinuousStochasticProcess",
+                            all_grids[source_regime_name][source_draw[1]],
+                        ).n_points
+                    ),
+                    probabilities=processed_functions[weight_name],
+                    support_origin=SupportOrigin.SOURCE_PROCESS,
+                    lifetime=LotteryLifetime.TRANSITION_LOCAL,
+                    persisted_state=None,
+                    support_params=ParameterBinding(),
+                    probability_params=ParameterBinding(
+                        public_path=(source_regime_name, target, next_state_name)
+                    ),
+                    weight_name=weight_name,
+                    support_provider_name=support_provider_name,
+                    node_annotation="ContinuousState",
+                )
+                continue
+            if next_state_name.startswith("support_next_") and (
+                (target, next_state_name.removeprefix("support_next_")) in source_draws
             ):
                 continue
 
