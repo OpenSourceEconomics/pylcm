@@ -26,6 +26,7 @@ from _lcm.solution.period_capture import (
     ShardingDescriptor,
     ValueTransferDescriptor,
     describe_array_leaves,
+    rebuild_sharding,
 )
 from _lcm.solution.period_replay import prepare_recorded_period
 from _lcm.solution.public_period_capture import (
@@ -85,6 +86,9 @@ def replay_public_period(
     if entry_metadata != metadata:
         raise ValueError("Period capture changed while being read.")
     layouts = _decode_layouts(metadata["layouts"])
+    devices = placed_devices_for_ids(
+        submesh_device_ids=layouts.device_ids, visible_device_ids=execution.device_ids
+    )
     kernel_kwargs = _restore_public_inputs(
         arrays=arrays,
         regimes=regimes,
@@ -95,8 +99,10 @@ def replay_public_period(
         ages=ages,
         retain_replay=metadata["retain_replay"],
     )
-    kernel_kwargs = _restore_weak_types(
-        kernel_kwargs=kernel_kwargs, leaves=layouts.leaves
+    kernel_kwargs = _restore_array_leaves(
+        kernel_kwargs=kernel_kwargs,
+        leaves=layouts.leaves,
+        device_by_recorded_id={int(device.id): device for device in devices},
     )
     observed_leaves = describe_array_leaves(tree=kernel_kwargs)
     if tuple(
@@ -109,9 +115,6 @@ def replay_public_period(
         raise ValueError(
             "Captured input layout identity is incompatible with reconstructed inputs."
         )
-    devices = placed_devices_for_ids(
-        submesh_device_ids=layouts.device_ids, visible_device_ids=execution.device_ids
-    )
     kernel_kwargs, cores = prepare_recorded_period(
         payload={
             "regime": regimes[name],
@@ -180,7 +183,7 @@ def _restore_public_inputs(
         flat_params=flat_params,
         device_ids=execution.device_ids,
     )
-    values: dict[str, dict[str, jax.Array]] = {
+    values: dict[str, dict[str, np.ndarray]] = {
         "next_regime_to_V_arr": {},
         "period_solution": {},
     }
@@ -193,7 +196,7 @@ def _restore_public_inputs(
             raise ValueError(
                 "Captured input shape or dtype is incompatible with this model."
             )
-        values[channel][regime_name] = jax.device_put(array)
+        values[channel][regime_name] = array
     if set(values["next_regime_to_V_arr"]) != set(regimes):
         raise ValueError("Captured continuation value coordinates are incomplete.")
     return {
@@ -218,15 +221,38 @@ def _restore_public_inputs(
     }
 
 
-def _restore_weak_types(
-    *, kernel_kwargs: dict[str, Any], leaves: tuple[LeafLayoutDescriptor, ...]
+def _restore_array_leaves(
+    *,
+    kernel_kwargs: dict[str, Any],
+    leaves: tuple[LeafLayoutDescriptor, ...],
+    device_by_recorded_id: Mapping[int, jax.Device],
 ) -> dict[str, Any]:
-    """Restore abstract weak typing that a NumPy payload cannot represent."""
+    """Upload host values directly to recorded devices and restore weak typing."""
     descriptors = {leaf.tree_path: leaf for leaf in leaves}
     flat, treedef = jax.tree_util.tree_flatten_with_path(kernel_kwargs)
     restored = []
-    for path, value in flat:
+    for path, leaf in flat:
+        value = leaf
         descriptor = descriptors.get(jax.tree_util.keystr(path))
+        if isinstance(value, np.ndarray):
+            # Persisted V arrays are committed in production. Fresh parameter
+            # leaves are already JAX arrays and may legitimately be uncommitted.
+            if (
+                descriptor is None
+                or not descriptor.committed
+                or value.shape != descriptor.shape
+                or str(value.dtype) != descriptor.dtype
+            ):
+                raise ValueError(
+                    "Captured value layout is incompatible with its payload."
+                )
+            value = jax.device_put(
+                value,
+                rebuild_sharding(
+                    descriptor=descriptor.sharding,
+                    device_by_recorded_id=device_by_recorded_id,
+                ),
+            )
         if (
             isinstance(value, jax.Array)
             and descriptor is not None
