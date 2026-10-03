@@ -9,16 +9,21 @@ The capture is written from the funnel every regime-period passes through, so wh
 replayed is what ran — not a reconstruction that might differ from it.
 """
 
+import json
 import logging
 import math
+import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import cloudpickle
 import jax
 import numpy as np
 import pytest
 
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
@@ -464,6 +469,104 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     )
     assert replay.reference_matches is None
     assert replay.in_context_seconds is None
+
+
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
+def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadata(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A selected native cache hit requires actual buffer-assignment evidence."""
+    stage = os.environ.get("PUBLIC_REPLAY_CACHE_STAGE")
+    if stage is None:
+        pytest.skip("Requires the serial warm/capture CI process pair")
+    assert stage in {"warm", "capture"}
+    root = Path(os.environ["PUBLIC_REPLAY_CACHE_EVIDENCE"])
+    root.mkdir(parents=True, exist_ok=True)
+    assert os.environ["JAX_ENABLE_COMPILATION_CACHE"] == "true"
+    assert jax.config.jax_enable_compilation_cache is True
+    assert jax.config.jax_persistent_cache_min_compile_time_secs == 0
+    assert jax.config.jax_persistent_cache_min_entry_size_bytes == -1
+    caplog.set_level(logging.DEBUG, logger="jax._src.compilation_cache")
+    caplog.set_level(logging.DEBUG, logger="jax._src.compiler")
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    if stage == "warm":
+        _make_public_capture_model().solve(params=params, log_level="off")
+        writes = [
+            match.groups()
+            for record in caplog.records
+            if record.name == "jax._src.compilation_cache"
+            and (
+                match := re.fullmatch(
+                    r"Writing (\S+) to persistent compilation cache "
+                    r"with key '([^']+)'",
+                    record.getMessage(),
+                )
+            )
+        ]
+        assert writes
+        (root / "warm.json").write_text(
+            json.dumps({"pid": os.getpid(), "writes": writes})
+        )
+        return
+
+    warmed = json.loads((root / "warm.json").read_text())
+    assert warmed["pid"] != os.getpid()
+    observed: dict[str, Any] = {}
+    original = public_period_capture.optimized_hlo_records
+
+    def observe(*, compiled_cores: Mapping[str, PlannedCore]) -> dict[str, Any]:
+        for name, core in compiled_cores.items():
+            assert isinstance(core.compiled, jax.stages.Compiled)
+            executable = core.compiled.runtime_executable()
+            assert executable is not None
+            memory = core.compiled.memory_analysis()
+            proto = getattr(memory, "serialized_buffer_assignment_proto", None)
+            observed[name] = {
+                "modules": [module.name for module in executable.hlo_modules()],
+                "proto_type": type(proto).__name__,
+                "proto_bytes": len(proto) if isinstance(proto, bytes) else None,
+                "memory": str(memory),
+            }
+        return original(compiled_cores=compiled_cores)
+
+    monkeypatch.setattr(public_period_capture, "optimized_hlo_records", observe)
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    interrupt = _InterruptCapturedPeriod()
+    logger = logging.getLogger("lcm")
+    logger.addFilter(interrupt)
+    capture = PeriodCapture(
+        directory=root / "capture",
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    try:
+        with pytest.raises(ValueError, match="serialized_buffer_assignment_proto"):
+            _make_public_capture_model().solve(
+                params=params, log_level="off", period_capture=capture
+            )
+    finally:
+        logger.removeFilter(interrupt)
+        (root / "capture.json").write_text(
+            json.dumps({"pid": os.getpid(), "observed": observed})
+        )
+        (root / "capture.log").write_text(caplog.text)
+    assert observed
+    for record in observed.values():
+        assert record["proto_bytes"] in {None, 0}
+        assert record["modules"]
+        for name in record["modules"]:
+            assert any(
+                module == name
+                and any(
+                    log.getMessage()
+                    == f"Persistent compilation cache hit for '{name}' with key {key!r}"
+                    for log in caplog.records
+                    if log.name == "jax._src.compiler"
+                )
+                for module, key in warmed["writes"]
+            )
+    assert not (capture.directory / "working_life@0" / "entry.h5").exists()
 
 
 @pytest.mark.parametrize("operation", ["capture", "replay"])

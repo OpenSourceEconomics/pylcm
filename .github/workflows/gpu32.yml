@@ -74,6 +74,40 @@ jobs:
           --ci-policy=pr --hardware-profile=gpu-small --precision=auto
           --environment=tests-cuda12 --report-dir=reports/policy
           --log-cli-level=INFO tests
+      - name: Witness native metadata after a separate process warms the cache
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          JAX_ENABLE_COMPILATION_CACHE: 'true'
+          JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: '0'
+          JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: '-1'
+        run: |
+          export PYLCM_JAX_CACHE_ROOT
+          PYLCM_JAX_CACHE_ROOT=$(mktemp -d "$RUNNER_TEMP/public-replay-cache.XXXXXX")
+          result=0
+          for precision in 64 32; do
+            export PUBLIC_REPLAY_CACHE_EVIDENCE
+            PUBLIC_REPLAY_CACHE_EVIDENCE="reports/public-replay-warmed/fp$precision"
+            for stage in warm capture; do
+              export PUBLIC_REPLAY_CACHE_STAGE="$stage"
+              if pixi run -e tests-cuda12 test -- \
+                --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+                --environment=tests-cuda12 \
+                --report-dir="$PUBLIC_REPLAY_CACHE_EVIDENCE/$stage" \
+                -k public_capture_from_separately_warmed_gpu_cache \
+                tests/solution/test_period_replay.py; then
+                status=0
+              else
+                status=$?
+                result=1
+              fi
+              printf '%s\n' "$status" > "$PUBLIC_REPLAY_CACHE_EVIDENCE/$stage.exit"
+              if test "$status" -ne 0; then
+                break
+              fi
+            done
+          done
+          exit "$result"
       - name: Diagnose public replay with cache disabled from process startup
         if: ${{ !cancelled() }}
         shell: bash
