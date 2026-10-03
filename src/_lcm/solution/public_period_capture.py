@@ -9,7 +9,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
 import jax
 import jaxlib
@@ -199,10 +199,6 @@ def capture_public_entry(
         },
         "admission": plain_metadata(admission),
         "optimized_hlo": optimized_hlo_records(compiled_cores=compiled_cores),
-        "diagnostic_compiler_inputs": {
-            name: repr(cast("jax.stages.Compiled", core.compiled).in_avals)
-            for name, core in compiled_cores.items()
-        },
         "retain_replay": kernel_kwargs["retain_replay"],
     }
     arrays = {
@@ -272,7 +268,7 @@ def load_period_capture(*, directory: Path) -> PeriodCaptureRecord:
 def optimized_hlo_records(
     *, compiled_cores: Mapping[str, PlannedCore]
 ) -> dict[str, Any]:
-    """Identify optimized modules including constants, layouts and backend config."""
+    """Require compiler evidence and identify complete optimized HLO modules."""
     options = _hlo.HloPrintOptions.canonical()
     options.canonicalize_computations = True
     options.print_ids = False
@@ -285,6 +281,17 @@ def optimized_hlo_records(
         executable = core.compiled.runtime_executable()
         if executable is None:
             raise ValueError(f"Core {name!r} exposes no runtime executable.")
+        if any(device.platform == "gpu" for device in executable.local_devices()):
+            memory = core.compiled.memory_analysis()
+            assignment = getattr(memory, "serialized_buffer_assignment_proto", None)
+            if not isinstance(assignment, bytes) or not assignment:
+                raise ValueError(
+                    f"Core {name!r}: compiler memory metadata is unavailable. "
+                    "Public period capture/replay requires GPU buffer-assignment "
+                    "metadata. Start a fresh process with "
+                    "JAX_ENABLE_COMPILATION_CACHE=false and retain compiler "
+                    "debug/HLO metadata."
+                )
         modules = executable.hlo_modules()
         canonical = _canonicalize_optimized_hlo(
             "\n".join(module.to_string(options) for module in modules)

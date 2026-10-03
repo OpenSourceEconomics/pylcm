@@ -1,11 +1,10 @@
 """Validate a numerical capture against a fresh model and replay one adapter."""
 
-import difflib
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
 import jax
 import numpy as np
@@ -128,44 +127,11 @@ def replay_public_period(
         devices=devices,
     )
     hlo = optimized_hlo_records(compiled_cores=cores)
-    try:
-        _validate_recorded_admission(
-            cores=cores,
-            records=metadata["admission"],
-            budget=execution.device_memory_bytes,
-        )
-    except ValueError as error:
-        captured_hlo = {
-            name: item["sha256"] for name, item in metadata["optimized_hlo"].items()
-        }
-        replay_hlo = {name: item["sha256"] for name, item in hlo.items()}
-        error.add_note(
-            "[DEBUG-public-period-admission] optimized HLO identities: "
-            f"captured={captured_hlo!r}; replay={replay_hlo!r}"
-        )
-        replay_inputs = {
-            name: repr(cast("jax.stages.Compiled", core.compiled).in_avals)
-            for name, core in cores.items()
-        }
-        error.add_note(
-            "[DEBUG-public-period-admission] compiled input abstracts: "
-            f"captured={metadata['diagnostic_compiler_inputs']!r}; "
-            f"replay={replay_inputs!r}"
-        )
-        for name, item in hlo.items():
-            error.add_note(
-                "[DEBUG-public-period-admission] optimized HLO diff "
-                f"for {name}:\n"
-                + "\n".join(
-                    difflib.unified_diff(
-                        metadata["optimized_hlo"][name]["text"].splitlines(),
-                        item["text"].splitlines(),
-                        fromfile="captured",
-                        tofile="replay",
-                    )
-                )
-            )
-        raise
+    _validate_recorded_admission(
+        cores=cores,
+        records=metadata["admission"],
+        budget=execution.device_memory_bytes,
+    )
     if hlo != metadata["optimized_hlo"]:
         raise ValueError(
             "Replayed optimized HLO identity is incompatible "
