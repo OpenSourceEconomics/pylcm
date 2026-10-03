@@ -74,14 +74,17 @@ dispatch. HLO canonicalization normalizes backend JSON member order while retain
 configuration values, constants and layouts. Existing target directories are refused
 rather than overwritten.
 
-GPU capture and replay require actual compiler buffer-assignment metadata. A cached
-executable can expose its HLO and allocation sizes while omitting that metadata and
-reporting a zero raw peak. Such an executable is refused before entry publication or
-replay dispatch; zero is not accepted as a substitute for unavailable evidence. Start
-the process with `JAX_ENABLE_COMPILATION_CACHE=false` and retain compiler debug/HLO
-metadata when acquiring or replaying GPU periods. A late cache-configuration change is
-not a reliable bypass of an already initialized persistent cache. The check validates
-the executable's metadata, not the global cache flag, and never changes cache settings.
+GPU capture and replay qualify nonempty numeric outputs only, and require every compiler
+memory record to report positive output allocation and positive raw peak. Zero-output
+records are unsupported, including layouts with empty device outputs. A cached
+executable can expose its HLO and positive allocation sizes while reporting a zero raw
+peak. That inconsistent report is refused before entry publication or replay dispatch;
+the peak is never synthesized from allocation sizes. The serialized buffer-assignment
+proto need not be exposed by the GPU runtime. Start the process with
+`JAX_ENABLE_COMPILATION_CACHE=false` and retain compiler debug/HLO metadata when
+acquiring or replaying GPU periods. A late cache-configuration change is not a reliable
+bypass of an already initialized persistent cache. The check validates the executable's
+metadata, not the global cache flag, and never changes cache settings.
 
 `record.metadata` exposes identities, input shapes/dtypes, layouts, widths, optimized
 HLO text and hashes, and per-core compiler reservation, raw peak and external production

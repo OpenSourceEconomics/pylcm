@@ -4,6 +4,7 @@ import dataclasses
 import enum
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -22,6 +23,7 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.engine import Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import PlannedCore
+from _lcm.execution.workspace_planning import compiler_memory_reservation
 from _lcm.persistence.period import read_period_archive, write_period_archive
 from _lcm.solution.period_capture import _period_layouts
 from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
@@ -282,33 +284,31 @@ def optimized_hlo_records(
         if executable is None:
             raise ValueError(f"Core {name!r} exposes no runtime executable.")
         if any(device.platform == "gpu" for device in executable.local_devices()):
-            memory = core.compiled.memory_analysis()
-            assignment = getattr(memory, "serialized_buffer_assignment_proto", None)
-            if not isinstance(assignment, bytes) or not assignment:
-                error = ValueError(
-                    f"Core {name!r}: compiler memory metadata is unavailable. "
-                    "Public period capture/replay requires GPU buffer-assignment "
-                    "metadata. Start a fresh process with "
+            if not any(
+                isinstance(leaf, jax.ShapeDtypeStruct)
+                and math.prod(leaf.shape) > 0
+                and jax.dtypes.issubdtype(leaf.dtype, np.number)
+                for leaf in jax.tree.leaves(core.compiled.out_info)
+            ):
+                raise ValueError(
+                    f"Core {name!r}: GPU period capture/replay requires a nonempty "
+                    "numeric output."
+                )
+            memory = compiler_memory_reservation(
+                compiled=core.compiled, widths=core.tile_widths
+            )
+            if any(record.output_bytes == 0 for record in memory.records):
+                raise ValueError(
+                    f"Core {name!r}: unsupported GPU output layout; every compiler "
+                    "memory record must report positive output allocation."
+                )
+            if any(record.peak_bytes == 0 for record in memory.records):
+                raise ValueError(
+                    f"Core {name!r}: compiler memory metadata is unavailable or "
+                    "inconsistent for a nonempty output. Start a fresh process with "
                     "JAX_ENABLE_COMPILATION_CACHE=false and retain compiler "
                     "debug/HLO metadata."
                 )
-                assignment_length = (
-                    len(assignment) if isinstance(assignment, (bytes, str)) else None
-                )
-                error.add_note(
-                    "[DEBUG-public-period-memory-evidence] "
-                    f"memory_type={type(memory).__qualname__!r}; "
-                    f"assignment_type={type(assignment).__qualname__!r}; "
-                    f"assignment_length={assignment_length!r}; "
-                    f"raw_peak={getattr(memory, 'peak_memory_in_bytes', None)!r}; "
-                    "argument_bytes="
-                    f"{getattr(memory, 'argument_size_in_bytes', None)!r}; "
-                    f"output_bytes={getattr(memory, 'output_size_in_bytes', None)!r}; "
-                    "temporary_bytes="
-                    f"{getattr(memory, 'temp_size_in_bytes', None)!r}; "
-                    f"cache_enabled={jax.config.jax_enable_compilation_cache!r}"
-                )
-                raise error
         modules = executable.hlo_modules()
         canonical = _canonicalize_optimized_hlo(
             "\n".join(module.to_string(options) for module in modules)
