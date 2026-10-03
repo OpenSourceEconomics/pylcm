@@ -25,6 +25,10 @@ native runtime acceptance remains outstanding after publication.
 Receipt fixture source-identity repair:
 [receipt-fixture-identity.md](receipt-fixture-identity.md).
 
+Shared JUnit receipt identity repair: [receipt-junit-identity.md](receipt-junit-identity.md).
+This helper-only repair preserves parameter labels. Its original native receipt
+observations are historical; it does not revise the approved CI decisions above.
+
 ## Stage status (2026-10-02)
 
 | Stage | State | Branch / PR | Head |
