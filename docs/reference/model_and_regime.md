@@ -98,8 +98,12 @@ budget it is `None`, because compiled admissions determine actual wave membershi
 Compiler memory, optimized HLO, buffer assignment and physical residency are also
 unavailable. No allocation or performance claim follows from lowering.
 
-The initial identity profile supports CPU source checkouts with matching installed
-native libraries. Source, native and runtime file hashes are collected only on this
+Identity profiles require source checkouts with matching installed native libraries. The
+bounded Linux CUDA12 profile requires one physical CUDA device, CPU retention support,
+identifiable installed CUDA packages, and matching loaded PJRT, native CUDA and driver
+libraries. Other GPU profiles fail closed. Current native build inputs, tool bytes and
+native/JAX FFI header bytes are recorded; observed header bytes do not attest the inputs
+of a cached native build. Source, native and runtime hashes are collected only on this
 diagnostic path; an unknown descriptor or inconsistent identity fails closed. Returned
 bytes preserve the exact raw IR, with no source-location normalization. The result keeps
 no model, device array, JAX `Lowered`, executable or future alive. A compile API is not

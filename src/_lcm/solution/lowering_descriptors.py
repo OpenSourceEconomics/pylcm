@@ -1,7 +1,7 @@
 """Copy fail-closed lowering descriptors and diagnostic-only byte identities.
 
-No collector runs on ordinary solve. The initial identity profile covers a CPU
-source checkout and its actual installed native payload; it does not certify GPUs.
+No collector runs on ordinary solve. CPU and bounded single-device CUDA12
+profiles require a source checkout and an identifiable installed native payload.
 """
 
 import dataclasses
@@ -21,6 +21,7 @@ import numpy as np
 
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
 from _lcm.regime_building.age_specialization import INVARIANT
+from _lcm.solution.cuda_lowering_identity import capture_cuda_lowering_identity
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from lcm.exceptions import ExecutionPlanningError
 
@@ -171,8 +172,16 @@ def capture_lowering_identity() -> Mapping[str, object]:
         )
         for device in jax.devices()
     )
-    if not devices or not all(device[2] == "cpu" for device in devices):
-        raise ExecutionPlanningError("Lowering identity currently supports CPU only.")
+    if not devices:
+        raise ExecutionPlanningError("Lowering identity requires a device.")
+    extra_identity: Mapping[str, object] = {}
+    if not all(device[2] == "cpu" for device in devices):
+        extra_identity = capture_cuda_lowering_identity(
+            root=root,
+            native_directory=directory,
+            manifest=manifest,
+            hatch_build=hatch_build,
+        )
     return MappingProxyType(
         {
             "source_files": sources,
@@ -189,14 +198,15 @@ def capture_lowering_identity() -> Mapping[str, object]:
             "python_abi": sys.implementation.cache_tag,
             "devices": devices,
             "xla_flags": os.environ.get("XLA_FLAGS", ""),
+            **extra_identity,
         }
     )
 
 
 def _capture_runtime_files() -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
-    """Hash the installed CPU runtime source and shared-library inventory."""
+    """Hash the common installed runtime source and shared-library inventory."""
     distributions = []
-    # Initial witness is CPU-only; plugin/GPU identity is a separate admission.
+    # CUDA plugin/driver inventories are bound separately by its profile.
     for name in ("jax", "jaxlib", "numpy"):
         package = distribution(name)
         if not package.files:
