@@ -609,7 +609,7 @@ type AxisDispatch = Literal["dense", "streamed"]
 # Optimized-HLO opcodes that move data between devices, with their asynchronous
 # start halves; the matching `-done` halves are not counted a second time.
 _HLO_COLLECTIVE = re.compile(
-    r"=\s+\S+\s+(?P<opcode>all-gather|all-reduce|all-to-all|reduce-scatter|"
+    r"[\s)](?P<opcode>all-gather|all-reduce|all-to-all|reduce-scatter|"
     r"collective-permute|collective-broadcast)(?:-start)?\("
 )
 
