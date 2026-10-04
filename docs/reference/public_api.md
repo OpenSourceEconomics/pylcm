@@ -15,6 +15,8 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
+| [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |

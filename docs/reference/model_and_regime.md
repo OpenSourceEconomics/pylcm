@@ -71,6 +71,8 @@ raises `UnsupportedOperationError`, from these methods and from `simulate` alike
 
 `model._regimes` is private canonical engine state.
 
+(api-period-candidate-lowering)=
+
 ## Lower one production candidate
 
 `model.lower_period_candidate(params=..., log_level=..., candidate=..., retention=...)`

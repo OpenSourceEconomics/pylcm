@@ -199,17 +199,20 @@ def test_shared_resolver_preserves_the_entire_native_program_contract() -> None:
 
 def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> None:
     compile_tree = _function_tree(backward_induction._compile_all_functions)
+    prepare_tree = _function_tree(backward_induction._prepare_solve_programs)
     collect_tree = _function_tree(
         backward_induction._resolve_output_layouts_and_lowering_keys
     )
     replay_tree = _function_tree(period_replay._compile_cores_for_one_period)
 
     compile_calls = _direct_call_lines(compile_tree)
+    prepare_calls = _direct_call_lines(prepare_tree)
     collect_calls = _direct_call_lines(collect_tree)
     replay_calls = _direct_call_lines(replay_tree)
 
-    assert len(compile_calls["_select_period_programs"]) == 1
-    assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
+    assert len(compile_calls["_prepare_solve_programs"]) == 1
+    assert len(prepare_calls["_select_period_programs"]) == 1
+    assert len(prepare_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
     assert len(collect_calls["materialize_core_program"]) == 1
     assert len(collect_calls["resolve_core_program_candidates"]) == 1
     resolver_calls = _direct_call_lines(_function_tree(resolve_core_program))
@@ -223,10 +226,10 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
         for node in ast.walk(compile_tree)
         if isinstance(node, ast.If) and _is_not_enable_jit(node.test)
     )
+    assert compile_calls["_prepare_solve_programs"][0] < eager_branch.lineno
     assert (
-        compile_calls["_select_period_programs"][0]
-        < compile_calls["_resolve_output_layouts_and_lowering_keys"][0]
-        < eager_branch.lineno
+        prepare_calls["_select_period_programs"][0]
+        < prepare_calls["_resolve_output_layouts_and_lowering_keys"][0]
     )
 
 
