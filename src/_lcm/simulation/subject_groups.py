@@ -71,6 +71,15 @@ class ComponentValueSource(Protocol):
         """Return every code, in the order they are acquired."""
         ...
 
+    @property
+    def subject_codes(self) -> tuple[int, ...] | None:
+        """Return the codes whose subjects are simulated, or `None` for every code.
+
+        A source holding a selection of the codes simulates the subjects of
+        those codes alone; the result then holds their rows only.
+        """
+        ...
+
     def acquire(
         self, *, code: int
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
@@ -117,7 +126,10 @@ class SubjectGroupPlan:
     """Chunks in dispatch order: by code, then by original row."""
 
     positions: np.ndarray
-    """For each original row, its row in the chunks' concatenated outputs."""
+    """For each returned real row, its row in the chunks' concatenated outputs."""
+
+    rows: np.ndarray | None
+    """Selected original rows, ascending; `None` denotes the whole population."""
 
 
 def group_codes(
@@ -164,6 +176,7 @@ def plan_subject_groups(
     codes: np.ndarray | None,
     n_real: int,
     width: int,
+    selected: tuple[int, ...] | None = None,
 ) -> SubjectGroupPlan:
     """Partition the real rows into chunks of one code each.
 
@@ -176,9 +189,12 @@ def plan_subject_groups(
         codes: The state's initial codes, or `None` when no subject supplies it.
         n_real: Number of real subjects, which lead the population.
         width: Rows per chunk.
+        selected: Codes whose rows are planned, or `None` for every code. The
+            chunks of a selected code are the chunks the whole population's
+            plan cuts for it.
 
     Returns:
-        The chunks and the position of each original row's output.
+        The chunks and the position of each planned original row's output.
 
     """
     keys = group_codes(route=route, codes=codes, n_real=n_real)
@@ -186,6 +202,8 @@ def plan_subject_groups(
     positions = np.empty(n_real, dtype=np.int32)
     offset = 0
     for code in route.codes:
+        if selected is not None and code not in selected:
+            continue
         rows = np.flatnonzero(keys == code).astype(np.int32)
         for start in range(0, len(rows), width):
             part = rows[start : start + width]
@@ -194,7 +212,12 @@ def plan_subject_groups(
                 part = np.concatenate([part, np.repeat(part[-1:], width - len(part))])
             chunks.append(SubjectChunk(code=int(code), rows=part))
             offset += width
-    return SubjectGroupPlan(chunks=tuple(chunks), positions=positions)
+    if selected is None:
+        return SubjectGroupPlan(chunks=tuple(chunks), positions=positions, rows=None)
+    planned = np.flatnonzero(np.isin(keys, selected)).astype(np.int32)
+    return SubjectGroupPlan(
+        chunks=tuple(chunks), positions=positions[planned], rows=planned
+    )
 
 
 def type_local_view(

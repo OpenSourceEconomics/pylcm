@@ -1,18 +1,19 @@
 # Handoff: invariant-state execution (#486 and follow-ups)
 
 This directory is a working space for passing the work between sessions. Delete it
-before anything merges into `main`. A `handoff-guard` workflow that fails pull
-requests into `main` while it exists is pending: the cloud session's token cannot
-write workflow files, so a person has to add it. It is a copy of the original local handoff (2026-10-02), updated by
-the cloud session that now owns the work:
+before anything merges into `main`. Historical cloud-session record: a
+`handoff-guard` workflow was pending because that session's token could not write
+workflow files. This directory derives from the original local handoff
+(2026-10-02), subsequently updated by that cloud session; its ownership/token
+statement is historical, and the current checkpoint below governs:
 https://claude.ai/code/session_01Pxm4joxHzgeNTvT5vf4eN9
 
 Start with `plan.md`; it is authoritative. The user's standing instructions:
 - Follow the plan meticulously and hand each chunk to a subagent. Workers return
   changes; the parent commits.
 - Explicit permission to push and open PRs.
-- Anything on the HPC (Marvin, GPU) is run through the aca session,
-  `session_01Hs8mfXPYyEa24KaAp6BwCW`; this session has no cluster access.
+- The user authorized direct SSH to Marvin, superseding the historical
+  aca-session-only route. Production submission waits for passing checks.
 - Each pushed work-in-progress branch carries its own `.handoff/`, with this
   branch's copy as the master index.
 
@@ -25,54 +26,68 @@ Its prepared-state receipt remains historical; current cascade status follows.
 Receipt fixture source-identity repair:
 [receipt-fixture-identity.md](receipt-fixture-identity.md).
 
-## Consolidated #491 checkpoint (2026-10-03)
+## Current #497 checkpoint (2026-10-03)
 
-The user authorized merging and pushing. #495 and#494 are merged into#491 at
-`cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; #497 is based on#491. #496 is
-merged into#486 at `b1dc9d077ccd1289c41010615132be11df40a53d`. This root
-cascade preserves #491 source/tests/certificates/workflows/manifest/lock exactly
-atcb62; its only payload is the JUnit identity handoff note and link. The
-original #495 qualification below is historical. No new numerical or native
-acceptance is inferred from this documentation merge.
+#491 is published at `3a214d11988b1c88cbf18667bfb43aa580781450`, incorporating
+#494, #495 and the complete #493 history. #493 is closed as incorporated:
+GitHub refused retargeting because no new commits remained against #491.
+#496 is merged into #486 at `b1dc9d077ccd1289c41010615132be11df40a53d`.
+The plain #491 merge into this branch carries the shared
+[JUnit identity note](receipt-junit-identity.md) and this checkpoint; source,
+tests, certificates, workflow, manifest and lock match the qualified production
+driver commit `d9da850a96261a698c8ffdc52c1e485335b2dc78` exactly. It introduces
+no numerical implementation change or native acceptance.
 
-Shared JUnit repair: [receipt-junit-identity.md](receipt-junit-identity.md).
-Direct SSH is authorized, superseding the historical ACA-owner-only route;
-production submission still waits for passing checks and authenticated access.
+The user authorized consolidation by merges and pushes. #495 was fast-forwarded
+into #494, then #494 into #491, both at the already tested commit
+`cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`; normal push hooks passed. GitHub
+records both PRs merged and automatically retargeted #497 to #491. No main
+merge occurred. The source/check records below distinguish original core
+validation from subsequent CI refresh and production-driver validation.
 
-The latest #493 history is also incorporated by a plain merge. Its driver,
-budget and handoff payload already existed here by content. The conflict
-resolution retains the complete additional block-major value/panel/lifetime
-controls and the consolidated manifest; no definition is duplicated or dropped.
-Source, certificates, tests, workflow and manifest remain byte-identical to
-`82a9463c4bc4b61f4a9c57998e80cf7a77372243`. Maintained manifest check passed.
-This ancestry consolidation introduces no numerical implementation change.
-
-## Historical #495 checkpoint (2026-10-03)
-
-- Incoming CI: published #494 `bc05375f8318d0a5522a46300258bac53744c829`,
-  carrying #491 `5b898bb554ccca70dd621c01510639453749055b` and #486
-  `553050fdfa60f2116ee20301a56002670725a80d`. The isolated #495 merge preserves
-  production, certificates and the ordered-distance test contract exactly from
-  its pre-merge head `cc744450d30d4b12cc5b1b9ab6b923226f8ed340`.
-  The production source tree remains `babc7fa21e75dccee1894fec46c6f7089b3a4810`.
-  Parent publication is pending.
-- Local CI acceptance for this #495 merge: maintained manifest generation/check
-  and the 18-case workflow/manifest/parser/source-identity smoke passed, with
-  no failures, errors or skips, exact JUnit duration **0:00:00.340**. Normal
-  all-file hooks passed; parent publication remains pending. Earlier #494
-  receipts are not this step's acceptance. Fresh native #495 timing and
-  complete receipt identity remain required; the earlier #486 `bdc19260`
-  macOS result retains its supporting-worker source-identity qualification.
-- The general value-only eight-ULP contract is approved; its tests/documentation
-  are published on #495 at `cc744450d30d4b12cc5b1b9ab6b923226f8ed340`.
-  Structural and same-program byte gates remain exact.
-- Stage 8A has a four-case fp64 CPU receipt on a separate, uncommitted local
-  branch. The updated driver has three binding/plan cases only. These are
-  inherited local receipts, not native three-node execution or a current
-  Stage 8A certificate claim. Actual three nodes × eight full-model GPUs,
-  native correctness/performance/resource gates and authorized owner access
-  remain required. Cluster execution stays with the ACA owner; this CI
-  cascade has no cluster access or Stage 8A acceptance claim.
+- Stage8A core is published as draft [PR #497](https://github.com/OpenSourceEconomics/pylcm/pull/497)
+  at `3028a022e8156880d71c6733a47c43f20828283b`, based on published #495
+  `cb62c3d9351b9d4aa2acdad885b6aaab93f8a16c`. Normal publication hooks and
+  committed source-binding checks passed. The approved general value-only
+  eight-ULP contract is published on #495; structural and same-program byte
+  gates remain exact. Stage8A implementation,195 local numerical cases per
+  precision, later cast/generated-version qualifications and completed local
+  certificate/CI gates are detailed in [stage8a.md](stage8a.md) and its
+  [numerical report](reports/Stage8A/FINAL-NUMERICAL-REPORT.md) and
+  [gate report](reports/Stage8A/FINAL-GATES-REPORT.md).
+- Exact #497 Mac intake reconciled12,305 selected/executed cases across four
+  lanes (11,990pass/315skip/0fail/error) at tested merge
+  `1717cb235b3f73740080c3ad7614f370c1d3e920`, whose tree equals the published
+  head. This is the general `not slow and not manual` subset: the new71-case
+  component-job module has **zero Mac selection/execution** because its
+  solution directory is slow. Mac3 payload25:29 misses24minutes; its whole
+  job26:53 fits30. Passing jobs do not establish all timing budgets or new
+  Stage8A macOS coverage.
+- The approved one-weight Mac refresh has local validation: one measured
+  module790.597seconds/count150, maintained four-shard regeneration, and
+  prediction20.13minutes per lane. Existing129 contract cases pass,
+  0fail/error/skip,0:00:07.783; all other weights, budgets, coverage and source
+  gates are preserved. Publication identity and fresh measured Mac24/30 timing
+  are tracked in PR #497 and the publication ledger. See [refresh report](reports/CI/MAC-ONE-WEIGHT-REFRESH.md)
+  and [matching CSV](reports/CI/mac-one-weight-refresh.csv).
+- Published `0019faab26766a0bbffb24d786f873e05a16aa67` has completed refreshed
+  Mac intake: 12,305 cases, 11,990 pass/315 skip/zero failure or error, with
+  exactly the prior whole population and outcomes. Maximum payload12:32 and
+  whole-job13:43 meet24/30minutes for this sample. All four canonical and16
+  worker receipts bind tested merge `7635f58c47bca10054a245c856226b99d1755008`,
+  whose whole tree equals0019. This general subset still selects none of the
+  new71 component-job cases; it establishes neither native acceptance nor a
+  causal speedup. See [Mac intake](reports/CI/MAC-0019-INTAKE.md).
+- The production driver is prepared on this branch, with its bounded
+  qualification in [stage8a-production-driver.md](stage8a-production-driver.md).
+  Actual simultaneous
+  **three nodes × eight GPUs each on mlgpu_short** with full canonicalACA inputs,
+  matched fp32 reference and native correctness/performance/resource receipts
+  is unsubmitted. The user authorized any available direct SSH connection;
+  access through the existing desktop agent succeeds. Isolated frozen sources
+  and production inputs are staged; native installation and admission remain
+  required before submission.
+  Driver/local and source-review receipts do not establish this native gate.
 
 ## Historical stage status (2026-10-02)
 
