@@ -45,7 +45,14 @@ def test_production_cli_routes_complete_owner_phase(  # noqa: C901, PLR0915
         index=[90, 80, 10, 30],
     )
     calls: dict[str, list[Any]] = {"config": [], "build": [], "phase": []}
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
     directory = tmp_path / "plan"
     source = tmp_path / "owner/src"

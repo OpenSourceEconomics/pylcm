@@ -36,10 +36,18 @@ def production_runtime(
             "regime_name": ["work"] * 4,
             "pref_type": [2, 0, 0, 1],
             "assets": [7, 8, 9, 11],
+            "claimed_ss": [False, True, True, False],
         },
         index=[90, 80, 10, 30],
     )
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
     directory = tmp_path / "plan"
     output = tmp_path / "output"

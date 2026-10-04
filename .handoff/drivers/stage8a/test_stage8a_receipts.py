@@ -140,7 +140,14 @@ def test_plan_cli_failure_publishes_only_failed_receipt(
         },
         index=[90, 80, 10, 30],
     )
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
     error = RuntimeError("component failed")
     output = tmp_path / "failed-plan"

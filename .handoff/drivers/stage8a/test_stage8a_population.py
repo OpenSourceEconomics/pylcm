@@ -13,6 +13,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from lcm.component_jobs import _initial_conditions_sha256
+
 
 @pytest.fixture
 def fragment_helpers(*, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
@@ -90,7 +92,14 @@ def test_canonical_population_retains_every_owner_admitted_row_and_original_id(
         },
         index=[90, 80, 10, 30],
     )
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
 
     dense, original_ids = owner_driver._canonical_population(
         model=model, initial_conditions=initial
@@ -118,6 +127,64 @@ def test_canonical_population_retains_every_owner_admitted_row_and_original_id(
     )
 
 
+def test_canonical_population_projects_initial_states_without_losing_rows_or_ids(
+    *, owner_driver: ModuleType
+) -> None:
+    """Legacy input fields cannot replace complete model states or admitted subjects."""
+    initial = pd.DataFrame(
+        {
+            "age": [50, 60, 51, 50],
+            "regime_name": ["work"] * 4,
+            "claimed_ss": [False, True, True, False],
+            "hcc_transitory": [1, 2, 3, 4],
+            "pref_type": [2, 0, 0, 1],
+            "assets": [7, 8, 9, 11],
+        },
+        index=[90, 80, 10, 30],
+    )
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={
+                    "age": None,
+                    "hcc_transitory": None,
+                    "pref_type": None,
+                    "assets": None,
+                }
+            ),
+            "retired": SimpleNamespace(states={"claimed_ss": None}),
+        },
+    )
+    raw_digest = _initial_conditions_sha256(initial_conditions=initial)
+
+    dense, original_ids = owner_driver._canonical_population(
+        model=model, initial_conditions=initial
+    )
+
+    assert (
+        dense.index.tolist(),
+        dense.to_dict("list"),
+        original_ids.tolist(),
+        initial["claimed_ss"].tolist(),
+        initial.index.tolist(),
+        _initial_conditions_sha256(initial_conditions=initial),
+    ) == (
+        [0, 1, 2],
+        {
+            "age": [50, 51, 50],
+            "regime_name": ["work"] * 3,
+            "hcc_transitory": [1, 3, 4],
+            "pref_type": [2, 0, 1],
+            "assets": [7, 9, 11],
+        },
+        [90, 10, 30],
+        [False, True, True, False],
+        [90, 80, 10, 30],
+        raw_digest,
+    )
+
+
 def test_plan_binds_full_canonical_population_original_codes_and_owner_seed(
     *, owner_driver: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -140,7 +207,14 @@ def test_plan_binds_full_canonical_population_original_codes_and_owner_seed(
     slurm.__dict__["__path__"] = []
     monkeypatch.setitem(sys.modules, "aca_slurm", slurm)
     monkeypatch.setitem(sys.modules, "aca_slurm.config", config)
-    model = SimpleNamespace(initial_nodes=((50, "work"), (51, "work")))
+    model = SimpleNamespace(
+        initial_nodes=((50, "work"), (51, "work")),
+        user_regimes={
+            "work": SimpleNamespace(
+                states={"age": None, "pref_type": None, "assets": None}
+            )
+        },
+    )
     params = {"literal_parameter": 17}
     initial = pd.DataFrame(
         {

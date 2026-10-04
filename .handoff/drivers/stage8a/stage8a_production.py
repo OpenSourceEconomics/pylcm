@@ -768,7 +768,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def _canonical_population(
     *, model: Model, initial_conditions: pd.DataFrame
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Keep every owner-admitted row with its original ID and dense position."""
+    """Keep initial-regime state columns for every owner-admitted row and ID."""
     import numpy as np
     from aca_model.simulation import select_admissible_starts
 
@@ -776,7 +776,13 @@ def _canonical_population(
         model=model, initial_conditions=initial_conditions
     )
     original_ids = np.asarray(admitted.index).copy()
-    return admitted.reset_index(drop=True), original_ids
+    columns = {"age", "regime_name"} | {
+        name
+        for _age, regime_name in model.initial_nodes
+        for name in model.user_regimes[regime_name].states
+    }
+    projected = admitted.loc[:, [name for name in admitted.columns if name in columns]]
+    return projected.reset_index(drop=True), original_ids
 
 
 def _plan(
