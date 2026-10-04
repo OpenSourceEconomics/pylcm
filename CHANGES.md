@@ -5,6 +5,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Opt-in type-local GridSearch
+
+- `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal
+  `GridSearch` regime carrying an invariant discrete state one code at a time. Each code
+  runs one shared executable with the code as a runtime operand, and reads every
+  continuation carrying the state through that code's block. The tested workloads
+  publish values, policies and simulated panels bitwise equal to the unblocked solve's;
+  the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
+  [Solve one invariant code at a time](docs/user_guide/tuning.md).
+
 ### Required starting problems and keyword-only age-indexed declarations
 
 - `Model(..., initial_regimes=...)` is required and has no default. It maps age

@@ -265,6 +265,29 @@ class ExecutionConfig:
     accepted but covers nothing.
     """
 
+    invariant_block_widths: Mapping[StateName, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Invariant state to the number of its codes solved at once; empty blocks none.
+
+    A state held fixed by `fixed_transition` makes every one of its codes an
+    independent continuation problem. Naming it here solves each regime that
+    carries it one code at a time, on the ordinary `GridSearch` route: the
+    regime's period program runs once per code on the remaining states, and
+    reads each continuation through that code's block only, so the replica a
+    device holds of a typed continuation shrinks to one code's share. The
+    code is a runtime operand of one shared executable per regime-period, and
+    the published result has the unblocked solve's layout.
+
+    Only width 1 and one state are supported. Model construction refuses,
+    before anything is lowered, a state that is not provably invariant, a
+    sharded state, a state no regime declares, and regimes the route does not
+    serve: another solver, taste shocks, collective regimes, gated edges,
+    same-period references, edge-reference reads, folded processes and a
+    non-discrete grid for the state. Terminal regimes, which read no
+    continuation, are solved unblocked.
+    """
+
     devices: tuple[int, ...] | None = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
@@ -354,6 +377,13 @@ class ExecutionConfig:
             ),
         )
         _fail_if_covered_axes_invalid(covered_axes=self.covered_axes)
+        object.__setattr__(
+            self,
+            "invariant_block_widths",
+            _normalized_invariant_block_widths(
+                invariant_block_widths=self.invariant_block_widths
+            ),
+        )
         sharded = tuple(self.sharded_states)
         _fail_if_sharded_states_invalid(sharded_states=sharded)
         object.__setattr__(self, "sharded_states", sharded)
@@ -455,6 +485,23 @@ def _normalized_axis_width_ceilings(
             raise TypeError(msg)
         _fail_if_width_invalid(label=f"axis_width_ceilings[{name!r}]", width=ceiling)
         validated[name] = ceiling
+    return MappingProxyType(validated)
+
+
+def _normalized_invariant_block_widths(
+    *, invariant_block_widths: Mapping[StateName, int]
+) -> MappingProxyType[StateName, int]:
+    """Require non-empty state names with positive exact widths, and freeze them."""
+    validated: dict[StateName, int] = {}
+    for name, width in invariant_block_widths.items():
+        if type(name) is not str or not name:
+            msg = (
+                "ExecutionConfig.invariant_block_widths keys must be non-empty "
+                "state names."
+            )
+            raise TypeError(msg)
+        _fail_if_width_invalid(label=f"invariant_block_widths[{name!r}]", width=width)
+        validated[name] = width
     return MappingProxyType(validated)
 
 

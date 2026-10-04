@@ -346,7 +346,7 @@ _SOURCE_SEALS = {
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "7744426281b262014e974e461b966dba3ca0f063ec01d7606caf67676d67aba6",
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
-    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "070d4936497a9a15089cdc34d188d56873dee724c2275a5fc3424478ce5a3d11",
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1b4f12b892e8928c42049cb54eb4a20e45f6f0f4f4fb35f905f9178b18b60224",
     COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
     COMBINED_CHUNK_ADMISSION_SOURCE: "9ffe18a412f2d136c2b9893ea4d93a88739325d9ba70bd6ec0e888d353a330aa",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
@@ -387,7 +387,7 @@ _SOURCE_SEALS = {
     SIMULATION_GATED_ROUTING_SOURCE: "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce",
     VALUE_TOPOLOGY_SOURCE: "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343",
     RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
-    SCHEDULER_SOURCE: "0d6c5bb74f8229fca43231142c4d53cbe3753949fc4e05e4c216f5cc683620ea",
+    SCHEDULER_SOURCE: "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd",
@@ -398,11 +398,11 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
-    PROCESSING_SOURCE: "1dd9b5df1ca7a9cfd9276e5faf6bda2b4181a934c6a924619e34462266b822ff",
-    GRID_SEARCH_SOURCE: "b5d54bb472953e20d2a3997767c9e5cd024d5aa8261446064f91d5fb82e4d42f",
-    CORE_PROGRAM_SOURCE: "fb62eeac677be64171c0a17e3478afbd09110ff2b6bafe7000edfef4bced4d7e",
+    PROCESSING_SOURCE: "76d7f57677d18dcc75492b5a0ba4a769d439bf8758b3d1dc4d2bf9e2b7847a4e",
+    GRID_SEARCH_SOURCE: "04bcf745f7829d1297906f5cbb2ae7e4342e85f6b59fb46fcf0d32d0a4bc6403",
+    CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
-    VALUE_TRANSFER_SOURCE: "043c28e80639d18919a8ea6c26f697f39816d028b85ad5a2e678086be717add6",
+    VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
@@ -419,10 +419,10 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "396ebb67694c96b6d2e6bcddc03f61a0e00e0b4de2ea12b3c53fb1365062f6dd",
     SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "3ba8fc010c36c102c72d992a28981d5da314429610e63c1f88947d8f84af6493",
+    MODEL_SOURCE: "8e19b2687632fac1ed0dd1efdfcf88639dc48feee0d567ba5f8d5563b15f2fca",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "4a350b86aba74e1a3f4267c11ac6fd890c1d33202192094e6e99be558ea4a132",
-    PERIOD_REPLAY_SOURCE: "5e32d5ad1932472525766a85b4402e5a75289a35891682f679773a758a0b4562",
+    BACKWARD_INDUCTION_SOURCE: "93709e36e1156ef53bf905f4a4c63cbc5e0de43f665a6a11c73c49f30aed12d7",
+    PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
     INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
     RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -430,7 +430,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "996469acb62c086b619f2696b8d81599e5bd198f537d3e2fc2d05648c6dd3472",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "722b611154446d512693792692eb2d65a579e4d844851c6726387c163f8136a1",
+    SOLUTION_CONTRACT_SOURCE: "45ff7b3798e1ae733e68ae23434fe3b6f2b8944c7983db8fc096a4b2eea29f47",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -1997,6 +1997,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
         fields=(
             "target: ValueArtifactAddress",
             "source: ValueConsumerAddress",
+            "view: ValueViewDescriptor | None = None",
         ),
         methods=("__post_init__",),
     )
@@ -2091,6 +2092,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "replaces_program: str | None = None",
                 "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
                 "compiler_options: tuple[tuple[str, int], ...] = ()",
+                "invariant_binding: InvariantBinding | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -2114,6 +2116,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "replaces_program: str | None = None",
                 "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
                 "compiler_options: tuple[tuple[str, int], ...] = ()",
+                "invariant_binding: InvariantBinding | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -2141,6 +2144,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "replaces_program: str | None = None",
                 "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
                 "compiler_options: tuple[tuple[str, int], ...] = ()",
+                "invariant_binding: InvariantBinding | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -2217,7 +2221,7 @@ ARTIFACT = "artifact"
             tree=tree,
             label="core-program provider-to-resolver transport",
             contracts={
-                "ValueRead.__post_init__": "e5281a9a44553519fe08e3a5248cb54b2a107e02de63727145651525fd033843",
+                "ValueRead.__post_init__": "9eb25ccdd2f056a241092952e6b92acef943f1babd2f2063af7b32da935a7190",
                 "ReducedAxis.__post_init__": "030c5cd6aadd91db7c7362241817b7b1734cf27d853824376ba1206bdfae05ef",
                 "ReducedAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
                 "TiledOutputAxis.__post_init__": "dc42959d05c19bee720f1423b60179a0d729b74546bfd278e0928cd2a6b2d3e2",
@@ -2234,17 +2238,17 @@ ARTIFACT = "artifact"
                 "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
                 "_validate_disposition_reason": "5df6651c2d9db4ebeb5542394c738c5238144ff19f48f0639b3bb6b43c63bc8d",
-                "materialize_core_program": "3fca95ce9b59331c45e956c4b5a86d468cfc10ff726875ec36f607a83f0cfb31",
+                "materialize_core_program": "7bde944455cb6ba4b0e8dfa5919970d0f2ad52b0af657dff49b597feb5cfbd6e",
                 "resolve_core_program": "0ec2c3d08016ccb5dfcd205ff179edcdcdeb7fd1a773bd695ea6d287f21598b8",
                 "resolve_core_program_candidates": "290aa30be2202a404c89d7d6a31f9c77847c2be1d5280d059d48864e6a72cafa",
-                "_resolve_core_program": "e84f83f1e02527adedd8b895f57981281e7e4ba725b3793cb4057f9ba10ced7f",
+                "_resolve_core_program": "435df0ae27ed0f6afb1d0ababe872e5cc33b98dc6db06f25b3ae875b24632109",
                 "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
                 "_validate_core_program": "b7558f7fe479363723c2b4d4925ab954e262883c4e07cbc956b72bbbe4291511",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
                 "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
                 "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
-                "_validate_transfer_argument_metadata": "1b81acb2f30edb626b63b984ae712ad91675d27f9b8d0dd91d1bdb2f9792b6ce",
+                "_validate_transfer_argument_metadata": "2da767cf572598810ce123e021513c3a2e0cae1813e07857a011b9262590c051",
                 "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
                 "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
                 "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
@@ -2511,7 +2515,7 @@ def category(self) -> str:
                 "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
                 "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
                 "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "8dac2f9411f9342782a06051432bb34c27cba1720d66e53804cb7addaded199c",
+                "GridSearch.build_period_kernels": "0c4a2f448364a67ec9d06e86c9deaf9b388b19c0e8d0b5165c1cc5e328e6a828",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -2562,10 +2566,10 @@ def category(self) -> str:
                 "_GridSearchArgumentBuilder._with_edge_substitution": "8d253b526755274685f3dbf2e28efe4f35062993bedd017cffddf2d17fe657cc",
                 "_GridSearchArgumentBuilder._edge_reference_args": "dbc3490fe06a35e27546fd6c4a29d185c4e05c3ebc500aa2a1f220615f55c0b9",
                 "_GridSearchArgumentBuilder._same_period_params": "8a9e646c6abededa222865ead1ad7e07c5355626b32a9fb1e631497a4889a58e",
-                "_GridSearchPeriodKernel.__post_init__": "056fa9a213d05cd91edced63b00b0968a0cb34bd4aae6262d429fc46107d6b57",
+                "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
                 "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
-                "_GridSearchPeriodKernel.with_fixed_params": "3ac015a29f87cd287c740773c837852d814c646a3131a9a2aa72ed99954bff1c",
-                "_GridSearchPeriodKernel.__call__": "060901593efed23b0252a251f1a720e96769a7fa116ef3dfe4f2a41749304252",
+                "_GridSearchPeriodKernel.with_fixed_params": "39a6130127f37d321af8c28eb803952e7fd583b910b3a8f3058850e8960e166f",
+                "_GridSearchPeriodKernel.__call__": "30bd170d721fdf3d4e7de47b5c846eee24cdc3b52d34d3c72e932b5b4b3b0b4c",
             },
         )
     )
@@ -2722,9 +2726,17 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
                 "expected_shape: tuple[int, ...]",
                 "expected_dtype: object",
                 "reused_by_several_consumers: bool = False",
+                "view: ValueViewDescriptor | None = None",
                 "specialization_key: Hashable = field(init=False)",
             ),
-            methods=("__post_init__", "cost"),
+            methods=(
+                "__post_init__",
+                "consumer_shape",
+                "selects",
+                "delivers_stored_buffer",
+                "stages",
+                "cost",
+            ),
         )
     )
     errors.extend(
@@ -2743,7 +2755,69 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
             methods=(),
         )
     )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value view coordinate selection",
+            class_name="CoordinateSelection",
+            fields=(
+                "state_name: StateName",
+                "start: int",
+                "width: int",
+                "codes: tuple[int, ...]",
+                "keep_axis: bool = False",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value view descriptor",
+            class_name="ValueViewDescriptor",
+            fields=(
+                "artifact: ValueArtifactAddress",
+                "leaf: ValueViewLeaf",
+                "stored_axis_names: tuple[StateName, ...]",
+                "stored_shape: tuple[int, ...]",
+                "dtype: object",
+                "weak_type: bool",
+                "consumer_shape: tuple[int, ...]",
+                "required_sharding: jax.sharding.Sharding",
+                "selections: tuple[CoordinateSelection, ...] = ()",
+            ),
+            methods=(
+                "__post_init__",
+                "selected_axes",
+                "structure_key",
+                "identity_key",
+            ),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value transfer stage",
+            class_name="TransferStage",
+            fields=(
+                "kind: TransferStageKind",
+                "input_shape: tuple[int, ...]",
+                "output_shape: tuple[int, ...]",
+                "input_sharding: jax.sharding.Sharding",
+                "output_sharding: jax.sharding.Sharding",
+                "operator: ValueTransferKind | None",
+                "item_bytes: int",
+            ),
+            methods=("allocates", "output_footprint"),
+        )
+    )
     enum_contracts = {
+        "ValueViewLeaf": """SHARED = "shared"
+SELECTED = "selected"
+""",
+        "TransferStageKind": """SELECT = "select"
+COMMUNICATE = "communicate"
+""",
         "ValueArtifactKind": """REGIME_VALUE = "regime_value"
 GATED_CONTINUATION = "gated_continuation"
 CONTINUATION_LEAF = "continuation_leaf"
@@ -2815,12 +2889,12 @@ COLLECTIVE = "collective"
             contracts={
                 "ValueArtifactAddress.__post_init__": "cafe101592a7a7d2019ac1f2bc57e2e64295da6093a399dbb948bf8c38765e0e",
                 "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
-                "ResolvedValueTransfer.__post_init__": "6fc7223a75c3dc5fbb6072004915bbf08a05c9d1d42711b12ba6aae4306192c8",
-                "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
-                "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+                "ResolvedValueTransfer.__post_init__": "60d77078407d8b253b0654dd03dca371c32a06cf1efb05470ff453c815a7092b",
+                "resolve_value_transfer": "1fb20659b43515507a727b46ad274d5bdc1c67a55ece59d48ed7e48e1e435a95",
+                "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
                 "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
                 "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
-                "ResolvedValueTransfer.cost": "b62e0d903fb8fb628e869b4fa90e089f8e4cc118bbbad34d8e654dfe0386f8e4",
+                "ResolvedValueTransfer.cost": "07d257016bddbec9e6eacefb5e26e26c8c612fd6a0884ea81b40ac667a0c9011",
                 "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
                 "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
                 "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
@@ -2834,6 +2908,24 @@ COLLECTIVE = "collective"
                 "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
                 "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
                 "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
+                "ValueViewDescriptor.__post_init__": "e5e888614d92e690a128d3812b217f8ddfcf6637809a896fe14c2401b6f0ef98",
+                "ValueViewDescriptor.selected_axes": "606104f0b662cf88a37ba1496a05ed142f93858c1646c2794c1aaf6cb34f1476",
+                "ValueViewDescriptor.structure_key": "39bf29f8d65be0bc19a5ee9a4b4fa6dc73a21c641f72f5d499c5367b58e0177a",
+                "ValueViewDescriptor.identity_key": "45ab6d675d4ef8c8350e34a7361dc6b307186a4558c3a420c5347bbec6326ee1",
+                "CoordinateSelection.__post_init__": "45f22f279739118a21c04a97d8fc4ad7108de34ee7fdea60b276afd1f84ddc01",
+                "TransferStage.allocates": "b17555d91ba1e9a31a9ed57148afa064982799c4953d95998b9a6fff344c472c",
+                "TransferStage.output_footprint": "41b4f1136bd24e82268fee82b7064efd7761f69d803ffa224ef434f02153ea99",
+                "ResolvedValueTransfer.consumer_shape": "2f7b722fc9a7cefd9bcc0c675fb33111ce3caff65a317e5d97014c7091b0fb95",
+                "ResolvedValueTransfer.selects": "a70c4976882f86afbd8c12c20334d58d5545540cb75bad2ee46b5fdc5c2f76db",
+                "ResolvedValueTransfer.delivers_stored_buffer": "8134faf2e24194ad2240f72eaf5ba7bdd6e63c81e1c4a84dce8d6ea7294194cf",
+                "ResolvedValueTransfer.stages": "045d5012182682b1ea9d41d56ada26ef6f92f3680eedcd706bc1986a9ddd4078",
+                "transfer_result_key": "9bfd1783f1feb8ea7549037e0505435b47fbdfd0e4b6f5dd37cb4ba762713f6a",
+                "_select_view_blocks": "e576be8253cc6f346825def3852a3def6da2dfd09c83b319c5b39a3031177b6e",
+                "_selection_operands": "7683b8e0ad2ed33a84b844cb52d66e091e8f3410848f296803d0e05eb376a61d",
+                "_select_stored_block": "b6f1647938496460dca1cf12ca5b26ba285287a01bb00c6cae0f367d391cd454",
+                "_fail_if_view_mismatches_transfer": "c7d588a05f07d1f2ecb8873539cb2ce62a3d28516bbdded5734172f8ba6cefc9",
+                "_fail_if_selections_invalid": "1ccb459a7f6b511bf7a631da7c31b5614a3b2b3a3b06a983d07333b44d6481cb",
+                "_selection_sharding": "ba7789147c8b08c57243e70d3906adc90aa8c9fe57021dc4fd7fcc27432a0e98",
             },
         )
     )
@@ -2843,6 +2935,7 @@ COLLECTIVE = "collective"
             label="value transfer",
             relevant_import_names={
                 "ArtifactKey",
+                "ArtifactFootprint",
                 "ExecutionPlanningError",
                 "Hashable",
                 "Iterable",
@@ -2850,6 +2943,7 @@ COLLECTIVE = "collective"
                 "MappingProxyType",
                 "Protocol",
                 "RegimeName",
+                "StateName",
                 "StrEnum",
                 "dataclass",
                 "field",
@@ -2871,13 +2965,15 @@ COLLECTIVE = "collective"
                 "from typing import Protocol, runtime_checkable",
                 "import jax",
                 "import jax.numpy as jnp",
-                "from _lcm.execution.footprint import layout_footprint, sharding_device_ids",
-                "from _lcm.typing import RegimeName",
+                "from _lcm.execution.footprint import ArtifactFootprint, layout_footprint, sharding_device_ids",
+                "from _lcm.typing import RegimeName, StateName",
                 "from lcm.exceptions import ExecutionPlanningError",
                 "from lcm.solver_api import ArtifactKey",
             ],
             expected_binding_counts={
                 "ArtifactKey": 1,
+                "ArtifactFootprint": 1,
+                "CoordinateSelection": 1,
                 "ExecutionPlanningError": 1,
                 "Hashable": 1,
                 "Iterable": 1,
@@ -2890,6 +2986,22 @@ COLLECTIVE = "collective"
                 "TransferCache": 1,
                 "TransferCost": 1,
                 "TransferOperationClass": 1,
+                "StateName": 1,
+                "TransferStage": 1,
+                "TransferStageKind": 1,
+                "ValueViewDescriptor": 1,
+                "ValueViewLeaf": 1,
+                "_fail_if_selections_invalid": 1,
+                "_fail_if_view_mismatches_transfer": 1,
+                "_select_stored_block": 1,
+                "_select_value_view": 1,
+                "_select_view_blocks": 1,
+                "_selection_operands": 1,
+                "_selection_sharding": 1,
+                "enumerate": 0,
+                "max": 0,
+                "transfer_result_key": 1,
+                "zip": 0,
                 "ValueArtifactAddress": 1,
                 "ValueArtifactKind": 1,
                 "ValueConsumerAddress": 1,
@@ -2950,7 +3062,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
         contracts={
             "_build_per_subject_decisions_per_period": "762d57a4dca8e9ce3cafc9725c81032b1a87dff7a2297593395cb5040fab1e2d",
             "_argmax_reducer": "d703712f2beec0f93e9cacbb67754faffe20bf4628e71979dba4dd8f4dd6842c",
-            "process_regimes": "0cf1b474ec3e716320ae2683d3b35b688f270ba72b2c038d4433e3fe55a99ac9",
+            "process_regimes": "a06cc715815a797f376452a1ea753397aaf02ca5d33749889e91683bbbf3384a",
         },
     )
     try:
@@ -3212,12 +3324,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "8a476f1f35ebe0d548ce11d5450712cf8e3db3d63637f8caef955e9ee02f41ee",
+            "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "5383ca090497c88712f9189d7e683d3d1aa3828e64341c90192d050b6e3d3159",
+                "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3573,7 +3685,7 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     SCHEDULER_SOURCE: (
-        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
+        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
         {
             "buffer_identity": "773d4a78840d9f58d52a23420af0b9942d22ce1e7d84af0d6e84fb3f0207716d",
             "shard_identities": "5dcf1a2c1f363f904cd238cebc7607d4a23350cd2ea7e7673c93a4df12334559",
@@ -3592,9 +3704,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
             "_one_delete_per_shared_buffer": "c6824683620084bbb6acbd667b2657a3ba1afdcf425268d7f1d384ee4b308f71",
             "plan_period_waves": "0f2995c211c6472a1f378a69861a15181f6f2e0856db85191883176788017999",
             "replace_leaf_by_identity": "12231a2d73d86bda8fd3611d877f8b2d23bb2006a4abd0134d480c88e7426d50",
-            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
-            "PeriodTransferCache.get": "f16cad2377317e84a219306a4cc2669dd74afc472906974c751452976ae63041",
-            "PeriodTransferCache.put": "28648ac358887b0434396849a8827980e1f7be1249a0b8a0bf43416a0f1ea8d8",
+            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
+            "PeriodTransferCache.get": "2b12aac3bfbcef4e7d2f0da22f5b8ecd429656fa07f72ceceb51d76cc1fb9956",
+            "PeriodTransferCache.put": "292575c03a3509d986086e6428e908b6303e852eb4ada1a3f095cceb226a83d8",
             "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
             "PeriodTransferCache.__len__": "9fb60f4b369c44a05b578b7d992aab8b3f956ffa5c5b465715beceba5fe2728d",
             "_add_declaring_array": "8cc69ee60ad06411506f95155fbef57acea86a11ca7246182e25c62336ade59c",
@@ -3758,10 +3870,8 @@ _SIMULATION_ADAPTER_MUTATIONS = {
     ),
     "simulation_adapter:cached_value_changed": (
         SCHEDULER_SOURCE,
-        "        return self._arrays.get((transfer.target, transfer.source_sharding))",
-        (
-            "        return candidate_filter(self._arrays.get((transfer.target, transfer.source_sharding)))"
-        ),
+        "        return self._arrays.get(key)",
+        "        return candidate_filter(self._arrays.get(key))",
     ),
     "simulation_adapter:live_read_released_early": (
         LIVENESS_SOURCE,
@@ -3867,12 +3977,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "8a476f1f35ebe0d548ce11d5450712cf8e3db3d63637f8caef955e9ee02f41ee",
+        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "5383ca090497c88712f9189d7e683d3d1aa3828e64341c90192d050b6e3d3159",
+            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
             "Model.simulate": "20d3f754e43eab78be776d62192b7a42eb879fa5399eec5ecae404fd55911589",
         },
     ),
@@ -3898,17 +4008,17 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/value_transfer.py": (
-        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
+        "01d90eb4f4e000170e36ab8c6a23ba129ce4d0660880dec9853c02f2a6efd75b",
         {
             "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a077b8ab276f707732a12490ff0f0b0d2cd0d0b83bc0af45b87a0088fd41d530",
+        "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "3a46b4865e0288215713ff655a9498a7f6722de5b0b2df44d063d06ecdf301d7",
+            "_compile_all_functions": "0474e5f7226922772c630b02844fb057e2322a652ae82d612beea0dd09706df8",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -3969,10 +4079,10 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/value_transfer.py": (
-        "5ec2b824f761dcbee87404a43daa6e106690da72260ed606a011677529965c13",
+        "01d90eb4f4e000170e36ab8c6a23ba129ce4d0660880dec9853c02f2a6efd75b",
         {
             "MaterializedTransferObserver.__call__": "3e06bf2091d6a3291e5674060c34313e03f0e7419af22b033de98b2fb2845ca4",
-            "apply_value_transfer": "ddbe334f29354344b04b5e73f280522164c6af9b128d93936c6a1ea3ef604961",
+            "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
             "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
             "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
             "_transferred_leaf": "b2b9022815cc8459d04c18fd9dda22ecd1fb8dfe969540e5112d279ef0403af1",
@@ -3980,19 +4090,19 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/scheduler.py": (
-        "c8e5d0bb93091e883f269194bb4803c6910b8717a887f5800bff0b64875d1b05",
+        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
         {
             "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
-            "PeriodTransferCache.__init__": "b8f98b0f9b31d9aa402075b92baa63729b17d71d4a5ce9fde078be47b95854c4",
+            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
             "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a077b8ab276f707732a12490ff0f0b0d2cd0d0b83bc0af45b87a0088fd41d530",
+        "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "83ab33e39dbda32c51f12e1f89758e2192873148ac35b12ea5d0f201b0a66e73",
+            "solve": "f7a7e2a5de50aaeb85676cb9666e0b3571d9edc9aea8c7c1173e61d49186fc75",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
@@ -4037,7 +4147,7 @@ _COMBINED_INPUT_CONTRACTS = {
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
         "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
         {
-            "abstract_program_inputs": "b752a7b6a65cdfd3b2d47462e8e2037522127db37cad64283229fc74e96b5139",
+            "abstract_program_inputs": "a0a1e8e4bc32c407704e58c2bf6322dfe068d44cc3a5ed14966ce301699c046e",
             "_OperandDescriptor.__call__": "f5f1dd8803d687c50ba2899e0bab0d5e49e9bef83c0def08582844e9351285b3",
             "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
         },
@@ -4240,12 +4350,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "8a476f1f35ebe0d548ce11d5450712cf8e3db3d63637f8caef955e9ee02f41ee",
+        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "5383ca090497c88712f9189d7e683d3d1aa3828e64341c90192d050b6e3d3159",
+            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4254,17 +4364,17 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/execution/core_program.py": (
-        "55ae70ce1ade1407dbb22948fb616f727ee33f829b726a47ad565c264f2b2f90",
+        "c850379603895cc5dbf090587cfb64caf04dbe6fe6b31672ee5070412c85f308",
         {
             "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a077b8ab276f707732a12490ff0f0b0d2cd0d0b83bc0af45b87a0088fd41d530",
+        "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_prepare_abstract_program": "e52dc8d942166c76985f13cf7cacb53041b1cfe2bedf72a67f23f1d4d90dad93",
+            "_prepare_abstract_program": "6a4dfcaa4277f0a5e58965b73c5390129848bd243d1dbfc91c32806ee982867e",
         },
     ),
     "src/_lcm/simulation/simulate.py": (
@@ -4457,7 +4567,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
             "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
             "_lower_and_compile_wave": "7068bda7502d1136c7412667a0921c9c86178800ecc57253f0f84fc98fdf8295",
@@ -4471,15 +4581,15 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "3a46b4865e0288215713ff655a9498a7f6722de5b0b2df44d063d06ecdf301d7",
+            "_compile_all_functions": "0474e5f7226922772c630b02844fb057e2322a652ae82d612beea0dd09706df8",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "cfa2b5ddca1772bcf4c2c1750cec6267f56b5d5fe71c6630dbd5ddaa5c70d6a6",
+            "_resolve_output_layouts_and_lowering_keys": "1dd780b58d41f8461889caff39f1a054dbda53b945c7077c8f35f6a7da0dca01",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
-            "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
+            "_consumer_key": "84e636efe031d30a19d76638e93a95b8a0debc28b2e2814f36361b40d6f3cb13",
             "_resolve_program_for_execution": "cc1658c1a344c669c0bfc13ef18749b886774d692fb1f7d2fb7966961619af34",
-            "_resolve_value_input_transfer_plan": "06d7eb8f3545d8d06f807ca30d36bc2ae91487c3dae156554065b00b4a59b4dc",
+            "_resolve_value_input_transfer_plan": "0fb74fcf8b78af2a777a6496d194afe5a6cf6927b93395179a4bf2c9120e6f52",
             "_resolve_value_transfer_layout": "5c185b3650134f62ecc54c80e35799ce39db20aa003458498eca536bfdc4db3e",
             "_lowering_key": "9ad1fce25968df0512af4e2c7ed1141bec689168aab645b61275ed62e5466fc4",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
@@ -4488,12 +4598,12 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
             "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
-            "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
+            "_publish_kernel_value": "f7685f97babcf0a002b49b1bb5708c2f723a6d64c5f28d75892650a8d6c3a43e",
             "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
             "_resident_inventory_by_triple": "62b94dba3601033214595d6964060fbe5c0562de7029e60b500664afa73333c0",
-            "_candidate_resident_bytes": "e0c819f129b362a5490302b8e758bce8c655df753bcb3476f2a511bcd2fc517d",
+            "_candidate_resident_bytes": "3e03eee2d0d510a5fb5012f6646e6121d645acbde1adaa6cf5c8c6bb976dc86c",
             "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
-            "_period_copy_reservations": "b5ffa438a989ee6e746686b0553ffb90708d4be519dcf19235cddd8cd4623651",
+            "_period_copy_reservations": "75082956fda5cd0e642e988ffbef655df444a391b815c5e50cdd6e7d8ec3e265",
             "_internal_reservations_by_cell": "f124d4d1a32d92a70f139138f66108ee97ca4ffc13e7f3260ea2469a9890abcb",
             "_internal_leaf_bytes": "ece84ac1a1905891efcec6e59693074f62da35ca50e9185f0fae55c2829f1206",
             "_retained_base_space_arrays": "b1c98e73406bfce36a00dd3a398da0ecd893d2e52e6c3911de59962126800c7c",
@@ -4502,7 +4612,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "a077b8ab276f707732a12490ff0f0b0d2cd0d0b83bc0af45b87a0088fd41d530"
+        != "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -4536,10 +4646,11 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             return (
                 isinstance(statement, ast.Assign)
                 and any(
-                    _target_names(target) == ("output",) for target in statement.targets
+                    _target_names(target) == ("output", "blocked")
+                    for target in statement.targets
                 )
                 and isinstance(statement.value, ast.Call)
-                and _call_name(statement.value) == "_run_period_kernel"
+                and _call_name(statement.value) == "_run_dispatch_unit"
             )
 
         loops = [
@@ -4566,7 +4677,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "be46a266f67b14329f43d2407d9e20fac0762368699298bb3a252621f888a02c"
+        expected = "c17bbbf82a14ffdb4d88ef171d48eef7d4a5d205668310b278eff7273e026d1e"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -4612,7 +4723,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "de011de034661023087bd7a3f4d6fcbf826b14fa49da09de722779bb1aa4b778",
-            "_compile_cores_for_one_period": "49ecf7f2531384af89df43dc7b690340b9679970692204b0d5687df92e040454",
+            "_compile_cores_for_one_period": "29d003faea81a8359e37359fd960f5be8c9234a970be2ab8eaa9da7dbf4c7c48",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -6362,16 +6473,16 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "a077b8ab276f707732a12490ff0f0b0d2cd0d0b83bc0af45b87a0088fd41d530",
+        "4deee1344c2acab85037994591923ab1d57cbba6e62a9d9d9499d0b968224e38",
         {
-            "_period_transfer_scratch_reservations": "0e7edda69ff2435a35f7a8d13f80df338c967fac05f3490354462db15ac69892",
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "83ab33e39dbda32c51f12e1f89758e2192873148ac35b12ea5d0f201b0a66e73",
+            "solve": "f7a7e2a5de50aaeb85676cb9666e0b3571d9edc9aea8c7c1173e61d49186fc75",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "3a46b4865e0288215713ff655a9498a7f6722de5b0b2df44d063d06ecdf301d7",
-            "_resolve_output_layouts_and_lowering_keys": "cfa2b5ddca1772bcf4c2c1750cec6267f56b5d5fe71c6630dbd5ddaa5c70d6a6",
+            "_compile_all_functions": "0474e5f7226922772c630b02844fb057e2322a652ae82d612beea0dd09706df8",
+            "_resolve_output_layouts_and_lowering_keys": "1dd780b58d41f8461889caff39f1a054dbda53b945c7077c8f35f6a7da0dca01",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -6444,12 +6555,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "8a476f1f35ebe0d548ce11d5450712cf8e3db3d63637f8caef955e9ee02f41ee",
+        "838e8716d03546b772b115fc390ba30fb381af94e621b27e1d095ada0aee9e76",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "5383ca090497c88712f9189d7e683d3d1aa3828e64341c90192d050b6e3d3159",
+            "Model.__init__": "da06bbb4af68431896baeee6f10672573f96d64a66ee7b33d41e372ab1d088e7",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "b7447007287a2846e9f8ae2f42f307d6308b98d81b2d38bf7312053aeac4e9bc",
@@ -7889,21 +8000,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=grid_source,
             old=(
                 "                    CoreExecutionDisposition.PLANNED\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             new=(
                 "                    CoreExecutionDisposition.DENSE\n"
-                "                    if requirements.axes"
+                "                    if requires_plan"
             ),
             label="native graph disposition authority",
         ),
         "native_graph:dense_reason_erased": replace_once(
             source=grid_source,
             old=(
-                "                disposition_reason=(\n"
-                "                    None if requirements.axes else "
-                "action_streaming.value\n"
-                "                ),"
+                "                disposition_reason=(None if requires_plan else "
+                "action_streaming.value),"
             ),
             new="                disposition_reason=None,",
             label="native graph disposition-reason authority",
@@ -8014,7 +8123,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_dispatch:bypass_compiled_core": replace_once(
             source=grid_source,
-            old='        out = compiled_cores["main"](**arguments)',
+            old="        out = compiled_cores[core_key](**arguments)",
             new="        out = program.function(**arguments)",
             label="native compiled dispatch",
         ),

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -313,11 +314,25 @@ def _collector(*, tmp_path: Path, **option: object) -> _ReceiptCollector:
 
 def _payload(*, collector: _ReceiptCollector) -> dict[str, Any]:
     """Assemble a record with the CI identity a real runner would supply."""
-    os.environ["GITHUB_SHA"] = "0" * 40
-    try:
+    with patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
         return collector.payload(exitstatus=0, junitxml_path="reports/junit.xml")
-    finally:
-        del os.environ["GITHUB_SHA"]
+
+
+@pytest.mark.parametrize("publisher", ["payload", "late_worker"])
+def test_receipt_fixture_preserves_inherited_source_identity(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publisher: str
+) -> None:
+    """Publishing a fixture receipt preserves the enclosing run's source SHA."""
+    source_sha = "bdc1926084f7ca728029082b4206a7e16eb13eea"
+    monkeypatch.setenv("GITHUB_SHA", source_sha)
+    if publisher == "payload":
+        _payload(collector=_collector(tmp_path=tmp_path))
+    else:
+        test_a_late_worker_record_cannot_add_itself_to_a_published_inventory(
+            tmp_path=tmp_path
+        )
+
+    assert os.environ.get("GITHUB_SHA") == source_sha
 
 
 def test_a_worker_that_never_reported_is_not_a_complete_inventory(
@@ -377,11 +392,8 @@ def test_a_late_worker_record_cannot_add_itself_to_a_published_inventory(
     """
     collector = _collector(tmp_path=tmp_path, numprocesses=2, dist="load")
     collector.on_worker_collection(worker_id="gw0", ids=["a.py::one"])
-    os.environ["GITHUB_SHA"] = "0" * 40
-    try:
+    with patch.dict(os.environ, {"GITHUB_SHA": "0" * 40}):
         collector.on_sessionfinish(exitstatus=0, junitxml_path="reports/junit.xml")
-    finally:
-        del os.environ["GITHUB_SHA"]
     (tmp_path / "junit.linux-fp64.worker-gw1.receipt.json").write_text(
         json.dumps({"role": WORKER_ROLE, "worker_id": "gw1"}), encoding="utf-8"
     )
@@ -509,6 +521,25 @@ def test_reconciliation_counts_a_multiphase_junit_case_once(tmp_path: Path) -> N
         ("tests/ci/test_x.py::test_y", ("tests.ci.test_x", "test_y")),
         ("tests/ci/test_x.py::test_y[a-1]", ("tests.ci.test_x", "test_y[a-1]")),
         ("tests/ci/test_x.py::Klass::test_y", ("tests.ci.test_x.Klass", "test_y")),
+        (
+            "tests/ci/test_x.py::test_y[left::right]",
+            ("tests.ci.test_x", "test_y[left::right]"),
+        ),
+        (
+            "tests/ci/test_x.py::Klass::test_y[left::right]",
+            ("tests.ci.test_x.Klass", "test_y[left::right]"),
+        ),
+        (
+            "tests/ci/test_x.py::test_y[tests/ci/test_x.py::test_y[a-1]-expected1]",
+            (
+                "tests.ci.test_x",
+                "test_y[tests/ci/test_x.py::test_y[a-1]-expected1]",
+            ),
+        ),
+        (
+            "tests/ci/test_x.py::Outer::Inner::test_y[left::right]",
+            ("tests.ci.test_x.Outer.Inner", "test_y[left::right]"),
+        ),
     ],
 )
 def test_a_nodeid_maps_to_the_junit_name_pytest_writes_for_it(
@@ -516,6 +547,54 @@ def test_a_nodeid_maps_to_the_junit_name_pytest_writes_for_it(
 ) -> None:
     """The join between a recorded selection and a written outcome holds."""
     assert junit_identity(nodeid=nodeid) == expected
+
+
+@pytest.mark.parametrize("defect", [None, "missing", "unexpected"])
+def test_parametrized_native_junit_population_is_reconciled_exactly(
+    *, tmp_path: Path, defect: str | None
+) -> None:
+    """Parameter delimiters survive; missing and extra outcomes are refused."""
+    suite = """
+import pytest
+
+@pytest.mark.parametrize("case", [1, 2], ids=["left::right", "nested[one::two]"])
+def test_family(case: int) -> None:
+    assert case in (1, 2)
+"""
+    process, receipts, junit = _run_pytest(
+        directory=tmp_path, suite=suite, arguments=()
+    )
+    canonical, _ = _records(receipts=receipts)
+    tree = ET.parse(junit)  # noqa: S314 - local XML written by the pytest child
+    xml_suite = tree.find(".//testsuite")
+    if xml_suite is None:
+        raise AssertionError("The native pytest child must write a test suite")
+    missing = []
+    unexpected = []
+    if defect == "missing":
+        case = xml_suite.find("testcase")
+        if case is None:
+            raise AssertionError("The native pytest child must write test cases")
+        missing = [(case.attrib["classname"], case.attrib["name"])]
+        xml_suite.remove(case)
+    elif defect == "unexpected":
+        ET.SubElement(xml_suite, "testcase", classname="test_suite", name="extra")
+        unexpected = [("test_suite", "extra")]
+    tree.write(junit)
+    expected_count = {None: 2, "missing": 1, "unexpected": 3}[defect]
+    assert (
+        process.returncode,
+        reconcile_with_junit(receipt=canonical, junit_path=junit),
+    ) == (
+        0,
+        {
+            "selected_count": 2,
+            "junit_case_count": expected_count,
+            "selected_without_outcome": missing,
+            "outcome_without_selection": unexpected,
+            "reconciled": defect is None,
+        },
+    )
 
 
 def test_the_same_junit_basename_on_two_lanes_publishes_two_receipts() -> None:
