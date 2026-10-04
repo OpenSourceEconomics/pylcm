@@ -2,9 +2,10 @@
 
 `ExecutionConfig(invariant_block_widths={"pref_type": 1})` solves every regime
 carrying `pref_type` one preference type at a time, reading each continuation
-through the selected block of that type. Values, policies and the public result
-schema equal the unblocked solve of the same model bit for bit, and an unsafe or
-unsupported request is refused before anything is dispatched.
+through the selected block of that type. Grid-node values remain bitwise equal;
+interpolated values agree within eight representable steps. Policies and the
+public result schema remain exact. Unsafe or unsupported requests are refused
+before dispatch.
 """
 
 import collections
@@ -100,6 +101,12 @@ def _next_wealth(
     return wealth - consumption
 
 
+def _next_interior_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return 0.75 * (wealth - consumption)
+
+
 def _affordable(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= wealth
 
@@ -109,7 +116,10 @@ def _next_sector(*, sector: DiscreteState) -> DiscreteState:
 
 
 def _sector_model(
-    *, typed_terminal: bool, execution_config: ExecutionConfig | None = None
+    *,
+    typed_terminal: bool,
+    execution_config: ExecutionConfig | None = None,
+    interpolate_continuation: bool = False,
 ) -> Model:
     """A model whose `pref_type` axis follows a moving discrete `sector` axis.
 
@@ -137,7 +147,9 @@ def _sector_model(
         state_transitions={
             "sector": _next_sector,
             "pref_type": fixed_transition("pref_type"),
-            "wealth": _next_wealth,
+            "wealth": (
+                _next_interior_wealth if interpolate_continuation else _next_wealth
+            ),
         },
         actions={"consumption": wealth},
         functions={"utility": _sector_utility},
@@ -327,6 +339,99 @@ def test_blocked_simulation_equals_the_unblocked_panel() -> None:
     ]
 
     assert frames[0].equals(frames[1])
+
+
+@pytest.mark.parametrize("typed_terminal", [False, True])
+def test_blocked_solve_preserves_values_with_between_grid_continuations(
+    *,
+    typed_terminal: bool,
+) -> None:
+    """Interpolated continuation values agree within eight representable steps."""
+    params = _sector_params(typed_terminal=typed_terminal)
+    model = _sector_model(
+        typed_terminal=typed_terminal,
+        execution_config=_blocked(),
+        interpolate_continuation=True,
+    )
+    reference = _sector_model(
+        typed_terminal=typed_terminal, interpolate_continuation=True
+    )
+    next_wealth = _next_interior_wealth(
+        wealth=jnp.asarray(1.0), consumption=jnp.asarray(0.0)
+    )
+    wealth_state = reference.user_regimes["terminal"].states["wealth"]
+    assert isinstance(wealth_state, LinSpacedGrid)
+    wealth_grid = np.asarray(wealth_state.to_jax())
+    np.testing.assert_array_equal(next_wealth, 0.75)
+    assert wealth_grid[0] < next_wealth < wealth_grid[1]
+    got = _values(model=model, params=params)
+    expected = _values(model=reference, params=params)
+
+    assert {period: tuple(regimes) for period, regimes in got.items()} == {
+        period: tuple(regimes) for period, regimes in expected.items()
+    }
+    for period, regimes in expected.items():
+        for regime, value in regimes.items():
+            got_array = np.asarray(got[period][regime])
+            expected_array = np.asarray(value)
+            assert (got_array.dtype, got_array.shape) == (
+                expected_array.dtype,
+                expected_array.shape,
+            )
+            np.testing.assert_array_max_ulp(got_array, expected_array, maxulp=8)
+
+
+@pytest.mark.parametrize("typed_terminal", [False, True])
+def test_blocked_simulation_preserves_structure_with_between_grid_continuations(
+    *,
+    typed_terminal: bool,
+) -> None:
+    """Off-grid continuation reads preserve every state, action and regime path."""
+    initial_conditions = {
+        "regime_id": jnp.full(2 * _N_TYPES, _RegimeId.working),
+        "age": jnp.zeros(2 * _N_TYPES),
+        "wealth": jnp.asarray(np.tile([2.0, 7.0], _N_TYPES)),
+        "pref_type": jnp.repeat(jnp.arange(_N_TYPES, dtype=jnp.int32), 2),
+        "sector": jnp.tile(jnp.arange(2, dtype=jnp.int32), _N_TYPES),
+    }
+    frames = [
+        _sector_model(
+            typed_terminal=typed_terminal,
+            execution_config=config,
+            interpolate_continuation=True,
+        )
+        .simulate(
+            params=_sector_params(typed_terminal=typed_terminal),
+            initial_conditions=initial_conditions,
+            seed=0,
+            log_level="off",
+        )
+        .to_dataframe()
+        .drop(columns="value")
+        for config in (_blocked(), ExecutionConfig())
+    ]
+
+    assert frames[0].equals(frames[1])
+    wealth_state = (
+        _sector_model(typed_terminal=typed_terminal)
+        .user_regimes["terminal"]
+        .states["wealth"]
+    )
+    assert isinstance(wealth_state, LinSpacedGrid)
+    wealth_grid = np.asarray(wealth_state.to_jax())
+    for frame in frames:
+        realized_wealth = frame.loc[frame["period"] > 0, "wealth"].to_numpy()
+        assert np.any(
+            (wealth_grid[0] < realized_wealth)
+            & (realized_wealth < wealth_grid[-1])
+            & ~np.isin(realized_wealth, wealth_grid)
+        )
+    for column in frames[0]:
+        if frames[0][column].dtype.kind == "f":
+            assert (
+                frames[0][column].to_numpy().tobytes()
+                == frames[1][column].to_numpy().tobytes()
+            )
 
 
 def test_block_programs_keep_the_original_type_codes() -> None:
