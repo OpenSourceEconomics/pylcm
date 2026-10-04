@@ -25,6 +25,7 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -164,6 +165,99 @@ def test_source_value_is_a_value_one_branch_actually_pays() -> None:
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["source"]),
         np.full(3, 8.5),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@categorical(ordered=False)
+class FallbackCategory:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _project_category(category: DiscreteState) -> DiscreteState:
+    return jnp.asarray(category, dtype=jnp.int32)
+
+
+def _project_zero_shock(x: ContinuousState) -> FloatND:
+    return 0.0 * x
+
+
+def _utility_categorical_fallback(
+    *, category: DiscreteState, shock: FloatND
+) -> FloatND:
+    return 12.0 * category + shock
+
+
+def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
+    """Categorical fallback values change which gated action is optimal.
+
+    Saving 1 closes the gate and pays 12 * category - 2 at shock zero.
+    Saving 1.5 opens it and pays 11.5 - 3 = 8.5. Thus category zero
+    chooses the open branch (8.5), while category one chooses the closed
+    branch (10). These values do not depend on the source's x coordinate.
+    """
+    categories = DiscreteGrid(category_class=FallbackCategory)
+    model = Model(
+        regimes={
+            "source": Regime(
+                regime_transitions=until_exit(
+                    1,
+                    law={
+                        "target": ValueDependentTransition(
+                            probability=MarkovTransition(func=_certain_target),
+                            gate=_gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={
+                                            "category": _project_category,
+                                            "shock": _project_zero_shock,
+                                        },
+                                    )
+                                )
+                            },
+                            off_grid="pointwise",
+                        )
+                    },
+                    exits=("target",),
+                ),
+                states={"category": categories, "x": _X},
+                state_transitions={"category": _project_category, "x": _next_x},
+                actions={"saving": IrregSpacedGrid(points=(1.0, 1.5))},
+                functions={"utility": _utility_source},
+            ),
+            "target": Regime(
+                regime_transitions=None,
+                states={"category": categories, "x": _X},
+                functions={"utility": _utility_target},
+            ),
+            "fallback": Regime(
+                regime_transitions=None,
+                states={
+                    "category": categories,
+                    "shock": NormalIIDProcess(
+                        n_points=3,
+                        gauss_hermite=False,
+                        mu=0.0,
+                        sigma=1.0,
+                        n_std=1.0,
+                        fold=False,
+                    ),
+                },
+                functions={"utility": _utility_categorical_fallback},
+            ),
+        },
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        initial_regimes={0: "source"},
+    )
+    solution = model.solve(params=_params(), log_level="debug")
+
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution.values[0]["source"]),
+        np.array([[8.5, 8.5, 8.5], [10.0, 10.0, 10.0]]),
         decimal=DECIMAL_PRECISION,
     )
 
