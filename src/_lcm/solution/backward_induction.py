@@ -5555,7 +5555,7 @@ class _LazyCandidateFrontier:
         return candidate
 
 
-def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
+def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
