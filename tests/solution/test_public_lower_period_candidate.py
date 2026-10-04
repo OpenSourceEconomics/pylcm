@@ -23,6 +23,7 @@ import pytest
 import hatch_build
 import lcm
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
+from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution import backward_induction as engine
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
@@ -93,6 +94,8 @@ def _describe_jax(value: Any) -> Any:
 
 def _describe_tree(value: Any) -> Any:
     """Copy structural containers without saving their live leaves."""
+    if value is INVARIANT:
+        return ("singleton", "_lcm.regime_building.age_specialization", "INVARIANT")
     if isinstance(
         value,
         (
