@@ -44,6 +44,7 @@ jobs:
           environments: tests-cuda12
           frozen: true
       - name: Probe or reinstall the installed native payload
+        id: native_payload
         shell: bash
         run: |
           mkdir -p reports
@@ -74,6 +75,32 @@ jobs:
           --ci-policy=pr --hardware-profile=gpu-small --precision=auto
           --environment=tests-cuda12 --report-dir=reports/policy
           --log-cli-level=INFO tests
+      - name: Check restored lookup in both GPU precisions
+        if: ${{ !cancelled() && steps.native_payload.outcome == 'success' }}
+        shell: bash
+        run: |
+          mkdir -p reports/lookup-fp64 reports/lookup-fp32
+          node='tests/simulation/test_policy_lookup.py::'
+          node+='test_restored_budgeted_lookup_has_analytic_last_decision_policy'
+          first_rc=0
+          set +e
+          for precision in 64 32; do
+            report_dir="reports/lookup-fp${precision}"
+            timeout --signal=TERM --kill-after=30s 600s \
+              pixi run --locked -e tests-cuda12 test -- \
+              --ci-policy=pr --hardware-profile=gpu-small \
+              --precision="$precision" --environment=tests-cuda12 \
+              --report-dir="$report_dir" --log-cli-level=INFO \
+              "$node" \
+              > "$report_dir/runner.log" 2>&1
+            leg_rc=$?
+            printf '%s\n' "$leg_rc" > "$report_dir/runner.rc"
+            cat "$report_dir/runner.log"
+            if test "$first_rc" -eq 0 && test "$leg_rc" -ne 0; then
+              first_rc=$leg_rc
+            fi
+          done
+          exit "$first_rc"
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1

@@ -150,13 +150,81 @@ def test_isolated_four_device_invocation_declares_the_cpu_hardware_profile(
     assert argv.count("--hardware-profile=cpu") == 1
 
 
-def test_gpu_suite_invocations_use_the_bounded_policy_launcher() -> None:
-    """Both GPU workflows activate their declared bounded policy."""
-    for name in ("gpu32.yml", "gpu64.yml"):
-        commands = [
-            str(step.get("run", "")) for _, _, step in _steps(_WORKFLOWS / name)
-        ]
-        policy_commands = [command for command in commands if " test --" in command]
-        assert len(policy_commands) == 1
-        assert "--ci-policy=pr" in policy_commands[0]
-        assert "--hardware-profile=gpu-small" in policy_commands[0]
+@pytest.mark.parametrize(
+    ("workflow", "suite_name", "suite_command", "diagnostic_names"),
+    [
+        (
+            "gpu32.yml",
+            "Run the bounded GPU policy",
+            (
+                "pixi run -e tests-cuda12 test -- "
+                "--ci-policy=pr --hardware-profile=gpu-small --precision=auto "
+                "--environment=tests-cuda12 --report-dir=reports/policy "
+                "--log-cli-level=INFO tests"
+            ),
+            ("Check restored lookup in both GPU precisions",),
+        ),
+        (
+            "gpu64.yml",
+            "Run the bounded fp64 GPU policy",
+            (
+                "pixi run -e tests-cuda12 test -- "
+                "--ci-policy=pr --hardware-profile=gpu-small --precision=64 "
+                "--environment=tests-cuda12 --report-dir=reports/policy-fp64 tests"
+            ),
+            (),
+        ),
+    ],
+)
+def test_gpu_suite_invocations_use_the_bounded_policy_launcher(
+    *,
+    workflow: str,
+    suite_name: str,
+    suite_command: str,
+    diagnostic_names: tuple[str, ...],
+) -> None:
+    """Keep one declared suite and only the explicitly named scoped diagnostic."""
+    policy_steps = [
+        (name, step["run"])
+        for _, name, step in _steps(_WORKFLOWS / workflow)
+        if " test --" in str(step.get("run", ""))
+    ]
+    assert tuple(name for name, _ in policy_steps) == (suite_name, *diagnostic_names)
+    assert policy_steps[0][1] == suite_command
+
+
+def test_gpu_lookup_diagnostic_has_two_bounded_literal_precision_legs() -> None:
+    """Retain both leg statuses without broadening the exact lookup selection."""
+    (step,) = [
+        step
+        for _, name, step in _steps(_WORKFLOWS / "gpu32.yml")
+        if name == "Check restored lookup in both GPU precisions"
+    ]
+    assert step == {
+        "name": "Check restored lookup in both GPU precisions",
+        "if": "${{ !cancelled() && steps.native_payload.outcome == 'success' }}",
+        "shell": "bash",
+        "run": r"""mkdir -p reports/lookup-fp64 reports/lookup-fp32
+node='tests/simulation/test_policy_lookup.py::'
+node+='test_restored_budgeted_lookup_has_analytic_last_decision_policy'
+first_rc=0
+set +e
+for precision in 64 32; do
+  report_dir="reports/lookup-fp${precision}"
+  timeout --signal=TERM --kill-after=30s 600s \
+    pixi run --locked -e tests-cuda12 test -- \
+    --ci-policy=pr --hardware-profile=gpu-small \
+    --precision="$precision" --environment=tests-cuda12 \
+    --report-dir="$report_dir" --log-cli-level=INFO \
+    "$node" \
+    > "$report_dir/runner.log" 2>&1
+  leg_rc=$?
+  printf '%s\n' "$leg_rc" > "$report_dir/runner.rc"
+  cat "$report_dir/runner.log"
+  if test "$first_rc" -eq 0 && test "$leg_rc" -ne 0; then
+    first_rc=$leg_rc
+  fi
+done
+exit "$first_rc"
+""",
+    }
