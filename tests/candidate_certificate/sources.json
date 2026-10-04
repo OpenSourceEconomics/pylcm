@@ -466,11 +466,11 @@
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "fe2ccc2b23b40f346088ea66310c9b43bedbc351b549882baafe7ef3fb91e5eb"
+            "sha256": "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a5c9a04adaa884464fbd92658741bf472b0742c7affa0120c6deb281683c5830"
+        "source_inventory_sha256": "73d30c7892572e904e2690333e7a06374f1effb5290a1ba225f5bb40ebb57fd4"
       },
       "fast": {
         "candidate_sources": [
@@ -936,17 +936,17 @@
           },
           {
             "path": "src/lcm/result.py",
-            "sha256": "fe2ccc2b23b40f346088ea66310c9b43bedbc351b549882baafe7ef3fb91e5eb"
+            "sha256": "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d"
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "a5c9a04adaa884464fbd92658741bf472b0742c7affa0120c6deb281683c5830"
+        "source_inventory_sha256": "73d30c7892572e904e2690333e7a06374f1effb5290a1ba225f5bb40ebb57fd4"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "a5c9a04adaa884464fbd92658741bf472b0742c7affa0120c6deb281683c5830",
+  "source_inventory_sha256": "73d30c7892572e904e2690333e7a06374f1effb5290a1ba225f5bb40ebb57fd4",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1410,7 +1410,7 @@
     },
     {
       "path": "src/lcm/result.py",
-      "sha256": "fe2ccc2b23b40f346088ea66310c9b43bedbc351b549882baafe7ef3fb91e5eb"
+      "sha256": "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d"
     }
   ]
 }

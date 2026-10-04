@@ -25,7 +25,6 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
-    _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
@@ -681,7 +680,7 @@ def test_save_overwrites_existing_output_directory(tmp_path: Path):
     assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
-def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
+def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path) -> None:
     """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
 
     The file's contents read back via `pd.read_feather` must match
@@ -702,23 +701,14 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
         },
     )
 
-    # Capture the expected frame before save; `save` releases device-pinned
-    # state including `self._regimes`, so `to_dataframe` won't work post-save.
-    # Apples-to-apples: write the expected frame to feather using the same
-    # JAX-scalar coercion that `save` applies, then read both sides back.
-    # That isolates pyarrow's type-promotion / null-representation rules
-    # from the round-trip contract under test.
-    expected = result.to_dataframe(use_labels=True).map(_coerce_jax_scalar_for_arrow)
+    expected = result.to_dataframe(use_labels=True)
 
     save_dir = tmp_path / "result"
     result.save(directory=save_dir)
     arrow_path = save_dir / "simulated_data.arrow"
     assert arrow_path.is_file()
 
-    expected_path = tmp_path / "expected.arrow"
-    expected.to_feather(expected_path)
-
-    assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
+    assert_frame_equal(pd.read_feather(arrow_path), expected, check_exact=True)
 
 
 def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):

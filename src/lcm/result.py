@@ -72,6 +72,9 @@ class SimulationResult:
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
+        self._terminal_regime_names = frozenset(
+            name for name, regime in regimes.items() if regime.terminal
+        )
         self._flat_params = flat_params
         self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
@@ -225,9 +228,7 @@ class SimulationResult:
         if terminal_rows == "first":
             df = _keep_first_terminal_row(
                 df=df,
-                terminal_regime_names=frozenset(
-                    name for name, regime in self._regimes.items() if regime.terminal
-                ),
+                terminal_regime_names=self._terminal_regime_names,
             )
 
         if use_labels:
@@ -341,11 +342,11 @@ class SimulationResult:
             additional_targets=df_additional_targets,
             use_labels=df_use_labels,
         )
-        # Feather columns must be homogeneous. `to_dataframe` can leave
-        # JAX 0-d arrays in object columns (e.g. a regime whose target
-        # function returns a constant gets broadcast as a 0-d JAX scalar
-        # across the per-regime sub-frame); coerce them to Python scalars.
-        df = df.map(_coerce_jax_scalar_for_arrow)
+        # Object columns can contain JAX 0-d arrays from constant targets.
+        # Coerce those scalars for Feather while preserving numeric and
+        # categorical column dtypes.
+        for name in df.select_dtypes(include=["object"]).columns:
+            df[name] = df[name].map(_coerce_jax_scalar_for_arrow)
 
         if self._regimes:
             self._regimes = MappingProxyType({})
@@ -417,6 +418,9 @@ class SimulationResult:
         instance = cls.__new__(cls)
         instance._raw_results = raw_results  # noqa: SLF001
         instance._regimes = metadata.regimes  # noqa: SLF001
+        instance._terminal_regime_names = frozenset(  # noqa: SLF001
+            name for name, regime in metadata.regimes.items() if regime.terminal
+        )
         instance._flat_params = metadata.flat_params  # noqa: SLF001
         instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
