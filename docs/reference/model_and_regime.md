@@ -71,6 +71,38 @@ raises `UnsupportedOperationError`, from these methods and from `simulate` alike
 
 `model._regimes` is private canonical engine state.
 
+## Lower one production candidate
+
+`model.lower_period_candidate(params=..., log_level=..., candidate=..., retention=...)`
+returns a frozen `lcm.LoweredPeriodCandidate` containing raw unoptimized StableHLO bytes
+and an immutable descriptor manifest. Select an exact primary candidate with
+`lcm.PeriodCandidate(regime=..., period=..., core=..., widths=...)`; periods are
+zero-based. The core must belong to the ordinary solve's retention-selected graph, and
+widths must occur in its ranked frontier. No donation-free fallback or off-frontier
+width is substituted.
+
+The method shares solve's sealed bindings, parameter and transition validation, solution
+authority, solver checks and fullgraph structural preparation. It lowers only the
+requested primary, including a later ranked or budgeted primary. It does not compile,
+submit, dispatch, or evaluate memory admission. Preparation can initialize a backend and
+allocate zero templates. Block-major and eager schedules are unsupported.
+
+The manifest records exact rank, lowering key, donation, retention, layouts and input
+shapes. `dedup_fanout` is the actual-wave count only for an unbudgeted rank-zero
+candidate: shared preparation and the production ranked source determine the complete
+initial pending map without admission. For later ranks or a configured device-memory
+budget it is `None`, because compiled admissions determine actual wave membership.
+`None` means unavailable, not zero and not a count over the full structural frontier.
+Compiler memory, optimized HLO, buffer assignment and physical residency are also
+unavailable. No allocation or performance claim follows from lowering.
+
+The initial identity profile supports CPU source checkouts with matching installed
+native libraries. Source, native and runtime file hashes are collected only on this
+diagnostic path; an unknown descriptor or inconsistent identity fails closed. Returned
+bytes preserve the exact raw IR, with no source-location normalization. The result keeps
+no model, device array, JAX `Lowered`, executable or future alive. A compile API is not
+provided.
+
 (api-regime)=
 
 ## `Regime`
