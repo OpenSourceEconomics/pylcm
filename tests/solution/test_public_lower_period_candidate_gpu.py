@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib.metadata import distribution, distributions
 from pathlib import Path
 from types import MappingProxyType
@@ -23,6 +23,7 @@ from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_director
 from _lcm.solution import backward_induction as engine
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
+from tests.solution._native_tool_identity import capture_native_tool_identity
 from tests.solution.test_public_lower_period_candidate import (
     _assert_immutable_result,
     _describe,
@@ -52,6 +53,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     *,
     retention: ResultRetention,
     monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, object], None],
 ) -> None:
     """A requested primary candidate preserves solve's exact lowering contract."""
     model = nbegm_ride_along_toy.build_model(
@@ -62,6 +64,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     )
     params = nbegm_ride_along_toy.build_params()
     identities = _capture_gpu_source_runtime_identity()
+    record_property("native_tools_before", json.dumps(identities["native_tool_files"]))
     observed, dispatched, dispatched_keys, wave_fanout = _run_gpu_reference(
         model=model,
         params=params,
@@ -112,7 +115,11 @@ def test_public_gpu_lower_period_candidate_matches_solve(
     assert fresh_model is not model
     # A runtime/driver identity change during the real reference is a fixture
     # prerequisite failure, never the intended missing GPU profile RED.
-    assert _capture_gpu_source_runtime_identity() == identities
+    after_identity = _capture_gpu_source_runtime_identity()
+    record_property(
+        "native_tools_after", json.dumps(after_identity["native_tool_files"])
+    )
+    assert after_identity == identities
 
     # Missing public behavior is reached only after the real reference is qualified.
     candidate = _require_public_member(owner=lcm, name="PeriodCandidate")(
@@ -348,7 +355,7 @@ def _capture_gpu_source_runtime_identity() -> Mapping[str, Any]:
     )
     assert ffi_headers
     native_tools = tuple(
-        (name, _sha256(path=Path(manifest["inputs"][name]).resolve(strict=True)))
+        (name, capture_native_tool_identity(command=manifest["inputs"][name]))
         for name in ("compiler", "nvcc")
     )
     runtime = []

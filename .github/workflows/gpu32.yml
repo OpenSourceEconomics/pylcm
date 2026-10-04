@@ -69,11 +69,21 @@ jobs:
             jax-gpu-
       - name: Run the bounded GPU policy
         shell: bash
-        run: >-
-          pixi run -e tests-cuda12 test --
-          --ci-policy=pr --hardware-profile=gpu-small --precision=auto
-          --environment=tests-cuda12 --report-dir=reports/policy
-          --log-cli-level=INFO tests
+        run: |
+          mkdir -p reports
+          status=0
+          for precision in 64 32; do
+            leg_status=0
+            pixi run -e tests-cuda12 test -- \
+              --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+              --environment=tests-cuda12 --report-dir=reports/policy \
+              --log-cli-level=INFO tests || leg_status=$?
+            printf '%s\t%s\n' "$precision" "$leg_status" >> reports/precision-exits.tsv
+            if test "$status" -eq 0 && test "$leg_status" -ne 0; then
+              status=$leg_status
+            fi
+          done
+          exit "$status"
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1
