@@ -1504,6 +1504,7 @@
     "tests/execution/test_unused_argument_budget.py",
     "tests/regime_building/test_collective_extended_real.py",
     "tests/regime_building/test_collective_feasibility_is_shared.py",
+    "tests/regime_building/test_collective_flow_transitions_are_phase_closed.py",
     "tests/regime_building/test_collective_fold_rejected.py",
     "tests/regime_building/test_entry_law_returning_several_values.py",
     "tests/regime_building/test_fold_repeated_iid_shock.py",
