@@ -415,6 +415,40 @@ jobs:
             --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
             -n 2 --dist load \
           && check_population reports/junit-cpu-fp64-source-contract.xml
+      - name: Verify the standalone candidate certificate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . \
+            > reports/candidate-certificate/verify.json \
+            2> reports/candidate-certificate/verify.stderr.log
+          status=$?
+          printf '%s\n' "$status" > reports/candidate-certificate/verify.exit-code.txt
+          exit "$status"
+      - name: Run standalone candidate certificate mutation controls
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . --self-test \
+            > reports/candidate-certificate/self-test.json \
+            2> reports/candidate-certificate/self-test.stderr.log
+          status=$?
+          printf '%s\n' "$status" > \
+            reports/candidate-certificate/self-test.exit-code.txt
+          exit "$status"
+      - name: Upload standalone candidate certificate receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: candidate-certificate-standalone
+          path: reports/candidate-certificate/
+          if-no-files-found: warn
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
