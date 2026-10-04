@@ -154,6 +154,8 @@ from _lcm.solution.fingerprint import (
     project_solution_params,
     solution_param_projection,
 )
+from _lcm.solution.lower_candidate import lower_period_candidate
+from _lcm.solution.lowering_descriptors import describe_lowering_value
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
@@ -227,6 +229,7 @@ from lcm.exceptions import (
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -1218,6 +1221,86 @@ class Model:
                 if isinstance(solved, ValueStore):
                     solved._block_until_ready()  # noqa: SLF001
         return result
+
+    @beartype(conf=PARAMS_CONF)
+    def lower_period_candidate(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        candidate: PeriodCandidate,
+        retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
+    ) -> LoweredPeriodCandidate:
+        """Lower an exact primary production candidate without compiling it.
+
+        Use the same sealed bindings, canonical parameters, transition policy,
+        solution authority and solver checks as `solve`, then resolve its full
+        retained graph and lower just the requested ranked primary. No fallback
+        variant is substituted. Block-major and eager schedules are unsupported.
+
+        The initial diagnostic identity profile requires a CPU source checkout
+        with its matching installed native payload. Source/runtime byte hashing
+        runs only on this diagnostic route. The returned raw unoptimized IR and
+        immutable manifest retain no executable or live arrays. Preparation may
+        initialize a backend and allocate zero templates; this is not a memory
+        admission or backend-free operation.
+
+        Args:
+            params: Parameters accepted by `solve`.
+            log_level: The same validation policy used by `solve`.
+            candidate: Exact regime, period, core and ranked axis widths.
+            retention: The ordinary solve's artifact retention policy.
+
+        Returns:
+            Owned StableHLO bytes and immutable diagnostic descriptors.
+        """
+        self._sealed_bindings.fail_if_moved()
+        if self._solves_block_major or not self.enable_jit:
+            raise ExecutionPlanningError(
+                "Candidate lowering requires the period-major JIT solve schedule."
+            )
+        log = get_logger(log_level=log_level)
+        flat_params = self._process_params(params)
+        validate_transitions(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            logger=log,
+            process_grid_resolver=None,
+        )
+        preparation = self._prepare_solution(
+            flat_params=flat_params,
+            log=log,
+            retention=retention,
+            process_grid_resolver=None,
+            call_id=None,
+        )
+        check_solver_params(regimes=self._regimes, flat_params=flat_params)
+        check_pareto_weights(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            process_grid_resolver=None,
+        )
+        return lower_period_candidate(
+            candidate=candidate,
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            execution=self._execution,
+            retention=retention,
+            persistable_artifact_refs=preparation.persistable_artifact_refs,
+            program_fingerprint=preparation.program_fingerprint,
+            authority={
+                "model_identity": preparation.model_fingerprint,
+                "program_identity": preparation.program_fingerprint,
+                "parameter_identity": self._params_fingerprint(flat_params=flat_params),
+                "artifact_refs": describe_lowering_value(
+                    preparation.persistable_artifact_refs
+                ),
+            },
+            logger=log,
+        )
 
     def _solve_from_flat_params(
         self,
