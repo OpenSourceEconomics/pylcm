@@ -25,8 +25,10 @@ import lcm
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
 from _lcm.regime_building.age_specialization import INVARIANT
 from _lcm.solution import backward_induction as engine
+from _lcm.solution import lower_candidate as candidate_lowering
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
 
@@ -498,3 +500,75 @@ def _require_public_member(*, owner: object, name: str) -> Any:
     """Require the proposed public behavior after the real reference qualifies."""
     assert hasattr(owner, name), f"Missing public API: {name}"
     return getattr(owner, name)
+
+
+def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid requests cannot substitute a real graph member or reach lowering."""
+    model = nbegm_ride_along_toy.build_model(
+        variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
+    )
+    params = nbegm_ride_along_toy.build_params()
+    dispatched: set[Any] = set()
+    observe_dispatch = functools.partial(
+        _observe_dispatch, dispatch=engine._run_period_kernel, dispatched=dispatched
+    )
+    with monkeypatch.context() as reference:
+        reference.setattr(engine, "_run_period_kernel", observe_dispatch)
+        model.solve(
+            params=params,
+            log_level="off",
+            retention=ResultRetention.VALUES_AND_REPLAY,
+        )
+    candidates = sorted(
+        entry for entry in dispatched if entry[1] < model.n_periods - 1 and entry[4]
+    )
+    assert candidates, "No genuine donated continuation candidate reached dispatch"
+    regime, period, core, width_items, _donated = candidates[0]
+    widths = dict(width_items)
+    assert widths, "The reference must expose execution-axis membership"
+    absent_core = "__absent_core__"
+    assert all(entry[2] != absent_core for entry in dispatched)
+    incomplete_widths = dict(width_items[1:])
+    assert set(incomplete_widths) < set(widths)
+    requests = (
+        (
+            lcm.PeriodCandidate(
+                regime=regime, period=model.n_periods, core=core, widths=widths
+            ),
+            "Candidate is absent from the selected solve graph.",
+        ),
+        (
+            lcm.PeriodCandidate(
+                regime=regime, period=period, core=absent_core, widths=widths
+            ),
+            "Candidate is absent from the selected solve graph.",
+        ),
+        (
+            lcm.PeriodCandidate(
+                regime=regime,
+                period=period,
+                core=core,
+                widths=incomplete_widths,
+            ),
+            "Candidate widths are absent from the ranked frontier.",
+        ),
+    )
+
+    def forbid_target_lowering(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("An absent candidate reached target lowering")
+
+    with monkeypatch.context() as bounded:
+        bounded.setattr(
+            candidate_lowering, "_lower_resolved_candidate", forbid_target_lowering
+        )
+        for candidate, message in requests:
+            with pytest.raises(ExecutionPlanningError) as exc_info:
+                model.lower_period_candidate(
+                    params=params,
+                    log_level="off",
+                    candidate=candidate,
+                    retention=ResultRetention.VALUES_AND_REPLAY,
+                )
+            assert str(exc_info.value) == message
