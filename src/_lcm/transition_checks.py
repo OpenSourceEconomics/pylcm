@@ -985,11 +985,18 @@ def _validate_regime_transition_probs(
             sum_all=sum_all,
             state_action_values=state_action_values,
         )
-        raise InvalidRegimeTransitionProbabilitiesError(
+        mass_detail = (
             f"Regime transition probabilities from '{regime_name}' {span} do not "
-            f"sum to 1.0. {detail}\n"
+            f"sum to 1.0. {detail}"
+        )
+        error = InvalidRegimeTransitionProbabilitiesError(
+            f"{mass_detail}\n"
             f"Check the 'next_regime' function of the '{regime_name}' regime."
         )
+        # Lets the model name graph edges whose missing cells explain the mass.
+        error.unit_mass_violation = (regime_name, period)  # ty: ignore[unresolved-attribute]
+        error.mass_detail = mass_detail  # ty: ignore[unresolved-attribute]
+        raise error
 
     for r, has_mass in zip(inactive, inactive_flags, strict=True):
         if has_mass:

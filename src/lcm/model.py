@@ -39,6 +39,7 @@ from _lcm.execution.execution_plan import (
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
+    naming_cells_without_edges,
     prepare_graph,
     resolve_graph_edges,
 )
@@ -701,6 +702,7 @@ class Model:
             fixed_params=self.fixed_params,
         )
         merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
+        self._cells_without_edges = prepared_graph.cells_without_edges
         # Lowering reads only the demanded periods, so a case no required
         # problem selects contributes no argument, parameter or kernel.
         demanded_transitions = lower_demanded_transitions(
@@ -1166,13 +1168,14 @@ class Model:
         with solve_phase(name="public_solve", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
                 flat_params = self._process_params(params)
-                validate_transitions(
-                    regimes=self._regimes,
-                    flat_params=flat_params,
-                    ages=self.ages,
-                    logger=log,
-                    process_grid_resolver=None,
-                )
+                with naming_cells_without_edges(self._cells_without_edges):
+                    validate_transitions(
+                        regimes=self._regimes,
+                        flat_params=flat_params,
+                        ages=self.ages,
+                        logger=log,
+                        process_grid_resolver=None,
+                    )
             result = self._solve_from_flat_params(
                 flat_params=flat_params,
                 params=params,
@@ -2673,13 +2676,14 @@ class Model:
                         inputs=entry_allocations.snapshot(),
                     )
                     selection_memory.check_resident()
-                    validate_regime_selection(
-                        regimes=self._regimes,
-                        flat_params=flat_params,
-                        ages=self.ages,
-                        process_grid_resolver=process_grid_resolver,
-                        memory=selection_memory,
-                    )
+                    with naming_cells_without_edges(self._cells_without_edges):
+                        validate_regime_selection(
+                            regimes=self._regimes,
+                            flat_params=flat_params,
+                            ages=self.ages,
+                            process_grid_resolver=process_grid_resolver,
+                            memory=selection_memory,
+                        )
             if solution is not None:
                 with solve_phase(
                     name="solution_resolution", logger=log, call_id=call_id
@@ -3406,9 +3410,10 @@ class Model:
         digest = fingerprint_flat_params(flat_params)
         if digest in self._validated_selection_params:
             return
-        validate_regime_selection(
-            regimes=self._regimes, flat_params=flat_params, ages=self.ages
-        )
+        with naming_cells_without_edges(self._cells_without_edges):
+            validate_regime_selection(
+                regimes=self._regimes, flat_params=flat_params, ages=self.ages
+            )
         self._validated_selection_params.add(digest)
 
     # keyword-only-exempt: primary-argument=params
