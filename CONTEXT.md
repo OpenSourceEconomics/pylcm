@@ -34,6 +34,23 @@ A regime that declares no actions. Its constraints, if any, depend only on state
 and parameters and still bind.
 _Avoid_: absorbing regime (an absorbing regime may have actions), terminal regime
 
+**Edge**:
+A transition from a source regime to a target regime. The source's state laws
+toward that target are the edge's laws.
+_Avoid_: arc, link, regime transition (that is the probability of taking an edge)
+
+**Carried state**:
+A state a regime keeps in its state space, and so in its value function. A
+regime carries a state it reads; reading the state's next-period draw counts.
+_Avoid_: retained variable, kept state (in user-facing text)
+
+**Transition-local draw**:
+A next-period value of a random state (a process or a Markov state) that is drawn
+on an edge and consumed by that edge's laws, but not kept by the target, because
+the target does not carry the state. It is drawn from the source's law at the
+source's current value.
+_Avoid_: dropped shock, ephemeral state
+
 **Age**:
 The user-facing time index of a subject, on the model's age grid.
 

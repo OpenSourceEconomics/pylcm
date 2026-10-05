@@ -451,6 +451,14 @@ class RegimePhaseSpec:
     `StochasticTransition` or a per-target dict (whose cells are
     `StochasticTransition`-wrapped probability functions)."""
 
+    markov_draw_laws: MappingProxyType[StateName, StochasticTransition] = (
+        MappingProxyType({})
+    )
+    """Markov laws declared once for every target, by state. A law toward a
+    target that does not carry the state may read its draw `next_<state>`, which
+    is then taken from this law inside the transition. Set by
+    `canonicalize_regimes`."""
+
 
 def _split_functions(
     *, user_regime: lcm.regime.Regime
