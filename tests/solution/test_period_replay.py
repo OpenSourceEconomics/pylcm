@@ -359,6 +359,11 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     )
     params = retirement_model.get_params(n_periods=_N_PERIODS)
     model = _make_public_capture_model(budget=budget)
+    if _gpu_runtime_omits_buffer_assignment():
+        with pytest.raises(ValueError, match="serialized_buffer_assignment_proto"):
+            model.solve(params=params, log_level="off", period_capture=capture)
+        assert not tuple(tmp_path.rglob("entry.h5"))
+        return
     result = model.solve(
         params=params,
         log_level="off",
@@ -444,8 +449,14 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     logger = logging.getLogger("lcm")
     logger.addFilter(interrupt)
     params = retirement_model.get_params(n_periods=_N_PERIODS)
+    refused = _gpu_runtime_omits_buffer_assignment()
     try:
-        with pytest.raises(RuntimeError, match="Interrupted captured entry"):
+        with pytest.raises(
+            ValueError if refused else RuntimeError,
+            match="serialized_buffer_assignment_proto"
+            if refused
+            else "Interrupted captured entry",
+        ):
             _make_public_capture_model().solve(
                 params=params,
                 log_level="off",
@@ -454,6 +465,9 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     finally:
         logger.removeFilter(interrupt)
     directory = tmp_path / "working_life@0"
+    if refused:
+        assert not (directory / "entry.h5").exists()
+        return
     record = load_period_capture(directory=directory)
     assert record.completed is False
     assert record.reference is None
@@ -683,6 +697,21 @@ def _assert_selected_cache_evidence(
                 for log in records
                 if log.name == "jax._src.compiler"
             )
+
+
+def _gpu_runtime_omits_buffer_assignment() -> bool:
+    """Whether the GPU runtime withholds the metadata public capture requires.
+
+    GPU capture and replay are refused on such a runtime, so the public tests
+    assert that refusal there and the bit-exact round trip everywhere else.
+    """
+    if jax.default_backend() != "gpu":
+        return False
+    compiled = jax.jit(jax.numpy.sin).lower(jax.numpy.ones(8)).compile()
+    proto = getattr(
+        compiled.memory_analysis(), "serialized_buffer_assignment_proto", None
+    )
+    return not (isinstance(proto, bytes) and proto)
 
 
 class _InterruptCapturedPeriod(logging.Filter):

@@ -120,7 +120,12 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
 from _lcm.simulation.replay_inputs import PreparedReplayReader
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    resolve_budget_devices,
+)
 from _lcm.simulation.result_metadata import _get_output_dtypes
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
     _referenced_value_kwargs,
@@ -129,6 +134,7 @@ from _lcm.simulation.simulate import (
 )
 from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
+from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -3515,6 +3521,18 @@ class Model:
         )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if (
+            isinstance(executor, SimulationRuntime)
+            and executor.execution.device_memory_bytes is not None
+        ):
+            live = measure_buffer_footprint(tree=(V_arrs, flat_params, states, grids))
+            executor = SimulationUnitExecutor(
+                runtime=executor,
+                live_footprint=lambda: live,
+                budget_devices=resolve_budget_devices(
+                    execution_devices=executor.subject_devices, live=live
+                ),
+            )
         indices, value = cast(
             "tuple[IntND, FloatND]",
             executor.dispatch(
