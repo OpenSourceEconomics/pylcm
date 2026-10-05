@@ -12,9 +12,11 @@ the route it could not be met on.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -37,6 +39,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _LIQUID = LiquidMargin(
     state="wealth",
@@ -100,7 +103,9 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        regime_transitions=Choose(func=next_regime, targets=("done",)),
+        regime_transitions=_SupportedDeterministicTransition(
+            func=next_regime, targets=("done",)
+        ),
         functions={"utility": utility, "savings": savings},
         solver=solver,
         liquid=_LIQUID,
@@ -112,11 +117,11 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"saving": saving_regime, "done": done_regime},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "saving"},
+        initial_nodes={0: "saving"},
     )
 
 

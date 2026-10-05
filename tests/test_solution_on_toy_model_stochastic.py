@@ -13,12 +13,12 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_solution_on_toy_model_deterministic import (
     THREE_PERIOD_TRANSITIONS,
     RegimeId,
@@ -46,7 +46,7 @@ alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
     | {"health": DiscreteGrid(category_class=Health)},
     state_transitions=dict(alive_deterministic.state_transitions)
-    | {"health": MarkovTransition(func=next_health)},
+    | {"health": StochasticTransition(func=next_health)},
 )
 
 
@@ -217,12 +217,12 @@ HEALTH_TRANSITION = [
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": alive_stochastic.replace(
                 states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
@@ -231,7 +231,7 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
     params = {
@@ -279,12 +279,12 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": alive_stochastic.replace(
                 states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
@@ -293,7 +293,7 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

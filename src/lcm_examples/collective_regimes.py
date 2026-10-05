@@ -16,20 +16,21 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
     fixed_transition,
 )
+from lcm.execution import ExecutionConfig
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -115,9 +116,7 @@ def get_shared_decision_model() -> Model:
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
     )
     couple = Regime(
-        regime_transitions=Choose(
-            func=_to_shared_terminal, targets=("couple_terminal",)
-        ),
+        regime_transitions=DeterministicTransition(func=_to_shared_terminal),
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -130,13 +129,14 @@ def get_shared_decision_model() -> Model:
         functions={"utility": shared_utility},
     )
     return Model(
+        edges={"couple": {"couple_terminal": 0}},
         regimes={
             "couple": couple,
             "couple_terminal": couple_terminal,
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=SharedDecisionRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
         description="A shared household labor choice.",
     )
 
@@ -205,7 +205,10 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def get_dissolution_model() -> Model:
+def get_dissolution_model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
@@ -225,8 +228,8 @@ def get_dissolution_model() -> Model:
     married_with_participation = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=_DISSOLUTION_AGE): {
-                    "married_terminal": MarkovTransition(func=_probability_one)
+                AgeRange(start=1, exclusive_stop=_DISSOLUTION_AGE): {
+                    "married_terminal": StochasticTransition(func=_probability_one)
                 }
             }
         ),
@@ -266,9 +269,9 @@ def get_dissolution_model() -> Model:
         # household stays together.
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_with_participation": ValueDependentTransition(
-                        probability=MarkovTransition(func=_probability_one),
+                        probability=StochasticTransition(func=_probability_one),
                         gate=_no_dissolution,
                         routes={
                             "f": StakeholderRoute(
@@ -310,6 +313,10 @@ def get_dissolution_model() -> Model:
         },
     )
     return Model(
+        edges={
+            "married": {"married_with_participation": 0, "single_f": 0, "single_m": 0},
+            "married_with_participation": {"married_terminal": 1},
+        },
         regimes={
             "married": married,
             "married_with_participation": married_with_participation,
@@ -317,8 +324,9 @@ def get_dissolution_model() -> Model:
             "single_f": single_f,
             "single_m": single_m,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
         description="Participation constraints and a gated dissolution edge.",
+        execution_config=execution_config,
     )

@@ -14,6 +14,7 @@ from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -26,9 +27,9 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _model(*, ages: AgeGrid, initial_regimes: Any) -> Model:
+def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge.until(
@@ -46,16 +47,16 @@ def _model(*, ages: AgeGrid, initial_regimes: Any) -> Model:
         },
         ages=ages,
         regime_id_class=_RegimeId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
-_QUARTERLY = AgeGrid(start=61, stop=63, step="Q")
+_QUARTERLY = AgeGrid(start=61, inclusive_stop=63, step="Q")
 _IRREGULAR = AgeGrid(exact_values=(58, 60, Fraction(123, 2), 62, 64))
 
 
 @pytest.mark.parametrize(
-    ("ages", "initial_regimes", "expected"),
+    ("ages", "initial_nodes", "expected"),
     [
         (
             _QUARTERLY,
@@ -64,7 +65,7 @@ _IRREGULAR = AgeGrid(exact_values=(58, 60, Fraction(123, 2), 62, 64))
         ),
         (
             _QUARTERLY,
-            {AgeRange(start=61, stop=Fraction(247, 4)): "working"},
+            {AgeRange(start=61, exclusive_stop=Fraction(247, 4)): "working"},
             {61, Fraction(245, 4), Fraction(246, 4)},
         ),
         (
@@ -74,7 +75,7 @@ _IRREGULAR = AgeGrid(exact_values=(58, 60, Fraction(123, 2), 62, 64))
         ),
         (
             _IRREGULAR,
-            {AgeRange(start=59, stop=62): "working"},
+            {AgeRange(start=59, exclusive_stop=62): "working"},
             {60, Fraction(123, 2)},
         ),
         (
@@ -92,42 +93,43 @@ _IRREGULAR = AgeGrid(exact_values=(58, 60, Fraction(123, 2), 62, 64))
     ],
 )
 def test_initial_nodes_are_exact_on_fractional_clocks(
-    *, ages: AgeGrid, initial_regimes: Any, expected: set
+    *, ages: AgeGrid, initial_nodes: Any, expected: set
 ) -> None:
     """Starts land on the exact grid coordinates the selector names."""
-    model = _model(ages=ages, initial_regimes=initial_regimes)
+    model = _model(ages=ages, initial_nodes=initial_nodes)
     assert model.initial_nodes == frozenset((age, "working") for age in expected)
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "match"),
+    ("initial_nodes", "match"),
     [
         (
-            {AgeRange(start=30, stop=31): "working"},
-            r"AgeRange\(start=30, stop=31\).*selects no age",
+            {AgeRange(start=30, exclusive_stop=31): "working"},
+            r"AgeRange\(start=30, exclusive_stop=31\).*selects no age",
         ),
         ({Fraction(245, 4): "working"}, r"61\.25|245/4"),
     ],
     ids=["age-range-between-grid-points", "fraction-off-an-annual-grid"],
 )
 def test_a_root_selector_without_a_grid_age_fails(
-    *, initial_regimes: Any, match: str
+    *, initial_nodes: Any, match: str
 ) -> None:
     """A root rule whose selector picks no grid age is refused by name."""
     with pytest.raises(ModelInitializationError, match=match):
         _model(
-            ages=AgeGrid(start=25, stop=45, step="10Y"),
-            initial_regimes=initial_regimes,
+            ages=AgeGrid(start=25, inclusive_stop=45, step="10Y"),
+            initial_nodes=initial_nodes,
         )
 
 
 def test_a_by_age_case_without_a_grid_age_fails() -> None:
     """A schedule case whose selector picks no grid age is refused by name."""
     with pytest.raises(
-        RegimeInitializationError, match=r"AgeRange\(start=30, stop=31\).*no age"
+        RegimeInitializationError,
+        match=r"AgeRange\(start=30, exclusive_stop=31\).*no age",
     ):
-        ByAge(cases={AgeRange(start=30, stop=31): "dead"}).resolve(
-            AgeGrid(start=25, stop=45, step="10Y")
+        ByAge(cases={AgeRange(start=30, exclusive_stop=31): "dead"}).resolve(
+            AgeGrid(start=25, inclusive_stop=45, step="10Y")
         )
 
 
@@ -147,7 +149,7 @@ def test_until_rejects_a_start_not_before_an_on_grid_stop(
     with pytest.raises(RegimeInitializationError, match=match):
         ByAge.until(
             start_age_inclusive=start, stop_age_exclusive=62, law="law", then="then"
-        ).resolve(AgeGrid(start=58, stop=64, step="Y"))
+        ).resolve(AgeGrid(start=58, inclusive_stop=64, step="Y"))
 
 
 @pytest.mark.parametrize(

@@ -7,8 +7,11 @@ import pytest
 
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.validate_V import validate_V
-from lcm import Choose, Model, categorical
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -19,6 +22,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -130,7 +134,9 @@ def _build_nan_model() -> tuple[Model, dict]:
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("non_terminal", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
@@ -138,11 +144,11 @@ def _build_nan_model() -> tuple[Model, dict]:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_Rid,
-        initial_regimes={0: "non_terminal"},
+        initial_nodes={0: "non_terminal"},
     )
     params = {
         "discount_factor": 0.95,
@@ -189,7 +195,9 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("non_terminal", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
@@ -197,11 +205,11 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_Rid,
-        initial_regimes={0: "non_terminal"},
+        initial_nodes={0: "non_terminal"},
     )
     params = {
         "discount_factor": 0.95,

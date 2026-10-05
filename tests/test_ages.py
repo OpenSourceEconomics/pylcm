@@ -20,6 +20,12 @@ from tests.test_models.deterministic.base import (
 )
 
 
+def test_age_grid_inclusive_stop_names_the_last_age() -> None:
+    """The inclusive endpoint belongs to the resulting exact age grid."""
+    ages = AgeGrid(start=60, inclusive_stop=62, step="Y")
+    assert ages.exact_values == (60, 61, 62)
+
+
 @pytest.mark.parametrize(
     ("step", "expected"),
     [
@@ -40,7 +46,7 @@ def test_parse_step_invalid():
 
 
 def test_age_grid_from_range():
-    ages = AgeGrid(start=18, stop=21, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=21, step="Y")
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
@@ -48,7 +54,7 @@ def test_age_grid_from_range():
 
 def test_age_grid_with_int_and_fraction_annual():
     """Test AgeGrid with int start and Fraction stop."""
-    ages = AgeGrid(start=18, stop=Fraction(21, 1), step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=Fraction(21, 1), step="Y")
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
@@ -59,7 +65,7 @@ def test_age_grid_with_int_and_fraction_annual():
 
 def test_age_grid_with_int_and_fraction_quarterly():
     """Test AgeGrid with int start and Fraction stop."""
-    ages = AgeGrid(start=20, stop=21 + Fraction(1, 4), step="Q")
+    ages = AgeGrid(start=20, inclusive_stop=21 + Fraction(1, 4), step="Q")
     assert ages.n_periods == 6
     np.testing.assert_array_equal(ages.values, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
     assert ages.step_size == 0.25
@@ -76,20 +82,20 @@ def test_age_grid_from_values():
 
 
 def test_age_grid_period_to_age():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=22, step="Y")
     assert ages.period_to_age(0) == 18
     assert type(ages.period_to_age(0)) is int
     assert ages.period_to_age(3) == 21
 
 
 def test_age_grid_get_periods_where():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=22, step="Y")
     periods = ages.get_periods_where(lambda age: age >= 21)
     assert periods == (3, 4)
 
 
 def test_age_grid_get_periods_where_accepts_numpy_ufunc() -> None:
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
     assert ages.get_periods_where(np.isfinite) == (0, 1, 2)
 
@@ -101,12 +107,12 @@ def test_age_grid_no_params_raises():
 
 def test_age_grid_values_and_range_raises():
     with pytest.raises(GridInitializationError, match="Cannot specify both"):
-        AgeGrid(start=18, stop=22, step="Y", exact_values=(18, 19))  # ty: ignore[no-matching-overload]
+        AgeGrid(start=18, inclusive_stop=22, step="Y", exact_values=(18, 19))  # ty: ignore[no-matching-overload]
 
 
 def test_age_grid_start_greater_than_stop_raises():
     with pytest.raises(GridInitializationError, match="must be less than"):
-        AgeGrid(start=30, stop=20, step="Y")
+        AgeGrid(start=30, inclusive_stop=20, step="Y")
 
 
 def test_age_grid_non_increasing_values_raises():
@@ -117,13 +123,14 @@ def test_age_grid_non_increasing_values_raises():
 def test_age_grid_step_size_not_divisible_raises():
     """Test that step size must divide evenly into the range."""
     with pytest.raises(GridInitializationError, match="does not divide evenly"):
-        AgeGrid(start=18, stop=21, step="2Y")
+        AgeGrid(start=18, inclusive_stop=21, step="2Y")
 
 
 def test_model_with_quarterly_steps():
     """Test that solve/simulate works with quarterly (Q) step size."""
     # Quarterly steps: 18.0, 18.25, 18.5, 18.75, 19.0 (5 periods)
-    ages = AgeGrid(start=18, stop=19, step="Q")
+    ages = AgeGrid(start=18, inclusive_stop=19, step="Q")
+    last_age = ages.exact_values[-1]
     final_age_alive = 18.75
     assert ages.n_periods == 5
     assert ages.step_size == 0.25
@@ -131,16 +138,27 @@ def test_model_with_quarterly_steps():
     model = Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=19)
+                regime_transitions=working_life_transitions(last_age=last_age)
             ),
             "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=19)
+                regime_transitions=retirement_transitions(last_age=last_age)
             ),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes=((ages.exact_values[0], "working_life"),),
+        edges={
+            "working_life": {
+                "working_life": ages.exact_values[:-2],
+                "retirement": ages.exact_values[:-2],
+                "dead": ages.exact_values[:-1],
+            },
+            "retirement": {
+                "retirement": ages.exact_values[:-2],
+                "dead": ages.exact_values[:-1],
+            },
+        },
     )
 
     params = {
@@ -178,20 +196,20 @@ def test_model_with_quarterly_steps():
 
 
 def test_age_grid_age_to_period():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=22, step="Y")
     assert ages.age_to_period(18) == 0
     assert ages.age_to_period(20) == 2
     assert ages.age_to_period(22) == 4
 
 
 def test_age_grid_age_to_period_invalid():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=22, step="Y")
     with pytest.raises(ValueError, match="not a valid grid point"):
         ages.age_to_period(17)
 
 
 def test_annual_step_produces_int():
-    ages = AgeGrid(start=18, stop=21, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=21, step="Y")
     assert ages.is_integer
     assert ages.values.dtype == jnp.int32
     np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
@@ -199,7 +217,7 @@ def test_annual_step_produces_int():
 
 
 def test_multiannual_step_produces_int():
-    ages = AgeGrid(start=40, stop=70, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=70, step="10Y")
     assert ages.is_integer
     assert ages.values.dtype == jnp.int32
     np.testing.assert_array_equal(ages.values, [40, 50, 60, 70])
@@ -215,20 +233,20 @@ def test_integer_exact_values_produce_int():
 
 def test_integer_fraction_exact_values_produce_int():
     """Fraction(18, 1) is integer-valued and should produce int."""
-    ages = AgeGrid(start=Fraction(18, 1), stop=Fraction(21, 1), step="Y")
+    ages = AgeGrid(start=Fraction(18, 1), inclusive_stop=Fraction(21, 1), step="Y")
     assert ages.is_integer
     assert ages.values.dtype == jnp.int32
     assert all(isinstance(v, int) for v in ages.exact_values)
 
 
 def test_quarterly_step_produces_float():
-    ages = AgeGrid(start=20, stop=21, step="Q")
+    ages = AgeGrid(start=20, inclusive_stop=21, step="Q")
     assert not ages.is_integer
     assert jnp.issubdtype(ages.values.dtype, jnp.floating)
 
 
 def test_monthly_step_produces_float():
-    ages = AgeGrid(start=20, stop=Fraction(20 * 12 + 1, 12), step="M")
+    ages = AgeGrid(start=20, inclusive_stop=Fraction(20 * 12 + 1, 12), step="M")
     assert not ages.is_integer
     assert jnp.issubdtype(ages.values.dtype, jnp.floating)
 
@@ -240,28 +258,28 @@ def test_fractional_exact_values_produce_float():
 
 
 def test_integer_period_to_age_returns_int():
-    ages = AgeGrid(start=18, stop=21, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=21, step="Y")
     result = ages.period_to_age(0)
     assert result == 18
     assert type(result) is int
 
 
 def test_float_period_to_age_returns_float():
-    ages = AgeGrid(start=20, stop=21, step="Q")
+    ages = AgeGrid(start=20, inclusive_stop=21, step="Q")
     result = ages.period_to_age(0)
     assert result == 20.0
     assert type(result) is float
 
 
 def test_integer_age_to_period():
-    ages = AgeGrid(start=40, stop=70, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=70, step="10Y")
     assert ages.age_to_period(40) == 0
     assert ages.age_to_period(60) == 2
     assert ages.age_to_period(70) == 3
 
 
 def test_integer_get_periods_where_passes_int():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, inclusive_stop=22, step="Y")
     received_types = []
     periods = ages.get_periods_where(
         lambda age: (received_types.append(type(age)), age >= 21)[1]
@@ -272,7 +290,7 @@ def test_integer_get_periods_where_passes_int():
 
 def test_model_with_integer_ages():
     """Test that solve/simulate works with integer ages."""
-    ages = AgeGrid(start=40, stop=70, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=70, step="10Y")
     last_age = ages.exact_values[-1]
 
     model = Model(
@@ -287,7 +305,18 @@ def test_model_with_integer_ages():
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes=((ages.exact_values[0], "working_life"),),
+        edges={
+            "working_life": {
+                "working_life": ages.exact_values[:-2],
+                "retirement": ages.exact_values[:-2],
+                "dead": ages.exact_values[:-1],
+            },
+            "retirement": {
+                "retirement": ages.exact_values[:-2],
+                "dead": ages.exact_values[:-1],
+            },
+        },
     )
 
     params = {

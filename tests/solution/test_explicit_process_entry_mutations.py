@@ -14,13 +14,14 @@ import pytest
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -69,10 +70,12 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     def enter_at_mean() -> ScalarFloat:
         return jnp.asarray(mu)
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=one_probability)
+                },
                 state_transitions={"shock": {"target": enter_at_mean}},
                 functions={"utility": zero},
             ),
@@ -89,11 +92,11 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
                 functions={"utility": square},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     got = source_value(model)

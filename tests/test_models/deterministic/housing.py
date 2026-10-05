@@ -30,7 +30,10 @@ is flagged, not yet replicated).
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.grids import DiscreteGrid
 from lcm.regime import Regime
 from lcm.typing import (
@@ -41,6 +44,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -206,7 +210,7 @@ def get_model(
     Grid sizes default to a small oracle scale; pass larger values for a finer
     reference solve.
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = ages.exact_values[-1]
     liquid_grid = LinSpacedGrid(
         start=borrowing_floor, stop=liquid_max, n_points=n_liquid
@@ -229,7 +233,9 @@ def get_model(
         constraints={"feasible": feasible},
         regime_transitions=until_exit(
             final_age,
-            law=Choose(func=next_regime_from_working, targets=("working", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime_from_working, targets=("working", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": utility},
@@ -239,11 +245,11 @@ def get_model(
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

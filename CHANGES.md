@@ -5,18 +5,113 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Public production period capture
+
+- `Model.solve(period_capture=PeriodCapture(...))` atomically records selected
+  ordinary GridSearch entry inputs and appends completed references. A fresh
+  `Model.replay_period` binds model/grid/parameter/source identities and validates
+  recorded layout, widths, optimized HLO and admission before dispatch. Entry-only
+  captures remain inspectable and cannot claim reference parity. See
+  [period capture](docs/reference/runtime_and_results.md#api-period-capture).
+
+### Opt-in action-partitioned GridSearch
+
+- `ExecutionConfig(action_partitions={"<regime>": n})` shares a `GridSearch` regime's
+  action product over `n` devices. Each device reduces its own contiguous run of action
+  blocks with the exact hard maximum, and the devices exchange and merge one compact
+  accumulator per state cell instead of any value over actions. Ties, infinities, NaNs
+  and signed zeros keep the ordinary route's conventions; at the same action width the
+  tested workloads publish values bitwise equal to the ordinary route, alone, with a
+  sharded continuous state and with type-local blocks. The default `{}` and a count of
+  one leave the solve unchanged. Unsupported requests are refused at model
+  construction. See [Share a large action product over
+  devices](docs/user_guide/tuning.md).
+### A shock read only through its next-period draw stays in the regime
+
+- A law may read the draw `next_<process>` of a process state, for instance costs
+  realized after the period's choices and paid out of next period's wealth. Reading the
+  draw is now a read of the state: the regime that reads it keeps the state, whether the
+  state is declared at model level (broadcast pruning) or at regime level (the
+  unused-variable check). A persistent process's draw is conditional on the state's
+  current node. An IID process's draw is not, but it is still taken from the carried
+  state, so the state keeps its axis and the value is constant along it.
+- Toward a target that does not carry the process, the draw exists only inside the
+  transition: it is taken from the source's process at the source's current node, read
+  by the target's laws and discarded. A terminal regime valuing only wealth therefore
+  carries only wealth. `GridSearch`, `DCEGM` and `NBEGM` solve and simulate such
+  edges.
+- The same holds for a Markov state (a `DiscreteGrid` with a `StochasticTransition`
+  law): reading its draw `next_<state>` keeps the state in the reading regime, and
+  toward a target that does not carry it the draw is taken from the source's Markov
+  law, with that law's parameters. This requires the law to be declared once for
+  every target; a per-target law names no law for a target that lacks the state.
+- A state law that reads `next_<state>` toward a target that neither carries the state
+  nor receives a draw of it on that edge is refused when the model is built, naming
+  the source, the target, the law and the `next_` argument.
+- `DCEGM` and `NBEGM` accept a liquid law that reads a draw, persisted or local to the
+  edge: the Euler state and its savings derivative are evaluated at every node of the
+  draws the law reads. `NBEGM`'s save-to-cliff targets are inverted per node. Under the
+  EGM solvers only the liquid law may read a draw; any other law reading one is refused
+  at construction.
+
+### Opt-in type-local GridSearch
+
+- `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal
+  `GridSearch` regime carrying an invariant discrete state one code at a time. Each code
+  runs one shared executable with the code as a runtime operand, and reads every
+  continuation carrying the state through that code's block. The tested workloads
+  publish values, policies and simulated panels bitwise equal to the unblocked solve's;
+  the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
+  [Solve one invariant code at a time](docs/user_guide/tuning.md).
+- When the simulate phase also keeps the state fixed, `simulate` groups subjects by their
+  starting code and reads each typed value through one code's block. Every subject keeps
+  its original random draws and output row, so the panel is unchanged; otherwise
+  simulation stays ungrouped.
+- `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)` solves
+  each code through all of its periods before the next code, simulates its subjects
+  while its values are still on the device, then copies them to the host and deletes the
+  device buffers, so the device holds one code's values at a time. Every code runs the
+  programs the first compiled. The result is complete: each value is assembled from the
+  retained codes when read, on the layout the period-major schedule publishes, saves
+  from the host, and simulates one code at a time; `values.materialize()` is refused
+  when every value cannot fit the device budget. Values and panels equal the default
+  period-major schedule's byte for byte. Unsupported requests (no blocked state, a
+  regime without it, budgeted or ungrouped simulation, `log_path`) are refused. See
+  [Solve, simulate and release one code at a time](docs/user_guide/tuning.md).
+
+### Phase-specific model graphs and transition declarations
+
+- Ordinary per-target `Phased` laws may declare different solve and simulation
+  destinations, with state handoffs local to each phase. Every physically visited
+  node is valued, together with its recursively required perceived continuations.
+- Construction-fixed, exactly zero scalar probability edges are omitted from
+  reachability. State, action, age and free-parameter dependencies retain their
+  declared edges; invalid all-zero lotteries still raise at execution.
+- Breaking API: `Choose` becomes `DeterministicTransition`, `MarkovTransition`
+  becomes `StochasticTransition`, and `initial_regimes` becomes `initial_nodes`.
+  Both transition wrappers support decorator factories and carry numerical kernels
+  only. Plain functions remain deterministic. Required `Model.edges` maps each
+  source to destinations and their source-age selectors, optionally through `Phased`.
+  `model.graph` provides immutable declared edges, effective reachability and
+  fixed-zero pruning reasons.
+- Probability mass validation is shared by the solver consumers. Compiled validation
+  now reliably rejects negative subnormal probabilities at both precisions.
+
 ### Required starting problems and keyword-only age-indexed declarations
 
-- `Model(..., initial_regimes=...)` is required and has no default. It maps age
-  selectors (exact age, tuple, `range`, `AgeRange(start=..., stop=...)`) to one regime
-  name or a nonempty sequence of names; the Cartesian pairs are the admissible roots,
+- `Model(..., initial_nodes=...)` is required and has no default. It accepts exact
+  `(age, regime)` pairs or maps age selectors (exact age, tuple, `range`,
+  `AgeRange(start=..., exclusive_stop=...)`) to one regime name or a nonempty
+  sequence of names; the resulting pairs are the admissible roots,
   published as `model.initial_nodes`. `None`, a bare name, an empty mapping, unknown
   names and off-grid ages raise.
+- `AgeGrid.inclusive_stop` includes the final grid age; `AgeRange.exclusive_stop`
+  excludes its upper selector bound.
 - Solved problems are derived from the roots — physical successors plus declared value
   reads — rather than from transition schedules. `ByAge` selects laws only;
   `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
 - Terminality is exactly `regime_transitions is None`.
-- `ByAge`, `ByAge.until`, `AgeRange`, `Choose` and `MarkovTransition` take keyword
+- `ByAge`, `ByAge.until`, `AgeRange`, `DeterministicTransition` and `StochasticTransition` take keyword
   arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
   uses `then` at the last source age below `stop_age_exclusive`. See
   [Migrating to age-indexed regimes](docs/user_guide/migrating_dated_regimes.md).
@@ -870,12 +965,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `None` now masks a model-level entry instead.
 
 - Regime transitions take a third form: a per-target dict
-  `{target_regime: MarkovTransition(func=prob_func)}` whose key set declares the regime's
+  `{target_regime: StochasticTransition(func=prob_func)}` whose key set declares the regime's
   reachable targets — omitted regimes are structurally unreachable. Per-target dicts in
   `state_transitions` hand state values across regime boundaries, including into states
   the source regime does not carry and across grids that differ between regimes.
 
-- A bare callable or bare `MarkovTransition` on `Regime.transition` declares
+- A bare callable or bare `StochasticTransition` on `Regime.transition` declares
   conservative support over every regime active in the next period, so every temporally
   compatible candidate must have a valid state handoff (a carried state, a
   deterministic/stochastic law, or an explicit target-local/entry law). Use a per-target
@@ -938,7 +1033,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - A simulated agent prices its continuation under the law it *believes*, while the world
   it moves through follows the law that is *true*. `Phased` state transitions accept
-  `MarkovTransition` laws, so perceived mortality, perceived health or income risk, and
+  `StochasticTransition` laws, so perceived mortality, perceived health or income risk, and
   misread policy rules are expressible: give the `solve` variant the agent's beliefs and
   the `simulate` variant the data-generating process. See the phase-grammar explanation
   in the docs.

@@ -1,18 +1,18 @@
 """Collect state transition functions from user-facing `state_transitions`.
 
 `collect_state_transitions` walks a regime's `state_transitions` and returns
-every state's transition *function* — a bare callable, a `MarkovTransition`
+every state's transition *function* — a bare callable, a `StochasticTransition`
 (callable via `__call__`), a grid-annotated identity for `fixed_transition`
 entries, or the variants of a per-target dict.
 
-The companion validation-metadata collector for the `MarkovTransition` entries
+The companion validation-metadata collector for the `StochasticTransition` entries
 lives in `_lcm.regime_building.stochastic_state_transitions`; keeping it
 separate lets this module stay free of any dependency on the user-facing
 `Regime`.
 """
 
 from collections.abc import Callable, Collection, Mapping
-from typing import TypeAliasType, cast
+from typing import Literal, TypeAliasType, cast
 
 from dags.tree import QNAME_DELIMITER
 
@@ -27,6 +27,13 @@ from lcm.phased import Phased
 from lcm.transition import AgeSpecializedGrid
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
+type _StateLaw = (
+    UserFunction
+    | Callable
+    | Phased
+    | Mapping[RegimeName, UserFunction | Callable | Phased]
+)
+
 
 def collect_state_transitions(
     *,
@@ -40,6 +47,7 @@ def collect_state_transitions(
         | None,
     ],
     joint_output_names: Collection[StateName] = (),
+    phase: Literal["solve", "simulate"] | None = None,
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
 
@@ -49,13 +57,13 @@ def collect_state_transitions(
     - `fixed_transition` entry -> rebuilt with the state's grid-matched
       annotation
     - Callable -> used directly
-    - `MarkovTransition` -> used directly (callable via `__call__`)
+    - `StochasticTransition` -> used directly (callable via `__call__`)
     - Per-target dict -> ALL variants with qualified names
       (e.g., `next_health__working`, `next_health__retired`)
 
     Target-only states (in `state_transitions` but not in `states`) are also
     collected. These have no grid in the source regime; `fixed_transition` is
-    rejected by validation there, so only callables, MarkovTransition, and
+    rejected by validation there, so only callables, StochasticTransition, and
     per-target dicts remain.
 
     """
@@ -74,7 +82,7 @@ def collect_state_transitions(
             )
             raise RegimeInitializationError(msg)
 
-        raw = state_transitions[name]
+        raw = _select_phase(law=state_transitions[name], phase=phase)
         if isinstance(raw, _IdentityTransition):
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
             transitions[f"next_{name}"] = _make_identity_fn(
@@ -86,9 +94,20 @@ def collect_state_transitions(
     # Second pass: target-only states (in state_transitions but not in states).
     for name, raw in state_transitions.items():
         if name not in states and raw is not None:
-            _add_raw_transition(transitions=transitions, name=name, raw=raw)
+            selected = _select_phase(law=raw, phase=phase)
+            if selected is not None:
+                _add_raw_transition(transitions=transitions, name=name, raw=selected)
 
     return transitions
+
+
+def _select_phase(
+    *, law: _StateLaw | None, phase: Literal["solve", "simulate"] | None
+) -> _StateLaw | None:
+    """Select one phase for evaluation, or retain both for parameter discovery."""
+    if isinstance(law, Phased) and phase is not None:
+        return law.solve if phase == "solve" else law.simulate
+    return law
 
 
 def _make_identity_fn(
@@ -122,9 +141,9 @@ def _add_raw_transition(
 
     A **bare** law on one side (map-vs-bare) BROADCASTS over the per-target side's
     targets — the same meaning a bare state law has outside `Phased`. The
-    per-target side's key set defines the targets; the shape validator has already
-    rejected two per-target dicts over different targets, so when both sides are
-    dicts their keys match and either set works.
+    union of the per-target sides defines the template targets. A missing side
+    contributes no function or parameter for that target. Phase-specific
+    evaluation collects only the selected side.
 
     Note this produces a `Phased` value *under a per-target key*, which is exactly
     what `_validate_per_target_dict` forbids a USER to write (`Phased` is
@@ -134,8 +153,12 @@ def _add_raw_transition(
     if isinstance(raw, Phased) and (
         isinstance(raw.solve, Mapping) or isinstance(raw.simulate, Mapping)
     ):
-        target_source = raw.solve if isinstance(raw.solve, Mapping) else raw.simulate
-        targets = cast("Mapping[RegimeName, object]", target_source)
+        targets = dict.fromkeys(
+            target
+            for side in (raw.solve, raw.simulate)
+            if isinstance(side, Mapping)
+            for target in side
+        )
         for target_regime_name in targets:
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = Phased(
@@ -150,9 +173,9 @@ def _add_raw_transition(
             transitions[key] = cast("UserFunction", law)
 
 
-def _phase_cell(*, side: object, target: RegimeName) -> UserFunction:
+def _phase_cell(*, side: object, target: RegimeName) -> UserFunction | None:
     """Return one phase side's law for `target`: its cell, or the bare law broadcast."""
     if isinstance(side, Mapping):
         by_target = cast("Mapping[RegimeName, object]", side)
-        return cast("UserFunction", by_target[target])
+        return cast("UserFunction | None", by_target.get(target))
     return cast("UserFunction", side)

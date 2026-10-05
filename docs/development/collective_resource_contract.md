@@ -25,9 +25,10 @@ consent and no dissolution, so that reference depth is the only thing varying.
 
 `CollectiveHouseholdConstruct` and `CollectiveHouseholdSolve` publish their timing and
 host-memory numbers through `setup_cache`-backed `track_*` metrics, so one build and one
-cold call are shared by every metric of that class. The two parameterized workloads use
-the ASV-native `time_execution` / `peakmem_execution` pair instead, because sharing a
-setup across parameters would need the device-memory subprocess to accept parameters.
+cold call are shared by every metric of that class. The two parameterized workloads
+cannot share a setup across parameters without the device-memory subprocess accepting
+parameters, so they time `track_execution_time` in process, as the median of warm calls
+after `setup`'s cold call, and keep ASV-native `peakmem_execution` for host memory.
 
 | Workload                    | Class and metric                                         | What it isolates                                                                                                                                |
 | --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

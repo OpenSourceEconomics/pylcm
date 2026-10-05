@@ -53,7 +53,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -71,7 +71,7 @@ from tests.conftest import (
 _BETA = 0.95
 
 # Two periods: the source is active at age 0, its target and fallback from age 1.
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # Transferable settlement components (housing, pension), one row per health state.
 _SETTLEMENT_COMPONENTS = ((1.0, 2.0), (3.0, 4.0))
@@ -157,9 +157,9 @@ def _make_regimes() -> dict[str, Regime]:
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_dissolves_everywhere,
                         routes={
                             "own": StakeholderRoute(

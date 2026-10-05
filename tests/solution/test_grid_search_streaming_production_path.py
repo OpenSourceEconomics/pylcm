@@ -13,10 +13,12 @@ from _lcm.execution.core_program import (
     core_program_graph,
 )
 from _lcm.regime_building import max_Q_over_a
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution import action_streaming
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -37,6 +39,7 @@ from tests.regime_building.test_collective_feasibility_is_shared import (
     _make_model as _build_collective_model,
 )
 from tests.test_models import taste_shocks_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -88,7 +91,9 @@ def _build_model(*, enable_jit: bool = True) -> Model:
     acting = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("acting", "done")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("acting", "done")
+            ),
             exits=("done",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
@@ -104,13 +109,13 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         regime_transitions=None,
         functions={"utility": _terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"acting": acting, "done": done},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "acting"},
+        initial_nodes={0: "acting"},
     )
 
 

@@ -1,5 +1,13 @@
 """The public per-period policy lookup on a solved model."""
 
+import json
+import logging
+from collections.abc import Callable
+from functools import partial
+from math import ceil, log
+from pathlib import Path
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,6 +16,8 @@ import lcm
 import lcm.solvers
 from lcm import PolicyLookup
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.persistence import load_solution, save_solution
+from lcm.solver_api import SolutionSource
 from lcm_examples.mortality import LaborSupply
 from tests.test_models.deterministic.discrete import get_model as get_discrete_model
 from tests.test_models.deterministic.discrete import (
@@ -288,3 +298,174 @@ def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
     V = solution.values[0]["alive"]
     np.testing.assert_allclose(got.value, V[index], rtol=1e-5)
     assert not np.isclose(V[index], V[index[::-1]], rtol=1e-5)
+
+
+def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy():
+    """A budgeted model looks up the analytic final-decision policy and value."""
+    grid = lcm.LinSpacedGrid(start=1, stop=3, n_points=3)
+    model = get_model(
+        n_periods=3,
+        wealth_grid=grid,
+        consumption_grid=grid,
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=2**30),
+    )
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="off")
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=1,
+        regime_name="working_life",
+        states={"wealth": jnp.array([2.0])},
+    )
+    # All successors are dead with utility zero; c <= wealth leaves c in {1, 2}
+    # and work subtracts 0.5, so the optimum is c = 2, retire, value log(2).
+    np.testing.assert_allclose(
+        [got.actions["consumption"][0], got.actions["labor_supply"][0], got.value[0]],
+        [2.0, 1.0, log(2)],
+        rtol=1e-5,
+    )
+
+
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small",), precisions="both")
+def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
+    *,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    record_property: Callable[[str, object], None],
+):
+    """Restored public lookup owns its live inputs under the real device budget."""
+    assert jax.default_backend() == "gpu"
+    dtype = np.dtype("float64" if jax.config.x64_enabled else "float32")
+    execution = lcm.ExecutionConfig(
+        axis_widths={"subject": 2000},
+        device_memory_bytes="device",
+        device_memory_headroom_fraction=0.15,
+    )
+    build = partial(
+        get_model,
+        n_periods=3,
+        wealth_grid=lcm.LinSpacedGrid(start=1, stop=3, n_points=3),
+        consumption_grid=lcm.LinSpacedGrid(start=1, stop=3, n_points=3),
+        execution_config=execution,
+    )
+    with caplog.at_level(logging.INFO):
+        producer = build()
+        consumer = build()
+
+    devices = {device.id: device for device in jax.devices()}
+    assert producer.execution_devices == consumer.execution_devices
+    limits = {}
+    for device_id in consumer.execution_devices:
+        stats = devices[device_id].memory_stats()
+        assert stats is not None
+        assert stats.get("bytes_limit", 0) > 0
+        limits[device_id] = stats["bytes_limit"]
+    effective = min(limit - ceil(0.15 * limit) for limit in limits.values())
+    summaries = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Device-memory budget:")
+    ]
+    assert len(summaries) == 2
+    assert all(
+        "derived from the device pool limit (default)" in message
+        and "headroom fraction 0.15;" in message
+        and message.endswith(f"effective {effective} bytes.")
+        for message in summaries
+    )
+    record_property(
+        "lookup_lane",
+        json.dumps(
+            {
+                "backend": jax.default_backend(),
+                "dtype": dtype.name,
+                "device_pool_limits": limits,
+                "effective_budget_bytes": effective,
+                "requested_subject_width": 2000,
+            },
+            sort_keys=True,
+        ),
+    )
+
+    params = get_params(n_periods=3)
+    solved = producer.solve(params=params, log_level="off")
+    path = save_solution(solution=solved, path=tmp_path / "tiny.solution")
+    restored = load_solution(path=path, verify_checksums=True)
+    before = restored.metadata
+    assert before.source is SolutionSource.PERSISTED
+    assert before.model_fingerprint == solved.metadata.model_fingerprint
+    assert before.params_fingerprint == solved.metadata.params_fingerprint
+    schema = before.value_schemas[1, "working_life"]
+    assert (schema.shape, schema.axis_names, schema.dtype) == (
+        (3,),
+        ("wealth",),
+        dtype.name,
+    )
+    record_property(
+        "lookup_metadata_before",
+        json.dumps(
+            {
+                "model_fingerprint": before.model_fingerprint,
+                "params_fingerprint": before.params_fingerprint,
+                "source": before.source.value,
+                "dtype": schema.dtype,
+            },
+            sort_keys=True,
+        ),
+    )
+    states = {"wealth": jnp.array([2.0], dtype=dtype)}
+    try:
+        with pytest.raises(InvalidSimulationInputError, match="params_fingerprint"):
+            consumer.lookup_policy(
+                params=get_params(n_periods=3, discount_factor=0.5),
+                solution=restored,
+                period=1,
+                regime_name="working_life",
+                states=states,
+            )
+        result = consumer.lookup_policy(
+            params=params,
+            solution=restored,
+            period=1,
+            regime_name="working_life",
+            states=states,
+        )
+        jax.block_until_ready((result.value, dict(result.actions)))
+        # At age 19 all successors are dead with utility zero. The constraint
+        # c <= wealth leaves c in {1, 2}; work subtracts 0.5. Thus these literals
+        # follow from the economic functions, not from archived solution arrays.
+        np.testing.assert_array_equal(result.actions["consumption"], [2.0])
+        np.testing.assert_array_equal(result.actions["labor_supply"], [1])
+        np.testing.assert_allclose(
+            result.value, [log(2)], rtol=1e-12 if dtype.itemsize == 8 else 1e-5
+        )
+        assert result.value.dtype == dtype
+        assert result.actions["consumption"].dtype == dtype
+        assert result.actions["labor_supply"].dtype == np.dtype("int32")
+    finally:
+        after = restored.metadata
+        record_property(
+            "lookup_metadata_after",
+            json.dumps(
+                {
+                    "model_fingerprint": after.model_fingerprint,
+                    "params_fingerprint": after.params_fingerprint,
+                    "source": after.source.value,
+                    "dtype": after.value_schemas[1, "working_life"].dtype,
+                },
+                sort_keys=True,
+            ),
+        )
+        record_property(
+            "lookup_device_stats_after",
+            json.dumps(
+                {
+                    device_id: devices[device_id].memory_stats()
+                    for device_id in consumer.execution_devices
+                },
+                sort_keys=True,
+            ),
+        )
+        assert after == before

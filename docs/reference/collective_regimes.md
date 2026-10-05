@@ -225,7 +225,7 @@ Three read-only properties resolve the declaration:
 ## `ValueDependentTransition`
 
 ```python
-probability: UserFunction | MarkovTransition
+probability: UserFunction | StochasticTransition
 gate: UserFunction
 routes: Mapping[str, StakeholderRoute]
 gate_references: Mapping[str, ProjectedRegimeValue] = field(
@@ -243,12 +243,12 @@ true. A dissolution edge is therefore keyed by the *continuing* collective regim
 Keying it by one partner's regime would send both partners there whenever the couple
 stays together.
 
-`probability` accepts either a `MarkovTransition` or, as a convenience specific to
+`probability` accepts either a `StochasticTransition` or, as a convenience specific to
 `ValueDependentTransition`, a bare probability callable. The latter is wrapped in
-`MarkovTransition` in `decomposed_transition`, because that is the grammar the canonical
-per-target cell consumes. An ordinary per-target `regime_transitions` cell still
-requires an explicit `MarkovTransition`; a bare callable there is rejected as an
-unsupported deterministic per-target transition.
+`StochasticTransition` in `decomposed_transition`, because that is the grammar the
+canonical per-target cell consumes. An ordinary per-target `regime_transitions` cell
+still requires an explicit `StochasticTransition`; a bare callable there is rejected as
+an unsupported deterministic per-target transition.
 
 `probability` and `gate` are two distinct operations: `probability` selects whether this
 target edge is attempted at all, while `gate` keeps that target or takes the route's
@@ -323,7 +323,7 @@ checked at evaluation only fires once the model runs.
 | a **constant** weight is finite and non-negative; the constants leave a positive total              | `Regime` construction                                             | `RegimeInitializationError` |
 | a `ValueDependentConstraint` on a singleton regime                                                  | `Regime` construction                                             | `RegimeInitializationError` |
 | a regime-level reference projection introduces no free parameter                                    | `Regime` construction                                             | `RegimeInitializationError` |
-| a gate is a plain callable, not a `MarkovTransition`                                                | `Regime` construction                                             | `RegimeInitializationError` |
+| a gate is a plain callable, not a `StochasticTransition`                                            | `Regime` construction                                             | `RegimeInitializationError` |
 | `routes` covers the source's stakeholder structure                                                  | `Regime` construction                                             | `RegimeInitializationError` |
 | phased declarations make a target value-dependent in both phases and agree on the edge              | `Regime` construction                                             | `RegimeInitializationError` |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime | `Regime` construction                                             | `NotImplementedError`       |

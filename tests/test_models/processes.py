@@ -4,8 +4,10 @@ from typing import Any, Literal
 from jax import numpy as jnp
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
-    Choose,
     LogNormalIIDProcess,
     NormalIIDProcess,
     RouwenhorstAR1Process,
@@ -13,9 +15,10 @@ from lcm import (
     UniformIIDProcess,
 )
 from lcm.ages import AgeGrid
+from lcm.execution import ExecutionConfig
 from lcm.model import Model
-from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StochasticTransition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -24,6 +27,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _SHOCK_GRID_CLASSES = {
@@ -111,14 +115,16 @@ def get_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=next_health),
+            "health": StochasticTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             final_age_alive + 1,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         constraints={"wealth_constraint": wealth_constraint},
@@ -128,12 +134,12 @@ def get_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -154,19 +160,24 @@ def _next_regime_multi(
     )
 
 
-@functools.cache
 def get_multi_regime_model(
     *,
     n_periods: int,
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ],
+    execution_config: ExecutionConfig | None = None,
 ) -> Model:
     """Create a model with two non-terminal regimes that each have shock grids.
 
     Triggers cross-regime shock transitions (work → retire), which is the
-    scenario that fails when shock stubs leak across regime boundaries.
+    scenario that fails when shock stubs leak across regime boundaries. Under
+    the default execution config the model is built once per argument pair.
     """
+    if execution_config is None:
+        return _get_default_multi_regime_model(
+            n_periods=n_periods, distribution_type=distribution_type
+        )
     work_final_age = n_periods // 2 - 1
     retire_final_age = n_periods - 2
 
@@ -181,14 +192,16 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=next_health),
+            "health": StochasticTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             work_final_age + 1,
-            law=Choose(func=_next_regime_multi, targets=("work",)),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime_multi, targets=("work",)
+            ),
             exits=("retire",),
         ),
         constraints={"wealth_constraint": wealth_constraint},
@@ -202,14 +215,16 @@ def get_multi_regime_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=next_health),
+            "health": StochasticTransition(func=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         regime_transitions=until_exit(
             retire_final_age + 1,
-            law=Choose(func=_next_regime_multi, targets=("retire",)),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime_multi, targets=("retire",)
+            ),
             exits=("dead",),
             start=work_final_age + 1,
         ),
@@ -220,19 +235,36 @@ def get_multi_regime_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "work": work_regime,
             "retire": retire_regime,
             "dead": dead_regime,
         },
         regime_id_class=MultiRegimeId,
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         fixed_params={
             "work_final_age": work_final_age,
             "retire_final_age": retire_final_age,
         },
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
+        execution_config=execution_config,
+    )
+
+
+@functools.cache
+def _get_default_multi_regime_model(
+    *,
+    n_periods: int,
+    distribution_type: Literal[
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+    ],
+) -> Model:
+    """Return the multi-regime model under the default execution config, cached."""
+    return get_multi_regime_model(
+        n_periods=n_periods,
+        distribution_type=distribution_type,
+        execution_config=ExecutionConfig(),
     )
 
 

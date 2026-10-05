@@ -14,10 +14,12 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -37,6 +39,7 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -61,7 +64,9 @@ def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(func=_next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         states={
@@ -83,11 +88,11 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_life, "dead": dead},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={25: "working_life"},
+        initial_nodes={25: "working_life"},
     )
 
 
@@ -105,7 +110,9 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(func=_next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=0, stop=2000, n_points=11)},
@@ -118,11 +125,11 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_life, "dead": dead},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={25: "working_life"},
+        initial_nodes={25: "working_life"},
     )
 
 
@@ -253,7 +260,9 @@ def _f1_make_model(boost: UserFunction) -> Model:
     working = UserRegime(
         regime_transitions=until_exit(
             55,
-            law=Choose(func=_f1_next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_f1_next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         states={"capital": DiscreteGrid(category_class=_Capital)},
@@ -265,11 +274,11 @@ def _f1_make_model(boost: UserFunction) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
-        ages=AgeGrid(start=25, stop=55, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=55, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={35: "working_life"},
+        initial_nodes={35: "working_life"},
     )
 
 
@@ -335,7 +344,9 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(func=_next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
@@ -351,11 +362,11 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_life, "dead": dead},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={25: "working_life", 35: "working_life", 45: "working_life"},
+        initial_nodes={25: "working_life", 35: "working_life", 45: "working_life"},
     )
 
 

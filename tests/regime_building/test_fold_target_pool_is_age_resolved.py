@@ -26,16 +26,17 @@ from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
-_AGES = AgeGrid(start=0, stop=3, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=2)
 
 # The bonus scale changes once over the worker's active ages, so the marker
@@ -135,7 +136,7 @@ def _build_model() -> Model:
     """Build a worker whose `bonus` helper is bound per age."""
     worker = Regime(
         regime_transitions=until_exit(
-            3, law={"dead": MarkovTransition(func=_prob_one)}, exits=("dead",)
+            3, law={"dead": StochasticTransition(func=_prob_one)}, exits=("dead",)
         ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},
@@ -149,11 +150,11 @@ def _build_model() -> Model:
         states={"wealth": _WEALTH},
         functions={"utility": _terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"worker": worker, "dead": dead},
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "worker"},
+        initial_nodes={0: "worker"},
     )
 
 

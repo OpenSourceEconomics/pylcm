@@ -6,11 +6,12 @@ it does not extend to ordinary operand uploads or value transfers. CPU execution
 charges assembly against its selected CPU device as every other operation does.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import cast
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from _lcm.simulation.host_operations import StaticArgument, _abstract_operand
 from _lcm.simulation.memory import SimulationMemory
@@ -46,15 +47,35 @@ def slice_array(
     )
 
 
+def take_rows(
+    *, array: jax.Array, rows: np.ndarray, memory: SimulationMemory | None = None
+) -> jax.Array:
+    """Gather a published field's rows, such as grouped outputs in original order."""
+    if memory is None:
+        return _take_rows(array=array, rows=rows)
+    return _run_assembly(
+        memory=memory,
+        arguments={"array": array, "rows": rows},
+        static_arguments={},
+        function=_take_rows,
+    )
+
+
 def _run_assembly(
     *,
     memory: SimulationMemory,
     arguments: Mapping[str, object],
     static_arguments: Mapping[str, StaticArgument],
+    function: Callable[..., jax.Array] | None = None,
 ) -> jax.Array:
-    """Apply the CPU-host exclusion only to the two final assembly bodies here."""
-    function = _slice_array if "array" in arguments else _concatenate_arrays
-    leaves = jax.tree.leaves(arguments)
+    """Apply the CPU-host exclusion only to the final assembly bodies here.
+
+    Every operand but the gathered `rows` carries the subject axis.
+    """
+    if function is None:
+        function = _slice_array if "array" in arguments else _concatenate_arrays
+    subject_arg_names = tuple(name for name in arguments if name != "rows")
+    leaves = jax.tree.leaves({name: arguments[name] for name in subject_arg_names})
     devices = set().union(*(leaf.devices() for leaf in leaves))
     host_assembly = len(devices) == 1 and next(iter(devices)).platform == "cpu"
     executing = tuple(devices) if host_assembly else memory.subject_devices
@@ -68,7 +89,7 @@ def _run_assembly(
         profile = memory.operations.prepare_abstract(
             function=function,
             arguments=jax.tree.map(_abstract_operand, arguments),
-            subject_arg_names=tuple(arguments),
+            subject_arg_names=subject_arg_names,
             static_arguments=static_arguments,
             devices=executing,
         )
@@ -78,7 +99,7 @@ def _run_assembly(
         result = memory.operations.dispatch(
             function=function,
             arguments=arguments,
-            subject_arg_names=tuple(arguments),
+            subject_arg_names=subject_arg_names,
             static_arguments=static_arguments,
             devices=executing,
             budget_devices=memory.devices,
@@ -97,3 +118,8 @@ def _concatenate_arrays(*, arrays: tuple[jax.Array, ...]) -> jax.Array:
 def _slice_array(*, array: jax.Array, start: int, stop: int) -> jax.Array:
     """The original contiguous subject slice with immutable bounds."""
     return array[start:stop]
+
+
+def _take_rows(*, array: jax.Array, rows: jax.Array | np.ndarray) -> jax.Array:
+    """Gather subject rows, copying each row's bytes unchanged."""
+    return jnp.take(array, rows, axis=0)

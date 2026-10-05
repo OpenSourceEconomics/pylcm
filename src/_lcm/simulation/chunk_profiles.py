@@ -32,6 +32,7 @@ from _lcm.simulation import (
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
+    _take_rows,
 )
 from _lcm.simulation.chunk_offload import chunk_host_device
 from _lcm.simulation.chunk_operations import (
@@ -41,6 +42,7 @@ from _lcm.simulation.chunk_operations import (
     _period_age,
     _regime_mask,
     _slice_population,
+    _take_population,
 )
 from _lcm.simulation.chunk_planning import (
     SimulationChunkProfile,
@@ -65,6 +67,7 @@ from _lcm.simulation.gated_routing import (
     commit_gated_route_delta,
     gated_route_candidates,
 )
+from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     _cast_carrier,
@@ -80,12 +83,14 @@ from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
     _create_simulation_key,
+    _generate_rowed_simulation_keys,
     _generate_windowed_simulation_keys,
     _site_simulation_key,
     _split_simulation_key,
 )
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_groups import grouped_rows, type_local_transfer
 from _lcm.simulation.taste_stream import (
     _advance_simulation_taste_key,
     draw_taste_shock_keys,
@@ -135,6 +140,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     log_level: LogLevel,
     policies: Mapping[int, Mapping[str, object]] | None = None,
     max_compilation_workers: int | None = None,
+    group_sizes: tuple[int, ...] | None = None,
 ) -> SimulationChunkProfile:
     """Prepare actual compiled stages for one proposed outer population extent.
 
@@ -146,10 +152,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     thread into one compilation wave, which compiles each program on the worker
     pool; the ordered walk then finds each executable in the runtime's shared
     cache under its exact abstract key and compiles only what the wave did not.
+
+    With `group_sizes`, the subjects of each code of the grouping state form
+    chunks of their own: the population is not padded to a chunk multiple, each
+    chunk gathers its original rows and their keys, reads every value carrying
+    the state through one code's block, and the outputs are gathered back into
+    original order.
     """
     if population < original_population or original_population <= 0 or n_subjects <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
-    padded = -(-population // n_subjects) * n_subjects
+    padded = (
+        -(-population // n_subjects) * n_subjects if group_sizes is None else population
+    )
     inventory = ChunkProfileInventory(runtime=runtime)
     devices = runtime.subject_devices
     subject = subject_operand_sharding(devices=devices)
@@ -159,6 +173,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         (n_subjects,), np.dtype(np.int32), sharding=subject
     )
     full_int = jax.ShapeDtypeStruct((padded,), np.dtype(np.int32), sharding=subject)
+    rows = (
+        None
+        if group_sizes is None
+        else jax.ShapeDtypeStruct((n_subjects,), np.dtype(np.int32), sharding=shared)
+    )
     initial = {
         name: jax.ShapeDtypeStruct(
             (n_subjects, *array.shape[1:]), array.dtype, sharding=subject
@@ -418,6 +437,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     population=padded,
                     original_population=original_population,
                     width=n_subjects,
+                    subject_rows=rows,
                 )
             # The real period owner retains every committed carry until finish.
             add_bytes(
@@ -467,13 +487,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         width=n_subjects,
         roles=roles,
         entry_periods=entry_periods,
+        group_sizes=group_sizes,
     )
     add_bytes(target=permanent, source=padded_inputs)
     add_bytes(target=setup, source=padded_inputs)
     add_bytes(target=permanent, source=inventory.maximum_unit)
     return SimulationChunkProfile(
         n_subjects=n_subjects,
-        padded_population=padded,
+        padded_population=(
+            padded
+            if group_sizes is None
+            else grouped_rows(sizes=group_sizes, width=n_subjects)
+        ),
         stages=tuple(inventory.stages),
         fixed_reservation=permanent,
         output_reservation=output_bank,
@@ -505,6 +530,7 @@ def _profile_next_subjects(
     population: int,
     original_population: int,
     width: int,
+    subject_rows: jax.ShapeDtypeStruct | None = None,
 ) -> tuple[
     Mapping[str, Mapping[str, jax.ShapeDtypeStruct]],
     jax.ShapeDtypeStruct,
@@ -539,6 +565,7 @@ def _profile_next_subjects(
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
+        rows=subject_rows,
     )
     raw = (
         _record_core(
@@ -596,6 +623,7 @@ def _profile_next_subjects(
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
+        rows=subject_rows,
     )
     rows = tuple(route[target] for target in names)
     drawn = inventory.operation(
@@ -747,10 +775,14 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
     width: int,
     roles: jax.ShapeDtypeStruct,
     entry_periods: jax.ShapeDtypeStruct,
+    group_sizes: tuple[int, ...] | None = None,
 ) -> tuple[
     tuple[SimulationStageProfile, ...], dict[jax.Device, int], dict[jax.Device, int]
 ]:
     """Profile exact entry padding/windows and every final record concatenate/trim.
+
+    Grouped by an invariant state, every chunk gathers its original rows, every
+    group's chunks are concatenated, and one gather restores original order.
 
     CPU execution keeps all completed chunks and their assembled/trimmed outputs.
     GPU execution keeps one compute chunk while CPU assembly is separately profiled
@@ -775,7 +807,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
             add_bytes(target=padded_inputs, source=payload_bytes(tree=descriptor))
         population_columns[name] = descriptor
     population_columns.update({"__roles__": roles, "__entry_periods__": entry_periods})
-    if width < population:
+    if width < population or group_sizes is not None:
         for column in population_columns.values():
             if (
                 not isinstance(column, jax.Array | jax.ShapeDtypeStruct)
@@ -788,15 +820,28 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                 device for device in devices if device in column.sharding.device_set
             )
             inventory.operation(
-                function=_slice_population,
-                arguments={"array": column, "start": scalar},
-                static_arguments={"width": width},
+                function=_slice_population if group_sizes is None else _take_population,
+                arguments=(
+                    {"array": column, "start": scalar}
+                    if group_sizes is None
+                    else {
+                        "array": column,
+                        "rows": jax.ShapeDtypeStruct(
+                            (width,), np.dtype(np.int32), sharding=scalar.sharding
+                        ),
+                    }
+                ),
+                static_arguments={"width": width} if group_sizes is None else {},
                 subject_arg_names=("array",) if len(source_devices) > 1 else (),
                 subject_outputs=len(source_devices) > 1,
                 devices=source_devices,
             )
     inventory.close_unit()
-    chunks = population // width
+    chunks = (
+        population // width
+        if group_sizes is None
+        else grouped_rows(sizes=group_sizes, width=width) // width
+    )
     multiple = chunks > 1
     host = chunk_host_device(subject_devices=devices)
     gpu_offload = multiple and all(device.platform == "gpu" for device in devices)
@@ -836,7 +881,22 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                     subject_arg_names=("arrays",),
                     devices=(host,),
                 )
-            if original_population < population:
+            if group_sizes is not None:
+                executing = (host,) if multiple else devices
+                final_inventory.operation(
+                    function=_take_rows,
+                    arguments={
+                        "array": leaf,
+                        "rows": jax.ShapeDtypeStruct(
+                            (original_population,),
+                            np.dtype(np.int32),
+                            sharding=jax.sharding.SingleDeviceSharding(executing[0]),
+                        ),
+                    },
+                    subject_arg_names=("array",),
+                    devices=executing,
+                )
+            elif original_population < population:
                 executing = (host,) if multiple else devices
                 final_inventory.operation(
                     function=_slice_array,
@@ -912,20 +972,28 @@ def _profile_keys(
     original_population: int,
     width: int,
     scalar_int: jax.ShapeDtypeStruct,
+    rows: jax.ShapeDtypeStruct | None = None,
 ) -> tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]:
-    """Profile the original full split with dynamic window start and fixed width."""
+    """Profile the original full split, windowed or gathered at a chunk's rows."""
+    static_arguments: dict[str, StaticArgument] = {
+        "names": names,
+        "n_initial_states": population,
+        "original_n_subjects": original_population,
+        "partitionable": jax.config.jax_threefry_partitionable,
+    }
+    if rows is None:
+        function = _generate_windowed_simulation_keys
+        arguments = {"key": key, "start": scalar_int}
+        static_arguments["width"] = width
+    else:
+        function = _generate_rowed_simulation_keys
+        arguments = {"key": key, "rows": rows}
     return cast(
         "tuple[jax.ShapeDtypeStruct, Mapping[str, jax.ShapeDtypeStruct]]",
         inventory.operation(
-            function=_generate_windowed_simulation_keys,
-            arguments={"key": key, "start": scalar_int},
-            static_arguments={
-                "names": names,
-                "n_initial_states": population,
-                "original_n_subjects": original_population,
-                "partitionable": jax.config.jax_threefry_partitionable,
-                "width": width,
-            },
+            function=function,
+            arguments=arguments,
+            static_arguments=static_arguments,
         ),
     )
 
@@ -998,13 +1066,18 @@ def _period_copy_reservation(
         for regime in regimes.values()
         for family in (
             regime.simulation.programs.policy_prepare,
-            regime.simulation.programs.decision,
+            regime.simulation.programs.forward_decision,
             regime.simulation.programs.gate_fold,
             regime.simulation.programs.gate_route,
         )
         if period in family
         for read in family[period].requirements.value_reads
         if read.target.kind is not ValueArtifactKind.GATED_CONTINUATION
+    )
+    # A grouped chunk reads one code's block of each value carrying the state;
+    # every code's block has the same size.
+    grouping = next(
+        (regime.simulation.programs.grouping for regime in regimes.values()), None
     )
     seen = set()
     result: dict[jax.Device, int] = {}
@@ -1023,18 +1096,29 @@ def _period_copy_reservation(
         if identity in seen:
             continue
         seen.add(identity)
-        kind = classify_value_transfer(
-            stored_sharding=source.sharding, required_sharding=required
-        )
-        if kind is ValueTransferKind.ALIGNED_LOCAL:
-            continue
-        transfer = resolve_value_transfer(
-            target=read.target,
-            source=read.source,
-            kind=kind,
-            stored_template=source,
-            source_sharding=required,
-        )
+        if grouping is not None:
+            transfer = type_local_transfer(
+                route=grouping,
+                code=grouping.codes[0],
+                read=read,
+                stored=source,
+                required_sharding=required,
+            )
+            if transfer.delivers_stored_buffer:
+                continue
+        else:
+            kind = classify_value_transfer(
+                stored_sharding=source.sharding, required_sharding=required
+            )
+            if kind is ValueTransferKind.ALIGNED_LOCAL:
+                continue
+            transfer = resolve_value_transfer(
+                target=read.target,
+                source=read.source,
+                kind=kind,
+                stored_template=source,
+                source_sharding=required,
+            )
         add_bytes(
             target=result,
             source=dict.fromkeys(required.device_set, transfer.cost.per_device_bytes),

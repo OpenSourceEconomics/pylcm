@@ -27,6 +27,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 from beartype import beartype
 
@@ -37,16 +38,23 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationLayout
-from _lcm.engine import StateActionSpace
+from _lcm.engine import (
+    StateActionSpace,
+    _build_regime_sharding,
+    _RegimeSharding,
+    placed_devices_for_ids,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InvariantBinding,
     ReducedAxis,
     TiledOutputAxis,
     ValueRead,
 )
+from _lcm.execution.invariant_blocks import block_state_action_space
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
@@ -59,6 +67,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -78,6 +87,7 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
@@ -235,6 +245,7 @@ class GridSearch(Solver):
         independently constructed test oracle rather than a second production path.
         """
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+            get_action_partitioned_max_Q_over_a,
             get_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
@@ -268,6 +279,9 @@ class GridSearch(Solver):
                 fold_conditioning[name] = process.state_conditioned.on
         action_streaming = _classify_action_streaming(context=context)
         stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
+        action_partition_mesh = _action_partition_mesh(
+            context=context, action_streaming=action_streaming
+        )
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
@@ -283,10 +297,14 @@ class GridSearch(Solver):
             if name not in context.co_map_state_names
             and name not in untiled_state_names
         )
-        cell_extent = math.prod(
-            context.state_action_space.states[name].shape[0]
-            for name in inner_state_names
-        )
+        # A blocked state enters each block program at its one bound code.
+        state_extents = {
+            name: 1
+            if name in context.invariant_bindings
+            else context.state_action_space.states[name].shape[0]
+            for name in context.state_action_space.state_names
+        }
+        cell_extent = math.prod(state_extents[name] for name in inner_state_names)
         cell_width_keyword = (
             _select_cell_width_keyword(context=context) if cell_extent > 1 else None
         )
@@ -301,8 +319,7 @@ class GridSearch(Solver):
                     else ()
                 )
                 broadcast_extents[q_id] = math.prod(
-                    context.state_action_space.states[name].shape[0]
-                    for name in broadcast_state_names
+                    state_extents[name] for name in broadcast_state_names
                 )
                 common_kwargs = {
                     "Q_and_F": Q_and_F,
@@ -326,14 +343,28 @@ class GridSearch(Solver):
                     "fold_weights": MappingProxyType(fold_weights),
                     "fold_conditioning": MappingProxyType(fold_conditioning),
                 }
-                program_functions[q_id] = (
-                    get_streaming_max_Q_over_a(
-                        **common_kwargs,
+                if action_partition_mesh is not None:
+                    program_functions[q_id] = get_action_partitioned_max_Q_over_a(
+                        Q_and_F=Q_and_F,
+                        batch_sizes=common_kwargs["batch_sizes"],
+                        action_names=action_names,
+                        state_names=context.state_action_space.state_names,
+                        n_partitions=context.action_partitions,
+                        mesh=action_partition_mesh,
                         action_width_keyword=action_width_keyword,
+                        cell_width_keyword=cell_width_keyword,
+                        untiled_state_names=untiled_state_names,
+                        broadcast_state_names=broadcast_state_names,
                     )
-                    if stream_actions
-                    else get_max_Q_over_a(**common_kwargs)
-                )
+                else:
+                    program_functions[q_id] = (
+                        get_streaming_max_Q_over_a(
+                            **common_kwargs,
+                            action_width_keyword=action_width_keyword,
+                        )
+                        if stream_actions
+                        else get_max_Q_over_a(**common_kwargs)
+                    )
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -394,6 +425,10 @@ class GridSearch(Solver):
                     edge_target_regimes=context.edge_target_regimes,
                 ),
             )
+            # A bound continuation needs its selected-view transfer even when
+            # all local state and action products have extent one. "Dense"
+            # arithmetic must not bypass the engine's value-read planning.
+            requires_plan = bool(requirements.axes) or bool(context.invariant_bindings)
             program = CoreProgram(
                 name="main",
                 function=program_functions[q_id],
@@ -406,18 +441,92 @@ class GridSearch(Solver):
                 ),
                 disposition=(
                     CoreExecutionDisposition.PLANNED
-                    if requirements.axes
+                    if requires_plan
                     else CoreExecutionDisposition.DENSE
                 ),
-                disposition_reason=(
-                    None if requirements.axes else action_streaming.value
-                ),
+                disposition_reason=(None if requires_plan else action_streaming.value),
                 donation_candidates=(),
             )
             result[period] = _GridSearchPeriodKernel(
                 _core_programs=MappingProxyType({"main": program})
+                if not context.invariant_bindings
+                else _bound_programs(program=program, context=context)
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
+
+
+def _bound_programs(
+    *, program: CoreProgram, context: SolverBuildContext
+) -> MappingProxyType[str, CoreProgram]:
+    """Declare one copy of `program` per code of the regime's blocked state.
+
+    Each copy is named after its code, bound to it, and owns the reads `program`
+    declared. All copies share `program`'s function, so they form one family
+    that compiles once.
+    """
+    (state_name,) = context.invariant_bindings
+    codes = context.state_action_space.states[state_name].tolist()
+    programs = {}
+    for start, code in enumerate(codes):
+        name = f"{program.name}[{state_name}={int(code)}]"
+        programs[name] = replace(
+            program,
+            name=name,
+            requirements=replace(
+                program.requirements,
+                value_reads=rekeyed_value_reads(
+                    reads=program.requirements.value_reads, core_key=name
+                ),
+            ),
+            invariant_binding=InvariantBinding(
+                state_name=state_name,
+                start=start,
+                code=int(code),
+                family=program.name,
+            ),
+        )
+    return MappingProxyType(programs)
+
+
+def _action_partition_mesh(
+    *,
+    context: SolverBuildContext,
+    action_streaming: _ActionStreamingDisposition,
+) -> jax.sharding.Mesh | None:
+    """Return the regime's mesh when its action product is shared, else `None`.
+
+    Model construction admits a partition request only on the ordinary
+    streamed singleton route without folded processes or co-mapped states;
+    reaching here with anything else is an internal planning error.
+    """
+    if context.action_partitions == 1:
+        return None
+    unserved = [
+        reason
+        for failed, reason in (
+            (
+                action_streaming is not _ActionStreamingDisposition.STREAMED,
+                f"its actions are not streamed ({action_streaming.value})",
+            ),
+            (bool(context.fold_state_names), "it folds a process"),
+            (bool(context.co_map_state_names), "it co-maps a sharded state"),
+        )
+        if failed
+    ]
+    if unserved:
+        msg = (
+            f"Regime {context.regime_name!r} cannot share its actions over "
+            f"{context.action_partitions} devices: " + "; ".join(unserved) + ". "
+            "Remove the regime from ExecutionConfig.action_partitions."
+        )
+        raise ExecutionPlanningError(msg)
+    plan = _build_regime_sharding(
+        grids=context.grids,
+        sharded_state_names=context.sharded_state_names,
+        devices=placed_devices_for_ids(submesh_device_ids=context.submesh_device_ids),
+        action_partitions=context.action_partitions,
+    )
+    return cast("_RegimeSharding", plan).mesh
 
 
 def _continuation_unread_state_names(
@@ -702,13 +811,21 @@ class _GridSearchPeriodKernel:
     """One period adapter whose native program graph is its sole core authority."""
 
     _core_programs: Mapping[str, CoreProgram]
-    """The immutable one-node GridSearch program graph."""
+    """The immutable GridSearch program graph: `main`, or one program per code."""
 
     def __post_init__(self) -> None:
-        """Snapshot and require the one mathematical GridSearch core."""
+        """Snapshot and require the one mathematical GridSearch core family."""
         programs = MappingProxyType(dict(self._core_programs))
-        if tuple(programs) != ("main",):
-            msg = "GridSearch requires exactly one core program named 'main'."
+        blocked = bool(programs) and all(
+            program.invariant_binding is not None
+            and program.invariant_binding.family == "main"
+            for program in programs.values()
+        )
+        if tuple(programs) != ("main",) and not blocked:
+            msg = (
+                "GridSearch requires exactly one core program named 'main', or "
+                "one bound program per code of an invariant state."
+            )
             raise ValueError(msg)
         object.__setattr__(self, "_core_programs", programs)
 
@@ -725,7 +842,7 @@ class _GridSearchPeriodKernel:
         regime's own fixed params restores the values removed from the live
         `flat_params`; the captured functions read only the keys they need.
         """
-        program = self._core_programs["main"]
+        program = next(iter(self._core_programs.values()))
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
         regime_fixed = dict(
             fixed_flat_params.get(
@@ -739,9 +856,15 @@ class _GridSearchPeriodKernel:
             program,
             function=functools.partial(program.function, **regime_fixed),
         )
+        # Programs of one family share one function, so they share one binding.
         return replace(
             self,
-            _core_programs=MappingProxyType({"main": bound_program}),
+            _core_programs=MappingProxyType(
+                {
+                    name: replace(member, function=bound_program.function)
+                    for name, member in self._core_programs.items()
+                }
+            ),
         )
 
     def __call__(
@@ -765,8 +888,17 @@ class _GridSearchPeriodKernel:
         a regime declaring `gated_edges` (substituted into
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
+
+        A regime solved one invariant code at a time is handed exactly one of
+        its bound programs per call and evaluates it on that code's block of
+        the state grid.
         """
-        program = self._core_programs["main"]
+        (core_key,) = (name for name in compiled_cores if name in self._core_programs)
+        program = self._core_programs[core_key]
+        if program.invariant_binding is not None:
+            state_action_space = block_state_action_space(
+                space=state_action_space, binding=program.invariant_binding
+            )
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
         if (
             argument_builder.same_period_ref_regimes
@@ -790,7 +922,7 @@ class _GridSearchPeriodKernel:
                 same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             )
         )
-        out = compiled_cores["main"](**arguments)
+        out = compiled_cores[core_key](**arguments)
         if program.output_roles == (VALUE, DISSOLUTION_FLAG):
             V_arr, dissolution = out
             return KernelOutput(

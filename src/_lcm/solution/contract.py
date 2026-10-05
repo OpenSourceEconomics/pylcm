@@ -267,6 +267,14 @@ class SolverBuildContext:
     sharded_state_names: frozenset[StateName] = frozenset()
     """State axes assigned to devices by the model's execution configuration."""
 
+    action_partitions: int = 1
+    """Devices sharing this regime's action product; one when it is not shared.
+
+    Set from `ExecutionConfig.action_partitions`. Above one, the regime's mesh
+    carries a trailing action axis of this size, and a solver serving the
+    request reduces each device's run of the action product separately.
+    """
+
     axis_widths: MappingProxyType[str, int] = MappingProxyType({})
     """Immutable mapping of execution axis name to the width it is fixed at.
 
@@ -402,6 +410,16 @@ class SolverBuildContext:
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
     """
 
+    invariant_bindings: tuple[StateName, ...] = ()
+    """Invariant states this regime's solve evaluates one code at a time.
+
+    Set from `ExecutionConfig.invariant_block_widths` for a non-terminal regime
+    carrying a blocked state on a discrete grid. The solve-phase `Q_and_F`
+    reads the continuation of each such state at the evaluated code, so a
+    program bound to one code reads only that code's block of every
+    continuation carrying the state. Empty when nothing is blocked.
+    """
+
     stakeholders: tuple[str, ...] | None = None
     """Ordered stakeholder names for a collective regime, or `None` (singleton).
 
@@ -473,6 +491,7 @@ class SolverBuildContext:
             states=self.state_action_space.states,
             fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
+            action_partitions=self.action_partitions,
         )
 
 

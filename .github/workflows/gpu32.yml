@@ -38,7 +38,7 @@ jobs:
           echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
       - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.80.0
+          pixi-version: v0.81.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
@@ -69,11 +69,98 @@ jobs:
             jax-gpu-
       - name: Run the bounded GPU policy
         shell: bash
-        run: >-
-          pixi run -e tests-cuda12 test --
-          --ci-policy=pr --hardware-profile=gpu-small --precision=auto
-          --environment=tests-cuda12 --report-dir=reports/policy
-          --log-cli-level=INFO tests
+        run: |
+          mkdir -p reports
+          status=0
+          for precision in 64 32; do
+            leg_status=0
+            pixi run -e tests-cuda12 test -- \
+              --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+              --environment=tests-cuda12 --report-dir=reports/policy \
+              --log-cli-level=INFO tests || leg_status=$?
+            printf '%s\t%s\n' "$precision" "$leg_status" >> reports/precision-exits.tsv
+            if test "$status" -eq 0 && test "$leg_status" -ne 0; then
+              status=$leg_status
+            fi
+          done
+          exit "$status"
+      - name: Witness native metadata after a separate process warms the cache
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          JAX_ENABLE_COMPILATION_CACHE: 'true'
+          JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: '0'
+          JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: '-1'
+        run: |
+          export PYLCM_JAX_CACHE_ROOT
+          PYLCM_JAX_CACHE_ROOT=$(mktemp -d "$RUNNER_TEMP/public-replay-cache.XXXXXX")
+          result=0
+          for precision in 64 32; do
+            export PUBLIC_REPLAY_CACHE_EVIDENCE
+            PUBLIC_REPLAY_CACHE_EVIDENCE="reports/public-replay-warmed/fp$precision"
+            for stage in warm capture; do
+              export PUBLIC_REPLAY_CACHE_STAGE="$stage"
+              if pixi run -e tests-cuda12 test -- \
+                --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+                --environment=tests-cuda12 \
+                --report-dir="$PUBLIC_REPLAY_CACHE_EVIDENCE/$stage" \
+                -k public_capture_from_separately_warmed_gpu_cache \
+                tests/solution/test_period_replay.py; then
+                status=0
+              else
+                status=$?
+                result=1
+              fi
+              printf '%s\n' "$status" > "$PUBLIC_REPLAY_CACHE_EVIDENCE/$stage.exit"
+              if test "$status" -ne 0; then
+                break
+              fi
+            done
+          done
+          exit "$result"
+      - name: Diagnose public replay with cache disabled from process startup
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          JAX_ENABLE_COMPILATION_CACHE: 'false'
+          PUBLIC_REPLAY_TESTS: >-
+            (public_solve_captures_adjacent_periods and False) or
+            public_interrupted_capture
+        run: |
+          pixi run -e tests-cuda12 python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import jax
+          root = Path(jax.__file__).parent
+          names = ("compilation_cache.py", "compiler.py", "config.py", "cache_key.py")
+          record = {
+              "jax_version": jax.__version__,
+              "cache_enabled_at_startup": jax.config.jax_enable_compilation_cache,
+              "source_sha256": {
+                  name: hashlib.sha256((root / "_src" / name).read_bytes()).hexdigest()
+                  for name in names
+              },
+          }
+          Path("reports/public-replay-jax-source.json").write_text(json.dumps(record))
+          assert record["cache_enabled_at_startup"] is False
+          PY
+          result=0
+          for precision in 64 32; do
+            if pixi run -e tests-cuda12 test -- \
+              --ci-policy=pr --hardware-profile=gpu-small --precision="$precision" \
+              --environment=tests-cuda12 \
+              --report-dir="reports/public-replay-no-cache/fp$precision" \
+              -k "$PUBLIC_REPLAY_TESTS" \
+              tests/solution/test_period_replay.py; then
+              status=0
+            else
+              status=$?
+              result=1
+            fi
+            printf '%s\n' "$status" > "reports/public-replay-no-cache/fp$precision.exit"
+          done
+          exit "$result"
       - name: Upload policy and native reports
         if: always()
         uses: actions/upload-artifact@v7.0.1

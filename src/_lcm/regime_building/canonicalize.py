@@ -14,7 +14,7 @@ carry the state in that phase:
 The regime transition itself is canonicalized into the same per-target form:
 
 - a user per-target dict passes through
-- a coarse callable / `MarkovTransition` maps every retained target to one shared
+- a coarse callable / `StochasticTransition` maps every retained target to one shared
   `_CoarseTransitionCell`, so the engine evaluates the underlying once and
   indexes per target
 - `None` (terminal) stays `None`
@@ -22,7 +22,7 @@ The regime transition itself is canonicalized into the same per-target form:
 Candidate support follows one syntax rule:
 
 - per-target dict ⇒ its key set
-- coarse callable / `MarkovTransition` ⇒ all regimes
+- coarse callable / `StochasticTransition` ⇒ all regimes
 - `None` (terminal) ⇒ empty
 
 The model path intersects those candidates with temporal activity in
@@ -50,15 +50,15 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
+from lcm.transition import AgeSpecializedGrid, JointTransition, StochasticTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
-type _CanonicalLaw = UserFunction | MarkovTransition
+type _CanonicalLaw = UserFunction | StochasticTransition
 type _CanonicalStateTransitions = MappingProxyType[
     StateName, MappingProxyType[RegimeName, _CanonicalLaw]
 ]
 type _CanonicalRegimeTransition = (
-    MappingProxyType[RegimeName, MarkovTransition | _CoarseTransitionCell] | None
+    MappingProxyType[RegimeName, StochasticTransition | _CoarseTransitionCell] | None
 )
 type _CanonicalJointTransitions = MappingProxyType[
     RegimeName, MappingProxyType[str, JointTransition]
@@ -176,6 +176,13 @@ def canonicalize_phased_regimes(
             canonical_slice = dataclasses.replace(
                 phase_slice,
                 state_transitions=cast("MappingProxyType", canonical_transitions),
+                markov_draw_laws=MappingProxyType(
+                    {
+                        state_name: law
+                        for state_name, law in _split_laws(phase_slice)[0].items()
+                        if isinstance(law, StochasticTransition)
+                    }
+                ),
                 joint_transitions=canonical_joint,
                 regime_transition=_canonicalize_regime_transition(
                     regime_transition=phase_slice.regime_transition,
@@ -344,7 +351,7 @@ def _canonicalize_regime_transition(
     """Rewrite one phase's regime transition into the per-target form.
 
     - a user per-target dict passes through
-    - a coarse callable / `MarkovTransition` maps every regime to one shared
+    - a coarse callable / `StochasticTransition` maps every regime to one shared
       `_CoarseTransitionCell`, so the engine evaluates the underlying once
       and indexes per target instead of re-evaluating per cell
     - `None` (terminal) stays `None`
@@ -353,7 +360,7 @@ def _canonicalize_regime_transition(
         return None
     if isinstance(regime_transition, Mapping):
         cells = cast(
-            "Mapping[RegimeName, MarkovTransition | _CoarseTransitionCell]",
+            "Mapping[RegimeName, StochasticTransition | _CoarseTransitionCell]",
             regime_transition,
         )
         return MappingProxyType(
@@ -436,8 +443,8 @@ def _declared_target_errors(
     """Read declared target support and report unknown mapping keys.
 
     - per-target dict ⇒ its key set (unknown regime names are errors)
-    - vector `MarkovTransition` with `targets` ⇒ its declared targets
-    - any other coarse callable or `MarkovTransition` ⇒ all regimes
+    - vector `StochasticTransition` with `targets` ⇒ its declared targets
+    - any other coarse callable or `StochasticTransition` ⇒ all regimes
 
     Return the declared targets and the violations found along the way.
     """

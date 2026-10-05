@@ -96,7 +96,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
     _solve_and_process,
@@ -104,7 +104,7 @@ from tests.regime_building.test_collective_regime_simulate import (
 )
 
 _BETA = 0.95
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The realized, OFF-GRID candidate `x` every subject lands on in the grid-points
 # repro.
@@ -177,9 +177,9 @@ def _make_f2_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_threshold_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -503,9 +503,9 @@ def _make_f3_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "stateless_target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_stateless_gate,
                         routes={
                             "only": StakeholderRoute(

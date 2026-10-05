@@ -19,9 +19,9 @@ from lcm import (
     AgeGrid,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -32,10 +32,11 @@ from lcm.exceptions import (
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import _phased_model
+from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
-_AGES = AgeGrid(start=25, stop=75, step="10Y")
+_AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 _N_SUBJECTS = 64
 
 
@@ -63,8 +64,8 @@ def _mortal() -> Regime:
         regime_transitions=ByAge.until(
             stop_age_exclusive=75,
             law={
-                "working": MarkovTransition(func=_stay),
-                "dead": MarkovTransition(func=_die),
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
             },
             then="dead",
         ),
@@ -79,8 +80,8 @@ def _island() -> Regime:
         regime_transitions=ByAge.until(
             stop_age_exclusive=75,
             law={
-                "island": MarkovTransition(func=_stay),
-                "dead": MarkovTransition(func=_die),
+                "island": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
             },
             then="dead",
         ),
@@ -90,8 +91,8 @@ def _island() -> Regime:
     )
 
 
-def _model(initial_regimes: Any) -> Model:
-    return Model(
+def _model(initial_nodes: Any) -> Model:
+    return with_fixture_graph(
         regimes={
             "island": _island(),
             "working": _mortal(),
@@ -103,7 +104,7 @@ def _model(initial_regimes: Any) -> Model:
         },
         ages=_AGES,
         regime_id_class=_Life,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 
@@ -204,14 +205,14 @@ def _overweight_death() -> FloatND:
 
 def _laws(*, die: Any) -> dict:
     return {
-        "working": MarkovTransition(func=_stay),
-        "dead": MarkovTransition(func=die),
+        "working": StochasticTransition(func=_stay),
+        "dead": StochasticTransition(func=die),
     }
 
 
 def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_wealth)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "island": _island(),
             "working": Regime(
@@ -230,7 +231,7 @@ def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
         },
         ages=_AGES,
         regime_id_class=_Life,
-        initial_regimes={25: "working"},
+        initial_nodes={25: "working"},
     )
 
 
@@ -289,8 +290,8 @@ def test_a_changed_law_changes_the_structure_identity() -> None:
     base = _law_model(law=_laws(die=_die))
     changed = _law_model(
         law={
-            "working": MarkovTransition(func=_two_thirds),
-            "dead": MarkovTransition(func=_one_third),
+            "working": StochasticTransition(func=_two_thirds),
+            "dead": StochasticTransition(func=_one_third),
         }
     )
     assert base._model_structure_fingerprint != changed._model_structure_fingerprint
@@ -329,22 +330,22 @@ def test_identical_models_share_the_durable_identity() -> None:
 def test_refused_start_raises_before_any_regime_law_is_evaluated(
     *, log_level: str, initial_frame: bool
 ) -> None:
-    """Admission runs first: a refused start never reaches a user regime law."""
+    """Runtime admission refuses a start without another regime-law call."""
     calls: list[None] = []
 
     def counting_stay() -> FloatND:
         calls.append(None)
         return jnp.asarray(0.5)
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "island": _island(),
             "working": Regime(
                 regime_transitions=ByAge.until(
                     stop_age_exclusive=75,
                     law={
-                        "working": MarkovTransition(func=counting_stay),
-                        "dead": MarkovTransition(func=_die),
+                        "working": StochasticTransition(func=counting_stay),
+                        "dead": StochasticTransition(func=_die),
                     },
                     then="dead",
                 ),
@@ -360,8 +361,11 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
         },
         ages=_AGES,
         regime_id_class=_Life,
-        initial_regimes={25: "working"},
+        initial_nodes={25: "working"},
     )
+    # Construction may evaluate this fixed scalar law to prove support. A refused
+    # simulation must not evaluate it again, including while tracing user code.
+    calls_before_simulation = tuple(calls)
     initial_conditions: Any = {
         "wealth": np.zeros(2),
         "age": np.full(2, 35.0),
@@ -378,7 +382,7 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
             log_level=log_level,  # ty: ignore[invalid-argument-type]
             seed=0,
         )
-    assert calls == []
+    assert tuple(calls) == calls_before_simulation
 
 
 def _stay_with_wealth(wealth: ContinuousState) -> FloatND:
@@ -395,15 +399,15 @@ def _drift(wealth: ContinuousState) -> ContinuousState:
 
 def _drifting_model() -> Model:
     """Valid regime-law rows on the wealth grid [0, 1]; simulated wealth leaves it."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "island": _island(),
             "working": Regime(
                 regime_transitions=ByAge.until(
                     stop_age_exclusive=75,
                     law={
-                        "working": MarkovTransition(func=_stay_with_wealth),
-                        "dead": MarkovTransition(func=_die_with_wealth),
+                        "working": StochasticTransition(func=_stay_with_wealth),
+                        "dead": StochasticTransition(func=_die_with_wealth),
                     },
                     then="dead",
                 ),
@@ -419,7 +423,7 @@ def _drifting_model() -> Model:
         },
         ages=_AGES,
         regime_id_class=_Life,
-        initial_regimes={25: "working"},
+        initial_nodes={25: "working"},
     )
 
 

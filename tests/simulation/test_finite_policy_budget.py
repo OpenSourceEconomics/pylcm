@@ -11,7 +11,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from lcm import ExecutionConfig, Model
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as smooth_toy
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 def _inputs(
@@ -21,6 +21,7 @@ def _inputs(
     factory = discrete_toy if discrete else smooth_toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
     model = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=smooth_toy.RegimeId,
@@ -28,7 +29,7 @@ def _inputs(
         execution_config=ExecutionConfig(
             device_memory_bytes=budget, axis_widths={"subject": width}
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"discount_factor": 0.95}
     if discrete:

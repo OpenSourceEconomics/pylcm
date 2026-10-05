@@ -415,6 +415,50 @@ def _method_display_name(*, class_name: str, method_name: str) -> str:
     )
 
 
+def display_names(benchmark_name: str) -> tuple[str, str]:
+    """Return the labels the comparison table gives an ASV benchmark.
+
+    Args:
+        benchmark_name: ASV benchmark name, `module.Class.method`.
+
+    Returns:
+        The table's benchmark label and statistic label.
+
+    """
+    class_name, method_name = _canonical_names(benchmark_name)
+    return (
+        _CLASS_DISPLAY.get(class_name, class_name),
+        _method_display_name(class_name=class_name, method_name=method_name),
+    )
+
+
+def display_sort_key(benchmark_name: str) -> tuple[Any, ...]:
+    """Return a key that orders ASV benchmarks as the comparison table orders rows.
+
+    Args:
+        benchmark_name: ASV benchmark name, `module.Class.method`.
+
+    Returns:
+        A key ordering by benchmark label, then statistic, then name.
+
+    """
+    class_name, method_name = _canonical_names(benchmark_name)
+    return (
+        *_group_sort_key((_CLASS_DISPLAY.get(class_name, class_name), "")),
+        _METHOD_SORT.get(method_name, len(_METHOD_SORT)),
+        benchmark_name,
+    )
+
+
+def _canonical_names(benchmark_name: str) -> tuple[str, str]:
+    """Return the class and method a benchmark name is tabulated under."""
+    class_name, method_name = benchmark_name.split(".")[-2:]
+    return (
+        _CLASS_ALIASES.get(class_name, class_name),
+        _METHOD_ALIASES.get(method_name, method_name),
+    )
+
+
 def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
     """Sort known families canonically and parameters by their numeric value."""
     display_name, params = group

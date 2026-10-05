@@ -21,7 +21,7 @@ def test_diagnostic_row_age_is_read_without_touching_the_device_array(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The row carries the period's age although the device array is unreadable."""
-    ages = AgeGrid(start=50, stop=52, step="Y")
+    ages = AgeGrid(start=50, inclusive_stop=52, step="Y")
 
     def _refuse(_grid: AgeGrid) -> None:
         msg = "the diagnostics fold read the age off the device array"

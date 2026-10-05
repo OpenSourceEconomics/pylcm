@@ -52,16 +52,17 @@ from lcm import (
 )
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
-    InitialRegimes,
+    InitialNodes,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -156,9 +157,7 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
         The complete labelled solution.
 
     """
-    return _make_model(
-        later_ceiling=later_ceiling, initial_regimes={0: "couple"}
-    ).solve(
+    return _make_model(later_ceiling=later_ceiling, initial_nodes={0: "couple"}).solve(
         params={
             "single_f": {"koopmans_aggregator": {"discount_factor": 0.0}},
             "single_f_terminal": {},
@@ -172,7 +171,7 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
     )
 
 
-def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Model:
+def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
     """Build the couple-and-single model with an age-specialized reference grid."""
 
     def _single_wealth_grid(age: float) -> LinSpacedGrid:
@@ -183,8 +182,8 @@ def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Mod
         regime_transitions=until_exit(
             2,
             law={
-                "single_f": MarkovTransition(func=_stays_single),
-                "single_f_terminal": MarkovTransition(func=_leaves_single),
+                "single_f": StochasticTransition(func=_stays_single),
+                "single_f_terminal": StochasticTransition(func=_leaves_single),
             },
             exits=("single_f_terminal",),
         ),
@@ -204,7 +203,9 @@ def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Mod
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"couple_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "couple_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wealth": COUPLE_GRID},
@@ -236,16 +237,16 @@ def _make_model(*, later_ceiling: float, initial_regimes: InitialRegimes) -> Mod
             )
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "single_f": single_f,
             "single_f_terminal": single_f_terminal,
             "couple": couple,
             "couple_terminal": couple_terminal,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
     )
 
 

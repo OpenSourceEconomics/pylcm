@@ -22,13 +22,14 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 # Leaves the power mean at exponent `1 - risk_aversion`, so `-3`.
 _RISK_AVERSION = 4.0
@@ -168,17 +169,17 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         "source": Regime(
             regime_transitions=(
                 {
-                    "lottery": MarkovTransition(func=_to_lottery),
-                    "safe": MarkovTransition(func=_to_safe),
+                    "lottery": StochasticTransition(func=_to_lottery),
+                    "safe": StochasticTransition(func=_to_safe),
                 }
                 if with_a_safe_alternative
-                else {"lottery": MarkovTransition(func=_certain)}
+                else {"lottery": StochasticTransition(func=_certain)}
             ),
             actions={"plan": DiscreteGrid(category_class=Plan)}
             if with_a_safe_alternative
             else {},
             state_transitions={
-                name: {"lottery": MarkovTransition(func=_draw_probabilities)}
+                name: {"lottery": StochasticTransition(func=_draw_probabilities)}
                 for name in axis_names
             },
             functions={"utility": _zero_utility},
@@ -194,13 +195,13 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         regimes["safe"] = Regime(
             regime_transitions=None, functions={"utility": _safe_utility}
         )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId if with_a_safe_alternative else LotteryOnlyRegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

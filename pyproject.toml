@@ -128,10 +128,11 @@ no-build-isolation = [ "pylcm" ]
 # device-memory budget is derived from that pool. No-ops on CPU.
 test = { cmd = "python -m tests.ci.policy_launcher", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "true", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.75" } }
 asv-compare = "asv compare"
+asv-machine = "python -m benchmarks.asv_machine"
 asv-preview = "asv preview"
 asv-preflight = "python -m benchmarks.preflight"
 asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
+asv-publish = "python -m benchmarks.publish"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
@@ -141,7 +142,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 # Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
 # execution keywords are rejected; omitted GPU policies derive an allocator budget.
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "ad38653696ec366e318ac61b9a81b597a4ecb700" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "196a56ad036bb63bb43898db334b701f12a9255d" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -433,6 +434,8 @@ collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
 src.include = [ "docs/", "src/", "tests/" ]
+# Standalone scripts and algebra tests import helpers from their own directories.
+environment.extra-paths = [ "tests/candidate_certificate", "tests/egm" ]
 # ty resolves third-party imports from this pixi env. The pre-commit hook runs
 # ty directly; pixi owns the project environment. Run `pixi install` once.
 environment.python = ".pixi/envs/type-checking"

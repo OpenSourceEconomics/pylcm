@@ -50,14 +50,15 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -206,7 +207,11 @@ def build_model(
     """
     working = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_retire)}}
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "retired": StochasticTransition(func=_retire)
+                }
+            }
         ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
@@ -232,16 +237,16 @@ def build_model(
         if states_lead_with_b
         else {"a": grids["a"], "b": grids["b"]}
     )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
         states=states,
         state_transitions={
             "a": {"retired": fixed_transition("a")},
-            "b": {"retired": MarkovTransition(func=_enter_b)},
+            "b": {"retired": StochasticTransition(func=_enter_b)},
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         execution_config=ExecutionConfig(
             devices=devices, sharded_states=sharded, **config
         ),

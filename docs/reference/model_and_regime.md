@@ -14,16 +14,19 @@ title: Model and Regime
 import lcm
 
 model = lcm.Model(
-    ages=lcm.AgeGrid(start=25, stop=80, step="Y"),
+    ages=lcm.AgeGrid(start=25, inclusive_stop=80, step="Y"),
     regimes={"working": working, "retired": retired},
     regime_id_class=RegimeId,
+    edges={"working": {"retired": 25}},
+    initial_nodes=((25, "working"),),
     enable_jit=True,
 )
 ```
 
-Required arguments are `ages`, `regimes`, and a class created with
-`@categorical(ordered=False)` whose fields match the regime names. A model must contain
-at least one terminal regime; a model whose starts are all terminal needs no other.
+Required arguments are `ages`, `regimes`, `edges`, `initial_nodes`, and
+`regime_id_class`, a class created with `@categorical(ordered=False)` whose fields match
+the regime names. A model must contain at least one terminal regime; a model whose
+starts are all terminal needs no other.
 
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
 `actions`, and `derived_categoricals` broadcast declarations to regimes. A name is
@@ -41,6 +44,9 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
+- `initial_nodes`, immutable admissible age–regime pairs;
+- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes and
+  pruning reasons;
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -71,26 +77,64 @@ raises `UnsupportedOperationError`, from these methods and from `simulate` alike
 
 `model._regimes` is private canonical engine state.
 
+(api-period-candidate-lowering)=
+
+## Lower one production candidate
+
+`model.lower_period_candidate(params=..., log_level=..., candidate=..., retention=...)`
+returns a frozen `lcm.LoweredPeriodCandidate` containing raw unoptimized StableHLO bytes
+and an immutable descriptor manifest. Select an exact primary candidate with
+`lcm.PeriodCandidate(regime=..., period=..., core=..., widths=...)`; periods are
+zero-based. The core must belong to the ordinary solve's retention-selected graph, and
+widths must occur in its ranked frontier. No donation-free fallback or off-frontier
+width is substituted.
+
+The method shares solve's sealed bindings, parameter and transition validation, solution
+authority, solver checks and fullgraph structural preparation. It lowers only the
+requested primary, including a later ranked or budgeted primary. It does not compile,
+submit, dispatch, or evaluate memory admission. Preparation can initialize a backend and
+allocate zero templates. Block-major and eager schedules are unsupported.
+
+The manifest records exact rank, lowering key, donation, retention, layouts and input
+shapes. `dedup_fanout` is the actual-wave count only for an unbudgeted rank-zero
+candidate: shared preparation and the production ranked source determine the complete
+initial pending map without admission. For later ranks or a configured device-memory
+budget it is `None`, because compiled admissions determine actual wave membership.
+`None` means unavailable, not zero and not a count over the full structural frontier.
+Compiler memory, optimized HLO, buffer assignment and physical residency are also
+unavailable. No allocation or performance claim follows from lowering.
+
+Identity profiles require source checkouts with matching installed native libraries. The
+bounded Linux CUDA12 profile requires one physical CUDA device, CPU retention support,
+identifiable installed CUDA packages, and matching loaded PJRT, native CUDA and driver
+libraries. Other GPU profiles fail closed. Current native build inputs, tool bytes and
+native/JAX FFI header bytes are recorded; observed header bytes do not attest the inputs
+of a cached native build. Source, native and runtime hashes are collected only on this
+diagnostic path; an unknown descriptor or inconsistent identity fails closed. Returned
+bytes preserve the exact raw IR, with no source-location normalization. The result keeps
+no model, device array, JAX `Lowered`, executable or future alive. A compile API is not
+provided.
+
 (api-regime)=
 
 ## `Regime`
 
 A general regime declares:
 
-| Field                  | Contract                                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `regime_transitions`   | Regime name, `Choose`, `MarkovTransition` with `targets`, per-target mapping, `ByAge` or `Phased` of those; `None` for terminal |
-| `states` / `actions`   | Name-to-grid mappings                                                                                                           |
-| `functions`            | Named DAG functions; a finalized regime needs utility                                                                           |
-| `constraints`          | Ordinary predicates or structured `Condition` objects                                                                           |
-| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions`                                                   |
-| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states                                                      |
-| `derived_categoricals` | Discrete grids for categorical DAG outputs                                                                                      |
-| `solver`               | `lcm.solvers.GridSearch()` by default                                                                                           |
-| `taste_shocks`         | Optional EV1 taste-shock configuration                                                                                          |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                                                                   |
-| `certainty_equivalent` | Optional regime-level lottery reduction                                                                                         |
-| `description`          | Human-readable description                                                                                                      |
+| Field                  | Contract                                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `regime_transitions`   | Regime name, `DeterministicTransition`, `StochasticTransition`, per-target mapping, `ByAge` or `Phased` of those; `None` for terminal |
+| `states` / `actions`   | Name-to-grid mappings                                                                                                                 |
+| `functions`            | Named DAG functions; a finalized regime needs utility                                                                                 |
+| `constraints`          | Ordinary predicates or structured `Condition` objects                                                                                 |
+| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions`                                                         |
+| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states                                                            |
+| `derived_categoricals` | Discrete grids for categorical DAG outputs                                                                                            |
+| `solver`               | `lcm.solvers.GridSearch()` by default                                                                                                 |
+| `taste_shocks`         | Optional EV1 taste-shock configuration                                                                                                |
+| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                                                                         |
+| `certainty_equivalent` | Optional regime-level lottery reduction                                                                                               |
+| `description`          | Human-readable description                                                                                                            |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 

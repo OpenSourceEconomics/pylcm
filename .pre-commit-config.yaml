@@ -101,7 +101,7 @@ repos:
         args:
           - --wrap
           - '88'
-        files: (AGENTS\.md|CLAUDE\.md|README\.md)
+        files: (AGENTS\.md|README\.md)
       - id: mdformat
         additional_dependencies:
           - mdformat-myst

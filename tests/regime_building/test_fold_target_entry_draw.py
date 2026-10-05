@@ -12,11 +12,13 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -26,13 +28,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
 DISCOUNT_FACTOR = 0.9
 SEED = 7
 WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-AGES = AgeGrid(start=0, stop=3, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
 @categorical(ordered=False)
@@ -69,7 +72,11 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=_next_bonus, targets=("bonus",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_bonus, targets=("bonus",)
+                )
+            }
         ),
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -79,7 +86,7 @@ def _build_model(*, fold: bool) -> Model:
     bonus = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): Choose(
+                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
                     func=_next_terminal, targets=("terminal",)
                 )
             }
@@ -101,11 +108,11 @@ def _build_model(*, fold: bool) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"start": start, "bonus": bonus, "terminal": terminal},
         ages=AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "start"},
+        initial_nodes={0: "start"},
     )
 
 

@@ -9,18 +9,20 @@ simulation must not demand their landing values.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
 )
@@ -31,6 +33,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -81,7 +84,7 @@ def near_next(age: int) -> ScalarInt:
 
 def _edge(*, probability, fallback_regime: str) -> ValueDependentTransition:
     return ValueDependentTransition(
-        probability=MarkovTransition(func=probability),
+        probability=StochasticTransition(func=probability),
         gate=always_open,
         routes={
             "only": StakeholderRoute(
@@ -115,11 +118,11 @@ def _build_model(*, enable_jit: bool) -> Model:
     source = _decision_regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "near": _edge(probability=p_near, fallback_regime="source"),
                     "far": far_edge,
                 },
-                AgeRange(start=1, stop=2): {
+                AgeRange(start=1, exclusive_stop=2): {
                     "far": far_edge,
                 },
             }
@@ -127,7 +130,11 @@ def _build_model(*, enable_jit: bool) -> Model:
     )
     near = _decision_regime(
         regime_transitions=ByAge(
-            cases={AgeRange(start=1, stop=2): Choose(func=near_next, targets=("far",))}
+            cases={
+                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
+                    func=near_next, targets=("far",)
+                )
+            }
         )
     )
     far = Regime(
@@ -140,8 +147,8 @@ def _build_model(*, enable_jit: bool) -> Model:
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
-    return Model(
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regimes={
             "source": source,
             "near": near,
@@ -151,7 +158,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 

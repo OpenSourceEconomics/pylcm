@@ -348,7 +348,18 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         array_copier: _ArrayCopier | None = None,
         value_materializer: _ValueMaterializer | None = None,
     ) -> _MaterializedValuesBoundary:
-        """Materialize through a call-local copy dependency without retaining it."""
+        """Materialize through a call-local copy dependency without retaining it.
+
+        Every kind of lazy entry is first asked, once, to admit all of its
+        entries together, so a set that cannot coexist is refused before any
+        entry loads.
+        """
+        by_kind: dict[type[_LazyEntry], list[_LazyEntry]] = {}
+        for entry in self._entries.values():
+            if isinstance(entry, _LazyEntry):
+                by_kind.setdefault(type(entry), []).append(entry)
+        for kind, entries in by_kind.items():
+            kind._admit_joint_materialization(entries=tuple(entries))  # noqa: SLF001
         return MappingProxyType(
             {
                 period: MappingProxyType(

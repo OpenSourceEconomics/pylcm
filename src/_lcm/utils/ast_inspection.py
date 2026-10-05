@@ -22,7 +22,7 @@ def _get_func_indexing_params(
     inspected through that `__call__`, where its body lives.
 
     A law lowered from an age schedule carries the laws it wraps, also when
-    it is itself wrapped (a `MarkovTransition`); those laws are inspected
+    it is itself wrapped (a `StochasticTransition`); those laws are inspected
     instead, and each law reading the array must index it alike.
 
     Args:

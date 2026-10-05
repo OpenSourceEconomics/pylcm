@@ -800,9 +800,10 @@ def _build_lcm_model(*, scale: float = 2.0) -> Model:
         ][0]
 
     return Model(
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes=((0, "working"),),
+        edges={"working": {"retired": 0}},
         regimes={
             "working": Regime(
                 regime_transitions="retired",

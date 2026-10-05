@@ -23,7 +23,6 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -33,7 +32,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -44,6 +43,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.graph import with_fixture_graph
 
 # Which regime is asked for its roots, in which phase.
 type RootCallKey = tuple[str, str]
@@ -77,7 +77,7 @@ class WageGroup:
     high: ScalarInt  # code 1
 
 
-_AGES = AgeGrid(start=0, stop=3, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 _WAGE_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
@@ -187,13 +187,13 @@ def _record_root_calls(
     monkeypatch.setattr(broadcast, "root_functions", make_spy("pruning"))
     monkeypatch.setattr(model_processing, "root_functions", make_spy("usage"))
 
-    Model(
+    with_fixture_graph(
         regimes=_make_regimes(),
         ages=_AGES,
         regime_id_class=RegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
     return recorded
 
@@ -209,9 +209,9 @@ def _make_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "couple_ir": ValueDependentTransition(
-                        probability=MarkovTransition(func=_probability_one),
+                        probability=StochasticTransition(func=_probability_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -256,8 +256,8 @@ def _make_regimes() -> dict[str, Regime]:
     couple_ir = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "couple_terminal": MarkovTransition(func=_probability_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "couple_terminal": StochasticTransition(func=_probability_one)
                 }
             }
         ),
@@ -301,8 +301,8 @@ def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "single_terminal": MarkovTransition(func=_probability_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_terminal": StochasticTransition(func=_probability_one)
                 }
             }
         ),

@@ -198,20 +198,41 @@ def test_shared_resolver_preserves_the_entire_native_program_contract() -> None:
 
 
 def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> None:
+    """Eager and AOT resolve through the structural blueprint, replay directly.
+
+    A warm solve may bind a stored blueprint instead of building one, so the
+    seam is pinned where every blueprint comes from: the builder is the only
+    place one is constructed, and it is the only place the solve route
+    materializes a program or resolves its candidates.
+    """
     compile_tree = _function_tree(backward_induction._compile_all_functions)
+    prepare_tree = _function_tree(backward_induction._prepare_solve_programs)
     collect_tree = _function_tree(
         backward_induction._resolve_output_layouts_and_lowering_keys
     )
+    build_tree = _function_tree(backward_induction._build_structural_blueprint)
     replay_tree = _function_tree(period_replay._compile_cores_for_one_period)
 
     compile_calls = _direct_call_lines(compile_tree)
+    prepare_calls = _direct_call_lines(prepare_tree)
     collect_calls = _direct_call_lines(collect_tree)
+    build_calls = _direct_call_lines(build_tree)
     replay_calls = _direct_call_lines(replay_tree)
+    module_calls = _direct_call_lines(ast.parse(inspect.getsource(backward_induction)))
 
-    assert len(compile_calls["_select_period_programs"]) == 1
-    assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
-    assert len(collect_calls["materialize_core_program"]) == 1
-    assert len(collect_calls["resolve_core_program_candidates"]) == 1
+    assert len(compile_calls["_prepare_solve_programs"]) == 1
+    assert len(prepare_calls["_select_period_programs"]) == 1
+    assert len(prepare_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
+    assert len(collect_calls["_build_structural_blueprint"]) == 1
+    assert len(collect_calls["_bind_structural_blueprint"]) == 1
+    assert "materialize_core_program" not in collect_calls
+    assert "resolve_core_program_candidates" not in collect_calls
+    assert len(build_calls["materialize_core_program"]) == 1
+    assert len(build_calls["resolve_core_program_candidates"]) == 1
+    assert len(build_calls["_StructuralBlueprint"]) == 1
+    assert len(module_calls["_StructuralBlueprint"]) == 1
+    assert len(module_calls["_build_structural_blueprint"]) == 1
+    assert len(module_calls["materialize_core_program"]) == 1
     resolver_calls = _direct_call_lines(_function_tree(resolve_core_program))
     assert len(resolver_calls["resolve_core_program_candidates"]) == 1
     assert len(replay_calls["core_program_graph"]) == 1
@@ -223,10 +244,10 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
         for node in ast.walk(compile_tree)
         if isinstance(node, ast.If) and _is_not_enable_jit(node.test)
     )
+    assert compile_calls["_prepare_solve_programs"][0] < eager_branch.lineno
     assert (
-        compile_calls["_select_period_programs"][0]
-        < compile_calls["_resolve_output_layouts_and_lowering_keys"][0]
-        < eager_branch.lineno
+        prepare_calls["_select_period_programs"][0]
+        < prepare_calls["_resolve_output_layouts_and_lowering_keys"][0]
     )
 
 
@@ -237,7 +258,7 @@ def _function_tree(function: Callable[..., object]) -> ast.FunctionDef:
     return function_node
 
 
-def _direct_call_lines(tree: ast.FunctionDef) -> dict[str, list[int]]:
+def _direct_call_lines(tree: ast.AST) -> dict[str, list[int]]:
     calls: dict[str, list[int]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):

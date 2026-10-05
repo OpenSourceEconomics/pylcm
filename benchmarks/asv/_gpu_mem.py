@@ -23,9 +23,8 @@ subprocess.  Subclass it and set ``bench_module`` / ``bench_class``::
         bench_class = "MahlerYum"
 
 The subprocess calls ``setup_for_gpu_measurement()`` (model + params only, no
-warm-up) followed by the benchmark's one measured cold call -- either the
-modern ``execute_for_measurement()`` or, for a benchmark still on the
-ASV-native pattern, ``time_execution()`` -- then prints ``peak_bytes_in_use``.
+warm-up) followed by the benchmark's one measured cold call,
+``execute_for_measurement()``, then prints ``peak_bytes_in_use``.
 
 ACA's long-running benchmarks also use ``measure_combined``. Its subprocess
 performs one cold execution, captures cold elapsed time plus CPU peak memory,
@@ -45,7 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 # Project root: the directory containing the benchmarks/ package. This file lives
@@ -574,11 +573,9 @@ def _collect_combined_measurements_with_warm_samples(
     compilation_time = time.perf_counter() - start
     peak_cpu_mem = _get_cpu_peak_bytes()
 
-    samples = []
-    for _ in range(warm_samples):
-        start = time.perf_counter()
-        instance.execute_for_measurement()
-        samples.append(time.perf_counter() - start)
+    samples = warm_call_seconds(
+        execute=instance.execute_for_measurement, warm_samples=warm_samples
+    )
 
     return {
         "compilation_time": compilation_time,
@@ -672,11 +669,9 @@ def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
     # allocations into what is supposed to be a single cold-call peak.
     peak_gpu_mem = _get_gpu_peak_bytes()
 
-    samples = []
-    for _ in range(warm_samples):
-        start = time.perf_counter()
-        instance.execute_for_measurement()
-        samples.append(time.perf_counter() - start)
+    samples = warm_call_seconds(
+        execute=instance.execute_for_measurement, warm_samples=warm_samples
+    )
 
     return {
         "compilation_time": compilation_time,
@@ -686,19 +681,31 @@ def _collect_combined_measurements_with_warm_samples_and_gpu_peak(
     }
 
 
-def _run_gpu_peak_measured_call(instance) -> None:
-    """Run one measured cold call for `GpuPeakMem`'s subprocess entry point.
+def warm_call_seconds(
+    *, execute: Callable[[], object], warm_samples: int
+) -> list[float]:
+    """Time `warm_samples` consecutive calls of `execute`.
 
-    Prefers the modern one-cold-call protocol (`execute_for_measurement`);
-    falls back to the ASV-native `time_execution` for a benchmark still on
-    that pattern (e.g. `CollectiveHouseholdSimulate` -- see its module
-    docstring for why it stays there).
+    Args:
+        execute: The measured call, run after a cold call has compiled it.
+        warm_samples: Number of timed calls.
+
+    Returns:
+        The elapsed seconds of each call, in call order.
+
     """
+    samples = []
+    for _ in range(warm_samples):
+        start = time.perf_counter()
+        execute()
+        samples.append(time.perf_counter() - start)
+    return samples
+
+
+def _run_gpu_peak_measured_call(instance) -> None:
+    """Run one measured cold call for `GpuPeakMem`'s subprocess entry point."""
     instance.setup_for_gpu_measurement()
-    if hasattr(instance, "execute_for_measurement"):
-        instance.execute_for_measurement()
-    else:
-        instance.time_execution()
+    instance.execute_for_measurement()
 
 
 def _collect_combined_measurements(instance) -> dict[str, float]:

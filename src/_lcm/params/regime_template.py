@@ -37,7 +37,7 @@ from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
-from lcm.transition import JointTransition, MarkovTransition
+from lcm.transition import JointTransition, StochasticTransition
 from lcm.typing import UserFunction
 
 
@@ -430,9 +430,13 @@ def _discovered_params(
 
     """
     if isinstance(func, Phased):
-        tree = dict(dt.create_tree_with_input_types({name: func.solve})) | dict(
-            dt.create_tree_with_input_types({name: func.simulate})
-        )
+        tree = {
+            arg_name: annotation
+            for variant in _callables_in(value=func)
+            for arg_name, annotation in dt.create_tree_with_input_types(
+                {name: variant}
+            ).items()
+        }
     else:
         tree = dict(dt.create_tree_with_input_types({name: func}))
     return {
@@ -975,7 +979,7 @@ def _callables_in(
         if phase == "simulate":
             return _callables_in(value=value.simulate, phase=phase)
         return [*_callables_in(value=value.solve), *_callables_in(value=value.simulate)]
-    if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
+    if isinstance(value, Mapping) and not isinstance(value, StochasticTransition):
         return [
             callable_
             for member in value.values()
@@ -1241,8 +1245,8 @@ def _regime_transition_entries(
     - coarse forms ⇒ one `next_regime` entry
     - a per-target dict ⇒ one `next_regime__<target>` entry per cell, so each
       cell's parameters nest under the target (`template[target_regime]["next_regime"]`)
-    - `Phased` per-target dicts (identical key sets) ⇒ per-cell `Phased`
-      entries, so both phases' parameters are unioned per target
+    - `Phased` per-target dicts ⇒ per-cell `Phased` entries, so both phases'
+      parameters are unioned per target; an absent phase contributes none
 
     """
     if isinstance(transition, Phased) and isinstance(transition.solve, Mapping):
@@ -1250,10 +1254,10 @@ def _regime_transition_entries(
         simulate_cells = cast("Mapping[RegimeName, UserFunction]", transition.simulate)
         return {
             f"next_regime__{target_regime_name}": Phased(
-                solve=solve_cells[target_regime_name],
-                simulate=simulate_cells[target_regime_name],
+                solve=solve_cells.get(target_regime_name),
+                simulate=simulate_cells.get(target_regime_name),
             )
-            for target_regime_name in solve_cells
+            for target_regime_name in dict.fromkeys((*solve_cells, *simulate_cells))
         }
     if isinstance(transition, Mapping):
         cells = cast("Mapping[RegimeName, UserFunction]", transition)

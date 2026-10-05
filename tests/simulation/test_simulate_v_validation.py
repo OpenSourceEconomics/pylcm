@@ -13,12 +13,22 @@ import logging
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.utils.logging import LogLevel
-from lcm import AgeGrid, ByAge, Choose, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    ByAge,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -115,7 +125,9 @@ def _nan_producing_model() -> Model:
     work = UserRegime(
         regime_transitions=until_exit(
             60,
-            law=Choose(func=_off_node_next_regime, targets=("work", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_off_node_next_regime, targets=("work", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": grid},
@@ -125,11 +137,11 @@ def _nan_producing_model() -> Model:
         functions={"utility": _off_node_utility},
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return Model(
+    return with_fixture_graph(
         regimes={"work": work, "dead": dead},
-        ages=AgeGrid(start=40, stop=60, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=OffNodeRegimeId,
-        initial_regimes={40: "work"},
+        initial_nodes={40: "work"},
     )
 
 
@@ -188,19 +200,23 @@ def _two_offender_model() -> Model:
             functions={"utility": _off_node_utility},
         )
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "work": occupied_regime(
                 regime_transitions=until_exit(
                     60,
-                    law=Choose(func=_next_regime_from_work, targets=("work", "dead")),
+                    law=_SupportedDeterministicTransition(
+                        func=_next_regime_from_work, targets=("work", "dead")
+                    ),
                     exits=("dead",),
                 )
             ),
             "study": occupied_regime(
                 regime_transitions=until_exit(
                     60,
-                    law=Choose(func=_next_regime_from_study, targets=("study", "dead")),
+                    law=_SupportedDeterministicTransition(
+                        func=_next_regime_from_study, targets=("study", "dead")
+                    ),
                     exits=("dead",),
                 )
             ),
@@ -208,9 +224,9 @@ def _two_offender_model() -> Model:
                 regime_transitions=None, functions={"utility": lambda: 0.0}
             ),
         },
-        ages=AgeGrid(start=40, stop=60, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=TwoOffenderRegimeId,
-        initial_regimes={40: ("work", "study")},
+        initial_nodes={40: ("work", "study")},
     )
 
 

@@ -1,6 +1,6 @@
 """A stochastic node reached with zero probability contributes nothing.
 
-A `MarkovTransition` row may place zero mass on one node of a target's lottery
+A `StochasticTransition` row may place zero mass on one node of a target's lottery
 while the other nodes carry the whole distribution. That node is never reached,
 so its value cannot matter — and `-inf`, the value of a state at which every
 action is infeasible, is exactly the value such an unreachable node tends to
@@ -11,16 +11,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -67,16 +70,18 @@ def _survives_to_spend(health: DiscreteState) -> BoolND:
 
 @pytest.fixture
 def model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
                     26,
-                    law=Choose(func=_next_regime, targets=("alive", "last")),
+                    law=_SupportedDeterministicTransition(
+                        func=_next_regime, targets=("alive", "last")
+                    ),
                     exits=("last",),
                 ),
                 states={"health": DiscreteGrid(category_class=_Health)},
-                state_transitions={"health": MarkovTransition(func=_health_probs)},
+                state_transitions={"health": StochasticTransition(func=_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(
@@ -87,9 +92,9 @@ def model() -> Model:
                 functions={"utility": _last_utility},
             ),
         },
-        ages=AgeGrid(start=25, stop=26, step="1Y"),
+        ages=AgeGrid(start=25, inclusive_stop=26, step="1Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={25: "alive"},
+        initial_nodes={25: "alive"},
     )
 
 

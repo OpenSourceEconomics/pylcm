@@ -40,6 +40,8 @@ class _MockSolutionPhase:
 
     sharded_state_names: frozenset[str] = frozenset()
     """No state is assigned a device axis in this topology-reuse fixture."""
+    action_partitions: int = 1
+    """No regime's actions are shared over devices."""
 
     def placed_devices(self) -> tuple[jax.Device, ...]:
         return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
@@ -113,10 +115,13 @@ def sharding_plan_calls(monkeypatch):
     calls: list[object] = []
     original = backward_induction._build_regime_sharding
 
-    def counting(*, grids, sharded_state_names, devices):
+    def counting(*, grids, sharded_state_names, devices, action_partitions=1):
         calls.append(grids)
         return original(
-            grids=grids, sharded_state_names=sharded_state_names, devices=devices
+            grids=grids,
+            sharded_state_names=sharded_state_names,
+            devices=devices,
+            action_partitions=action_partitions,
         )
 
     monkeypatch.setattr(backward_induction, "_build_regime_sharding", counting)

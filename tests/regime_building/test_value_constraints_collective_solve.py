@@ -55,7 +55,6 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     ValueDependentConstraint,
     categorical,
     fixed_transition,
@@ -64,7 +63,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -73,6 +72,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=True)
@@ -150,8 +150,8 @@ def _make_ir_regimes(
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(exclusive_stop=1): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -166,14 +166,16 @@ def _make_ir_regimes(
         functions={"utility": _utility_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
+        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
         functions={"utility": _utility_single_m},
     )
     single_m_terminal = single_f_terminal.replace()
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": _WAGE_GRID},
@@ -274,7 +276,7 @@ def _flat_params_for_ir_model() -> MappingProxyType:
 def _solve_ir_model(
     *, married_first: bool = False, with_value_constraints: bool = True
 ):
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     flat_params = dict(_flat_params_for_ir_model())
     if not with_value_constraints:
         flat_params["married"] = MappingProxyType(
@@ -388,12 +390,12 @@ def test_within_period_topological_order_overrides_dict_order():
 
 def test_ir_model_via_public_model_api():
     """The same model through public `Model(...)` + `solve()` (V values only)."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    model = with_fixture_graph(
         regimes=_make_ir_regimes(),
         ages=ages,
         regime_id_class=IRRegimeId,
-        initial_regimes={ages.exact_values[0]: "married"},
+        initial_nodes={ages.exact_values[0]: "married"},
     )
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
@@ -454,8 +456,8 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(exclusive_stop=1): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -472,7 +474,9 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": married_grid},
@@ -502,7 +506,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
             )
         },
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -616,7 +620,9 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"couple_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "couple_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": _WAGE_GRID},
@@ -637,7 +643,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
             )
         },
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -700,7 +706,9 @@ def _minimal_collective_kwargs() -> dict:
     return {
         "regime_transitions": ByAge(
             cases={
-                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         "states": {"wage": _WAGE_GRID},
@@ -770,7 +778,7 @@ def _married_with_refs(refs: dict[str, ProjectedRegimeValue]) -> Regime:
 
 
 def _process_ir_variant(regimes: dict[str, Regime]) -> None:
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -833,7 +841,9 @@ def _cycle_regimes() -> dict[str, Regime]:
         return Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(stop=1): {terminal_name: MarkovTransition(func=_prob_one)}
+                    AgeRange(exclusive_stop=1): {
+                        terminal_name: StochasticTransition(func=_prob_one)
+                    }
                 }
             ),
             states={"wage": _WAGE_GRID},
@@ -914,15 +924,15 @@ class CycleRegimeId:
 def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
     """A reference cycle among regimes no required problem solves is not checked."""
     ir_regimes = _make_ir_regimes()
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "single_f": ir_regimes["single_f"],
             "single_f_terminal": ir_regimes["single_f_terminal"],
             **_cycle_regimes(),
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=CycleRegimeId,
-        initial_regimes={0: "single_f"},
+        initial_nodes={0: "single_f"},
     )
     assert model.reachability.nodes == {(0, "single_f"), (1, "single_f_terminal")}
 
@@ -938,8 +948,8 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
     couple_b = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "married_terminal_b": MarkovTransition(func=_prob_one)
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal_b": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -1007,11 +1017,13 @@ def test_same_period_ref_requires_reference_covered_in_same_periods():
     regimes["married"] = regimes["married"].replace(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=2): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         )
     )
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     with pytest.raises(ModelInitializationError, match="not solved in period"):
         process_regimes(
             prepared_structure=build_prepared_structure(

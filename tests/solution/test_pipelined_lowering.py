@@ -72,7 +72,7 @@ def _run_wave(*, n_workers: int) -> dict[Hashable, jax.stages.Compiled]:
         },
         internal_templates={candidate: {} for candidate in candidates.values()},
         donations=dict.fromkeys(candidates.values(), ()),
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         n_triples_per_lowering=dict.fromkeys(_KEYS, 1),
         log_kernel_memory=False,
         n_workers=n_workers,

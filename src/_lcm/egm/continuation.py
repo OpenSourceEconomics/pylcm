@@ -60,15 +60,15 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import Grid
 from _lcm.logsum import logsum_and_softmax
-from _lcm.probability import is_negative, scaled_by_power_of_two
+from _lcm.probability import probabilities_form_distribution, scaled_by_power_of_two
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import (
-    _regime_mass_is_a_distribution,
+    draw_dependencies_by_law,
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_plans import TargetTransitionPlans
+from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     EconFunctionsMapping,
@@ -80,7 +80,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.zero_safe import scaled_joint_weight, zero_safe_weighted_term
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -147,10 +147,24 @@ class _ChildRead:
     """
 
     next_state_func: Callable[..., Any]
-    """The target's next-state function (post-decision function removed)."""
+    """The target's next-state function (post-decision function removed).
+
+    Computes every law that reads no draw. A law reading a draw has one value
+    per node, so it is left out here and resolved inside the node expectation.
+    """
 
     next_state_key: TransitionFunctionName
     """`next_<state>` key of the child's continuous (Euler) state."""
+
+    euler_state_func: Callable[..., Any]
+    """The child's Euler-state law alone, with the draws it reads as inputs."""
+
+    euler_draw_names: frozenset[TransitionFunctionName] = frozenset()
+    """The draws `next_<name>` the Euler-state law reads.
+
+    Each is the value of one node axis at the node being read, so with any
+    draw read the queries and their savings gradients are formed per node.
+    """
 
     euler_state_name: StateName
     """Name of the child's continuous (Euler) state."""
@@ -254,6 +268,23 @@ class _ChildRead:
     the blended value interpolates the nodewise outer maximum. `0` for every
     other child (no candidate axis in its carry).
     """
+
+    local_draw_names: tuple[TransitionFunctionName, ...] = ()
+    """Draws local to this edge, as node axes after the carry's stochastic axes.
+
+    A draw local to the transition is taken from the source's process and read
+    by the target's laws, but the target does not carry it: its axis indexes
+    no carry row, it only feeds the laws reading it.
+    """
+
+    local_support_func: Callable[..., Any] | None = None
+    """Concatenated support providers of the local draws, or `None` without."""
+
+    local_support_keys: tuple[str, ...] = ()
+    """Support-provider keys aligned with `local_draw_names`."""
+
+    local_draw_sizes: tuple[int, ...] = ()
+    """Node counts aligned with `local_draw_names`."""
 
     co_map_state_names: tuple[StateName, ...] = ()
     """Fixed, distributed child states co-mapped with the carry's leading axes.
@@ -536,15 +567,12 @@ class _BoundContinuation:
         since a negative weight too small for the dtype to hold as a normal
         number arrives at an arithmetic sign test as `-0` and passes it.
         """
-        probability_mass = jnp.asarray(0.0, dtype=self.dtype)
-        has_negative_probability = jnp.zeros((), dtype=bool)
-        for target in (*self.plan.stateful_targets, *self.plan.scalar_targets):
-            prob = self.regime_transition_probs[target]
-            probability_mass = probability_mass + prob
-            has_negative_probability = has_negative_probability | is_negative(prob)
-        return _regime_mass_is_a_distribution(
-            probability_mass=probability_mass,
-            has_negative_probability=has_negative_probability,
+        return probabilities_form_distribution(
+            probabilities=(
+                self.regime_transition_probs[target]
+                for target in (*self.plan.stateful_targets, *self.plan.scalar_targets)
+            ),
+            dtype=self.dtype,
         )
 
 
@@ -607,10 +635,16 @@ def stochastic_node_axes(
     counts: dict[StateName, int] = {}
     for target in plan.stateful_targets:
         read = plan.child_reads[target]
-        for name, values in zip(
-            read.stochastic_state_names, read.stochastic_node_values, strict=True
-        ):
-            count = int(jnp.asarray(values).shape[0])
+        local_counts = tuple(
+            zip(read.local_draw_names, read.local_draw_sizes, strict=True)
+        )
+        carry_counts = tuple(
+            (name, int(jnp.asarray(values).shape[0]))
+            for name, values in zip(
+                read.stochastic_state_names, read.stochastic_node_values, strict=True
+            )
+        )
+        for name, count in (*carry_counts, *local_counts):
             if counts.setdefault(name, count) != count:
                 msg = (
                     f"Child stochastic state {name!r} carries {counts[name]} nodes "
@@ -680,6 +714,12 @@ def _get_child_carry_reader(
             read.process_grid_names, read.stochastic_node_values, strict=True
         )
     )
+    if read.local_support_func is not None:
+        supports = read.local_support_func(**combo_pool)
+        stochastic_node_values = (
+            *stochastic_node_values,
+            *(_local_support_values(supports[key]) for key in read.local_support_keys),
+        )
     weight_vecs: tuple[Float1D, ...] = ()
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
@@ -687,9 +727,11 @@ def _get_child_carry_reader(
     # Every stochastic row is interpolated before expectation. Monotone Hermite
     # interpolation is nonlinear where its slope limiter binds, so pre-folding
     # rows would compute `interp(E[V])` instead of the required `E[interp(V)]`.
+    # The queries vary over the nodes when the resources function reads a
+    # stochastic state or the Euler-state law reads a draw.
     resources_reads_stochastic = bool(
         set(read.stochastic_state_names) & read.resources_arg_names
-    )
+    ) or bool(read.euler_draw_names)
 
     # The child's carry rows are fixed for the period; prepare each row's `+inf`
     # search key and valid prefix length once here — above the per-savings-node
@@ -818,7 +860,7 @@ class _ChildCarryReader:
         queries_and_gradients = _RowQueriesAndGradients(
             read=read,
             child_euler_state=_ChildEulerState(
-                next_state_func=read.next_state_func,
+                next_state_func=read.euler_state_func,
                 combo_pool=combo_pool,
                 post_decision_name=self.post_decision_name,
                 next_state_key=read.next_state_key,
@@ -828,7 +870,7 @@ class _ChildCarryReader:
             savings_value=savings_value,
         )
 
-        if not read.stochastic_state_names:
+        if not (read.stochastic_state_names or read.local_draw_names):
             queries, gradients = queries_and_gradients(())
             value, marginal = _aggregate_child_choices(
                 carry=self.carry,
@@ -890,11 +932,20 @@ class _ChildEulerState:
     next_state_key: str
     """Key of the child's Euler state in the DAG's output mapping."""
 
+    draws: Mapping[str, ScalarFloat | ScalarInt] = MappingProxyType({})
+    """Values of the draws the Euler-state law reads, at the node being read."""
+
     def __call__(self, savings: ScalarFloat) -> ScalarFloat:
         inner = self.next_state_func(
-            **self.combo_pool, **{self.post_decision_name: savings}
+            **self.combo_pool, **self.draws, **{self.post_decision_name: savings}
         )
         return cast("ScalarFloat", inner[self.next_state_key])
+
+    def at_node(
+        self, *, draws: Mapping[str, ScalarFloat | ScalarInt]
+    ) -> _ChildEulerState:
+        """The Euler state with the draws it reads fixed at one node."""
+        return replace(self, draws=draws)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -948,7 +999,19 @@ def _compute_row_queries_and_gradients(
     params $\\theta$ ride as constants. With a simple resources function
     (Euler state and params only), one query and gradient is computed and
     broadcast across the row block.
+
+    `stochastic_values` runs over every node axis: the carry's stochastic axes,
+    then the edge's local draws. A draw the Euler-state law reads takes its
+    node's value, so the law is differentiated at that node.
     """
+    if read.euler_draw_names and stochastic_values:
+        draw_values = dict(
+            zip(_draw_axis_names(read=read), stochastic_values, strict=True)
+        )
+        child_euler_state = cast("_ChildEulerState", child_euler_state).at_node(
+            draws={name: draw_values[name] for name in read.euler_draw_names}
+        )
+    stochastic_values = stochastic_values[: len(read.stochastic_state_names)]
     if read.resources_is_simple:
         composed = functools.partial(
             _composed_simple_resources,
@@ -1442,6 +1505,54 @@ def _accumulate_ez_partials_block(
         risk_aversion=risk_aversion,
     )
     return combined, None
+
+
+def euler_draw_nodes(
+    *, read: _ChildRead, combo_pool: Mapping[str, Any]
+) -> dict[TransitionFunctionName, FloatND]:
+    """Node values of each draw the child's Euler-state law reads.
+
+    A draw of a stochastic state the child carries takes that state's nodes; a
+    draw local to the edge takes its support, evaluated under `combo_pool`. A law
+    reading a draw requires the draw's nodes at construction, so a carried
+    state's build-time nodes are final here.
+    """
+    nodes = dict(
+        zip(
+            (f"next_{name}" for name in read.stochastic_state_names),
+            read.stochastic_node_values,
+            strict=True,
+        )
+    )
+    if read.local_support_func is not None:
+        supports = read.local_support_func(**combo_pool)
+        nodes |= {
+            name: _local_support_values(supports[key])
+            for name, key in zip(
+                read.local_draw_names, read.local_support_keys, strict=True
+            )
+        }
+    return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+
+
+def _local_support_values(support: FloatND | IntND) -> FloatND | IntND:
+    """A transition-local draw's node values: codes stay integer, values float.
+
+    A Markov draw's support is its codes, which laws read as indices; a process
+    draw's support is its node values, held at the canonical float dtype.
+    """
+    support = jnp.asarray(support)
+    if jnp.issubdtype(support.dtype, jnp.integer):
+        return support
+    return support.astype(canonical_float_dtype())
+
+
+def _draw_axis_names(*, read: _ChildRead) -> tuple[TransitionFunctionName, ...]:
+    """The draw each node axis carries: `next_<state>`, then the local draws."""
+    return (
+        *(f"next_{name}" for name in read.stochastic_state_names),
+        *read.local_draw_names,
+    )
 
 
 def _interleave_child_index(
@@ -2190,8 +2301,16 @@ def _build_child_reads(
             name if _is_runtime_process(target_info.discrete_states[name]) else None
             for name in stochastic_state_names
         )
-        weight_keys = tuple(
-            f"weight_{target}__next_{name}" for name in stochastic_state_names
+        draw_reads = _child_draw_reads(
+            target=target,
+            bundle=transitions[target],
+            functions=functions_without_post,
+            transition_plans=transition_plans,
+            euler_state_name=euler_state_name,
+        )
+        weight_keys = (
+            *(f"weight_{target}__next_{name}" for name in stochastic_state_names),
+            *draw_reads.local_weight_keys,
         )
         weights_func = None
         if weight_keys:
@@ -2260,10 +2379,21 @@ def _build_child_reads(
         n_outer_candidates = layout.n_stacked_candidates
         reads[target] = _ChildRead(
             next_state_func=get_next_state_function_for_solution(
-                transitions=transitions[target],
+                transitions=draw_reads.laws,
                 functions=functions_without_post,
+                targets=draw_reads.draw_free_law_names,
             ),
             next_state_key=f"next_{euler_state_name}",
+            euler_state_func=get_next_state_function_for_solution(
+                transitions=draw_reads.laws,
+                functions=functions_without_post,
+                targets=(f"next_{euler_state_name}",),
+            ),
+            euler_draw_names=draw_reads.euler_draw_names,
+            local_draw_names=draw_reads.local_draw_names,
+            local_support_func=draw_reads.local_support_func,
+            local_support_keys=draw_reads.local_support_keys,
+            local_draw_sizes=draw_reads.local_draw_sizes,
             euler_state_name=euler_state_name,
             has_taste_shocks=target_regime.taste_shocks is not None,
             resources_func=resources_func,
@@ -2286,6 +2416,107 @@ def _build_child_reads(
             n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ChildDrawReads:
+    """How one target's laws read the draws of its edge."""
+
+    laws: MappingProxyType[TransitionFunctionName, Any]
+    """The target's laws, without the draws' own producers."""
+
+    draw_free_law_names: tuple[TransitionFunctionName, ...]
+    """Laws reading no draw: one value per savings node."""
+
+    euler_draw_names: frozenset[TransitionFunctionName]
+    """The draws the Euler-state law reads."""
+
+    local_draw_names: tuple[TransitionFunctionName, ...]
+    """The edge's transition-local draws, in plan order."""
+
+    local_support_keys: tuple[str, ...]
+    """Support-provider keys of the local draws."""
+
+    local_weight_keys: tuple[str, ...]
+    """Weight keys of the local draws."""
+
+    local_draw_sizes: tuple[int, ...]
+    """Node counts of the local draws."""
+
+    local_support_func: Callable[..., Any] | None
+    """Concatenated support providers of the local draws."""
+
+
+def _child_draw_reads(
+    *,
+    target: RegimeName,
+    bundle: MappingProxyType[TransitionFunctionName, Any],
+    functions: EconFunctionsMapping,
+    transition_plans: TargetTransitionPlans,
+    euler_state_name: StateName,
+) -> _ChildDrawReads:
+    """Split a target's laws by whether they read one of the edge's draws.
+
+    A draw is the realized node of a lottery on the edge: a stochastic state the
+    target carries, or a draw local to the transition. Its producer returns a
+    node index, not the value a law reads, so it is left out of the laws; a law
+    reading the draw then takes the node's value as an input. Only the Euler
+    state's law may read a draw: its query is formed per node, while every other
+    law is evaluated once per savings node.
+
+    Raises:
+        ModelInitializationError: If a law other than the Euler state's reads a
+            draw.
+
+    """
+    plan = transition_plans[target]
+    lottery_names = tuple(name for name in bundle if plan.is_lottery(name))
+    local = tuple(
+        lottery
+        for lottery in plan.lotteries.values()
+        if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+        and lottery.support_provider_name is not None
+    )
+    support_keys = tuple(
+        cast("str", lottery.support_provider_name) for lottery in local
+    )
+    dependencies = draw_dependencies_by_law(
+        bundle=bundle, functions=functions, stochastic_names=lottery_names
+    )
+    euler_law = f"next_{euler_state_name}"
+    others = sorted(name for name in dependencies if name != euler_law)
+    if others:
+        msg = (
+            f"The laws {others} into target {target!r} read a draw of the edge "
+            f"({sorted(set().union(*(dependencies[name] for name in others)))}). "
+            "An EGM continuation evaluates every law but the Euler state's once "
+            "per savings node, so only the Euler state's law may read a draw."
+        )
+        raise ModelInitializationError(msg)
+    excluded = {*lottery_names, *support_keys}
+    laws = MappingProxyType(
+        {name: law for name, law in bundle.items() if name not in excluded}
+    )
+    return _ChildDrawReads(
+        laws=laws,
+        draw_free_law_names=tuple(name for name in laws if name not in dependencies),
+        euler_draw_names=dependencies.get(euler_law, frozenset()),
+        local_draw_names=tuple(lottery.name for lottery in local),
+        local_support_keys=support_keys,
+        local_weight_keys=tuple(lottery.weight_name for lottery in local),
+        local_draw_sizes=tuple(lottery.support_signature.size for lottery in local),
+        local_support_func=(
+            concatenate_functions(
+                functions=dict(functions) | dict(bundle),
+                targets=list(support_keys),
+                return_type="dict",
+                enforce_signature=False,
+                set_annotations=True,
+            )
+            if support_keys
+            else None
+        ),
+    )
 
 
 def _is_stochastic_child_axis(

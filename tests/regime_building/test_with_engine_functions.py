@@ -13,10 +13,12 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -71,7 +73,7 @@ def _couple(*, functions: Mapping[str, object]) -> Regime:
     return Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
                 )
             }

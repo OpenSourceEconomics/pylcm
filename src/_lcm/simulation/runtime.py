@@ -988,12 +988,16 @@ def execute_simulation_program(
     arguments: Mapping[str, object],
     n_subjects: int,
 ) -> object:
-    """Dispatch one family's published program for the current period."""
+    """Dispatch one family's published program for the current period.
+
+    The `"decision"` family is the decision forward simulation dispatches,
+    which is the type-local one on the grouped route.
+    """
     if programs.executor is None:
         msg = "Simulation programs require a call-local executor before dispatch."
         raise ExecutionPlanningError(msg)
     families = {
-        "decision": programs.decision,
+        "decision": programs.forward_decision,
         "transition": programs.transition,
         "route": programs.route,
         "gate_fold": programs.gate_fold,

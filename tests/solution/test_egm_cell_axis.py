@@ -25,8 +25,8 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -41,6 +41,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -140,7 +141,7 @@ def _cell_width_config(width: int | None) -> ExecutionConfig:
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 @functools.cache
@@ -157,8 +158,8 @@ def _model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -169,7 +170,7 @@ def _model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=health_transition),
+            "health": StochasticTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -192,12 +193,12 @@ def _model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 
@@ -218,8 +219,8 @@ def _model_with_batched_health() -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -230,7 +231,7 @@ def _model_with_batched_health() -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=health_transition),
+            "health": StochasticTransition(func=health_transition),
         },
         functions={
             "utility": utility,
@@ -250,11 +251,11 @@ def _model_with_batched_health() -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 
@@ -284,8 +285,8 @@ def _action_model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -299,7 +300,7 @@ def _action_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=health_transition),
+            "health": StochasticTransition(func=health_transition),
         },
         functions={
             "utility": utility_with_action,
@@ -319,12 +320,12 @@ def _action_model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 
@@ -467,8 +468,8 @@ def _two_combo_model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -480,7 +481,7 @@ def _two_combo_model(width: int | None = None) -> Model:
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=health_transition),
+            "health": StochasticTransition(func=health_transition),
             "married": fixed_transition("married"),
         },
         functions={
@@ -504,12 +505,12 @@ def _two_combo_model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

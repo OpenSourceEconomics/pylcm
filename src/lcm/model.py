@@ -1,6 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 import dataclasses
+import functools
 import logging
 import operator
 import threading
@@ -37,6 +38,11 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
+from _lcm.model_graph import (
+    ModelGraph,
+    prepare_graph,
+    resolve_graph_edges,
+)
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
@@ -62,6 +68,10 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.processes.iid import LogNormalIIDProcess, NormalIIDProcess
 from _lcm.reachability import ModelReachability
+from _lcm.regime_building.action_partitioning import (
+    action_partition_width_ceilings,
+    fail_if_action_partition_route_is_unsupported,
+)
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
@@ -77,6 +87,10 @@ from _lcm.regime_building.fixed_components import (
     split_initial_conditions,
 )
 from _lcm.regime_building.fixed_process_laws import bind_fixed_process_laws
+from _lcm.regime_building.invariant_blocking import (
+    admit_invariant_blocking,
+    fail_if_invariant_blocking_route_is_unsupported,
+)
 from _lcm.regime_building.phases import project_onto_solve_phase
 from _lcm.regime_building.processing import (
     Regime,
@@ -85,9 +99,7 @@ from _lcm.regime_building.processing import (
 from _lcm.regime_building.schedules import (
     gated_source_periods,
     lower_demanded_transitions,
-    resolve_demand,
     resolve_initial_nodes,
-    resolve_regime_schedules,
 )
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
@@ -108,14 +120,21 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
 from _lcm.simulation.replay_inputs import PreparedReplayReader
+from _lcm.simulation.residency import (
+    measure_buffer_footprint,
+    resolve_budget_devices,
+)
 from _lcm.simulation.result_metadata import _get_output_dtypes
+from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
     _referenced_value_kwargs,
     _require_next_period_values,
     simulate,
 )
+from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
+from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -127,6 +146,13 @@ from _lcm.solution.backward_induction import (
     _reject_edge_fold_state_param_collisions,
     solve,
 )
+from _lcm.solution.block_major import (
+    ComponentSchedule,
+    RetainedComponentValues,
+    SolvingComponentValues,
+    UploadedComponentValues,
+    active_component_selection,
+)
 from _lcm.solution.contract import BackwardInductionResult
 from _lcm.solution.fingerprint import (
     SolutionParamProjection,
@@ -137,6 +163,8 @@ from _lcm.solution.fingerprint import (
     project_solution_params,
     solution_param_projection,
 )
+from _lcm.solution.lower_candidate import lower_period_candidate
+from _lcm.solution.lowering_descriptors import describe_lowering_value
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
@@ -157,6 +185,11 @@ from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
 )
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    prepare_period_capture,
+)
+from _lcm.solution.public_period_replay import replay_public_period
 from _lcm.solution.replay_validation import (
     validate_egm_sim_policy,
     validate_nested_egm_sim_policy,
@@ -170,6 +203,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
+from _lcm.solution.structural_blueprints import StructuralBlueprintCache
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
@@ -208,8 +242,10 @@ from lcm.exceptions import (
     ModelInitializationError,
     UnsupportedOperationError,
 )
-from lcm.execution import ExecutionConfig
+from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
+from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -245,7 +281,7 @@ from lcm.solvers import GridSearch
 from lcm.typing import (
     Bool1D,
     FloatND,
-    InitialRegimes,
+    InitialNodes,
     IntND,
     UserFacingParamsTemplate,
     UserFunction,
@@ -441,6 +477,32 @@ def _materialize_artifact_projection(
     )
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _SolutionPreparation:
+    """The authority and identities one solve's result is bound to."""
+
+    retention: ResultRetention
+    """Post-solve artifacts the result keeps."""
+    declared_authority: SolutionAuthority
+    """The model's declared solution authority for the solve's grid support."""
+    retain_all_persistable: bool
+    """Whether every independently persistable artifact is kept."""
+    persistable_artifact_refs: frozenset[ArtifactRef]
+    """Addresses the persistence-oriented retention selects."""
+    model_fingerprint: str
+    """Durable identity of the model and its solution parameters."""
+    program_fingerprint: str
+    """Identity of the model's programs, without solve-time parameter values."""
+
+
+# A block-major solve publishes no value array through the engine outputs: its
+# values are retained on the host, and no other artifact is published.
+_VALUES_RETAINED_ON_THE_HOST = BackwardInductionResult(
+    value_functions=MappingProxyType({}),
+    simulation_policies=MappingProxyType({}),
+)
+
+
 class Model:
     """A model which is created from a regime.
 
@@ -483,6 +545,14 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
+    initial_nodes: frozenset[tuple[object, RegimeName]]
+    """Exact admissible starting age-regime pairs."""
+
+    @property
+    def graph(self) -> ModelGraph:
+        """Return the immutable declared and effective model graph."""
+        return self._graph
+
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
 
@@ -519,7 +589,7 @@ class Model:
     """Serialize creation of runtime executors for each subject shape."""
 
     @beartype(conf=MODEL_CONF)
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         *,
         description: str = "",
@@ -539,7 +609,8 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_regimes: InitialRegimes,
+        initial_nodes: InitialNodes,
+        edges: object,
     ) -> None:
         """Initialize the Model.
 
@@ -554,12 +625,17 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_regimes: The admissible starting age-regime pairs, as a
-                nonempty mapping from age selector (as in `ByAge`) to a regime
-                name or a nonempty sequence of names. Each rule contributes its
-                selected grid ages times names; rules are unioned. Published as the
+            initial_nodes: The admissible starting age-regime pairs, as a
+                nonempty sequence of `(age, regime)` pairs. A mapping from
+                age selectors to regime names also selects admissible pairs.
+                Published as the
                 exact pairs in `self.initial_nodes`. Required: there is no
                 default starting universe.
+            edges: Mapping from source regime to destination regime to source-age
+                selector. A bare mapping broadcasts to both phases; `Phased`
+                declares perceived solve and realized simulation topology separately.
+                The edge lands at the next grid age. Stored as an immutable,
+                validated graph in `self.graph`.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -636,22 +712,26 @@ class Model:
         # Fusion verdicts read off compiled solve programs; warm solves reuse the
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
-
-        # The declared starts, then each regime's available laws and support,
-        # read once from the raw `regime_transitions`. The single canonical
-        # coverage schedule threaded through pruning, validation and
-        # model-structure preparation is the solve demand of the starts,
-        # resolved below; only the laws it selects are lowered to the engine's
-        # period-independent vocabulary.
-        initial_nodes = resolve_initial_nodes(
-            initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
+        # Immutable structural blueprints of earlier solves, keyed by abstract
+        # schema; a warm solve binds one instead of resolving every program.
+        self._structural_blueprints: StructuralBlueprintCache = (
+            StructuralBlueprintCache()
         )
+
+        # The declared starts and Model.edges provide roots and support.
+        # Numerical regime_transitions and ByAge select the available laws.
+        # One canonical coverage schedule carries the resulting solve demand
+        # through pruning, validation and model-structure preparation; only
+        # demanded laws are lowered to the engine's period-independent form.
+        resolved_initial_nodes = resolve_initial_nodes(
+            initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
+        )
+        graph_edges = resolve_graph_edges(edges=edges, regimes=regimes, ages=ages)
         regime_names_to_ids = {
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        schedules = resolve_regime_schedules(user_regimes=regimes, ages=ages)
-        declared_transitions = {
+        user_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
         }
 
@@ -667,27 +747,19 @@ class Model:
             user_regimes=regimes,
             model_slots=model_slots,
         )
-        # Solve demand: the problems the declared starts require, physically or
-        # through a value read. Same-period references are read off the merged
-        # regimes, so model-level constraints contribute theirs.
-        schedules = resolve_demand(
-            schedules=schedules,
-            initial_nodes=initial_nodes,
-            same_period_refs_by_regime={
-                name: tuple(ref.regime for ref in regime.same_period_refs.values())
-                for name, regime in merged_regimes.items()
-            },
-            terminal_regimes=frozenset(
-                name for name, regime in regimes.items() if regime.terminal
-            ),
+        prepared_graph = prepare_graph(
+            regimes=merged_regimes,
+            edges=graph_edges,
             ages=ages,
+            initial_nodes=resolved_initial_nodes,
+            fixed_params=self.fixed_params,
         )
-        active_periods_by_regime = schedules.coverage_by_regime
+        merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         # Lowering reads only the demanded periods, so a case no required
         # problem selects contributes no argument, parameter or kernel.
         demanded_transitions = lower_demanded_transitions(
             schedules=schedules,
-            declared_transitions=declared_transitions,
+            declared_transitions=prepared_graph.declarations,
             code_by_name=regime_names_to_ids,
         )
         # A regime no subject visits owes its backward problem only, so none of
@@ -705,7 +777,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
         )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
@@ -732,7 +804,7 @@ class Model:
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         self.regime_names_to_ids = MappingProxyType(
@@ -768,10 +840,19 @@ class Model:
         self._execution = dataclasses.replace(
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
+        fail_if_invariant_blocking_route_is_unsupported(
+            user_regimes=self._engine_user_regimes,
+            block_widths=self._execution.invariant_block_widths,
+            sharded_states=self._execution.sharded_states,
+            schedule=self._execution.invariant_block_schedule,
+        )
+        self._execution = _with_action_partition_ceilings(
+            execution=self._execution, user_regimes=self._engine_user_regimes
+        )
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
             ages=self.ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
@@ -787,24 +868,42 @@ class Model:
                 for period, name in schedules.visited_nodes
             ),
         )
+        self._graph = ModelGraph(
+            edges=graph_edges,
+            initial_nodes=resolved_initial_nodes,
+            reachability=self.reachability,
+            pruned_edges=prepared_graph.pruned_edges,
+        )
         # Public regimes keep each transition as declared; the engine copy
         # holds the lowered law every internal consumer reads.
         self.user_regimes = MappingProxyType(
             {
-                name: regime.replace(regime_transitions=declared_transitions[name])
+                name: regime.replace(regime_transitions=user_transitions[name])
                 for name, regime in self._engine_user_regimes.items()
             }
         )
-        self.initial_nodes = initial_nodes
+        self.initial_nodes = resolved_initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self._engine_user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
-            params_already_consumed=params_consumed_by_binder,
+            params_already_consumed=(
+                params_consumed_by_binder | prepared_graph.consumed_param_keys
+            ),
             prepared_structure=prepared_structure,
             execution=self._execution,
+        )
+        self._regimes = admit_invariant_blocking(
+            user_regimes=self._engine_user_regimes,
+            regimes=self._regimes,
+            reachability=self.reachability,
+            initial_nodes=self.initial_nodes,
+            ages=self.ages,
+            fixed_component_splits=self._fixed_component_splits,
+            block_widths=self._execution.invariant_block_widths,
+            schedule=self._execution.invariant_block_schedule,
         )
         # The axis names a width may fix are what the core programs declare, so
         # this is the first point at which the declaration can be checked at all.
@@ -913,6 +1012,7 @@ class Model:
             "_declared_authority_lock",
             "_validated_selection_params",
             "_gather_checks",
+            "_structural_blueprints",
             "_solution_param_projection",
             "_sealed_bindings",
         ):
@@ -936,6 +1036,7 @@ class Model:
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
         self._gather_checks = {}
+        self._structural_blueprints = StructuralBlueprintCache()
         self._validated_selection_params = set()
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
@@ -1085,6 +1186,7 @@ class Model:
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
+        period_capture: PeriodCapture | None = None,
     ) -> SolutionResult:
         """Solve the model into a labelled, model-authoritative result.
 
@@ -1113,12 +1215,22 @@ class Model:
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
             log_keep_n_latest: Maximum snapshots to retain on disk.
+            period_capture: Optional atomic selected-period inputs and references.
+                Requires actual GPU buffer-assignment metadata before publishing
+                the selected entry; unsupported runtime metadata is refused.
 
         Returns:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
         self._sealed_bindings.fail_if_moved()
+        if self._solves_block_major and log_path is not None:
+            msg = (
+                "log_path snapshots of a block-major solve would hold every value "
+                "at once. Omit log_path, or keep the default "
+                "InvariantBlockSchedule.PERIOD_MAJOR."
+            )
+            raise ExecutionPlanningError(msg)
         log = get_logger(log_level=log_level)
         call_id = new_call_id()
         with solve_phase(name="public_solve", logger=log, call_id=call_id):
@@ -1141,6 +1253,18 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
                 process_grid_resolver=None,
                 call_id=call_id,
+                period_capture=None
+                if period_capture is None
+                else prepare_period_capture(
+                    request=period_capture,
+                    regimes=self._regimes,
+                    execution=self._execution,
+                    enable_jit=self.enable_jit,
+                    model_fingerprint=self._model_fingerprint(flat_params=flat_params),
+                    params_fingerprint=self._params_fingerprint(
+                        flat_params=flat_params
+                    ),
+                ),
             )
             # Device work dispatched by backward induction can still be in flight
             # here; its completion belongs to a named phase, not the residual.
@@ -1149,6 +1273,118 @@ class Model:
                 if isinstance(solved, ValueStore):
                     solved._block_until_ready()  # noqa: SLF001
         return result
+
+    def replay_period(
+        self,
+        *,
+        directory: Path,
+        params: UserParams,
+        source_identity: Mapping[str, str],
+        require_reference: bool = True,
+    ) -> CapturedPeriodReplay:
+        """Replay one captured period after binding it to this fresh public model.
+
+        Model, grids, parameters, source, runtime and execution identities must
+        agree before compilation. Recorded layouts, widths, optimized HLO and
+        compiler admission must agree before dispatch. An entry-only capture
+        requires `require_reference=False` and cannot establish parity.
+        GPU replay requires actual serialized buffer-assignment metadata.
+        Missing runtime metadata is refused before selected-period dispatch.
+        """
+        self._sealed_bindings.fail_if_moved()
+        flat_params = self._process_params(params)
+        return replay_public_period(
+            directory=Path(directory),
+            flat_params=flat_params,
+            regimes=self._regimes,
+            ages=self.ages,
+            execution=self._execution,
+            enable_jit=self.enable_jit,
+            source_identity=source_identity,
+            model_fingerprint=self._model_fingerprint(flat_params=flat_params),
+            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+            require_reference=require_reference,
+        )
+
+    @beartype(conf=PARAMS_CONF)
+    def lower_period_candidate(
+        self,
+        *,
+        params: UserParams,
+        log_level: LogLevel,
+        candidate: PeriodCandidate,
+        retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
+    ) -> LoweredPeriodCandidate:
+        """Lower an exact primary production candidate without compiling it.
+
+        Use the same sealed bindings, canonical parameters, transition policy,
+        solution authority and solver checks as `solve`, then resolve its full
+        retained graph and lower just the requested ranked primary. No fallback
+        variant is substituted. Block-major and eager schedules are unsupported.
+
+        The initial diagnostic identity profile requires a CPU source checkout
+        with its matching installed native payload. Source/runtime byte hashing
+        runs only on this diagnostic route. The returned raw unoptimized IR and
+        immutable manifest retain no executable or live arrays. Preparation may
+        initialize a backend and allocate zero templates; this is not a memory
+        admission or backend-free operation.
+
+        Args:
+            params: Parameters accepted by `solve`.
+            log_level: The same validation policy used by `solve`.
+            candidate: Exact regime, period, core and ranked axis widths.
+            retention: The ordinary solve's artifact retention policy.
+
+        Returns:
+            Owned StableHLO bytes and immutable diagnostic descriptors.
+        """
+        self._sealed_bindings.fail_if_moved()
+        if self._solves_block_major or not self.enable_jit:
+            raise ExecutionPlanningError(
+                "Candidate lowering requires the period-major JIT solve schedule."
+            )
+        log = get_logger(log_level=log_level)
+        flat_params = self._process_params(params)
+        validate_transitions(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            logger=log,
+            process_grid_resolver=None,
+        )
+        preparation = self._prepare_solution(
+            flat_params=flat_params,
+            log=log,
+            retention=retention,
+            process_grid_resolver=None,
+            call_id=None,
+        )
+        check_solver_params(regimes=self._regimes, flat_params=flat_params)
+        check_pareto_weights(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            process_grid_resolver=None,
+        )
+        return lower_period_candidate(
+            candidate=candidate,
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+            execution=self._execution,
+            retention=retention,
+            persistable_artifact_refs=preparation.persistable_artifact_refs,
+            program_fingerprint=preparation.program_fingerprint,
+            authority={
+                "model_identity": preparation.model_fingerprint,
+                "program_identity": preparation.program_fingerprint,
+                "parameter_identity": self._params_fingerprint(flat_params=flat_params),
+                "artifact_refs": describe_lowering_value(
+                    preparation.persistable_artifact_refs
+                ),
+            },
+            logger=log,
+        )
 
     def _solve_from_flat_params(
         self,
@@ -1163,13 +1399,84 @@ class Model:
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
         The declared solution authority is the model's, shared across solves
         with the same grid support; the solve's generated replay facts are
-        bound into a copy that belongs to this result alone.
+        bound into a copy that belongs to this result alone. Under the
+        block-major schedule every component is solved and retained on the
+        host before the result is assembled.
         """
+        preparation = self._prepare_solution(
+            flat_params=flat_params,
+            log=log,
+            retention=retention,
+            process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
+        )
+        if self._solves_block_major:
+            retained = self._component_schedule(
+                preparation=preparation,
+                flat_params=flat_params,
+                log=log,
+                max_compilation_workers=max_compilation_workers,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+            ).run()
+            return self._finish_solution(
+                preparation=preparation,
+                internal_result=_VALUES_RETAINED_ON_THE_HOST,
+                flat_params=flat_params,
+                log=log,
+                call_id=call_id,
+                component_values=retained,
+            )
+        internal_result = self._solve_compiled(
+            flat_params=flat_params,
+            program_fingerprint=preparation.program_fingerprint,
+            params=params,
+            log=log,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+            max_compilation_workers=max_compilation_workers,
+            retain_dissolution_flags=preparation.retention.retains_replay,
+            retain_replay=preparation.retention is ResultRetention.VALUES_AND_REPLAY,
+            retain_all_artifacts=preparation.retain_all_persistable,
+            persistable_artifact_refs=preparation.persistable_artifact_refs,
+            collect_solver_diagnostics=True,
+            retained_input_arrays=retained_input_arrays,
+            process_grid_resolver=process_grid_resolver,
+            call_id=call_id,
+            period_capture=period_capture,
+        )
+        return self._finish_solution(
+            preparation=preparation,
+            internal_result=internal_result,
+            flat_params=flat_params,
+            log=log,
+            call_id=call_id,
+        )
+
+    @property
+    def _solves_block_major(self) -> bool:
+        """Whether this model solves one invariant component at a time."""
+        return (
+            self._execution.invariant_block_schedule
+            is InvariantBlockSchedule.BLOCK_MAJOR
+        )
+
+    def _prepare_solution(
+        self,
+        *,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        process_grid_resolver: ProcessGridResolver | None,
+        call_id: CallId | None,
+    ) -> _SolutionPreparation:
+        """Resolve the authority and identities one solve's result is bound to."""
         with solve_phase(name="authority_fingerprint", logger=log, call_id=call_id):
             declared_authority = self._declared_solution_authority(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
@@ -1191,43 +1498,109 @@ class Model:
             model_fingerprint = self._model_fingerprint(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             )
-        internal_result = self._solve_compiled(
-            flat_params=flat_params,
+        return _SolutionPreparation(
+            retention=retention,
+            declared_authority=declared_authority,
+            retain_all_persistable=retain_all_persistable,
+            persistable_artifact_refs=persistable_artifact_refs,
+            model_fingerprint=model_fingerprint,
             program_fingerprint=self._program_fingerprint(
                 flat_params=flat_params, process_grid_resolver=process_grid_resolver
             ),
-            params=params,
-            log=log,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            max_compilation_workers=max_compilation_workers,
-            retain_dissolution_flags=retention.retains_replay,
-            retain_replay=retention is ResultRetention.VALUES_AND_REPLAY,
-            retain_all_artifacts=retain_all_persistable,
-            persistable_artifact_refs=persistable_artifact_refs,
-            collect_solver_diagnostics=True,
-            retained_input_arrays=retained_input_arrays,
-            process_grid_resolver=process_grid_resolver,
-            call_id=call_id,
         )
+
+    def _finish_solution(
+        self,
+        *,
+        preparation: _SolutionPreparation,
+        internal_result: BackwardInductionResult,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        call_id: CallId | None,
+        component_values: RetainedComponentValues | None = None,
+    ) -> SolutionResult:
+        """Assemble the public result of one solve's engine outputs."""
         with solve_phase(name="result_assembly", logger=log, call_id=call_id):
             authority = bind_generated_solution_authority(
-                authority=declared_authority,
+                authority=preparation.declared_authority,
                 internal_result=internal_result,
                 regimes=self._regimes,
                 flat_params=flat_params,
             )
             return build_solution_result(
                 internal_result=internal_result,
-                retention=retention,
+                retention=preparation.retention,
                 regimes=self._regimes,
                 user_regimes=self._engine_user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
-                model_fingerprint=model_fingerprint,
+                model_fingerprint=preparation.model_fingerprint,
                 authority=authority,
+                component_values=component_values,
             )
+
+    def _component_schedule(
+        self,
+        *,
+        preparation: _SolutionPreparation,
+        flat_params: FlatParams,
+        log: logging.Logger,
+        max_compilation_workers: int | None,
+        process_grid_resolver: ProcessGridResolver | None,
+        call_id: CallId | None,
+    ) -> ComponentSchedule:
+        """Prepare the block-major schedule of one solve; nothing is solved yet.
+
+        Each component runs the solve engine with the arguments the
+        period-major solve passes, on the component view of the regimes. No
+        caller inputs are retained beside it: those belong to a budgeted
+        simulation, which the block-major schedule refuses. Inside a
+        `selected_components` scope the schedule solves the selected codes
+        alone, and the scope records its retention.
+        """
+        with solve_phase(name="solver_param_checks", logger=log, call_id=call_id):
+            check_solver_params(regimes=self._regimes, flat_params=flat_params)
+            check_pareto_weights(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+                process_grid_resolver=process_grid_resolver,
+            )
+        (state_name,) = self._execution.invariant_block_widths
+        selection = active_component_selection()
+        schedule = ComponentSchedule(
+            regimes=self._regimes,
+            state_name=state_name,
+            flat_params=flat_params,
+            device_ids=self._execution.device_ids,
+            process_grid_resolver=process_grid_resolver,
+            budget_bytes=self._execution.device_memory_bytes,
+            solve=functools.partial(
+                solve,
+                flat_params=flat_params,
+                ages=self.ages,
+                program_fingerprint=preparation.program_fingerprint,
+                logger=log,
+                enable_jit=self.enable_jit,
+                execution=self._execution,
+                collect_solver_diagnostics=True,
+                max_compilation_workers=max_compilation_workers,
+                retain_dissolution_flags=preparation.retention.retains_replay,
+                retain_replay=preparation.retention
+                is ResultRetention.VALUES_AND_REPLAY,
+                retain_all_artifacts=preparation.retain_all_persistable,
+                persistable_artifact_refs=preparation.persistable_artifact_refs,
+                process_grid_resolver=process_grid_resolver,
+                call_id=call_id,
+                gather_checks=self._gather_checks,
+            ),
+            logger=log,
+            codes=None if selection is None else selection.codes,
+        )
+        if selection is not None:
+            selection.record(retained=schedule.retained)
+        return schedule
 
     def _solve_compiled(
         self,
@@ -1247,6 +1620,7 @@ class Model:
         retained_input_arrays: object = (),
         process_grid_resolver: ProcessGridResolver | None = None,
         call_id: CallId | None = None,
+        period_capture: CaptureContext | None = None,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -1294,6 +1668,8 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
+                period_capture=period_capture,
+                structural_blueprints=self._structural_blueprints,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -2564,6 +2940,14 @@ class Model:
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
             with solve_phase(name="params_validation", logger=log, call_id=call_id):
                 self._fail_if_simulation_is_unsupported()
+                # A block-major result, or an automatic block-major solve, is
+                # read one code at a time; every other solution is read whole.
+                retained_components = self._owned_component_values(solution=solution)
+                reads_components = self._solves_block_major and (
+                    solution is None or retained_components is not None
+                )
+                if reads_components:
+                    self._fail_if_component_simulation_is_unsupported(log_path=log_path)
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
                 )
@@ -2744,7 +3128,42 @@ class Model:
                     producers=self._simulate_entry_operations,
                 )
                 padded_n_subjects = len(next(iter(initial_conditions.values())))
-            if solution is None:
+            component_values: (
+                SolvingComponentValues | UploadedComponentValues | None
+            ) = (
+                None
+                if retained_components is None
+                else UploadedComponentValues(
+                    retained=retained_components,
+                    store=cast("ValueStore", cast("SolutionResult", solution).values),
+                )
+            )
+            preparation: _SolutionPreparation | None = None
+            if solution is None and reads_components:
+                # Each component is solved as the simulation reaches its code,
+                # so no complete solution exists before the simulation runs.
+                preparation = self._prepare_solution(
+                    flat_params=flat_params,
+                    log=log,
+                    retention=ResultRetention.VALUES_AND_REPLAY,
+                    process_grid_resolver=process_grid_resolver,
+                    call_id=call_id,
+                )
+                component_values = SolvingComponentValues(
+                    schedule=self._component_schedule(
+                        preparation=preparation,
+                        flat_params=flat_params,
+                        log=log,
+                        max_compilation_workers=max_compilation_workers,
+                        process_grid_resolver=process_grid_resolver,
+                        call_id=call_id,
+                    )
+                )
+                period_to_regime_to_V_arr = MappingProxyType({})
+                period_to_regime_to_sim_policy = MappingProxyType({})
+                period_to_regime_to_dissolution_flags = MappingProxyType({})
+                period_to_regime_to_replay_reader = MappingProxyType({})
+            elif solution is None:
                 solve_params = (
                     flat_params
                     if entry_allocations is None
@@ -2807,6 +3226,27 @@ class Model:
                 # Values and replay artifacts retain their solve placement. The forward
                 # period owner acquires only the copies consumed by that period's units.
                 prepared_chunks = None
+                # Grouped by an invariant state, each code's subjects form chunks
+                # of their own, so no chunk spans more than the largest group and
+                # the population is not padded to a chunk multiple.
+                grouping = next(
+                    iter(self._regimes.values())
+                ).simulation.programs.grouping
+                sizes = (
+                    None
+                    if grouping is None
+                    else group_sizes(
+                        route=grouping,
+                        codes=(
+                            np.asarray(
+                                jax.device_get(initial_conditions[grouping.state_name])
+                            )
+                            if grouping.state_name in initial_conditions
+                            else None
+                        ),
+                        n_real=original_n_subjects,
+                    )
+                )
                 if entry_allocations is not None:
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=padded_n_subjects,
@@ -2826,22 +3266,29 @@ class Model:
                         log_level=log_level,
                         process_grid_resolver=process_grid_resolver,
                         max_compilation_workers=max_compilation_workers,
+                        group_sizes=sizes,
                     )
                     compile_batch_size = prepared_chunks.plan.profile.n_subjects
-                    initial_conditions, _ = entry_allocations.pad(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
-                    entry_allocations.publish(stage="initial", tree=initial_conditions)
+                    if sizes is None:
+                        initial_conditions, _ = entry_allocations.pad(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
+                        entry_allocations.publish(
+                            stage="initial", tree=initial_conditions
+                        )
                 else:
                     compile_batch_size = self._resolve_compile_batch_size(
                         subject_batch_size=subject_batch_size,
-                        padded_n_subjects=padded_n_subjects,
+                        padded_n_subjects=padded_n_subjects
+                        if sizes is None
+                        else grouped_extent(sizes=sizes, alignment=alignment),
                     )
-                    initial_conditions, _ = pad_initial_conditions_to_multiple(
-                        initial_conditions=initial_conditions,
-                        multiple=compile_batch_size,
-                    )
+                    if sizes is None:
+                        initial_conditions, _ = pad_initial_conditions_to_multiple(
+                            initial_conditions=initial_conditions,
+                            multiple=compile_batch_size,
+                        )
                     simulate_regimes = self._runtime_regimes_for_shape(
                         compile_batch_size=compile_batch_size,
                     )
@@ -2872,7 +3319,20 @@ class Model:
                 ),
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
+                component_values=component_values,
             )
+            if (
+                isinstance(component_values, SolvingComponentValues)
+                and component_values.subject_codes is None
+            ):
+                solution = self._finish_solution(
+                    preparation=cast("_SolutionPreparation", preparation),
+                    internal_result=_VALUES_RETAINED_ON_THE_HOST,
+                    flat_params=flat_params,
+                    log=log,
+                    call_id=call_id,
+                    component_values=component_values.retained,
+                )
             with solve_phase(name="result_finalization", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.close()
@@ -2893,6 +3353,65 @@ class Model:
                         log_keep_n_latest=log_keep_n_latest,
                     )
             return result
+
+    def _owned_component_values(
+        self, *, solution: _SolutionResultBoundary | None
+    ) -> RetainedComponentValues | None:
+        """Return the host retention of a block-major result this model built.
+
+        `None` for every other solution, which is read whole.
+        """
+        if type(solution) is not SolutionResult:
+            return None
+        engine_view = solution._engine_view  # noqa: SLF001
+        if (
+            type(engine_view) is not OwnedSolutionView
+            or engine_view.model_instance_id != self._solution_model_instance_id
+        ):
+            return None
+        return cast("RetainedComponentValues | None", engine_view.component_values)
+
+    def _fail_if_component_simulation_is_unsupported(
+        self, *, log_path: str | Path | None
+    ) -> None:
+        """Refuse a block-major simulation the code-by-code route does not serve.
+
+        Every failed condition is named at once:
+
+        - the forward phase does not group subjects by the blocked state, so a
+          subject could read another code's values;
+        - the simulation is budgeted, and chunk admission does not yet charge
+          one code's values at a time;
+        - diagnostic snapshots are requested, which hold every value at once.
+
+        Raises:
+            ExecutionPlanningError: The simulation is not served.
+
+        """
+        failures = []
+        if next(iter(self._regimes.values())).simulation.programs.grouping is None:
+            failures.append(
+                "the simulate phase may change the blocked state, so subjects "
+                "cannot be grouped by its code"
+            )
+        if self._execution.device_memory_bytes is not None:
+            failures.append(
+                "the simulation is budgeted; set ExecutionConfig."
+                "device_memory_bytes=None to simulate without a budget"
+            )
+        if log_path is not None:
+            failures.append(
+                "log_path snapshots hold every value at once; omit log_path"
+            )
+        if failures:
+            msg = (
+                "A block-major solution is simulated one code at a time, which "
+                "is not possible here: "
+                + "; ".join(failures)
+                + ". Alternatively keep the default "
+                "InvariantBlockSchedule.PERIOD_MAJOR."
+            )
+            raise ExecutionPlanningError(msg)
 
     def lookup_policy(
         self,
@@ -3002,6 +3521,18 @@ class Model:
         )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if (
+            isinstance(executor, SimulationRuntime)
+            and executor.execution.device_memory_bytes is not None
+        ):
+            live = measure_buffer_footprint(tree=(V_arrs, flat_params, states, grids))
+            executor = SimulationUnitExecutor(
+                runtime=executor,
+                live_footprint=lambda: live,
+                budget_devices=resolve_budget_devices(
+                    execution_devices=executor.subject_devices, live=live
+                ),
+            )
         indices, value = cast(
             "tuple[IntND, FloatND]",
             executor.dispatch(
@@ -3313,7 +3844,7 @@ class Model:
                 for period, name in refused
             )
             raise InvalidInitialConditionsError(
-                "Subjects start at (age, regime) pairs that `initial_regimes` does "
+                "Subjects start at (age, regime) pairs that `initial_nodes` does "
                 f"not admit as starts:\n{details}"
             )
 
@@ -3636,6 +4167,44 @@ def _supports_unsharded_continuous_process(grid: Grid) -> bool:
         return False
     process = cast("_ContinuousStochasticProcess", grid)
     return process.is_fully_specified and process.state_conditioned is None
+
+
+def _with_action_partition_ceilings(
+    *,
+    execution: ResolvedExecution,
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+) -> ResolvedExecution:
+    """Admit an `action_partitions` request and record its width ceilings.
+
+    Refuses, before anything is built, a request the action-partitioned
+    GridSearch route does not serve. An admitted request plans each
+    partitioned regime's action blocks narrow enough that every device of its
+    action group owns at least one.
+    """
+    if not execution.action_partitions:
+        return execution
+    fixed_widths_by_regime = MappingProxyType(
+        {
+            regime_name: execution.widths_for(regime_name=regime_name)
+            for regime_name in execution.action_partitions
+        }
+    )
+    fail_if_action_partition_route_is_unsupported(
+        user_regimes=user_regimes,
+        action_partitions=execution.action_partitions,
+        sharded_states=execution.sharded_states,
+        continuous_sharded_state=execution.continuous_sharded_state,
+        n_devices=len(execution.device_ids),
+        fixed_widths_by_regime=fixed_widths_by_regime,
+    )
+    return dataclasses.replace(
+        execution,
+        axis_width_ceilings_by_regime=action_partition_width_ceilings(
+            user_regimes=user_regimes,
+            action_partitions=execution.action_partitions,
+            fixed_widths_by_regime=fixed_widths_by_regime,
+        ),
+    )
 
 
 def _fail_if_a_sharded_state_is_pruned(

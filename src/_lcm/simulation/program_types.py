@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
+from _lcm.simulation.subject_groups import SubjectGroupingRoute
 from _lcm.typing import RegimeName, StateOrActionName
 
 # Planner name of the per-subject axis every simulation program tiles.
@@ -131,12 +132,23 @@ class SimulationPrograms:
     )
     """Canonical ranking of the represented finite candidate bank."""
 
+    type_local_decision: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Period to the decision that reads each continuation carrying the blocked
+    state through one code's block, without that axis; empty unless a blocked
+    state is carried."""
+
+    grouping: SubjectGroupingRoute | None = None
+    """The invariant state forward simulation groups subjects by, or `None`."""
+
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
 
     def __post_init__(self) -> None:
         """Snapshot the caller-owned program mappings."""
         for field in (
+            "type_local_decision",
             "decision",
             "transition",
             "route",
@@ -150,12 +162,25 @@ class SimulationPrograms:
             )
 
     @property
+    def forward_decision(self) -> MappingProxyType[int, CoreProgram]:
+        """Return the decision forward simulation dispatches at each period.
+
+        On the grouped route every subject of a dispatch holds one code of the
+        grouping state, so the type-local decision replaces the ordinary one
+        wherever it is declared.
+        """
+        if self.grouping is None or not self.type_local_decision:
+            return self.decision
+        return MappingProxyType({**self.decision, **self.type_local_decision})
+
+    @property
     def declared_axis_names(self) -> frozenset[str]:
         """Return every planner axis name these programs declare."""
         return frozenset(
             name
             for family in (
                 self.decision,
+                self.type_local_decision,
                 self.transition,
                 self.route,
                 self.gate_fold,

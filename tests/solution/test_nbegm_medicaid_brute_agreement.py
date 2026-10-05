@@ -16,8 +16,8 @@ import lcm
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
 )
 from lcm.case_piece import BoundaryKind
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -26,6 +26,7 @@ from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import FloatND, UserFunction
 from tests.test_models import nbegm_medicaid_toy as toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -202,8 +203,8 @@ def _build_model(
         regime_transitions=until_exit(
             1.0,
             law={
-                "alive": MarkovTransition(func=toy.prob_stay_alive),
-                "dead": MarkovTransition(func=toy.prob_die),
+                "alive": StochasticTransition(func=toy.prob_stay_alive),
+                "dead": StochasticTransition(func=toy.prob_die),
             },
             exits=("dead",),
         ),
@@ -233,11 +234,11 @@ def _build_model(
         functions={"utility": toy.bequest},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=toy.RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
