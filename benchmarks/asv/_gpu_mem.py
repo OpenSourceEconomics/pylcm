@@ -94,7 +94,8 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
     - Enables preallocation, overriding the ASV parent's on-demand setting, so
       the subprocess allocates from one contiguous pool as production does and
       pylcm's default device-memory budget is admitted. ``peak_bytes_in_use``
-      counts bytes handed to buffers, not the pool, so it still tracks demand.
+      counts the chunks handed to buffers, not the pool; carved from one pool,
+      each chunk is the requested size, so the peak tracks demand.
     - Appends ``--xla_gpu_autotune_level=0`` to ``XLA_FLAGS`` (preserving any
       existing flags) so the compile footprint is deterministic.
     """

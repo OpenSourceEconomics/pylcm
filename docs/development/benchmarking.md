@@ -71,8 +71,10 @@ resolve to, as an explicit `device_memory_bytes`. The isolated measurement subpr
 in `_gpu_mem` turn preallocation back on, as production runs: an on-demand pool grows in
 separate regions, so an explicit budget the size of the device pool can admit a buffer
 that no free region holds. There the ACA benchmark passes no execution policy and runs
-under aca-model's default, as production does. `peak_bytes_in_use` counts buffer bytes,
-not the pool, and reports the same peak with and without preallocation.
+under aca-model's default, as production does. `peak_bytes_in_use` counts the allocator
+chunks handed to buffers, not the pool. A preallocated pool carves each chunk to the
+requested size; an on-demand pool can hand a buffer a whole newly grown region, so it
+reads higher for the same programs.
 
 ### Exact paired GridSearch measurements
 
