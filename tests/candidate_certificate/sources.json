@@ -382,7 +382,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
+            "sha256": "b302fb3880d2391df67045fab195814b1be2a862220dc5ec91c3e0acf5f90170"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "e11119f10064678844facf59a4fa28a23e572cfcc92abe86f8ccf6817a26437f"
+        "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a"
       },
       "fast": {
         "candidate_sources": [
@@ -852,7 +852,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
+            "sha256": "b302fb3880d2391df67045fab195814b1be2a862220dc5ec91c3e0acf5f90170"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "e11119f10064678844facf59a4fa28a23e572cfcc92abe86f8ccf6817a26437f"
+        "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "e11119f10064678844facf59a4fa28a23e572cfcc92abe86f8ccf6817a26437f",
+  "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1326,7 +1326,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
+      "sha256": "b302fb3880d2391df67045fab195814b1be2a862220dc5ec91c3e0acf5f90170"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
