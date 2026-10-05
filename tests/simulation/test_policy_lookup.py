@@ -300,6 +300,33 @@ def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
     assert not np.isclose(V[index], V[index[::-1]], rtol=1e-5)
 
 
+def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy():
+    """A budgeted model looks up the analytic final-decision policy and value."""
+    grid = lcm.LinSpacedGrid(start=1, stop=3, n_points=3)
+    model = get_model(
+        n_periods=3,
+        wealth_grid=grid,
+        consumption_grid=grid,
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=2**30),
+    )
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="off")
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=1,
+        regime_name="working_life",
+        states={"wealth": jnp.array([2.0])},
+    )
+    # All successors are dead with utility zero; c <= wealth leaves c in {1, 2}
+    # and work subtracts 0.5, so the optimum is c = 2, retire, value log(2).
+    np.testing.assert_allclose(
+        [got.actions["consumption"][0], got.actions["labor_supply"][0], got.value[0]],
+        [2.0, 1.0, log(2)],
+        rtol=1e-5,
+    )
+
+
 @pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small",), precisions="both")
 def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
