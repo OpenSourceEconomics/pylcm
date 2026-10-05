@@ -88,7 +88,7 @@ from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
-from tests.simulation._profile_comparison import assert_value_steps
+from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
@@ -675,7 +675,7 @@ def test_eager_solve_respects_planned_regime_layouts(
             if devices is not None:
                 assert value.devices() <= {jax.devices()[index] for index in devices}
                 assert jax.devices()[0] not in value.devices()
-            assert_value_steps(got=value, expected=expected, n_ulp=8)
+            assert_values_agree(got=value, expected=expected, n_ulp=8)
 
 
 @_skip_pytest_parallel
@@ -840,7 +840,7 @@ def test_two_placements_of_one_model_publish_the_same_values(
     for period, active in expected_roster.items():
         if regime not in active:
             continue
-        assert_value_steps(
+        assert_values_agree(
             got=np.asarray(placed.values[period][regime]),
             expected=np.asarray(canonical.values[period][regime]),
             n_ulp=8,
@@ -1352,7 +1352,7 @@ def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
     for period in placed.values:
         if regime not in placed.values[period]:
             continue
-        assert_value_steps(
+        assert_values_agree(
             got=np.asarray(placed.values[period][regime]),
             expected=np.asarray(canonical.values[period][regime]),
             n_ulp=8,

@@ -65,7 +65,7 @@ from lcm.result import SimulationResult
 from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
-    assert_value_steps as assert_agrees_to_ulp,
+    assert_values_agree as assert_agrees_to_ulp,
 )
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
