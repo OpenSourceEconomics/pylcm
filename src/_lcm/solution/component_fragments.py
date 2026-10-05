@@ -50,7 +50,7 @@ PLAN_FILE: Final = "plan.json"
 FRAGMENT_DIRECTORY: Final = "fragments"
 PLAN_FORMAT: Final = "pylcm-component-job-plan"
 FRAGMENT_FORMAT: Final = "pylcm-component-fragment"
-FORMAT_VERSION: Final = 1
+FORMAT_VERSION: Final = 2
 
 _MANIFEST: Final = "manifest"
 _VALUES: Final = "values"
@@ -84,6 +84,12 @@ class FragmentPanel:
 
     `key` names an entry of a mapping field (`actions`, `states`) and is `None`
     for an array field. Leaves are in raw-result order.
+    """
+
+    layouts: MappingProxyType[LeafAddress, MappingProxyType[str, object]]
+    """Per leaf, the JSON description of the device layout the job produced it on.
+
+    Devices are positions in the model's selected devices, never device ids.
     """
 
 
@@ -330,18 +336,23 @@ def _write_fragment_file(
                     array=panel.rows,
                 ),
                 "leaves": [
-                    _write_leaf(
-                        group=panel_group,
-                        address=f"{index:06d}",
-                        identity={
-                            "kind": "panel",
-                            "regime": regime,
-                            "period": period,
-                            "field": field_name,
-                            "key": key,
-                        },
-                        array=array,
-                    )
+                    {
+                        **_write_leaf(
+                            group=panel_group,
+                            address=f"{index:06d}",
+                            identity={
+                                "kind": "panel",
+                                "regime": regime,
+                                "period": period,
+                                "field": field_name,
+                                "key": key,
+                            },
+                            array=array,
+                        ),
+                        "layout": dict(
+                            panel.layouts[(regime, period, field_name, key)]
+                        ),
+                    }
                     for index, ((regime, period, field_name, key), array) in enumerate(
                         panel.leaves.items()
                     )
@@ -573,6 +584,7 @@ def _read_panel(
         msg = f"Fragment {path.name} requires one-dimensional int64 original rows."
         raise SolutionIntegrityError(msg)
     leaves: dict[LeafAddress, np.ndarray] = {}
+    layouts: dict[LeafAddress, MappingProxyType[str, object]] = {}
     for leaf in cast("list[dict[str, object]]", entry["leaves"]):
         identity = _require_exact_dict(value=leaf["identity"], label="raw leaf address")
         if (
@@ -596,6 +608,9 @@ def _read_panel(
             msg = f"Fragment {path.name} publishes duplicate panel address {address!r}."
             raise SolutionIntegrityError(msg)
         leaves[address] = _read_leaf(path=path, file=file, entry=leaf, listed=listed)
+        layouts[address] = MappingProxyType(
+            _require_exact_dict(value=leaf["layout"], label="raw leaf layout")
+        )
     return FragmentPanel(
         n_subjects=_require_nonnegative_exact_int(
             value=entry["n_subjects"], label="raw population count"
@@ -617,6 +632,7 @@ def _read_panel(
             for regime, periods in cast("list[list[object]]", entry["regimes"])
         ),
         leaves=MappingProxyType(leaves),
+        layouts=MappingProxyType(layouts),
     )
 
 

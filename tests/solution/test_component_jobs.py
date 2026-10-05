@@ -721,6 +721,31 @@ def test_loaded_simulation_plan_preserves_a_complete_admitted_bundle(
 
 
 @pytest.mark.parametrize(
+    "corruption", ["missing", "short", "wrong-sum", "negative", "boolean"]
+)
+def test_loaded_simulation_plan_requires_one_count_per_code_summing_to_population(
+    *, tmp_path: Path, complete_campaign: CompleteCampaign, corruption: str
+) -> None:
+    """A plan's per-code counts are exact, one per code, and sum to the population."""
+    component_jobs = importlib.import_module("lcm.component_jobs")
+    campaign, _, _, _ = complete_campaign
+    directory = shutil.copytree(campaign, tmp_path / "jobs")
+    plan = json.loads((directory / "plan.json").read_bytes())
+    counts = list(plan["simulation"]["code_counts"])
+    plan["simulation"]["code_counts"] = {
+        "missing": None,
+        "short": counts[:-1],
+        "wrong-sum": [counts[0] + 1, *counts[1:]],
+        "negative": [-1, counts[1] + counts[0] + 1, *counts[2:]],
+        "boolean": [True, *counts[1:]],
+    }[corruption]
+    _replace_campaign_plan(directory=directory, plan=plan)
+
+    with pytest.raises(SolutionIntegrityError):
+        component_jobs.load_component_job_plan(directory=directory)
+
+
+@pytest.mark.parametrize(
     ("field_name", "foreign"),
     [
         ("jax_version", "foreign-jax"),
