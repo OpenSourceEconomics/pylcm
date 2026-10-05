@@ -22,14 +22,15 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinearExpectation,
-    MarkovTransition,
     Model,
     QuasiArithmeticMean,
     Regime,
+    StochasticTransition,
     UniformIIDProcess,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -188,19 +189,19 @@ def _build_model(
 ) -> Model:
     """A source entering the target's income process at several rare draws."""
     axis_names = tuple(f"draw_{index}" for index in range(_n_axes()))
-    return Model(
+    return with_fixture_graph(
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
-                    law={"target": MarkovTransition(func=_certain)},
+                    law={"target": StochasticTransition(func=_certain)},
                     exits=("target",),
                 ),
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{
-                        name: {"target": MarkovTransition(func=_draw_probabilities)}
+                        name: {"target": StochasticTransition(func=_draw_probabilities)}
                         for name in axis_names
                     },
                 },
@@ -221,11 +222,11 @@ def _build_model(
                 },
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

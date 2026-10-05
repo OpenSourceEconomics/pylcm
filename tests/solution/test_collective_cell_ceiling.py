@@ -35,10 +35,11 @@ def _model(*, n_wage: int = _N_WAGE, **execution: Any) -> tuple[Model, Any]:
     }
     model = Model(
         regimes=regimes,
+        edges=base.graph.edges,
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         execution_config=ExecutionConfig(**execution),
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
     return model, params
 

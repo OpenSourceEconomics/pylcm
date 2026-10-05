@@ -61,6 +61,9 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.simulation.process_grids import SimulationProcessGrids
@@ -74,17 +77,19 @@ from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from _lcm.utils.logging import LogLevel
-from lcm import AgeRange, ByAge, Choose, fixed_transition
+from lcm import AgeRange, ByAge, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.model import Model
+from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -147,6 +152,58 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
 
 
 _PARAMS = {"discount_factor": 0.95}
+
+
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+@_skip_pytest_parallel
+def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persistent_compilation_cache: bool,
+) -> None:
+    """Restoring a capture never stages its value arrays on an excluded device."""
+    assert persistent_compilation_cache is False
+    model = _make_three_type_model(distributed=False, devices=(1,))
+    fresh = _make_three_type_model(distributed=False, devices=(1,))
+    identity = {"model": "three-type-device-placement"}
+    result = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        period_capture=PeriodCapture(
+            directory=tmp_path,
+            periods=(("working", 0),),
+            source_identity=identity,
+        ),
+    )
+    original_put = jax.device_put
+    uploaded_devices: list[set[jax.Device]] = []
+
+    # keyword-only-exempt: library-callback=jax.device_put
+    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+        uploaded = original_put(value, device, **kwargs)
+        # Each persisted value has three types and twelve wealth points. Grid
+        # construction has smaller leaves; retain the real transfer in every case.
+        if isinstance(value, np.ndarray) and value.size == 36:
+            assert isinstance(uploaded, jax.Array)
+            uploaded_devices.append(uploaded.devices())
+        return uploaded
+
+    with monkeypatch.context() as probe:
+        probe.setattr(jax, "device_put", record_put)
+        replay = fresh.replay_period(
+            directory=tmp_path / "working@0",
+            params=_PARAMS,
+            source_identity=identity,
+        )
+    assert uploaded_devices
+    assert all(devices == {jax.devices()[1]} for devices in uploaded_devices)
+    assert replay.reference_matches is True
+    assert replay.optimized_hlo_matches is True
+    np.testing.assert_array_equal(
+        np.asarray(replay.value).view(np.uint8),
+        np.asarray(result.values[0]["working"]).view(np.uint8),
+    )
 
 
 def _ordered_eager_sharding(*, explicit: bool = False) -> jax.NamedSharding:
@@ -476,7 +533,7 @@ def _make_three_type_model(
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         regime_transitions=until_exit(
             4,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=lambda age: jnp.where(
                     age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
                 ),
@@ -496,9 +553,9 @@ def _make_three_type_model(
         },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "retired": retired},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
         enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=_Type)},
@@ -510,7 +567,7 @@ def _make_three_type_model(
             ),
             devices=devices,
         ),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -1000,7 +1057,7 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            regime_transitions=Choose(
+            regime_transitions=_SupportedDeterministicTransition(
                 func=lambda age: jnp.where(
                     age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
                 ),
@@ -1008,7 +1065,7 @@ def _make_two_mesh_model() -> Model:
             ),
         )
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alpha": _worker(),
             "beta": _worker(),
@@ -1018,12 +1075,12 @@ def _make_two_mesh_model() -> Model:
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_TwoMeshRegimeId,
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
-        initial_regimes={0: ("alpha", "beta")},
+        initial_nodes={0: ("alpha", "beta")},
     )
 
 
@@ -1178,8 +1235,10 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     first = _worker(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(func=_next_from_first, targets=("first",)),
-                AgeRange(start=1, stop=3): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_from_first, targets=("first",)
+                ),
+                AgeRange(start=1, exclusive_stop=3): _SupportedDeterministicTransition(
                     func=_next_from_first, targets=("second",)
                 ),
             }
@@ -1188,7 +1247,7 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     second = _worker(
         regime_transitions=until_exit(
             4,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=lambda age: jnp.where(
                     age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
                 ),
@@ -1202,16 +1261,16 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"first": first, "second": second, "dead": dead},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_TwoBlockRegimeId,
         states={"type1": DiscreteGrid(category_class=_TwoValuedType)},
         state_transitions={"type1": fixed_transition("type1")},
         execution_config=ExecutionConfig(
             sharded_states=("type1",) if distributed else ()
         ),
-        initial_regimes={0: "first"},
+        initial_nodes={0: "first"},
     )
 
 
@@ -1467,7 +1526,7 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
         all_layouts={triple: layout},
         internal_templates={candidate: {}},
         donations={candidate: ()},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         n_triples_per_lowering={"transferred": 1},
         log_kernel_memory=False,
         n_workers=1,
@@ -1813,10 +1872,10 @@ def _uniform_placement_model(
 ) -> Model:
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": UserRegime(
-                regime_transitions=Choose(
+                regime_transitions=_SupportedDeterministicTransition(
                     func=_uniform_placement_transition, targets=("done",)
                 ),
                 states={"income": UniformIIDProcess(n_points=5)},
@@ -1835,11 +1894,11 @@ def _uniform_placement_model(
         states={"kind": DiscreteGrid(_TwoValuedType)},
         state_transitions={"kind": fixed_transition("kind")},
         regime_id_class=_UniformPlacementRegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(
             device_memory_bytes=2**28,
             devices=selected,
             sharded_states=("kind",) if sharded else (),
         ),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )

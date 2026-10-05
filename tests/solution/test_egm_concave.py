@@ -11,13 +11,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    Model,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -38,6 +39,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_model,
     get_retirement_only_params,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Every model here is solved by `DCEGM`, whose default envelope is `ExactEnvelope`,
@@ -141,16 +143,16 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(last_age=50)
             ),
             "dead": bequest_dead,
         },
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
     params = get_retirement_only_params(
         n_periods=n_periods, discount_factor=discount_factor
@@ -235,12 +237,14 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
             _InterestRegimeId.retirement,
         )
 
-    ages = AgeGrid(start=40, stop=40 + n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + n_periods - 1, step="Y")
     last_age = ages.exact_values[-1]
     retirement = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(func=next_regime, targets=("retirement", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("retirement", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},
@@ -271,11 +275,11 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"retirement": retirement, "dead": dead},
         ages=ages,
         regime_id_class=_InterestRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
     params = {
         "discount_factor": 0.95,
@@ -351,16 +355,16 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         states={"wealth": IrregSpacedGrid(points=bequest_points)},
         functions={"utility": _bequest_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(last_age=50)
             ),
             "dead": bequest_dead,
         },
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
     params = get_retirement_only_params(
         n_periods=n_periods, discount_factor=discount_factor

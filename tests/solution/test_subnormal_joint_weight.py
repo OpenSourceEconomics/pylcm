@@ -26,12 +26,12 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
@@ -226,11 +226,13 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     def _mood_probs() -> FloatND:
         return jnp.asarray([small, 1.0 - small], dtype=active)
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
-                    21, law={"dead": MarkovTransition(func=_certain)}, exits=("dead",)
+                    21,
+                    law={"dead": StochasticTransition(func=_certain)},
+                    exits=("dead",),
                 ),
                 states={
                     "wealth": _WEALTH,
@@ -239,8 +241,8 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 },
                 state_transitions={
                     "wealth": _keep_wealth,
-                    "health": MarkovTransition(func=_health_probs),
-                    "mood": MarkovTransition(func=_mood_probs),
+                    "health": StochasticTransition(func=_health_probs),
+                    "mood": StochasticTransition(func=_mood_probs),
                 },
                 functions={"utility": _no_utility},
             ),
@@ -254,9 +256,9 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 functions={"utility": _wealth_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
     V = model.solve(

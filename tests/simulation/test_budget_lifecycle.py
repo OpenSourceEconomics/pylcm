@@ -13,17 +13,27 @@ import pytest
 import _lcm.simulation.transitions as transitions_module
 import lcm._solver_api.entries as entries_module
 from _lcm.execution.core_program import CoreProgram
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_types import DECISION_PROGRAM, ROUTE_PROGRAM
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
 from _lcm.solution.retained_buffers import retained_solution_buffers
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.solution.test_solution_result import _small_grid_search_inputs
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -51,10 +61,10 @@ def _lifecycle_next_regime() -> ScalarInt:
 
 
 def _stateful_target_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": Regime(
-                regime_transitions=Choose(
+                regime_transitions=_SupportedDeterministicTransition(
                     func=_lifecycle_next_regime, targets=("done",)
                 ),
                 functions={"utility": _lifecycle_utility},
@@ -67,10 +77,10 @@ def _stateful_target_model() -> Model:
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},
         state_transitions={"wealth": _lifecycle_next_wealth},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

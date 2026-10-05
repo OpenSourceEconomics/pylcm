@@ -30,8 +30,9 @@ from lcm import (
     fixed_transition,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
@@ -78,7 +79,7 @@ def _make_model(*, participation: bool) -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law={"couple_terminal": MarkovTransition(func=_certain)},
+            law={"couple_terminal": StochasticTransition(func=_certain)},
             exits=("couple_terminal",),
         ),
         states={"wage": _WAGE},
@@ -114,16 +115,16 @@ def _make_model(*, participation: bool) -> Model:
         states={"wage": _WAGE},
         functions={"utility": _outside_option},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "couple": couple,
             "couple_terminal": couple_terminal,
             "single_f_terminal": single_f_terminal,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         # The outside option is a value dependency, not an admissible start.
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 

@@ -139,12 +139,12 @@ supplies one:
 
 ```python
 from lcm import ProjectedRegimeValue, StakeholderRoute, ValueDependentTransition
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 
 single_f = Regime(
     regime_transitions={
         "couple": ValueDependentTransition(
-            probability=MarkovTransition(func=meets_a_partner),
+            probability=StochasticTransition(func=meets_a_partner),
             gate=mutual_consent,
             routes={
                 "her": StakeholderRoute(
@@ -160,7 +160,7 @@ single_f = Regime(
                 "V_alone_m": ProjectedRegimeValue(regime="single_m", projection=...),
             },
         ),
-        "single_f": MarkovTransition(func=meets_nobody),
+        "single_f": StochasticTransition(func=meets_nobody),
     },
     states={"wealth": single_wealth},
     state_transitions={"wealth": next_single_wealth},
@@ -170,12 +170,12 @@ single_f = Regime(
 ```
 
 `probability` and `gate` are two distinct operations. The first decides whether this
-target edge is attempted at all. It accepts a `MarkovTransition` or, as a convenience
-inside `ValueDependentTransition`, a bare probability callable; pylcm wraps the latter
-before the canonical transition pipeline reads it. An ordinary per-target cell such as
-`"single_f"` above still requires an explicit `MarkovTransition`. The gate decides,
-having arrived at the target's coordinates, whether the row keeps that target or takes
-its route's fallback.
+target edge is attempted at all. It accepts a `StochasticTransition` or, as a
+convenience inside `ValueDependentTransition`, a bare probability callable; pylcm wraps
+the latter before the canonical transition pipeline reads it. An ordinary per-target
+cell such as `"single_f"` above still requires an explicit `StochasticTransition`. The
+gate decides, having arrived at the target's coordinates, whether the row keeps that
+target or takes its route's fallback.
 
 When the whole regime transition is `Phased`, repeat the value-dependent cell on both
 sides. The target is value-dependent in both phases or in neither, and both declarations
@@ -207,7 +207,7 @@ together continues in the couple regime, so **that** is the key, under
 couple = Regime(
     regime_transitions={
         "couple": ValueDependentTransition(
-            probability=MarkovTransition(func=stays_married),
+            probability=StochasticTransition(func=stays_married),
             gate=no_dissolution,  # ~D_target
             routes={
                 "f": StakeholderRoute(

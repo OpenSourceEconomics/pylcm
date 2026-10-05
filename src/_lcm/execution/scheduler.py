@@ -24,7 +24,7 @@ from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.pending_work import BeforeArrayDelete
-from _lcm.execution.value_transfer import ResolvedValueTransfer
+from _lcm.execution.value_transfer import ResolvedValueTransfer, transfer_result_key
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
@@ -529,8 +529,11 @@ def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> objec
 class PeriodTransferCache:
     """Copies of shared value transfers, held for one period and then dropped.
 
-    Keyed by the artifact and the required layout, so several sources reading
-    one stored value onto one layout share the one copy made for it. A copy
+    Keyed by `transfer_result_key`: the artifact, or the selected block of
+    it a value view reads, together with the required layout, so several
+    sources reading one stored value onto one layout share the one copy made
+    for it, while equal-shaped blocks of two types never share one. A cache
+    built with a `generation` keys every copy by it as well. A copy
     that occupies no buffer of the stored artifact's is one the engine
     produced, not one the model owns: it is registered with the buffer
     registry under the exact key its declared consumers commit, and released
@@ -563,6 +566,7 @@ class PeriodTransferCache:
     __slots__ = (
         "_arrays",
         "_before_delete",
+        "_generation",
         "_ledger",
         "_logger",
         "_next_dispatch_index",
@@ -581,6 +585,7 @@ class PeriodTransferCache:
         release_enabled: bool = True,
         logger: logging.Logger = _logger,
         before_delete: BeforeArrayDelete | None = None,
+        generation: Hashable = None,
     ) -> None:
         """Start with no cached copy and the period's declared consumer counts.
 
@@ -589,11 +594,14 @@ class PeriodTransferCache:
         release barrier current without threading it through every call.
         `release_enabled` is the solve's own release gate: with it false the
         cache counts consumers and refuses an over-commit as ever, and frees
-        nothing.
+        nothing. `generation` names the solution generation the copies belong
+        to; `consumer_counts` must be keyed by `transfer_result_key` under the
+        same generation.
         """
         # Keyed by Hashable, not the exact tuple shape, so the mapping widens
         # cleanly to `release_closed_artifacts`'s `Mapping[Hashable, jax.Array]`
         # parameter — `Mapping`'s key type parameter is invariant.
+        self._generation = generation
         self._arrays: dict[Hashable, jax.Array] = {}
         self._before_delete = before_delete
         self._registry = registry
@@ -616,7 +624,8 @@ class PeriodTransferCache:
 
     def get(self, *, transfer: ResolvedValueTransfer) -> jax.Array | None:
         """Return the copy made for the transfer's artifact and layout, if any."""
-        return self._arrays.get((transfer.target, transfer.source_sharding))
+        key = transfer_result_key(transfer=transfer, generation=self._generation)
+        return self._arrays.get(key)
 
     def put(
         self, *, transfer: ResolvedValueTransfer, array: jax.Array, stored: jax.Array
@@ -628,7 +637,7 @@ class PeriodTransferCache:
         wholly or for one shard of a wider replicated layout, names no new
         buffer for this cache to release.
         """
-        key = (transfer.target, transfer.source_sharding)
+        key = transfer_result_key(transfer=transfer, generation=self._generation)
         self._arrays[key] = array
         if shares_a_buffer(first=array, second=stored):
             return

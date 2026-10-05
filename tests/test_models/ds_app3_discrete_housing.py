@@ -73,9 +73,11 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -96,6 +98,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Lifecycle: T = 20 periods. The last period is the terminal bequest regime, so
@@ -511,7 +514,7 @@ def build_model(
         The two-regime (working, dead) discrete-housing model.
     """
     n_periods = N_PERIODS if n_periods is None else n_periods
-    ages = AgeGrid(start=START_AGE, stop=START_AGE + n_periods - 1, step="Y")
+    ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y")
     final_age_alive = int(ages.exact_values[-1])
 
     assets_grid = LinSpacedGrid(start=0.0, stop=asset_max, n_points=n_assets)
@@ -538,7 +541,9 @@ def build_model(
         working = UserRegime(
             regime_transitions=until_exit(
                 final_age_alive,
-                law=Choose(func=next_regime, targets=("working", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working", "dead")
+                ),
                 exits=("dead",),
             ),
             states={
@@ -563,17 +568,19 @@ def build_model(
             },
             solver=GridSearch(),
         )
-        return Model(
+        return with_fixture_graph(
             regimes={"working": working, "dead": dead},
             ages=ages,
             regime_id_class=DiscreteHousingRegimeId,
-            initial_regimes={ages.exact_values[0]: "working"},
+            initial_nodes={ages.exact_values[0]: "working"},
         )
 
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age_alive,
-            law=Choose(func=next_regime, targets=("working", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working", "dead")
+            ),
             exits=("dead",),
         ),
         states={
@@ -610,11 +617,11 @@ def build_model(
             post_decision_state="savings",
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=DiscreteHousingRegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

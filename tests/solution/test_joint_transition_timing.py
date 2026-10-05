@@ -12,13 +12,13 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     JointTransition,
-    MarkovTransition,
-    Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -52,12 +52,12 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     *, enable_jit: bool
 ) -> None:
     """Correct `max E` chooses the safe value 6; the folded `E max` mutant is 8."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
-                    law={"target": MarkovTransition(func=_certain)},
+                    law={"target": StochasticTransition(func=_certain)},
                     exits=("target",),
                 ),
                 actions={"choice": DiscreteGrid(category_class=Choice)},
@@ -79,11 +79,11 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
                 functions={"utility": lambda payoff: payoff},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     params: UserParams = {
         "source": {

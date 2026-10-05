@@ -17,7 +17,7 @@ on:
       - '**.md'
       - '**.ipynb'
 jobs:
-  # General (`notslow`) work, duration-weighted into three shards per fp64 OS.
+  # General (`notslow`) work, duration-weighted into a per-leg shard count.
   # The split is deterministic: `tests/ci/shard_test_files.py` sorts the
   # manifest's general universe by decreasing observed per-LEG weight and fills
   # the lightest bin, and `tests/conftest.py` applies the result at collection
@@ -37,10 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       # Shard counts differ per leg because the legs cost different amounts and
-      # carry different setup. Measured on run 35078533997: 141 worker-minutes
-      # of payload on fp64 Linux, 117 on macOS, 232 on Windows, against roughly
-      # 2, 3 and 8 minutes of per-job checkout and pixi install respectively.
-      # At four workers that is 11.7, 14.6 and 14.5 payload minutes per job.
+      # carry different setup. The manifest preserves observed weights and
+      # records each leg's payload prediction against the operating budgets.
       matrix:
         include:
           - os: ubuntu-latest
@@ -62,12 +60,22 @@ jobs:
             python-version: '3.14'
             leg: fp64-macos
             shard: 1
-            shards: 2
+            shards: 4
           - os: macos-latest
             python-version: '3.14'
             leg: fp64-macos
             shard: 2
-            shards: 2
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 3
+            shards: 4
+          - os: macos-latest
+            python-version: '3.14'
+            leg: fp64-macos
+            shard: 4
+            shards: 4
           - os: windows-latest
             python-version: '3.14'
             leg: fp64-windows
@@ -407,6 +415,40 @@ jobs:
             --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
             -n 2 --dist load \
           && check_population reports/junit-cpu-fp64-source-contract.xml
+      - name: Verify the standalone candidate certificate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . \
+            > reports/candidate-certificate/verify.json \
+            2> reports/candidate-certificate/verify.stderr.log
+          status=$?
+          printf '%s\n' "$status" > reports/candidate-certificate/verify.exit-code.txt
+          exit "$status"
+      - name: Run standalone candidate certificate mutation controls
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . --self-test \
+            > reports/candidate-certificate/self-test.json \
+            2> reports/candidate-certificate/self-test.stderr.log
+          status=$?
+          printf '%s\n' "$status" > \
+            reports/candidate-certificate/self-test.exit-code.txt
+          exit "$status"
+      - name: Upload standalone candidate certificate receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: candidate-certificate-standalone
+          path: reports/candidate-certificate/
+          if-no-files-found: warn
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
@@ -418,6 +460,7 @@ jobs:
           path: |
             reports/junit-*.xml
             reports/ci-receipts/*.json
+            reports/certificate-*.json
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         # Not sent to Codecov here. The `coverage` job below is the single

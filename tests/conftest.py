@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import config as jax_config
+from jax.experimental.compilation_cache import compilation_cache
 from numpy.typing import ArrayLike
 
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
@@ -32,6 +33,7 @@ from _lcm.regime_building.schedules import (
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
+from lcm.tuning import _array_ulp_gap
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
 from tests.ci.cpu_suite_invocations import ignore_implicit_eight_device_collection
@@ -246,6 +248,24 @@ def assert_agrees_to_ulp(
             f"{err_msg}"
         )
         raise AssertionError(msg)
+
+
+def assert_general_values_agree(*, got: Mapping, expected: Mapping) -> None:
+    """Require exact value coordinates and metadata, with at most eight ULP per cell."""
+    assert {period: tuple(regimes) for period, regimes in got.items()} == {
+        period: tuple(regimes) for period, regimes in expected.items()
+    }
+    for period, regimes in expected.items():
+        for regime, value in regimes.items():
+            got_array = np.asarray(got[period][regime])
+            expected_array = np.asarray(value)
+            assert (got_array.dtype, got_array.shape) == (
+                expected_array.dtype,
+                expected_array.shape,
+            )
+            gap = _array_ulp_gap(expected=expected_array, got=got_array)
+            assert gap is not None, (period, regime, gap)
+            assert gap <= 8, (period, regime, gap)
 
 
 def _general_shard_selection() -> frozenset[str] | None:
@@ -759,3 +779,37 @@ def _apply_backend_skips(*, items: list[pytest.Item]) -> None:
                     )
                 )
             )
+
+
+@pytest.fixture
+def persistent_compilation_cache(
+    *,
+    request: pytest.FixtureRequest,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[bool]:
+    """Own an isolated test cache, including JAX's memoized enablement state."""
+    monkeypatch.setenv("JAX_ENABLE_COMPILATION_CACHE", str(request.param).lower())
+    settings = {
+        "jax_enable_compilation_cache": request.param,
+        "jax_compilation_cache_dir": str(tmp_path / "jax-cache"),
+        "jax_persistent_cache_min_compile_time_secs": 0,
+        "jax_persistent_cache_min_entry_size_bytes": -1,
+    }
+    original = {name: getattr(jax.config, name) for name in settings}
+    for name, value in settings.items():
+        jax.config.update(name, value)
+    _reset_test_compilation_cache(enabled=request.param)
+    try:
+        yield request.param
+    finally:
+        for name, value in original.items():
+            jax.config.update(name, value)
+        _reset_test_compilation_cache(enabled=original["jax_enable_compilation_cache"])
+
+
+def _reset_test_compilation_cache(*, enabled: bool) -> None:
+    """Reset test-process caches through JAX's public APIs, never in production."""
+    jax.config.update("jax_enable_compilation_cache", enabled)
+    compilation_cache.reset_cache()
+    jax.clear_caches()

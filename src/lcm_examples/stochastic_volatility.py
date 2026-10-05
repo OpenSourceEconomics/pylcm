@@ -3,8 +3,8 @@
 A minimal example of the *state-conditioned shock* primitive: the standard deviation of
 the IID income shock depends on a discrete `uncertainty` regime (low vs high) — a
 current-regime conditioning of `sigma`. The regime follows its own
-`MarkovTransition`; the income shock is discretized once on a FIXED common grid (from
-the scalar `sigma`), and each regime's transition row is evaluated directly at the
+`StochasticTransition`; the income shock is discretized once on a FIXED common grid
+(from the scalar `sigma`), and each regime's transition row is evaluated directly at the
 from-value with that regime's `sigma`.
 
 Supported for CDF-binned `NormalIIDProcess` (`gauss_hermite=False`) and
@@ -19,13 +19,13 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.processes import StateConditioned
@@ -113,7 +113,7 @@ def get_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "uncertainty": MarkovTransition(func=next_uncertainty),
+            "uncertainty": StochasticTransition(func=next_uncertainty),
         },
         actions={
             "consumption": LinSpacedGrid(
@@ -122,8 +122,8 @@ def get_model(
         },
         regime_transitions=ByAge.until(
             stop_age_exclusive=final_age_alive + 10,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
-            then=Choose(func=next_regime, targets=("dead",)),
+            law=DeterministicTransition(func=next_regime),
+            then=DeterministicTransition(func=next_regime),
         ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
@@ -133,10 +133,20 @@ def get_model(
         functions={"utility": lambda: 0.0},
     )
     return Model(
+        edges={
+            "alive": {
+                "dead": tuple(range(20, final_age_alive + 1, 10)),
+                **(
+                    {"alive": tuple(range(20, final_age_alive, 10))}
+                    if tuple(range(20, final_age_alive, 10))
+                    else {}
+                ),
+            },
+        },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
-        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
+        initial_nodes={20: "alive"},
+        ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
     )
 

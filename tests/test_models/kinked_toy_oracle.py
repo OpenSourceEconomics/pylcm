@@ -24,10 +24,14 @@ Run: python tests/test_models/kinked_toy_oracle.py
 """
 
 # ruff: noqa: T201, S607  (script provenance block: prints, calls git)
-
 import os
 import subprocess
 from pathlib import Path
+
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from tests.test_models.graph import with_fixture_graph
 
 os.environ.setdefault("JAX_ENABLE_X64", "1")
 
@@ -37,7 +41,6 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
     Model,
     Regime,
@@ -144,7 +147,9 @@ def build_model() -> Model:
         },
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         constraints={
@@ -158,12 +163,12 @@ def build_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

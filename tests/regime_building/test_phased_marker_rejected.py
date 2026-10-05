@@ -14,7 +14,7 @@ import pytest
 
 from lcm import AgeSpecializedGrid, LinSpacedGrid, Phased, Regime
 from lcm.exceptions import RegimeInitializationError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, FloatND
 
 _TENURE = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -70,7 +70,7 @@ def test_age_specialized_grid_as_a_phased_states_simulate_variant_is_rejected():
 def _build_regime(*, state_spec: Phased) -> Regime:
     """Build a one-state regime whose `tenure` is declared as given."""
     return Regime(
-        regime_transitions={"exit": MarkovTransition(func=_prob_one)},
+        regime_transitions={"exit": StochasticTransition(func=_prob_one)},
         states={"tenure": state_spec},
         state_transitions={"tenure": _next_tenure},
         functions={"utility": _utility},

@@ -29,9 +29,9 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     RouwenhorstAR1Process,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -48,6 +48,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -177,7 +178,7 @@ DCEGM_SOLVER = DCEGM(
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 def _shared_functions() -> dict:
@@ -212,8 +213,8 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working_life": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -250,12 +251,12 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         execution_config=config,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 
@@ -417,8 +418,8 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(func=stay_prob_share),
-                "dead": MarkovTransition(func=death_prob_share),
+                "working_life": StochasticTransition(func=stay_prob_share),
+                "dead": StochasticTransition(func=death_prob_share),
             },
             exits=("dead",),
         ),
@@ -464,12 +465,12 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         if rate_is_fixed
         else {}
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=PassiveAssetRowRegimeId,
         fixed_params=fixed_params,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 

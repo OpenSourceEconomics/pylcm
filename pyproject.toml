@@ -142,7 +142,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 # Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
 # execution keywords are rejected; omitted GPU policies derive an allocator budget.
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "ad38653696ec366e318ac61b9a81b597a4ecb700" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "196a56ad036bb63bb43898db334b701f12a9255d" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
@@ -430,6 +430,8 @@ collapse_tables = [ "tool.hatch", "tool.pytask", "tool.pytest", "tool.ty" ]
 
 [tool.ty]
 src.include = [ "docs/", "src/", "tests/" ]
+# Standalone scripts and algebra tests import helpers from their own directories.
+environment.extra-paths = [ "tests/candidate_certificate", "tests/egm" ]
 # ty resolves third-party imports from this pixi env. The pre-commit hook runs
 # ty directly; pixi owns the project environment. Run `pixi install` once.
 environment.python = ".pixi/envs/type-checking"

@@ -1,7 +1,7 @@
 """Weighted arithmetic that treats an exactly-zero weight as a null event.
 
 `-inf` is the ordinary value of a state at which every action is infeasible,
-and an exactly-zero weight is equally ordinary — a `MarkovTransition` row with
+and an exactly-zero weight is equally ordinary — a `StochasticTransition` row with
 a zero entry, a binned process with an empty tail bin, a regime that cannot be
 reached from here. Where the two meet, floating-point arithmetic computes
 `0.0 * -inf = nan` rather than `0.0`, and that NaN then destroys every

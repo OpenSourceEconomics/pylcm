@@ -753,8 +753,9 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/_lcm/simulation/simulate.py",
         (
             "prepared_chunks.require_chunk(\n"
-            "                    memory=memory, completed_setup=completed_setup\n"
-            "                )"
+            "                            memory=memory, "
+            "completed_setup=completed_setup\n"
+            "                        )"
         ),
         "pass",
     ),
@@ -1388,6 +1389,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "native_values:live_source_budget_omitted",
         "native_values:host_receives_accelerator_ceiling",
         "constant_program:lower_compile_mesh_context_omitted",
+        "type_local_decision:ordinary_decision_shadows_type_local",
+        "type_local_decision:reducer_reads_ordinary_q_and_f",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == (

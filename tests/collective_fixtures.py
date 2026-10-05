@@ -25,11 +25,13 @@ from typing import Any
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -39,6 +41,7 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, IntND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Nested `{regime: {function: {parameter: value}}}` params, as `solve` takes them.
@@ -76,7 +79,7 @@ class ShockRegimeId:
 DISCOUNT_FACTOR = 0.95
 
 # Three periods: the source regime is active at age 0, the terminal from age 1.
-AGES = AgeGrid(start=0, stop=2, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The collective regimes' only continuous state.
 WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
@@ -129,7 +132,9 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_couple_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -147,11 +152,11 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
     return model, _couple_params()
 
@@ -183,7 +188,9 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_couple_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={"wage": WAGE_GRID},
@@ -203,11 +210,11 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
     return model, _couple_params()
 
@@ -232,7 +239,7 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
     shocked = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=_next_shock_regime, targets=("shocked", "shocked_terminal")
             ),
             exits=("shocked_terminal",),
@@ -245,11 +252,11 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
         regime_transitions=None,
         functions={"utility": _fold_terminal_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
-        initial_regimes={0: "shocked"},
+        initial_nodes={0: "shocked"},
     )
     params: ParamsDict = {
         "shocked": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},
@@ -277,7 +284,7 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
     return {
         "regime_transitions": ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_couple_regime, targets=("couple_terminal",)
                 )
             }

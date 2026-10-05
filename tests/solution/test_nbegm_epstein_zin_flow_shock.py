@@ -15,10 +15,12 @@ than the interpolation tolerance asserted here.
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     CESAggregator,
-    Choose,
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -31,6 +33,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import NBEGM, STOCHASTIC_NODE_AXIS, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
@@ -105,7 +108,9 @@ def _build_model(
         actions={"consumption": _CONSUMPTION_GRID},
         regime_transitions=until_exit(
             final_age_alive + 5,
-            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -134,13 +139,13 @@ def _build_model(
         states={"liquid": LinSpacedGrid(start=0.0, stop=20.0, n_points=15)},
         functions={"utility": _terminal_value},
     )
-    return Model(
+    return with_fixture_graph(
         execution_config=execution_config,
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

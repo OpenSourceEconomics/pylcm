@@ -27,9 +27,8 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
-    MarkovTransition,
-    Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -50,6 +49,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     _prob_one,
     _u_zero_collective,
 )
+from tests.test_models.graph import with_fixture_graph
 
 # The three wage nodes the dissolution miniature is solved on. Its participation
 # mask empties at wage 2 alone, so exactly the middle subject dissolves.
@@ -86,11 +86,11 @@ def dissolution_model_and_solution():
     `married` carries the stakeholders `("f", "m")` and a dissolution edge whose
     legs send the wife to `single_f` and the husband to `single_m`.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_dissolution_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     return model, solution
@@ -103,11 +103,11 @@ def consent_model_and_solution():
     `single_f` is a singleton whose gated edge into the collective
     `married_terminal` declares one leg, and that leg carries no role.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_consent_regimes(),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
-        initial_regimes={0: "single_f"},
+        initial_nodes={0: "single_f"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
     return model, solution
@@ -264,7 +264,9 @@ def _make_unreachable_role_routing_regimes():
     alone = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"alone_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "alone_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": _WAGE_3},
@@ -302,11 +304,11 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
     reach it, so demanding a seed on its account refuses a well specified
     model over a column that would go unread.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_unreachable_role_routing_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
-        initial_regimes={0: ("alone", "married")},
+        initial_nodes={0: ("alone", "married")},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
@@ -349,10 +351,10 @@ def _shift_dissolution_one_age() -> dict:
     """Move the dissolution miniature one age later, freeing age 0 for a start."""
     regimes = _make_dissolution_regimes()
     windows = {
-        "married": AgeRange(start=1, stop=2),
-        "married_ir": AgeRange(start=2, stop=3),
-        "single_f": AgeRange(start=2, stop=3),
-        "single_m": AgeRange(start=2, stop=3),
+        "married": AgeRange(start=1, exclusive_stop=2),
+        "married_ir": AgeRange(start=2, exclusive_stop=3),
+        "single_f": AgeRange(start=2, exclusive_stop=3),
+        "single_m": AgeRange(start=2, exclusive_stop=3),
     }
     return {
         name: regime.replace(
@@ -382,7 +384,11 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     """
     prelude = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): {"married": MarkovTransition(func=_prob_one)}}
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married": StochasticTransition(func=_prob_one)
+                }
+            }
         ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
@@ -393,11 +399,11 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"prelude": prelude, **_shift_dissolution_one_age()},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
-        initial_regimes={0: "prelude"},
+        initial_nodes={0: "prelude"},
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     with pytest.raises(InvalidInitialConditionsError, match="prelude"):

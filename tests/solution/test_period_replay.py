@@ -9,29 +9,39 @@ The capture is written from the funnel every regime-period passes through, so wh
 replayed is what ran — not a reconstruction that might differ from it.
 """
 
+import json
 import logging
 import math
+import os
 import re
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import cloudpickle
+import jax
 import numpy as np
 import pytest
+from jax._src import compilation_cache as jax_compilation_cache
 
+from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
-from _lcm.solution import backward_induction, period_replay
-from lcm import AgeGrid, ExecutionConfig, Model
-from lcm.persistence import replay_period
+from _lcm.solution import backward_induction, period_replay, public_period_capture
+from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
+from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
     RegimeId,
     get_model,
     get_params,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 
 _N_PERIODS = 3
 
@@ -46,10 +56,11 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     base = get_model(n_periods=_N_PERIODS)
     model = Model(
         regimes=base.user_regimes,
+        edges=base.graph.edges,
         ages=base.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = get_params(n_periods=_N_PERIODS)
     solution = model.solve(params=params, log_level="off").values
@@ -193,11 +204,11 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     """
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "single_f@0")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_full_topology_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
-        initial_regimes={0: ("single_f", "single_m")},
+        initial_nodes={0: ("single_f", "single_m")},
     )
     params = {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
     solution = model.solve(params=params, log_level="off").values
@@ -325,3 +336,392 @@ def test_malformed_captured_tile_widths_are_refused(
 
     with pytest.raises(error):
         replay_period(directory=tmp_path / "working_life@1")
+
+
+@pytest.mark.parametrize("budget", [None, 32 * 1024**2])
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: int | None,
+    caplog: pytest.LogCaptureFixture,
+    persistent_compilation_cache: bool,
+) -> None:
+    """A fresh public model reproduces completed captured values bit for bit."""
+    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(("retirement", 1), ("working_life", 0)),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    model = _make_public_capture_model(budget=budget)
+    result = model.solve(
+        params=params,
+        log_level="off",
+        period_capture=capture,
+    )
+    fresh = _make_public_capture_model(budget=budget)
+    for regime_name, period in capture.periods:
+        caplog.clear()
+        replay = fresh.replay_period(
+            directory=tmp_path / f"{regime_name}@{period}",
+            params=params,
+            source_identity={"model": "tiny-public-model-v1"},
+        )
+        np.testing.assert_array_equal(
+            np.asarray(replay.value).view(np.uint8),
+            np.asarray(result.values[period][regime_name]).view(np.uint8),
+        )
+        assert replay.reference_matches is True
+        assert replay.optimized_hlo_matches is True
+        assert replay.in_context_seconds is not None
+        assert replay.in_context_seconds > 0
+        assert replay.replay_seconds > 0
+        executed = [
+            record.getMessage()
+            for record in caplog.records
+            if re.search(r"\[attr\] \S+ age", record.getMessage())
+        ]
+        assert len(executed) == 1
+        assert f"[attr] {regime_name} age" in executed[0]
+        assert f"period {period}:" in executed[0]
+        for mask in (np.isnan, np.isposinf, np.isneginf):
+            np.testing.assert_array_equal(
+                mask(np.asarray(replay.value)),
+                mask(np.asarray(result.values[period][regime_name])),
+            )
+    assert not tuple(tmp_path.rglob("*.pkl"))
+
+    def reject_compilation(**_kwargs: object) -> None:
+        raise AssertionError("An incompatible capture reached compilation")
+
+    monkeypatch.setattr(
+        period_replay, "_compile_cores_for_one_period", reject_compilation
+    )
+    for incompatible_model, incompatible_params, source in (
+        (fresh, {**params, "discount_factor": 0.9}, capture.source_identity),
+        (
+            _make_public_capture_model(wealth_stop=5, budget=budget),
+            params,
+            capture.source_identity,
+        ),
+        (
+            _make_public_capture_model(axis_widths={"cell": 1}, budget=budget),
+            params,
+            capture.source_identity,
+        ),
+        (fresh, params, {"model": "different-source"}),
+    ):
+        with pytest.raises(ValueError, match=r"identity|incompatible"):
+            incompatible_model.replay_period(
+                directory=tmp_path / "working_life@0",
+                params=incompatible_params,
+                source_identity=source,
+            )
+
+
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+@pytest.mark.coverage(backends=("cpu", "gpu-small", "gpu-large"), precisions="both")
+def test_public_interrupted_capture_has_inputs_without_a_reference(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persistent_compilation_cache: bool,
+) -> None:
+    """An interruption after entry leaves readable inputs and no parity claim."""
+    assert persistent_compilation_cache is False
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    interrupt = _InterruptCapturedPeriod()
+    logger = logging.getLogger("lcm")
+    logger.addFilter(interrupt)
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    try:
+        with pytest.raises(RuntimeError, match="Interrupted captured entry"):
+            _make_public_capture_model().solve(
+                params=params,
+                log_level="off",
+                period_capture=capture,
+            )
+    finally:
+        logger.removeFilter(interrupt)
+    directory = tmp_path / "working_life@0"
+    record = load_period_capture(directory=directory)
+    assert record.completed is False
+    assert record.reference is None
+    fresh = _make_public_capture_model()
+    with pytest.raises(ValueError, match="completed reference"):
+        fresh.replay_period(
+            directory=directory,
+            params=params,
+            source_identity=capture.source_identity,
+        )
+    replay = fresh.replay_period(
+        directory=directory,
+        params=params,
+        source_identity=capture.source_identity,
+        require_reference=False,
+    )
+    assert replay.reference_matches is None
+    assert replay.in_context_seconds is None
+
+
+@pytest.mark.requires(device="gpu")
+@pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
+def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadata(
+    *, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A selected native cache hit requires actual buffer-assignment evidence."""
+    stage = os.environ.get("PUBLIC_REPLAY_CACHE_STAGE")
+    if stage is None:
+        pytest.skip("Requires the serial warm/capture CI process pair")
+    assert stage in {"warm", "capture"}
+    root = Path(os.environ["PUBLIC_REPLAY_CACHE_EVIDENCE"])
+    root.mkdir(parents=True, exist_ok=True)
+    assert os.environ["JAX_ENABLE_COMPILATION_CACHE"] == "true"
+    assert jax.config.jax_enable_compilation_cache is True
+    assert jax.config.jax_persistent_cache_min_compile_time_secs == 0
+    assert jax.config.jax_persistent_cache_min_entry_size_bytes == -1
+    caplog.set_level(logging.DEBUG, logger="jax._src.compilation_cache")
+    caplog.set_level(logging.DEBUG, logger="jax._src.compiler")
+    if stage == "warm":
+        _record_public_cache_warmup(root=root, caplog=caplog)
+        return
+
+    params = retirement_model.get_params(n_periods=_N_PERIODS)
+    warmed = json.loads((root / "warm.json").read_text())
+    assert warmed["pid"] != os.getpid()
+    observed: dict[str, Any] = {}
+    # Distinct period cores can share an HLO module name. Bind cache keys to the
+    # actual loaded objects, retaining them until the selected core is observed.
+    loaded_executables: list[tuple[object, str]] = []
+    original_cache_read = jax_compilation_cache.get_executable_and_time
+    original = public_period_capture.optimized_hlo_records
+
+    def observe_cache_read(*args: Any, **kwargs: Any) -> Any:
+        result = original_cache_read(*args, **kwargs)
+        if result[0] is not None:
+            loaded_executables.append((result[0], args[0]))
+        return result
+
+    monkeypatch.setattr(
+        jax_compilation_cache, "get_executable_and_time", observe_cache_read
+    )
+
+    def observe(*, compiled_cores: Mapping[str, PlannedCore]) -> dict[str, Any]:
+        for name, core in compiled_cores.items():
+            assert isinstance(core.compiled, jax.stages.Compiled)
+            executable = core.compiled.runtime_executable()
+            assert executable is not None
+            memory = core.compiled.memory_analysis()
+            proto = getattr(memory, "serialized_buffer_assignment_proto", None)
+            observed[name] = {
+                "modules": [module.name for module in executable.hlo_modules()],
+                "cache_keys": sorted(
+                    {key for loaded, key in loaded_executables if loaded is executable}
+                ),
+                "proto_type": type(proto).__name__,
+                "proto_bytes": len(proto) if isinstance(proto, bytes) else None,
+                "raw_peak_bytes": getattr(memory, "peak_memory_in_bytes", None),
+                "memory": str(memory),
+            }
+        return original(compiled_cores=compiled_cores)
+
+    monkeypatch.setattr(public_period_capture, "optimized_hlo_records", observe)
+    monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
+    interrupt = _InterruptCapturedPeriod()
+    logger = logging.getLogger("lcm")
+    logger.addFilter(interrupt)
+    capture = PeriodCapture(
+        directory=root / "capture",
+        periods=(("working_life", 0),),
+        source_identity={"model": "tiny-public-model-v1"},
+    )
+    try:
+        with pytest.raises(ValueError, match="serialized_buffer_assignment_proto"):
+            _make_public_capture_model().solve(
+                params=params, log_level="off", period_capture=capture
+            )
+    finally:
+        logger.removeFilter(interrupt)
+        (root / "capture.json").write_text(
+            json.dumps({"pid": os.getpid(), "observed": observed})
+        )
+        (root / "capture.log").write_text(caplog.text)
+    _assert_selected_cache_evidence(
+        observed=observed, warm_writes=warmed["writes"], records=caplog.records
+    )
+    assert not (capture.directory / "working_life@0" / "entry.h5").exists()
+
+
+@pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])
+def test_optimized_hlo_identity_preserves_backend_configuration_values(
+    *, nested_value: int, equal: bool
+) -> None:
+    """JSON member ordering is irrelevant while backend configuration values bind."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    original = (
+        'ROOT x = f32[] constant(1), backend_config={"z":1,"nested":{"b":2,"a":3}}\n'
+    )
+    reordered = (
+        'ROOT x = f32[] constant(1), backend_config={"nested":{"a":'
+        f'{nested_value},"b":2}},"z":1}}  \n\n'
+    )
+    assert (canonicalize(original) == canonicalize(reordered)) is equal
+
+
+def test_optimized_hlo_identity_preserves_arrays_and_following_attributes() -> None:
+    """JSON normalization retains arrays, literal strings and other HLO fields."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    prefix = 'ROOT x = f32[] constant(1), metadata={op_name="backend_config=01"}, '
+    suffix = ', frontend_attributes={"keep":"yes"}'
+    original = (
+        prefix
+        + 'backend_config={"z":[true, null, "01", {"b":2,"a":1}], "a":0.1}'
+        + suffix
+    )
+    expected = (
+        prefix + 'backend_config={"a":0.1,"z":[true,null,"01",{"a":1,"b":2}]}' + suffix
+    )
+    assert canonicalize(original) == expected
+
+
+@pytest.mark.parametrize(
+    ("configuration", "message"),
+    [
+        ('{"missing":', "Expecting value"),
+        ('{"x":1,"x":2}', "Duplicate"),
+        ('{"x":1,"\\u0078":2}', "Duplicate"),
+        ('{"x":NaN}', "Nonstandard"),
+        ('{"x":Infinity}', "Nonstandard"),
+        ('{"x":-Infinity}', "Nonstandard"),
+        ("01", "Malformed backend JSON boundary"),
+        ("1e", "Malformed backend JSON boundary"),
+        ('{"x":1}garbage', "Malformed backend JSON boundary"),
+    ],
+)
+def test_optimized_hlo_identity_refuses_malformed_backend_configuration(
+    *, configuration: str, message: str
+) -> None:
+    """Malformed backend JSON must not disappear during canonicalization."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    with pytest.raises(ValueError, match=message):
+        canonicalize(f"ROOT x = f32[] constant(1), backend_config={configuration}")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("0.123456789012345678901", "0.123456789012345678902"),
+        ("1e10000", "2e10000"),
+        ("-0", "0"),
+    ],
+)
+def test_optimized_hlo_identity_preserves_numeric_tokens(
+    *, left: str, right: str
+) -> None:
+    """Ordering normalization cannot erase numeric distinctions or spelling."""
+    canonicalize = getattr(public_period_capture, "_canonicalize_optimized_hlo", None)
+    assert canonicalize is not None
+    prefix = 'ROOT x = f32[] constant(1), backend_config={"x":'
+    assert canonicalize(prefix + left + "}") != canonicalize(prefix + right + "}")
+
+
+def _record_public_cache_warmup(
+    *, root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Persist the actual cache writes from the ordinary public solve."""
+    _make_public_capture_model().solve(
+        params=retirement_model.get_params(n_periods=_N_PERIODS), log_level="off"
+    )
+    writes = [
+        match.groups()
+        for record in caplog.records
+        if record.name == "jax._src.compilation_cache"
+        and (
+            match := re.fullmatch(
+                r"Writing (\S+) to persistent compilation cache "
+                r"with key '([^']+)'",
+                record.getMessage(),
+            )
+        )
+    ]
+    assert writes
+    (root / "warm.json").write_text(json.dumps({"pid": os.getpid(), "writes": writes}))
+    (root / "warm.log").write_text(caplog.text)
+
+
+def _assert_selected_cache_evidence(
+    *,
+    observed: dict[str, Any],
+    warm_writes: list[list[str]],
+    records: list[logging.LogRecord],
+) -> None:
+    """Match each selected native executable to its own warmed cache entry."""
+    assert observed
+    for record in observed.values():
+        assert record["proto_bytes"] in {None, 0}
+        assert record["modules"]
+        assert len(record["cache_keys"]) == 1
+        key = record["cache_keys"][0]
+        for name in record["modules"]:
+            assert [name, key] in warm_writes
+            assert any(
+                log.getMessage()
+                == f"Persistent compilation cache hit for '{name}' with key {key!r}"
+                for log in records
+                if log.name == "jax._src.compiler"
+            )
+
+
+class _InterruptCapturedPeriod(logging.Filter):
+    """Interrupt the real public solve immediately before the selected dispatch."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "[attr] working_life age" in message and "period 0:" in message:
+            raise RuntimeError("Interrupted captured entry")
+        return True
+
+
+def _make_public_capture_model(
+    *,
+    wealth_stop: float = 4,
+    axis_widths: dict[str, int] | None = None,
+    budget: int | None = None,
+) -> Model:
+    """Build the public retirement fixture on a small complete candidate grid."""
+    base = retirement_model.get_model(n_periods=_N_PERIODS)
+    regimes = {
+        name: regime.replace(
+            states={"wealth": LinSpacedGrid(start=1, stop=wealth_stop, n_points=4)},
+            actions={
+                **regime.actions,
+                "consumption": LinSpacedGrid(start=1, stop=4, n_points=5),
+            },
+        )
+        if name != "dead"
+        else regime
+        for name, regime in base.user_regimes.items()
+    }
+    return Model(
+        regimes=regimes,
+        edges=base.graph.edges,
+        ages=base.ages,
+        regime_id_class=retirement_model.RegimeId,
+        execution_config=ExecutionConfig(
+            device_memory_bytes=budget, axis_widths=axis_widths or {}
+        ),
+        initial_nodes=initial_nodes_of(model=base),
+    )

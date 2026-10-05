@@ -19,8 +19,8 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     LiquidMargin,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.regime import Regime
@@ -138,9 +138,9 @@ def _build_living_regime(
     regime_transition = until_exit(
         final_age,
         law={
-            "alive_a": MarkovTransition(func=prob_to_alive_a),
-            "alive_b": MarkovTransition(func=prob_to_alive_b),
-            "dead": MarkovTransition(func=prob_to_dead),
+            "alive_a": StochasticTransition(func=prob_to_alive_a),
+            "alive_b": StochasticTransition(func=prob_to_alive_b),
+            "dead": StochasticTransition(func=prob_to_dead),
         },
         exits=("dead",),
     )
@@ -200,7 +200,7 @@ def build_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = float(ages.exact_values[-1])
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
 
@@ -222,10 +222,24 @@ def build_model(
         solver=GridSearch(),
     )
     return Model(
+        edges={
+            source: {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {
+                        target: tuple(ages.exact_values[:-2])
+                        for target in ("alive_a", "alive_b")
+                    }
+                    if ages.n_periods > 2
+                    else {}
+                ),
+            }
+            for source in ("alive_a", "alive_b")
+        },
         regimes={"alive_a": make(), "alive_b": make(), "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "alive_a"},
+        initial_nodes={ages.exact_values[0]: "alive_a"},
     )
 
 

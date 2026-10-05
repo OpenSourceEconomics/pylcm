@@ -55,10 +55,21 @@ _PARAMS = get_params(
 
 def _build_model(*, working_solver: object | None = None) -> Model:
     """Build the retirement model, optionally overriding `working_life`'s solver."""
-    ages = AgeGrid(start=40, stop=40 + (_N_PERIODS - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (_N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     overrides = {} if working_solver is None else {"solver": working_solver}
     return Model(
+        edges={
+            "working_life": {
+                "dead": tuple(ages.exact_values[:-1]),
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            },
+            "retirement": {
+                "dead": tuple(ages.exact_values[:-1]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            },
+        },
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(last_age=last_age),
@@ -71,7 +82,7 @@ def _build_model(*, working_solver: object | None = None) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
 

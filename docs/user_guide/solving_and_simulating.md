@@ -530,7 +530,9 @@ import pandas as pd
 from lcm import Model
 
 # 1. Define model (see previous pages)
-model = Model(regimes={...}, ages=..., regime_id_class=...)
+model = Model(
+    regimes={...}, ages=..., regime_id_class=..., edges=..., initial_nodes=...
+)
 
 # 2. Set parameters
 params = {

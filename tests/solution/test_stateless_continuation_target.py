@@ -15,18 +15,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
     Regime,
+    StochasticTransition,
     TauchenAR1Process,
     categorical,
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
@@ -72,7 +74,9 @@ def _solve_with_bequest(bequest: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "gone")
+            ),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -83,11 +87,11 @@ def _solve_with_bequest(bequest: float):
     gone = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": gone},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {
@@ -157,10 +161,10 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         regime_transitions=until_exit(
             _LAST_AGE,
             law={
-                "alive": MarkovTransition(
+                "alive": StochasticTransition(
                     func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
                 ),
-                "gone": MarkovTransition(
+                "gone": StochasticTransition(
                     func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
                 ),
             },
@@ -177,11 +181,11 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     limbo = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=_ThreeRegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {
@@ -220,7 +224,9 @@ def _solve_with_process_only_target(level: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "gone")
+            ),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -243,11 +249,11 @@ def _solve_with_process_only_target(level: float):
         },
         functions={"utility": lambda shock: shock + level},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": retired},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {

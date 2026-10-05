@@ -34,7 +34,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -45,6 +45,7 @@ from lcm.typing import (
 )
 from tests.collective_fixtures import DISCOUNT_FACTOR, Work
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -154,7 +155,7 @@ _WAGE_LOW = 1.0
 _WAGE_HIGH = 2.0
 
 # Three ages: the single woman decides at age 0, everyone else pays out from age 1.
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 def _parameter_names(branch: Mapping[str, object]) -> set[str]:
@@ -204,7 +205,7 @@ def _build_model(
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(func=_marry_for_sure),
+                    probability=StochasticTransition(func=_marry_for_sure),
                     gate=gate,
                     routes={
                         "f": StakeholderRoute(
@@ -254,7 +255,7 @@ def _build_model(
         states={"wage": _WAGE},
         functions={"utility": _utility_single_m_terminal},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "single_f": single_f,
             "married_terminal": married_terminal,
@@ -263,7 +264,7 @@ def _build_model(
         },
         ages=_AGES,
         regime_id_class=_RegimeId,
-        initial_regimes={0: "single_f"},
+        initial_nodes={0: "single_f"},
     )
 
 

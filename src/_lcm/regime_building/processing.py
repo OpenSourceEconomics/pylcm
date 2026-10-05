@@ -12,7 +12,7 @@ import functools
 import inspect
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Collection, Hashable, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
 from itertools import product
@@ -141,6 +141,7 @@ from _lcm.regime_building.gated_edges import (
     get_edge_simulate_gate_evaluator,
     source_reads_folded_wbar,
 )
+from _lcm.regime_building.invariant_blocking import bound_state_names
 from _lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
 )
@@ -259,6 +260,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
@@ -283,7 +285,7 @@ from lcm.solvers import (
     Solver,
     UniformObservedFixedCost,
 )
-from lcm.transition import JointTransition, MarkovTransition
+from lcm.transition import JointTransition, StochasticTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
@@ -543,6 +545,9 @@ def process_regimes(
                     template_bytes=_value_template_bytes(
                         state_grids=state_grids[regime_name]
                     ),
+                    action_partitions=resolved_execution.action_partitions_for(
+                        regime_name=regime_name
+                    ),
                 )
                 for regime_name in user_regimes
             ),
@@ -727,6 +732,8 @@ def process_regimes(
         phased_specs=phased_specs,
         placement=placement,
         sharded_state_names_by_regime=sharded_state_names_by_regime,
+        invariant_block_widths=resolved_execution.invariant_block_widths,
+        action_partitions=resolved_execution.action_partitions,
         reachability=reachability,
         regime_names_to_ids=regime_names_to_ids,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -910,6 +917,12 @@ class _CanonicalRegimeBuilder:
     sharded_state_names_by_regime: MappingProxyType[RegimeName, frozenset[StateName]]
     """Immutable mapping of regime names to their states carrying a device axis."""
 
+    invariant_block_widths: MappingProxyType[StateName, int]
+    """States the solve evaluates one code at a time, with their block widths."""
+
+    action_partitions: MappingProxyType[RegimeName, int]
+    """Regimes whose action product several devices share, with the count."""
+
     reachability: ModelReachability
     """The model's static solution and simulation regime graphs."""
 
@@ -1049,6 +1062,17 @@ class _CanonicalRegimeBuilder:
                 state_names=self.state_action_spaces[regime_name].state_names,
                 grids=self.all_grids[regime_name],
             )
+            invariant_bindings = bound_state_names(
+                user_regime=user_regime,
+                block_widths=self.invariant_block_widths,
+                state_names=self.state_action_spaces[regime_name].state_names,
+            )
+            _fail_if_blocked_regime_reads_unsupported_inputs(
+                regime_name=regime_name,
+                invariant_bindings=invariant_bindings,
+                fold_state_names=fold_state_names,
+                edge_reference_regimes=edge_reference_regimes,
+            )
             # Empty on the first build, and for every regime declaring no
             # gated edge.
             gated_continuations = MappingProxyType(
@@ -1098,6 +1122,8 @@ class _CanonicalRegimeBuilder:
                 edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=tuple(user_regime.gated_edges),
                 fold_state_names=fold_state_names,
+                invariant_bindings=invariant_bindings,
+                action_partitions=self.action_partitions.get(regime_name, 1),
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
             )
@@ -1150,6 +1176,7 @@ class _CanonicalRegimeBuilder:
                 pareto_weights=pareto_weights,
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
+                invariant_bindings=invariant_bindings,
             )
 
             stochastic_state_transitions = collect_stochastic_state_transitions(
@@ -3169,6 +3196,8 @@ def _build_solution_phase(  # noqa: PLR0915
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
+    invariant_bindings: tuple[StateName, ...] = (),
+    action_partitions: int = 1,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
@@ -3219,6 +3248,12 @@ def _build_solution_phase(  # noqa: PLR0915
         value_aware_feasibility: The regime's value constraints and resolved
             same-period references, resolved once for both phases so the two
             apply the identical mask. Empty for a singleton regime.
+        invariant_bindings: Invariant states the solve evaluates one code at a
+            time. The solve `Q_and_F` reads each one's continuation at the
+            evaluated code, so its coordinate is dropped like a co-mapped
+            state's. Empty when nothing is blocked.
+        action_partitions: Devices sharing the regime's action product, from
+            `ExecutionConfig.action_partitions`; one when it is not shared.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
@@ -3394,7 +3429,9 @@ def _build_solution_phase(  # noqa: PLR0915
             regime_to_v_interpolation_info=regime_to_v_interpolation_info_for_Q,
             flat_param_names=flat_param_names,
             period_to_regime_v_interp=period_to_regime_v_interp,
-            co_map_state_names=co_map_state_names,
+            # A blocked program reads every continuation carrying a bound state
+            # through that code's block, which has the state's axis removed.
+            co_map_state_names=(*co_map_state_names, *invariant_bindings),
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
             stakeholders=stakeholders,
@@ -3460,6 +3497,7 @@ def _build_solution_phase(  # noqa: PLR0915
         grids=all_grids[regime_name],
         submesh_device_ids=submesh_device_ids,
         sharded_state_names=sharded_state_names,
+        action_partitions=action_partitions,
         axis_widths=axis_widths,
         period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
@@ -3484,6 +3522,7 @@ def _build_solution_phase(  # noqa: PLR0915
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+        invariant_bindings=invariant_bindings,
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
@@ -3632,6 +3671,7 @@ def _build_solution_phase(  # noqa: PLR0915
         pareto_weights=pareto_weights,
         submesh_device_ids=submesh_device_ids,
         sharded_state_names=sharded_state_names,
+        action_partitions=action_partitions,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
@@ -4228,6 +4268,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
+    invariant_bindings: tuple[StateName, ...] = (),
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
 
@@ -4302,6 +4343,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
             regime declaring no `gated_edges`.
+        invariant_bindings: Blocked states the regime carries. When non-empty,
+            the regime also declares a type-local decision whose continuation
+            reads drop each such state's axis, for forward simulation grouped
+            by one code at a time.
 
     Returns:
         Complete simulate functions container.
@@ -4423,6 +4468,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # collective branch (below) recomputes the household argmax and gathers
     # each stakeholder's own value at it.
     collective = stakeholders is not None
+    type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
+        MappingProxyType({})
+    )
     if _is_zero_node_regime(
         spec=spec,
         regime_name=regime_name,
@@ -4546,7 +4594,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             }
             | dict(functions)
         )
-        Q_and_F_functions = _build_Q_and_F_per_period(
+        decision_Q_and_F = functools.partial(
+            _build_Q_and_F_per_period,
             active_periods=simulated_periods[regime_name],
             phase_reachability=solution_reachability,
             source_regime_name=regime_name,
@@ -4566,11 +4615,25 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
-        ).by_period
+        )
+        Q_and_F_functions = decision_Q_and_F().by_period
+        # Grouped forward simulation reads each continuation carrying a blocked
+        # state through the dispatched code's block, which has that axis removed.
+        if invariant_bindings:
+            type_local_Q_and_F_functions = decision_Q_and_F(
+                co_map_state_names=invariant_bindings
+            ).by_period
 
     per_subject_decisions = _build_per_subject_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+    )
+    type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
+        state_action_space=state_action_space,
+        Q_and_F_functions=type_local_Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
@@ -4847,6 +4910,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         simulation_state_names=simulation_variables.state_names,
         active_periods=tuple(simulated_periods[regime_name]),
         has_gated_edges=bool(user_regime.gated_edges),
+        type_local_Q_and_F_functions=type_local_Q_and_F_functions,
+        type_local_per_subject_decisions=type_local_per_subject_decisions,
     )
 
     return SimulationPhase(
@@ -5293,7 +5358,7 @@ def _process_regime_core(
         )
         wrapped = (
             getattr(func.func, "__wrapped__", None)
-            if isinstance(func, MarkovTransition)
+            if isinstance(func, StochasticTransition)
             else None
         )
         if inspect.ismethod(wrapped) and isinstance(
@@ -5474,6 +5539,29 @@ def _process_regime_core(
         }
     )
 
+    # A law toward a target may read the draw of a process the source carries
+    # but the target does not. The draw then exists only inside the transition:
+    # it is taken from the source's process at the source's current value,
+    # consumed by the target's laws, and not persisted, because the target has
+    # no axis to store it on.
+    source_draw_grids = _source_draws_read_by_target_laws(
+        flat_nested_transitions=flat_nested_transitions,
+        functions=processed_functions,
+        source_process_grids={
+            process: grid
+            for process, grid in state_grids[source_regime_name].items()
+            if process in carried_processes
+            and isinstance(grid, _ContinuousStochasticProcess)
+        },
+        state_grids=state_grids,
+        continuation_targets=continuation_targets,
+    )
+    source_draw_keys = _add_source_draw_functions(
+        processed_functions=processed_functions,
+        source_draw_grids=source_draw_grids,
+        source_grids=all_grids[source_regime_name],
+    )
+
     # Bundle insertion order fixes the continuation's lottery reduction axes.
     # Preserve the declared process order independently of Python's hash seed.
     process_transition_keys = tuple(
@@ -5490,7 +5578,7 @@ def _process_regime_core(
         for func_name in flat_nested_transitions
     } | {
         key: processed_functions[key]
-        for key in (*process_transition_keys, *joint_transition_keys)
+        for key in (*process_transition_keys, *joint_transition_keys, *source_draw_keys)
     }
 
     all_constraint_functions: ConstraintFunctionsMapping = MappingProxyType(
@@ -5504,6 +5592,7 @@ def _process_regime_core(
         | set(constraints)
         | set(process_transition_keys)
         | set(joint_transition_keys)
+        | set(source_draw_keys)
     )
     phase_functions = MappingProxyType(
         {
@@ -5544,6 +5633,7 @@ def _process_regime_core(
         joint_transitions=joint_transitions,
         phase_name=phase_name,
         original_lottery_layouts=original_lottery_layouts,
+        source_draws=frozenset(source_draw_grids),
     )
 
     fail_if_transition_namespaces_are_mixed(
@@ -5631,6 +5721,123 @@ def _process_joint_transitions(
     return tuple(transition_keys)
 
 
+def _source_draws_read_by_target_laws(
+    *,
+    flat_nested_transitions: Mapping[str, UserFunction],
+    functions: Mapping[str, UserFunction],
+    source_process_grids: Mapping[ProcessName, _ContinuousStochasticProcess],
+    state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
+    continuation_targets: Collection[RegimeName],
+) -> dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess]:
+    """Find the source processes whose draw a law toward a non-carrier reads.
+
+    A target that carries the process receives its draw as a persisted lottery,
+    and a target with its own law for `next_<process>` names the value itself;
+    neither needs a draw here. Every other target whose laws read
+    `next_<process>`, directly or through regime functions, needs the draw
+    taken from the source's process inside the transition.
+
+    Returns:
+        The source process grid, keyed by `(target, process)`.
+
+    """
+    draws: dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess] = {}
+    for target in sorted(continuation_targets):
+        laws = {
+            name: law
+            for name, law in flat_nested_transitions.items()
+            if tree_path_from_qname(name)[0] == target
+        }
+        reads = _names_read_by(roots=laws.values(), functions=functions)
+        for process, grid in source_process_grids.items():
+            if (
+                process not in state_grids.get(target, {})
+                and f"{target}__next_{process}" not in flat_nested_transitions
+                and f"next_{process}" in reads
+            ):
+                draws[(target, process)] = grid
+    return draws
+
+
+def _add_source_draw_functions(
+    *,
+    processed_functions: dict[str, EconFunction],
+    source_draw_grids: Mapping[
+        tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
+    ],
+    source_grids: Mapping[StateOrActionName, Grid],
+) -> tuple[str, ...]:
+    """Add each transition-local draw's node axis, support and weights.
+
+    The axis enumerates the source process's nodes, the support provider gives
+    their values, and the weights are the source process's row at the source's
+    current value. Returns the keys of the axis and support functions, which
+    belong to the target's transition bundle.
+    """
+    keys: list[str] = []
+    for (target, process), grid in source_draw_grids.items():
+        axis_name = f"{target}__next_{process}"
+        support_name = f"{target}__support_next_{process}"
+        processed_functions[axis_name] = _joint_support_indices(grid.n_points)
+        processed_functions[support_name] = _get_source_process_nodes(
+            name=process, grid=grid
+        )
+        processed_functions[f"weight_{axis_name}"] = _get_weights_func_for_process(
+            name=process, grid=grid, grids=source_grids
+        )
+        keys += [axis_name, support_name]
+    return tuple(keys)
+
+
+def _names_read_by(
+    *, roots: Iterable[UserFunction], functions: Mapping[str, UserFunction]
+) -> frozenset[str]:
+    """Collect every argument name `roots` read, through `functions`."""
+    reads: set[str] = set()
+    frontier = list(roots)
+    while frontier:
+        for arg in get_annotations(frontier.pop()):
+            if arg == "return" or arg in reads:
+                continue
+            reads.add(arg)
+            if arg in functions:
+                frontier.append(functions[arg])
+    return frozenset(reads)
+
+
+def _get_source_process_nodes(
+    *, name: ProcessName, grid: _ContinuousStochasticProcess
+) -> UserFunction:
+    """Get the provider of a source process's nodes, the support of its draw."""
+    if grid.params_to_pass_at_runtime:
+        fixed_params = dict(grid.params)
+        runtime_param_names = {
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
+        }
+
+        @with_signature(
+            args=dict.fromkeys(runtime_param_names, "FloatND"),
+            return_annotation="ContinuousState",
+            enforce=False,
+        )
+        def nodes_runtime(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+            process_kw: dict[str, FloatND | IntND] = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            return grid.compute_gridpoints(**process_kw)
+
+        return nodes_runtime
+
+    gridpoints = grid.get_gridpoints()
+
+    @with_signature(args={}, return_annotation="ContinuousState", enforce=False)
+    def nodes(*args: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
+        return gridpoints
+
+    return nodes
+
+
 def _joint_support_indices(support_size: int) -> EconFunction:
     """Return the internal node-index axis of one finite joint support."""
 
@@ -5701,8 +5908,15 @@ def _build_transition_plans(
     original_lottery_layouts: Mapping[str, OriginalLotteryLayout] = MappingProxyType(
         {}
     ),
+    source_draws: frozenset[tuple[RegimeName, ProcessName]] = frozenset(),
 ) -> TargetTransitionPlans:
-    """Lower ordinary and joint declarations into complete target-edge plans."""
+    """Lower ordinary and joint declarations into complete target-edge plans.
+
+    `source_draws` names the `(target, process)` pairs whose draw is taken from
+    the source's process inside the transition: a law toward `target` reads it,
+    and `target` does not carry the process. Each is a transition-local lottery
+    on the source's process nodes.
+    """
     plans: dict[RegimeName, TargetTransitionPlan] = {}
     for target, bundle in transitions.items():
         lotteries: dict[str, TransitionLotteryInfo] = {}
@@ -5752,6 +5966,38 @@ def _build_transition_plans(
             if (
                 next_state_name.startswith("support_")
                 and next_state_name.removeprefix("support_") in joint_kernels
+            ):
+                continue
+            source_draw = (target, next_state_name.removeprefix("next_"))
+            if source_draw in source_draws:
+                qualified_name = qname_from_tree_path((target, next_state_name))
+                support_provider_name = f"support_{next_state_name}"
+                weight_name = f"weight_{qualified_name}"
+                lotteries[next_state_name] = TransitionLotteryInfo(
+                    name=next_state_name,
+                    qualified_name=qualified_name,
+                    support_provider=bundle[support_provider_name],
+                    support_signature=SupportSignature(
+                        size=cast(
+                            "_ContinuousStochasticProcess",
+                            all_grids[source_regime_name][source_draw[1]],
+                        ).n_points
+                    ),
+                    probabilities=processed_functions[weight_name],
+                    support_origin=SupportOrigin.SOURCE_PROCESS,
+                    lifetime=LotteryLifetime.TRANSITION_LOCAL,
+                    persisted_state=None,
+                    support_params=ParameterBinding(),
+                    probability_params=ParameterBinding(
+                        public_path=(source_regime_name, target, next_state_name)
+                    ),
+                    weight_name=weight_name,
+                    support_provider_name=support_provider_name,
+                    node_annotation="ContinuousState",
+                )
+                continue
+            if next_state_name.startswith("support_next_") and (
+                (target, next_state_name.removeprefix("support_next_")) in source_draws
             ):
                 continue
 
@@ -5900,7 +6146,7 @@ def _process_next_regime_cells(
     - `_CoarseTransitionCell` cells ⇒ the shared underlying transition is
       processed once under the `next_regime` template key, so the engine
       evaluates it once and indexes per target
-    - `MarkovTransition` cells (user per-target dict) ⇒ each cell is
+    - `StochasticTransition` cells (user per-target dict) ⇒ each cell is
       processed under its nested `template[target]["next_regime"]` branch
 
     Args:
@@ -6041,9 +6287,9 @@ def _get_stochastic_transition_names(
     """
     markov_state_names: set[StateName] = set()
     for name, raw in state_transitions.items():
-        if isinstance(raw, MarkovTransition) or (
+        if isinstance(raw, StochasticTransition) or (
             isinstance(raw, Mapping)
-            and any(isinstance(v, MarkovTransition) for v in raw.values())
+            and any(isinstance(v, StochasticTransition) for v in raw.values())
         ):
             markov_state_names.add(name)
     return frozenset(
@@ -6310,9 +6556,9 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     state_transitions: Mapping[StateName, object],
     source_regime_name: RegimeName,
 ) -> None:
-    """Reject a `MarkovTransition` law written for a state with a continuous grid.
+    """Reject a `StochasticTransition` law written for a state with a continuous grid.
 
-    `MarkovTransition` declares a probability vector over a discrete outcome space,
+    `StochasticTransition` declares a probability vector over a discrete outcome space,
     which only exists for a `DiscreteGrid`. A continuous stochastic process carries
     its own transition mechanism and needs no law at all; an entry into one is a
     deterministic function of the source's variables. Both mistakes reach the same
@@ -6330,7 +6576,7 @@ def _fail_if_a_markov_law_names_a_continuous_state(
         source_regime_name: Regime whose law is being checked, named in the message.
 
     Raises:
-        ModelInitializationError: If the law is a `MarkovTransition` and the state's
+        ModelInitializationError: If the law is a `StochasticTransition` and the state's
             grid is not a `DiscreteGrid`.
 
     """
@@ -6341,17 +6587,17 @@ def _fail_if_a_markov_law_names_a_continuous_state(
     target = tree_path[0] if len(tree_path) > 1 else None
     state_name = tree_path[-1].replace("next_", "")
     raw = state_transitions.get(state_name)
-    if isinstance(raw, MarkovTransition):
+    if isinstance(raw, StochasticTransition):
         written_for = "every target it reaches"
-    elif isinstance(raw, Mapping) and isinstance(raw.get(target), MarkovTransition):
+    elif isinstance(raw, Mapping) and isinstance(raw.get(target), StochasticTransition):
         written_for = f"target '{target}'"
     else:
         return
 
     msg = (
         f"The law for state '{state_name}' of regime '{source_regime_name}' toward "
-        f"{written_for} is wrapped in `MarkovTransition`, but '{state_name}' has a "
-        f"{type(grid).__name__}, not a DiscreteGrid. `MarkovTransition` declares a "
+        f"{written_for} is wrapped in `StochasticTransition`, but '{state_name}' has a "
+        f"{type(grid).__name__}, not a DiscreteGrid. `StochasticTransition` declares a "
         f"probability vector over a discrete outcome space, which a continuous grid "
         f"does not have. A continuous stochastic process already carries its own "
         f"transition mechanism and needs no law; write the law as a plain function "
@@ -7142,7 +7388,7 @@ def _get_simple_transition_discrete_grid(
             return None
         raw = variants[0]
     # Per-target dicts handle category differences explicitly
-    if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
+    if isinstance(raw, Mapping) and not isinstance(raw, StochasticTransition):
         return None
     # An identity law (fixed state) only maps within its own regime
     if isinstance(raw, _IdentityTransition):
@@ -7568,6 +7814,39 @@ def _co_map_state_names(
         ):
             co_map.append(name)
     return tuple(co_map)
+
+
+def _fail_if_blocked_regime_reads_unsupported_inputs(
+    *,
+    regime_name: RegimeName,
+    invariant_bindings: tuple[StateName, ...],
+    fold_state_names: tuple[StateName, ...],
+    edge_reference_regimes: tuple[RegimeName, ...],
+) -> None:
+    """Refuse blocking a regime that folds a process or reads an edge reference.
+
+    Raises:
+        ExecutionPlanningError: The regime binds an invariant state and folds a
+            process or reads a gated-edge reference value.
+
+    """
+    if not invariant_bindings:
+        return
+    failures = [
+        *(f"folds the process {name!r}" for name in fold_state_names),
+        *(
+            f"reads the edge-reference value of {name!r}"
+            for name in edge_reference_regimes
+        ),
+    ]
+    if failures:
+        msg = (
+            f"ExecutionConfig.invariant_block_widths cannot block regime "
+            f"{regime_name!r}: it " + "; ".join(failures) + ". Remove "
+            f"{invariant_bindings[0]!r} from ExecutionConfig.invariant_block_widths "
+            "to solve it unblocked."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 def _fold_state_names(

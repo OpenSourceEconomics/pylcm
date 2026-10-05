@@ -145,7 +145,7 @@ def test_every_invocation_stays_inside_the_payload_guardrail():
     """No recorded lane's predicted payload exceeds the manifest's ceiling.
 
     The prediction is `max(total worker seconds / workers, largest single file)`
-    over the frozen head's observed per-leg JUnit times. It is a *lower bound*
+    over each leg's own recorded JUnit times. It is a *lower bound*
     on real time -- it excludes setup, collection, reporting and worker
     imbalance -- so a lane already over the ceiling here is certainly over it in
     CI. Being under it is necessary, not sufficient; only a CI run can confirm

@@ -32,7 +32,7 @@ from lcm.phased import Phased
 from lcm.transition import (
     AgeSpecializedGrid,
     JointTransition,
-    MarkovTransition,
+    StochasticTransition,
     _literal_joint_support_schema,
 )
 from lcm.typing import UserFunction
@@ -42,14 +42,14 @@ if TYPE_CHECKING:
 
 type _PhaseStateTransition = (
     UserFunction
-    | MarkovTransition
-    | Mapping[RegimeName, UserFunction | MarkovTransition]
+    | StochasticTransition
+    | Mapping[RegimeName, UserFunction | StochasticTransition]
     | None
 )
 type _PhaseRegimeTransition = (
     UserFunction
-    | MarkovTransition
-    | Mapping[RegimeName, MarkovTransition | _CoarseTransitionCell]
+    | StochasticTransition
+    | Mapping[RegimeName, StochasticTransition | _CoarseTransitionCell]
     | None
 )
 type _PhaseJointTransitions = MappingProxyType[
@@ -251,9 +251,9 @@ def _build_phase_spec(
         koopmans_aggregator=koopmans_aggregator,
         regime_transition=regime_transition,
         # A per-target dict is stochastic by construction (each cell is a
-        # MarkovTransition-wrapped probability function).
+        # StochasticTransition-wrapped probability function).
         stochastic_regime_transition=isinstance(
-            regime_transition, MarkovTransition | Mapping
+            regime_transition, StochasticTransition | Mapping
         ),
     )
 
@@ -442,14 +442,14 @@ class RegimePhaseSpec:
     regime_transition: _PhaseRegimeTransition
     """Phase-resolved regime transition; `None` for terminal regimes.
     `normalize_regime_phases` emits the user form (bare callable,
-    `MarkovTransition`, or per-target dict); `canonicalize_regimes` rewrites
+    `StochasticTransition`, or per-target dict); `canonicalize_regimes` rewrites
     every non-terminal form into a per-target mapping — coarse forms become
     cells sharing one `_CoarseTransitionCell`."""
 
     stochastic_regime_transition: bool
     """Whether this phase's regime transition is stochastic — a
-    `MarkovTransition` or a per-target dict (whose cells are
-    `MarkovTransition`-wrapped probability functions)."""
+    `StochasticTransition` or a per-target dict (whose cells are
+    `StochasticTransition`-wrapped probability functions)."""
 
 
 def _split_functions(
@@ -736,11 +736,11 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
     runs with the regular state-transition validation); the supported form is
     a plain deterministic callable, including `fixed_transition` identities.
     """
-    if isinstance(law, MarkovTransition):
+    if isinstance(law, StochasticTransition):
         return [
             (
                 f"State '{name}' is carried only in the simulate phase; a "
-                f"stochastic (`MarkovTransition`) law of motion for it is not "
+                f"stochastic (`StochasticTransition`) law of motion for it is not "
                 f"yet supported."
             )
         ]
@@ -780,28 +780,19 @@ def _split_regime_transition(
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(
                 f"Regime transition {phase_label} variant must be a callable, "
-                f"`MarkovTransition`, or a per-target dict, got {side!r}."
+                f"`StochasticTransition`, or a per-target dict, got {side!r}."
             )
     if not errors:
         solve_granular = isinstance(raw.solve, Mapping)
         simulate_granular = isinstance(raw.simulate, Mapping)
         if solve_granular != simulate_granular or (
             not solve_granular
-            and isinstance(raw.solve, MarkovTransition)
-            != isinstance(raw.simulate, MarkovTransition)
+            and isinstance(raw.solve, StochasticTransition)
+            != isinstance(raw.simulate, StochasticTransition)
         ):
             errors.append(
                 "Regime transition variants must have matching forms: both "
                 "coarse with matching stochasticity, or both per-target dicts."
-            )
-        elif solve_granular and set(cast("Mapping", raw.solve)) != set(
-            cast("Mapping", raw.simulate)
-        ):
-            errors.append(
-                "Per-target regime transition variants must declare identical "
-                "key sets — phase-variant reachability would let the "
-                "simulation realize a jump into a regime whose continuation "
-                "value was never planned over."
             )
     return (
         cast("_PhaseRegimeTransition", raw.solve),

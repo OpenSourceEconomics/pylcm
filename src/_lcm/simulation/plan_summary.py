@@ -19,6 +19,7 @@ import jax
 from _lcm.engine import Regime
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_groups import SubjectGroupPlan
 from _lcm.typing import RegimeName
 
 
@@ -55,6 +56,9 @@ class SimulationPlanSummary:
     effective_device_memory_bytes: int | None
     """Effective per-device budget in bytes; `None` when unbudgeted."""
 
+    subject_grouping: str | None = None
+    """The invariant state subjects were grouped by, or `None` when ungrouped."""
+
     def summary(self) -> str:
         """Return one line describing the resolved plan, for the progress tier."""
         devices = (
@@ -68,9 +72,14 @@ class SimulationPlanSummary:
             if self.effective_device_memory_bytes is None
             else f"budgeted at {self.effective_device_memory_bytes} bytes"
         )
+        grouping = (
+            ""
+            if self.subject_grouping is None
+            else f" grouped by {self.subject_grouping!r}"
+        )
         return (
             f"Simulation plan: route={self.route}; {devices}; "
-            f"outer chunks={self.outer_chunk_count} "
+            f"outer chunks={self.outer_chunk_count}{grouping} "
             f"(widths={self.admitted_chunk_widths}); {budget}."
         )
 
@@ -87,7 +96,8 @@ class SimulationPlanSummary:
             f"outer_chunk_count={self.outer_chunk_count}; "
             f"admitted_chunk_widths={self.admitted_chunk_widths}; "
             f"budget_mode={self.budget_mode}; "
-            f"effective_device_memory_bytes={self.effective_device_memory_bytes}."
+            f"effective_device_memory_bytes={self.effective_device_memory_bytes}; "
+            f"subject_grouping={self.subject_grouping}."
         )
 
 
@@ -98,6 +108,7 @@ def build_simulation_plan_summary(
     n_subjects: int,
     batch_size: int,
     prepared_chunks: PreparedSimulationChunks | None,
+    group_plan: SubjectGroupPlan | None = None,
 ) -> SimulationPlanSummary:
     """Build the resolved-plan record for one `simulate()` call.
 
@@ -110,6 +121,8 @@ def build_simulation_plan_summary(
             before chunk admission overrides it (see `prepared_chunks`).
         prepared_chunks: The budgeted chunk-admission result, or `None` for
             an unbudgeted call.
+        group_plan: The grouped chunks this call dispatched, or `None` when
+            subjects are not grouped.
 
     Returns:
         The frozen plan summary.
@@ -149,6 +162,13 @@ def build_simulation_plan_summary(
     else:
         chunk_width = n_subjects if batch_size == 0 else min(batch_size, n_subjects)
         outer_chunk_count = math.ceil(n_subjects / chunk_width) if chunk_width else 1
+    if group_plan is not None:
+        # A plan of selected codes no subject holds dispatches no chunk.
+        chunk_width = (
+            len(group_plan.chunks[0].rows) if group_plan.chunks else chunk_width
+        )
+        outer_chunk_count = len(group_plan.chunks)
+    grouping = next(iter(regimes.values())).simulation.programs.grouping
     return SimulationPlanSummary(
         route=execution.simulation_sharding,
         subject_device_ids=tuple(device.id for device in subject_devices),
@@ -160,4 +180,5 @@ def build_simulation_plan_summary(
         if execution.device_memory_bytes is None
         else "budgeted",
         effective_device_memory_bytes=execution.device_memory_bytes,
+        subject_grouping=None if grouping is None else grouping.state_name,
     )

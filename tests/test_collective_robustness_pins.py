@@ -27,7 +27,6 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     ParetoObjective,
     Regime,
     ValueDependentTransition,
@@ -37,7 +36,7 @@ from lcm import (
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
 from lcm.result import SimulationResult
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import (
     Work,
@@ -45,10 +44,11 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.mock_regime import MockRegime
+from tests.test_models.graph import with_fixture_graph
 
 # Lifecycle of the gated-edge model: the source is active at age 0, both
 # terminal regimes from age 1 on.
-GATE_AGES = AgeGrid(start=0, stop=2, step="Y")
+GATE_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The gated-edge model's only state.
 GATE_WAGE_GRID = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
@@ -144,11 +144,11 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
     while the model is being built.
     """
     with pytest.raises((PyLCMError, NotImplementedError), match="D_target"):
-        Model(
+        with_fixture_graph(
             regimes=_make_singleton_target_dissolution_gate_regimes(),
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
-            initial_regimes={0: "source"},
+            initial_nodes={0: "source"},
         )
 
 
@@ -190,9 +190,9 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_enters_target),
+                        probability=StochasticTransition(func=_enters_target),
                         gate=_no_dissolution,
                         routes={
                             "only": StakeholderRoute(
@@ -203,7 +203,7 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
                             )
                         },
                     ),
-                    "fallback": MarkovTransition(func=_never_entered),
+                    "fallback": StochasticTransition(func=_never_entered),
                 }
             }
         ),

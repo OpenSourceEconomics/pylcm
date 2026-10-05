@@ -14,14 +14,15 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 def _model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes=_make_full_topology_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
-        initial_regimes={0: ("single_f", "single_m")},
+        initial_nodes={0: ("single_f", "single_m")},
     )
 
 

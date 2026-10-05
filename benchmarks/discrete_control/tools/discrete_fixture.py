@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -70,11 +70,10 @@ def _make_three_type_model(
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         regime_transitions=until_exit(
             4,
-            law=Choose(
+            law=DeterministicTransition(
                 func=lambda age: jnp.where(
                     age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
                 ),
-                targets=("working", "retired"),
             ),
             exits=("retired",),
         ),
@@ -92,9 +91,10 @@ def _make_three_type_model(
     )
     return Model(
         regimes={"working": working, "retired": retired},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        edges={"working": {"working": (0, 1, 2), "retired": (0, 1, 2, 3)}},
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=_Type)},
         state_transitions={"type1": fixed_transition("type1")},

@@ -22,8 +22,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, MarkovTransition, Model
-from lcm.typing import BoolND, DiscreteAction
+from lcm import AgeGrid, Model, StochasticTransition
+from lcm.typing import BoolND, DiscreteAction, UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
     dead,
     retirement_transitions,
@@ -38,6 +38,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # The no-crossing-insertion delta is a kink-placement error of order the local
@@ -48,6 +49,23 @@ _PARITY_ATOL = 5e-3
 _PARITY_RTOL = 1e-3
 
 
+def _lifecycle_edges(
+    *, ages: AgeGrid
+) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+    """Keep work and retirement before the final death-only source age."""
+    return {
+        "working_life": {
+            "working_life": tuple(ages.exact_values[:-2]),
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+        "retirement": {
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+    }
+
+
 def _with_backend(*, regime, envelope):
     """Rebuild a DC-EGM regime with the chosen upper-envelope backend."""
     solver = dataclasses.replace(regime.solver, envelope=envelope_config(envelope))
@@ -55,9 +73,9 @@ def _with_backend(*, regime, envelope):
 
 
 def _retirement_only_model(*, envelope, n_periods):
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    return Model(
+    return with_fixture_graph(
         regimes={
             "retirement": _with_backend(
                 regime=dcegm_retirement, envelope=envelope_config(envelope)
@@ -70,14 +88,15 @@ def _retirement_only_model(*, envelope, n_periods):
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 
 def _full_model(*, envelope, n_periods):
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": _with_backend(
                 regime=dcegm_working_life, envelope=envelope
@@ -89,7 +108,7 @@ def _full_model(*, envelope, n_periods):
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
 
 
@@ -138,12 +157,12 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
     """
     n_periods = 4
     retirement_transition = {
-        "retirement": MarkovTransition(
+        "retirement": StochasticTransition(
             func=lambda age, final_age_alive: jnp.where(
                 age >= final_age_alive, 0.0, 1.0
             )
         ),
-        "dead": MarkovTransition(
+        "dead": StochasticTransition(
             func=lambda age, final_age_alive: jnp.where(
                 age >= final_age_alive, 1.0, 0.0
             )
@@ -151,8 +170,9 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
     }
 
     def build(envelope):
-        ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+        ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
         return Model(
+            edges=_lifecycle_edges(ages=ages),
             regimes={
                 "working_life": _with_backend(
                     regime=dcegm_working_life, envelope=envelope
@@ -174,7 +194,7 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
             },
             ages=ages,
             regime_id_class=base.RegimeId,
-            initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+            initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
         )
 
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)

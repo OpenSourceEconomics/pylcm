@@ -12,9 +12,11 @@ import os
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jaxtyping import Int, Scalar, UInt32
 
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
+from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
 
@@ -113,7 +115,7 @@ def generate_simulation_keys(
     key: PRNGKeyND,
     names: list[str],
     n_initial_states: int,
-    subject_slice: slice | None = None,
+    subject_slice: slice | SubjectRows | None = None,
     original_n_subjects: int | None = None,
     memory: SimulationMemory | None = None,
 ) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
@@ -138,6 +140,9 @@ def generate_simulation_keys(
     - **Chunking** (`subject_slice` given): the assembled full-population stream is
       sliced to the chunk's global-index window, so a chunk reproduces exactly the
       keys it would get in a single pass.
+    - **Grouping** (`SubjectRows` given): the assembled stream is gathered at the
+      chunk's original rows, so each subject keeps its own row's keys wherever its
+      group places it.
 
     See the JAX documentation for more details:
     https://docs.jax.dev/en/latest/random-numbers.html#random-numbers-in-jax
@@ -148,7 +153,8 @@ def generate_simulation_keys(
         n_initial_states: Number of initial states the simulate dispatch sees
             (the full population, possibly padded for sharding).
         subject_slice: When given, the contiguous global-index slice of the subjects
-            being simulated in this chunk. `None` returns keys for all subjects.
+            being simulated in this chunk, or the original rows of a grouped
+            chunk. `None` returns keys for all subjects.
         original_n_subjects: Number of subjects before per-device padding. Defaults
             to `n_initial_states` (no padding). When smaller, the per-subject split
             is sized to it so real subjects' draws are device-count-invariant.
@@ -159,6 +165,18 @@ def generate_simulation_keys(
           `n_initial_states`, then sliced to `subject_slice` when given).
 
     """
+    if isinstance(subject_slice, SubjectRows):
+        return run_simulation_operation(
+            memory=memory,
+            function=_generate_rowed_simulation_keys,
+            arguments={"key": key, "rows": subject_slice.rows},
+            static_arguments={
+                "names": tuple(names),
+                "n_initial_states": n_initial_states,
+                "original_n_subjects": original_n_subjects,
+                "partitionable": jax.config.jax_threefry_partitionable,
+            },
+        )
     if memory is not None and subject_slice is not None:
         start, width = _validated_chunk_window(
             subject_slice=subject_slice, n_initial_states=n_initial_states
@@ -234,6 +252,27 @@ def _generate_windowed_simulation_keys(
         name: jax.lax.dynamic_slice_in_dim(keys, start, width, axis=0)
         for name, keys in full_keys.items()
     }
+
+
+def _generate_rowed_simulation_keys(
+    *,
+    key: PRNGKeyND,
+    rows: Int[Array, " width"] | np.ndarray,
+    names: tuple[str, ...],
+    n_initial_states: int,
+    original_n_subjects: int | None,
+    partitionable: bool,
+) -> tuple[PRNGKeyND, dict[str, PRNGKeyND]]:
+    """Gather original rows from the identical full split and duplicate-last pad."""
+    next_key, full_keys = _generate_simulation_keys(
+        key=key,
+        names=names,
+        n_initial_states=n_initial_states,
+        original_n_subjects=original_n_subjects,
+        partitionable=partitionable,
+        subject_window=None,
+    )
+    return next_key, {name: keys[rows] for name, keys in full_keys.items()}
 
 
 def _generate_simulation_keys(

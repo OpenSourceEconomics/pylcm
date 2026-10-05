@@ -12,13 +12,14 @@ import pytest
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -42,12 +43,12 @@ def _one_probability() -> ScalarFloat:
 
 def _model_with_process_action(*, enable_jit: bool) -> Model:
     """A target whose `shock` is an action drawn from a process's node set."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_one_probability)},
+                    law={"target": StochasticTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -62,11 +63,11 @@ def _model_with_process_action(*, enable_jit: bool) -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

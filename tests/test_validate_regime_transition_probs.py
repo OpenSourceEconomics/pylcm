@@ -4,6 +4,9 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
 from _lcm.transition_checks import (
     _format_sum_violation,
     _validate_regime_transition_probs,
@@ -17,8 +20,8 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -29,6 +32,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, FloatND, ScalarFloat, ScalarInt
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -252,7 +256,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
     active = UserRegime(
         regime_transitions=until_exit(
             27,
-            law=MarkovTransition(
+            law=_SupportedStochasticTransition(
                 func=_next_regime_only_fails_for_leave, targets=("active", "terminal")
             ),
             exits=("terminal",),
@@ -271,11 +275,11 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"active": active, "terminal": terminal},
-        ages=AgeGrid(start=25, stop=27, step="Y"),
+        ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={25: "active"},
+        initial_nodes={25: "active"},
     )
     params: dict = {"discount_factor": 0.95}
     return model, params
@@ -313,7 +317,7 @@ def test_regime_transition_validation_passes_period_as_int32():
     active = UserRegime(
         regime_transitions=until_exit(
             27,
-            law=MarkovTransition(
+            law=_SupportedStochasticTransition(
                 func=_transition_recording_period, targets=("active", "terminal")
             ),
             exits=("terminal",),
@@ -332,11 +336,11 @@ def test_regime_transition_validation_passes_period_as_int32():
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"active": active, "terminal": terminal},
-        ages=AgeGrid(start=25, stop=27, step="Y"),
+        ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={25: "active"},
+        initial_nodes={25: "active"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -458,21 +462,23 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
     """A coarse stochastic state law is checked at every age its regime is solved.
 
     `solo` is solved only at age 21 and moves to the terminal `term`. The coarse
-    (`target_regime_name is None`) `MarkovTransition` on state `aux` is
+    (`target_regime_name is None`) `StochasticTransition` on state `aux` is
     numerically validated there.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "solo": UserRegime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=21, stop=22): {
-                            "term": MarkovTransition(func=_one_probability)
+                        AgeRange(start=21, exclusive_stop=22): {
+                            "term": StochasticTransition(func=_one_probability)
                         }
                     }
                 ),
                 states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
-                state_transitions={"aux": MarkovTransition(func=_malformed_aux_probs)},
+                state_transitions={
+                    "aux": StochasticTransition(func=_malformed_aux_probs)
+                },
                 constraints={"aux_is_valid": lambda aux: aux >= 0},
                 functions={"utility": _zero_utility},
             ),
@@ -481,11 +487,11 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
                 functions={"utility": _zero_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=_SoloTermRegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={21: "solo"},
+        initial_nodes={21: "solo"},
     )
     flat_params = model._process_params({"discount_factor": 1.0})
     logger = get_logger(log_level="debug")
