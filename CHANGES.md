@@ -24,6 +24,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   toward a target that does not carry it the draw is taken from the source's Markov
   law, with that law's parameters. This requires the law to be declared once for
   every target; a per-target law names no law for a target that lacks the state.
+- When a regime law's probabilities do not sum to one because the law has a cell for
+  a target that the graph gives no edge at that age, the error names each such
+  `(age, source -> target)` cell and says the graph declares no edge for it.
 - A state law that reads `next_<state>` toward a target that neither carries the state
   nor receives a draw of it on that edge is refused when the model is built, naming
   the source, the target, the law and the `next_` argument.

@@ -1,6 +1,7 @@
 """Resolve explicit model topology and bind it to the numerical transition laws."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
@@ -20,7 +21,11 @@ from _lcm.regime_building.transition_support import (
 )
 from lcm.ages import AgeGrid
 from lcm.collective import ValueDependentTransition
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -84,6 +89,20 @@ class ModelGraph:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DroppedCells:
+    """Targets a source's law names at one age without a declared edge."""
+
+    age: object
+    """The source age."""
+    targets: tuple[RegimeName, ...]
+    """The law's targets that have no edge out of the source at that age."""
+
+
+# Keyed by `(source, period)`.
+CellsWithoutEdges = MappingProxyType[tuple[RegimeName, int], DroppedCells]
+
+
+@dataclass(frozen=True, kw_only=True)
 class GraphPreparation:
     """Keep the graph proof and its numerical declarations together."""
 
@@ -97,6 +116,43 @@ class GraphPreparation:
     """Fixed leaves consumed by a removed zero cell."""
     pruned_edges: MappingProxyType[str, MappingProxyType[Edge, str]]
     """Fixed-zero primary edges and their proof reason."""
+    cells_without_edges: CellsWithoutEdges
+    """Law cells binding dropped because the graph declares no edge for them."""
+
+
+@contextmanager
+def naming_cells_without_edges(
+    cells_without_edges: CellsWithoutEdges,
+) -> Iterator[None]:
+    """Name the missing edges when a law's mass falls short because of them.
+
+    A law cell toward a target the graph gives no edge at that age is dropped when
+    the law is bound, so its probability mass is lost. The unit-mass check then
+    fails on the law, while the cause is the graph. When the failing source and
+    period have dropped cells, the error names each `(age, source -> target)` cell;
+    otherwise it is raised unchanged.
+    """
+    try:
+        yield
+    except InvalidRegimeTransitionProbabilitiesError as error:
+        dropped = cells_without_edges.get(
+            getattr(error, "unit_mass_violation", None)  # ty: ignore[invalid-argument-type]
+        )
+        if dropped is None:
+            raise
+        source = error.unit_mass_violation[0]  # ty: ignore[unresolved-attribute]
+        cells = ", ".join(
+            f"(age {dropped.age}, '{source}' -> '{target}')"
+            for target in dropped.targets
+        )
+        msg = (
+            f"{error.mass_detail}\n"  # ty: ignore[unresolved-attribute]
+            f"The regime law of '{source}' at age {dropped.age} has cells for "
+            f"{cells}, but the graph declares no edge for them. Those cells are "
+            "dropped, so their probability mass is missing. Declare these edges "
+            "in `Model(edges=...)`, or give these targets no cell at that age."
+        )
+        raise InvalidRegimeTransitionProbabilitiesError(msg) from error
 
 
 def prepare_graph(
@@ -108,7 +164,9 @@ def prepare_graph(
     fixed_params: UserParams,
 ) -> GraphPreparation:
     """Bind laws, prove fixed zeros, and close physical and value demand."""
-    bound = bind_graph_support(regimes=regimes, edges=edges, ages=ages)
+    bound, cells_without_edges = bind_graph_support(
+        regimes=regimes, edges=edges, ages=ages
+    )
     declarations = MappingProxyType(
         {name: regime.regime_transitions for name, regime in bound.items()}
     )
@@ -142,6 +200,7 @@ def prepare_graph(
         declarations=declarations,
         consumed_param_keys=fixed_support.consumed_param_keys,
         pruned_edges=fixed_zero_edge_reasons(before=before, after=after, ages=ages),
+        cells_without_edges=cells_without_edges,
     )
 
 
@@ -173,13 +232,18 @@ def resolve_graph_edges(
 
 def bind_graph_support(
     *, regimes: Mapping[RegimeName, Regime], edges: GraphEdges, ages: AgeGrid
-) -> MappingProxyType[RegimeName, Regime]:
+) -> tuple[MappingProxyType[RegimeName, Regime], CellsWithoutEdges]:
     """Bind graph-selected probability cells and selector support per source age.
 
     Numerical kernels supply no support. The private tags used by scheduling
     and lowering are derived exclusively from the resolved graph.
+
+    Returns:
+        The graph-bound regimes, and per `(source, period)` the targets whose law
+        cells binding dropped because no edge leads to them at that age.
     """
     result: dict[RegimeName, Regime] = {}
+    dropped: dict[tuple[RegimeName, int], DroppedCells] = {}
     for source, regime in regimes.items():
         if regime.terminal:
             result[source] = regime
@@ -235,6 +299,22 @@ def bind_graph_support(
                         regime_names=tuple(regimes),
                     )
                 sides[side] = cache[key]
+                if isinstance(law, Mapping) and targets[side]:
+                    missing = tuple(
+                        target
+                        for target in regimes
+                        if target in law and target not in targets[side]
+                    )
+                    if missing:
+                        previous = dropped.get((source, period))
+                        dropped[(source, period)] = DroppedCells(
+                            age=age,
+                            targets=tuple(
+                                dict.fromkeys(
+                                    (*(previous.targets if previous else ()), *missing)
+                                )
+                            ),
+                        )
             cases.append(
                 (
                     age,
@@ -253,7 +333,7 @@ def bind_graph_support(
             )
         )
         result[source] = regime.replace(regime_transitions=bound)
-    return MappingProxyType(result)
+    return MappingProxyType(result), MappingProxyType(dropped)
 
 
 def fixed_zero_edge_reasons(
