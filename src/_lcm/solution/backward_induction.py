@@ -21,6 +21,7 @@ import time
 import uuid
 from collections.abc import (
     Callable,
+    Collection,
     Container,
     Hashable,
     Iterable,
@@ -175,6 +176,7 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _states_for_period,
 )
+from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -201,6 +203,12 @@ from _lcm.solution.solve_inputs import (
 )
 from _lcm.solution.solve_phase_records import CallId, nested_phase, solve_phase
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.solution.structural_blueprints import (
+    StructuralBlueprintCache,
+    UncacheableSchemaError,
+    abstract_schema,
+    frozen_policy,
+)
 from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -306,6 +314,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
     period_capture: CaptureContext | None = None,
+    structural_blueprints: StructuralBlueprintCache | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -364,6 +373,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         executable_cache: Executables compiled by earlier solves whose programs
             lower to the same keys, extended by this solve's. `None` compiles
             for this solve only.
+        structural_blueprints: The model's store of immutable structural
+            blueprints, which a warm solve of the same abstract schema binds
+            instead of resolving every program again. `None` resolves afresh.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -449,6 +461,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         executable_cache=ExecutableCache()
         if executable_cache is None
         else executable_cache,
+        structural_blueprints=structural_blueprints,
+        base_state_action_spaces=base_state_action_spaces,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -3549,6 +3563,8 @@ def _prepare_solve_programs(
     logger: logging.Logger,
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
+    structural_blueprints: StructuralBlueprintCache | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
@@ -3611,6 +3627,9 @@ def _prepare_solve_programs(
             retain_all_artifacts=retain_all_artifacts,
             persistable_artifact_refs=persistable_artifact_refs,
             process_grid_resolver=process_grid_resolver,
+            structural_blueprints=structural_blueprints,
+            base_state_action_spaces=base_state_action_spaces,
+            logger=logger,
         )
 
         _fail_if_one_key_covers_two_callables(
@@ -3676,6 +3695,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
     capture_periods: tuple[tuple[str, int], ...] = (),
+    structural_blueprints: StructuralBlueprintCache | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
 ) -> _CompiledPrograms:
     """Resolve every solve program and optionally compile unique lowerings.
 
@@ -3725,6 +3746,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             with other solves whose programs lower to the same keys; a key it
             already holds is not lowered or compiled again. `None` keeps them
             for this solve only.
+        structural_blueprints: The model's store of structural blueprints;
+            `None` resolves every program afresh.
+        base_state_action_spaces: This solve's params-completed state-action
+            spaces, whose abstract schema enters the structural key.
 
     Returns:
         Executable mappings by regime-period, the resolved metadata used by
@@ -3761,6 +3786,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         logger=logger,
         process_grid_resolver=process_grid_resolver,
         call_id=call_id,
+        structural_blueprints=structural_blueprints,
+        base_state_action_spaces=base_state_action_spaces,
     )
     fallback_keys = frontier.fallback_keys
     fallback_donations = frontier.fallback_donations
@@ -5559,7 +5586,7 @@ class _LazyCandidateFrontier:
     donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     lowering_keys: dict[_CoreCandidate, Hashable]
     argument_keys: dict[_CoreTriple, Hashable]
-    transfer_consumers: Mapping[_ConsumerKey, set[_CoreTriple]]
+    transfer_consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]]
     readers_by_dispatch: Mapping[
         tuple[int, RegimeName],
         Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
@@ -5722,7 +5749,7 @@ class _LazyCandidateFrontier:
         return candidate
 
 
-def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
+def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -5740,6 +5767,9 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     process_grid_resolver: ProcessGridResolver | None = None,
+    structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint] | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+    logger: logging.Logger | None = None,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
@@ -5790,6 +5820,115 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
     candidate, whose declared reads and transfer plan no width changes — the
     donation set of every candidate is decided against it, and only then are the
     keys computed, so a key names everything the executable is lowered with.
+
+    The structural part — materialized abstract programs, read plans, layouts,
+    ranked frontiers and the top-ranked candidates — is an immutable
+    `_StructuralBlueprint`. With `structural_blueprints`, a blueprint resolved
+    for the same structural key (see `_structural_key`) is bound instead of
+    resolving every program again. The liveness ledger, the donation decisions,
+    the lowering keys and the candidate frontier are built from the blueprint
+    for every call, and admission runs afterwards on the current inventory.
+    """
+    key = (
+        None
+        if structural_blueprints is None or base_state_action_spaces is None
+        else _structural_key(
+            all_programs=all_programs,
+            program_fingerprint=program_fingerprint,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            base_state_action_spaces=base_state_action_spaces,
+            execution=execution_widths,
+            budgeted=budget_bytes is not None,
+            enable_jit=enable_jit,
+        )
+    )
+    blueprint = (
+        None
+        if key is None or structural_blueprints is None
+        else structural_blueprints.get(key=key)
+    )
+    if blueprint is None:
+        blueprint = _build_structural_blueprint(
+            all_programs=all_programs,
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            budget_bytes=budget_bytes,
+            execution_widths=execution_widths,
+            continuous_sharded_state=continuous_sharded_state,
+            process_grid_resolver=process_grid_resolver,
+        )
+        if key is not None and structural_blueprints is not None:
+            structural_blueprints.put(key=key, blueprint=blueprint)
+    if logger is not None and structural_blueprints is not None:
+        logger.debug(
+            "structural blueprint: %s (hits=%d, misses=%d, entries=%d)",
+            "uncached" if key is None else "stored",
+            structural_blueprints.hits,
+            structural_blueprints.misses,
+            len(structural_blueprints),
+        )
+    return _bind_structural_blueprint(
+        blueprint=blueprint,
+        regimes=regimes,
+        program_fingerprint=program_fingerprint,
+        enable_jit=enable_jit,
+        donate_buffers=donate_buffers,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _StructuralBlueprint:
+    """The immutable, abstract recipe every program of one solve schema resolves to.
+
+    Every tree it holds is abstract: argument and template leaves are shape
+    descriptors carrying their required layout. It holds no concrete array, no
+    liveness ledger, no donation decision and no frontier cursor, so binding it
+    to a later solve of the same structural key reads nothing that solve has to
+    supply afresh.
+    """
+
+    programs: tuple[CoreProgram, ...]
+    """The declarations the recipe was resolved from, kept alive with it."""
+    layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]
+    resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]
+    """The marked top-ranked candidate of every core, in producer order."""
+    internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]
+    frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
+    frontier_lengths: MappingProxyType[_CoreTriple, int]
+    transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
+    representative_metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
+
+
+def _build_structural_blueprint(  # noqa: PLR0915
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    budget_bytes: int | None,
+    execution_widths: ResolvedExecution,
+    continuous_sharded_state: str | None,
+    process_grid_resolver: ProcessGridResolver | None,
+) -> _StructuralBlueprint:
+    """Materialize every program once and bind its top-ranked width candidate.
+
+    Programs are visited so every producer of an internal output is materialized
+    before the consumers that read it. Each program is materialized against the
+    current inputs and immediately replaced by its abstract form, so the
+    blueprint retains shapes, dtypes, weak typing and layouts, never values.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
@@ -5946,6 +6085,56 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
     # One derivation per program group, handed to both the liveness ledger and
     # the resident-bytes walk, so the two read the same declaration facts.
     representative_metadata = _execution_metadata(programs=representatives)
+    return _StructuralBlueprint(
+        programs=tuple(all_programs.values()),
+        layouts=MappingProxyType(layouts),
+        resolved_programs=MappingProxyType(resolved_programs),
+        internal_templates=MappingProxyType(internal_templates),
+        frontiers=MappingProxyType(frontiers),
+        frontier_lengths=MappingProxyType(frontier_lengths),
+        transfer_consumers=MappingProxyType(
+            {key: frozenset(triples) for key, triples in transfer_consumers.items()}
+        ),
+        representative_metadata=representative_metadata,
+    )
+
+
+def _bind_structural_blueprint(
+    *,
+    blueprint: _StructuralBlueprint,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_fingerprint: str,
+    enable_jit: bool,
+    donate_buffers: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
+]:
+    """Build one call's ledger, donations, lowering keys and frontier.
+
+    Every mutable object returned is new: the frontier extends its own copies
+    of the candidate, program and template maps as refusals bind narrower
+    widths, and the blueprint is left untouched for the next call.
+    """
+    layouts = dict(blueprint.layouts)
+    resolved_programs = dict(blueprint.resolved_programs)
+    internal_templates = dict(blueprint.internal_templates)
+    candidates_by_triple = {
+        candidate[0]: [candidate] for candidate in blueprint.resolved_programs
+    }
+    representatives = {
+        candidate[0]: resolved
+        for candidate, resolved in blueprint.resolved_programs.items()
+    }
+    representative_metadata = blueprint.representative_metadata
     input_liveness = _build_planned_input_liveness(
         regimes=regimes,
         program_metadata=representative_metadata,
@@ -5972,9 +6161,9 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
         argument_keys=argument_keys,
     )
     frontier = _LazyCandidateFrontier(
-        frontiers=frontiers,
+        frontiers=blueprint.frontiers,
         candidates_by_triple=candidates_by_triple,
-        frontier_lengths=MappingProxyType(frontier_lengths),
+        frontier_lengths=blueprint.frontier_lengths,
         layouts=layouts,
         resolved_programs=resolved_programs,
         internal_templates=internal_templates,
@@ -5982,7 +6171,7 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
         donations=donations,
         lowering_keys=lowering_keys,
         argument_keys=argument_keys,
-        transfer_consumers=transfer_consumers,
+        transfer_consumers=blueprint.transfer_consumers,
         readers_by_dispatch=readers_by_dispatch,
         input_liveness=input_liveness,
         regimes=regimes,
@@ -6001,6 +6190,82 @@ def _resolve_output_layouts_and_lowering_keys(  # noqa: PLR0915
         representative_metadata,
         frontier,
     )
+
+
+# Budget facts admission reads; the recipe reads only whether a budget applies.
+_ADMISSION_ONLY_EXECUTION_FIELDS = frozenset(
+    {"device_memory_bytes", "requested_device_memory_bytes", "device_pool_limit_bytes"}
+)
+
+
+def _structural_key(
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    program_fingerprint: str,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: Mapping[_EdgeKey, FloatND],
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    execution: ResolvedExecution,
+    budgeted: bool,
+    enable_jit: bool,
+) -> Hashable | None:
+    """Return the key a solve's structural blueprint is stored under, if certified.
+
+    Only built-in GridSearch programs are certified: their argument builder
+    reads the state-action space, the value templates, the parameters, the
+    period and the age grid, and nothing else, so its abstract output follows
+    from the abstract schema of those inputs. A graph holding any other builder
+    returns `None` and is resolved afresh on every call.
+
+    The key opens with the sealed model identity and the exact declarations of
+    the selected programs, then the abstract schema of every input the builder
+    reads — tree structure, shape, canonical dtype, weak typing, commitment and
+    sharding — the execution policy except the budget value, whether a budget
+    applies, JIT and the precision mode. Parameter values never enter: a value
+    that fixes a support, a shape or a compile-closed grid is already part of
+    the sealed identity or of the state-action space schema.
+    """
+    if not all(
+        type(program.argument_builder) is _GridSearchArgumentBuilder
+        for program in all_programs.values()
+    ):
+        return None
+    try:
+        return (
+            ("pylcm-structural-blueprint", 1),
+            program_fingerprint,
+            tuple((triple, id(program)) for triple, program in all_programs.items()),
+            abstract_schema(flat_params),
+            abstract_schema(ages.values),
+            abstract_schema(next_regime_to_V_arr),
+            abstract_schema(next_regime_to_continuation),
+            abstract_schema(next_edge_to_V_arr),
+            abstract_schema(
+                {
+                    name: (
+                        space.states,
+                        space.discrete_actions,
+                        space.continuous_actions,
+                    )
+                    for name, space in base_state_action_spaces.items()
+                }
+            ),
+            frozen_policy(
+                {
+                    field.name: getattr(execution, field.name)
+                    for field in dataclasses.fields(execution)
+                    if field.name not in _ADMISSION_ONLY_EXECUTION_FIELDS
+                }
+            ),
+            budgeted,
+            enable_jit,
+            bool(jax.config.jax_enable_x64),
+        )
+    except UncacheableSchemaError:
+        return None
 
 
 def _value_axis_names(
@@ -6163,7 +6428,7 @@ def _transfer_consumer_counts(
 def _apply_transfer_marks(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    consumers: Mapping[_ConsumerKey, set[_CoreTriple]],
+    consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]],
 ) -> dict[_CoreCandidate, ResolvedCoreProgram]:
     """Write a census of shared transfer results onto each candidate's plan."""
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}

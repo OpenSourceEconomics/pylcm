@@ -46,6 +46,7 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _N_WEALTH = 3
@@ -271,7 +272,7 @@ def _model(
 ) -> Model:
     """Build the regression regime with its solver replaced by the scalar edge."""
     last_age = START_AGE + _N_PERIODS - 2
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(last_age=last_age + 1),
@@ -288,11 +289,11 @@ def _model(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=last_age + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=last_age + 1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=True,
         execution_config=execution_config,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

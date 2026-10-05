@@ -76,7 +76,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -98,7 +98,7 @@ _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
 # Nodes: linspace(mu - n_std*sigma, mu + n_std*sigma, n_points) = [-1, 0, 1].
 _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=1.0)
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 _REGIME_NAMES_TO_IDS = MappingProxyType(
     {
         "single_f": jnp.int32(0),
@@ -178,9 +178,9 @@ def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(

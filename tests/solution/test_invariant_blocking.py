@@ -27,7 +27,7 @@ from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -102,6 +102,12 @@ def _next_wealth(
     return wealth - consumption
 
 
+def _next_interior_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return 0.75 * (wealth - consumption)
+
+
 def _affordable(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= wealth
 
@@ -111,7 +117,10 @@ def _next_sector(*, sector: DiscreteState) -> DiscreteState:
 
 
 def _sector_model(
-    *, typed_terminal: bool, execution_config: ExecutionConfig | None = None
+    *,
+    typed_terminal: bool,
+    execution_config: ExecutionConfig | None = None,
+    interpolate_continuation: bool = False,
 ) -> Model:
     """A model whose `pref_type` axis follows a moving discrete `sector` axis.
 
@@ -119,15 +128,15 @@ def _sector_model(
     continuation read selects one type's block. Without it, the terminal value
     is type-free and every reader shares it whole.
     """
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
     last_age = ages.exact_values[-1]
     working = Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(func=lambda: _RegimeId.working, targets=("working",)),
-            then=Choose(func=lambda: _RegimeId.terminal, targets=("terminal",)),
+            law=DeterministicTransition(func=lambda: _RegimeId.working),
+            then=DeterministicTransition(func=lambda: _RegimeId.terminal),
         ),
         # `sector` is declared first, so it leads the discrete axes and
         # `pref_type` is the second value axis.
@@ -139,7 +148,9 @@ def _sector_model(
         state_transitions={
             "sector": _next_sector,
             "pref_type": fixed_transition("pref_type"),
-            "wealth": _next_wealth,
+            "wealth": (
+                _next_interior_wealth if interpolate_continuation else _next_wealth
+            ),
         },
         actions={"consumption": wealth},
         functions={"utility": _sector_utility},
@@ -156,9 +167,15 @@ def _sector_model(
     )
     return Model(
         regimes={"working": working, "terminal": terminal},
+        edges={
+            "working": {
+                "working": tuple(ages.exact_values[:-2]),
+                "terminal": (ages.exact_values[-2],),
+            }
+        },
         ages=ages,
         regime_id_class=_RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
         execution_config=execution_config or ExecutionConfig(),
     )
 
@@ -189,9 +206,10 @@ def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     model = independent_types.get_model()
     return Model(
         regimes=model.user_regimes,
+        edges=model.graph.edges,
         ages=model.ages,
         regime_id_class=independent_types.RegimeId,
-        initial_regimes={model.ages.exact_values[0]: "working"},
+        initial_nodes={model.ages.exact_values[0]: "working"},
         execution_config=execution_config,
     )
 
@@ -309,6 +327,99 @@ def test_blocked_simulation_equals_the_unblocked_panel() -> None:
     ]
 
     grouped_simulation._assert_general_panels_agree(got=results[0], want=results[1])
+
+
+@pytest.mark.parametrize("typed_terminal", [False, True])
+def test_blocked_solve_preserves_values_with_between_grid_continuations(
+    *,
+    typed_terminal: bool,
+) -> None:
+    """Interpolated continuation values agree within eight representable steps."""
+    params = _sector_params(typed_terminal=typed_terminal)
+    model = _sector_model(
+        typed_terminal=typed_terminal,
+        execution_config=_blocked(),
+        interpolate_continuation=True,
+    )
+    reference = _sector_model(
+        typed_terminal=typed_terminal, interpolate_continuation=True
+    )
+    next_wealth = _next_interior_wealth(
+        wealth=jnp.asarray(1.0), consumption=jnp.asarray(0.0)
+    )
+    wealth_state = reference.user_regimes["terminal"].states["wealth"]
+    assert isinstance(wealth_state, LinSpacedGrid)
+    wealth_grid = np.asarray(wealth_state.to_jax())
+    np.testing.assert_array_equal(next_wealth, 0.75)
+    assert wealth_grid[0] < next_wealth < wealth_grid[1]
+    got = _values(model=model, params=params)
+    expected = _values(model=reference, params=params)
+
+    assert {period: tuple(regimes) for period, regimes in got.items()} == {
+        period: tuple(regimes) for period, regimes in expected.items()
+    }
+    for period, regimes in expected.items():
+        for regime, value in regimes.items():
+            got_array = np.asarray(got[period][regime])
+            expected_array = np.asarray(value)
+            assert (got_array.dtype, got_array.shape) == (
+                expected_array.dtype,
+                expected_array.shape,
+            )
+            np.testing.assert_array_max_ulp(got_array, expected_array, maxulp=8)
+
+
+@pytest.mark.parametrize("typed_terminal", [False, True])
+def test_blocked_simulation_preserves_structure_with_between_grid_continuations(
+    *,
+    typed_terminal: bool,
+) -> None:
+    """Off-grid continuation reads preserve every state, action and regime path."""
+    initial_conditions = {
+        "regime_id": jnp.full(2 * _N_TYPES, _RegimeId.working),
+        "age": jnp.zeros(2 * _N_TYPES),
+        "wealth": jnp.asarray(np.tile([2.0, 7.0], _N_TYPES)),
+        "pref_type": jnp.repeat(jnp.arange(_N_TYPES, dtype=jnp.int32), 2),
+        "sector": jnp.tile(jnp.arange(2, dtype=jnp.int32), _N_TYPES),
+    }
+    frames = [
+        _sector_model(
+            typed_terminal=typed_terminal,
+            execution_config=config,
+            interpolate_continuation=True,
+        )
+        .simulate(
+            params=_sector_params(typed_terminal=typed_terminal),
+            initial_conditions=initial_conditions,
+            seed=0,
+            log_level="off",
+        )
+        .to_dataframe()
+        .drop(columns="value")
+        for config in (_blocked(), ExecutionConfig())
+    ]
+
+    assert frames[0].equals(frames[1])
+    wealth_state = (
+        _sector_model(typed_terminal=typed_terminal)
+        .user_regimes["terminal"]
+        .states["wealth"]
+    )
+    assert isinstance(wealth_state, LinSpacedGrid)
+    wealth_grid = np.asarray(wealth_state.to_jax())
+    for frame in frames:
+        realized_wealth = frame.loc[frame["period"] > 0, "wealth"].to_numpy()
+        assert np.any(
+            (wealth_grid[0] < realized_wealth)
+            & (realized_wealth < wealth_grid[-1])
+            & ~np.isin(realized_wealth, wealth_grid)
+        )
+    for column in frames[0]:
+        if frames[0][column].dtype.kind == "f":
+            assert (
+                frames[0][column].to_numpy().tobytes()
+                == frames[1][column].to_numpy().tobytes()
+            )
 
 
 def test_block_programs_keep_the_original_type_codes() -> None:
@@ -616,12 +727,10 @@ def _two_carrier_regime(*, stay: str) -> Regime:
     return Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=2,
-            law=Choose(
-                func=_stay_left if stay == "left" else _stay_right, targets=(stay,)
+            law=DeterministicTransition(
+                func=_stay_left if stay == "left" else _stay_right
             ),
-            then=Choose(
-                func=lambda: _TwoCarrierRegimeId.terminal, targets=("terminal",)
-            ),
+            then=DeterministicTransition(func=lambda: _TwoCarrierRegimeId.terminal),
         ),
         states={"pref_type": pref_type, "wealth": wealth},
         state_transitions={
@@ -636,8 +745,9 @@ def _two_carrier_regime(*, stay: str) -> Regime:
 
 def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
     """Two type-carrying regimes read one typed terminal in the same period."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     return Model(
+        edges={name: {name: (0,), "terminal": (1,)} for name in ("left", "right")},
         regimes={
             "left": _two_carrier_regime(stay="left"),
             "right": _two_carrier_regime(stay="right"),
@@ -654,7 +764,7 @@ def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
         },
         ages=ages,
         regime_id_class=_TwoCarrierRegimeId,
-        initial_regimes={0: ("left", "right")},
+        initial_nodes={0: ("left", "right")},
         execution_config=execution_config,
     )
 

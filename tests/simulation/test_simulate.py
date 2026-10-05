@@ -20,12 +20,10 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     LinearAggregator,
     LinearExpectation,
-    Model,
 )
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
-    _coerce_jax_scalar_for_arrow,
     _collect_array_tree_leaf_sizes,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
@@ -39,11 +37,12 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 @pytest.fixture
 def simulate_inputs():
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     final_age_alive = 0
     updated_working_life = working_life.replace(
         actions={
@@ -144,7 +143,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         }
         stop_age = START_AGE + n_periods - 1
         final_age_alive = stop_age - 1
-        ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
+        ages = AgeGrid(start=START_AGE, inclusive_stop=stop_age, step="Y")
         updated_working_life = working_life.replace(
             functions=updated_functions,
             regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
@@ -152,11 +151,11 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
-        model = Model(
+        model = with_fixture_graph(
             regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
-            initial_regimes={ages.exact_values[0]: "working_life"},
+            initial_nodes={ages.exact_values[0]: "working_life"},
         )
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model
@@ -681,7 +680,7 @@ def test_save_overwrites_existing_output_directory(tmp_path: Path):
     assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
-def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
+def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path) -> None:
     """`save(directory=...)` writes a `simulated_data.arrow` file at the directory root.
 
     The file's contents read back via `pd.read_feather` must match
@@ -702,23 +701,14 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
         },
     )
 
-    # Capture the expected frame before save; `save` releases device-pinned
-    # state including `self._regimes`, so `to_dataframe` won't work post-save.
-    # Apples-to-apples: write the expected frame to feather using the same
-    # JAX-scalar coercion that `save` applies, then read both sides back.
-    # That isolates pyarrow's type-promotion / null-representation rules
-    # from the round-trip contract under test.
-    expected = result.to_dataframe(use_labels=True).map(_coerce_jax_scalar_for_arrow)
+    expected = result.to_dataframe(use_labels=True)
 
     save_dir = tmp_path / "result"
     result.save(directory=save_dir)
     arrow_path = save_dir / "simulated_data.arrow"
     assert arrow_path.is_file()
 
-    expected_path = tmp_path / "expected.arrow"
-    expected.to_feather(expected_path)
-
-    assert_frame_equal(pd.read_feather(arrow_path), pd.read_feather(expected_path))
+    assert_frame_equal(pd.read_feather(arrow_path), expected, check_exact=True)
 
 
 def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):

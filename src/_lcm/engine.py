@@ -1188,7 +1188,7 @@ class SimulationPhase:
 class _StochasticStateTransition:
     """Metadata for a stochastic state transition, used by automatic validation.
 
-    One entry exists for every `MarkovTransition` state — for each target of a
+    One entry exists for every `StochasticTransition` state — for each target of a
     per-target dict, and for each phase variant of a `Phased` law. The pre-solve
     state-transition validator consumes these to evaluate the function on the
     regime's grid Cartesian product and check that the output has the expected
@@ -1202,13 +1202,13 @@ class _StochasticStateTransition:
     """
 
     func: Callable[..., FloatND]
-    """The `MarkovTransition`'s wrapped function."""
+    """The `StochasticTransition`'s wrapped function."""
 
     state_name: StateName
     """Name of the state being transitioned."""
 
     target_regime_name: RegimeName | None
-    """Target regime for per-target dicts; `None` for a plain `MarkovTransition`."""
+    """Target regime for per-target dicts; `None` for a plain `StochasticTransition`."""
 
     n_outcomes: int
     """Size of the outcome axis (always the last axis of the function output)."""
@@ -1260,7 +1260,7 @@ class Regime:
     ]
     """Immutable mapping of qualified transition name to validation metadata.
 
-    Populated for every `MarkovTransition` state transition. Per-target
+    Populated for every `StochasticTransition` state transition. Per-target
     dict entries appear under qualified names like `next_health__working`.
     Empty for terminal regimes and for regimes whose state transitions
     are all deterministic.

@@ -13,14 +13,15 @@ from lcm import (
     categorical,
 )
 from lcm.collective import (
-    MarkovTransition,
     ProjectedRegimeValue,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
 )
 from lcm.regime import Regime
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _BETA = 0.9
@@ -75,7 +76,7 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
             1,
             law={
                 "stateless_target": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_one),
+                    probability=StochasticTransition(func=_prob_one),
                     gate=gate,
                     routes={
                         "only": StakeholderRoute(
@@ -101,17 +102,17 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
         regime_transitions=None,
         functions={"utility": _u_stateless_fallback},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "src": src,
             "stateless_target": stateless_target,
             "stateless_fallback": stateless_fallback,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "src"},
+        initial_nodes={0: "src"},
     )
 
 

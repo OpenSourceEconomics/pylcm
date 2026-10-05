@@ -23,7 +23,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from _lcm.utils.logging import LogLevel
-from lcm import CollectiveUtility, DiscreteGrid, MarkovTransition, Model, Regime
+from lcm import CollectiveUtility, DiscreteGrid, Model, Regime, StochasticTransition
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     ContinuousState,
@@ -42,6 +42,7 @@ from tests.collective_fixtures import (
     Work,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import choose_among, until_exit
 
 # The stakeholders every collective regime in this module carries, wife first.
@@ -176,7 +177,7 @@ def _build_single_target_model(
     """
     return _build_model(
         regime_transitions={
-            "couple_terminal": MarkovTransition(func=_target_probability)
+            "couple_terminal": StochasticTransition(func=_target_probability)
         },
         household=household,
         stakeholder=stakeholder,
@@ -206,8 +207,8 @@ def _build_two_target_model(
     """
     return _build_model(
         regime_transitions={
-            "couple": MarkovTransition(func=_stay_probability),
-            "couple_terminal": MarkovTransition(func=_leave_probability),
+            "couple": StochasticTransition(func=_stay_probability),
+            "couple_terminal": StochasticTransition(func=_leave_probability),
         },
         household=household,
         stakeholder=stakeholder,
@@ -217,7 +218,7 @@ def _build_two_target_model(
 
 def _build_model(
     *,
-    regime_transitions: Mapping[RegimeName, MarkovTransition],
+    regime_transitions: Mapping[RegimeName, StochasticTransition],
     household: tuple[str, ...] | None,
     stakeholder: str,
     source_ends_at_age: int,
@@ -256,11 +257,11 @@ def _build_model(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 

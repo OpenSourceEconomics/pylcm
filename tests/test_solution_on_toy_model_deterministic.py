@@ -9,12 +9,13 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -27,6 +28,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -96,7 +98,9 @@ alive_deterministic = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    regime_transitions=Choose(func=next_regime, targets=("dead",)),
+    regime_transitions=_SupportedDeterministicTransition(
+        func=next_regime, targets=("dead",)
+    ),
 )
 
 dead = UserRegime(
@@ -220,7 +224,9 @@ def matrix_to_dict_of_vectors(*, arr, col_names):
 
 
 THREE_PERIOD_TRANSITIONS = until_exit(
-    2, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+    2,
+    law=_SupportedDeterministicTransition(func=next_regime, targets=("alive", "dead")),
+    exits=("dead",),
 )
 
 
@@ -233,12 +239,12 @@ def dict_of_vectors_to_matrix(d):
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_solve(*, discount_factor, n_wealth_points):
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": alive_deterministic.replace(
                 states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
@@ -247,7 +253,7 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {
@@ -284,12 +290,12 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_simulate(*, discount_factor, n_wealth_points):
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": alive_deterministic.replace(
                 states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
@@ -298,7 +304,7 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
     params_alive = {

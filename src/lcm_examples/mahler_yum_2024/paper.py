@@ -48,9 +48,9 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     affine_breakpoint,
     fixed_transition,
     piecewise_affine,
@@ -70,6 +70,7 @@ from lcm.typing import (
 )
 from lcm_examples.mahler_yum_2024 import (
     _WEALTH_GRID_POINTS,
+    MODEL_EDGES,
     RETIREMENT_TRANSITIONS,
     WORKING_TRANSITIONS,
     DiscountType,
@@ -300,7 +301,7 @@ def build_working_regime(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=next_health),
+            "health": StochasticTransition(func=next_health),
             "lagged_effort": next_lagged_effort,
             "education": fixed_transition("education"),
             "productivity": fixed_transition("productivity"),
@@ -363,7 +364,7 @@ def build_retirement_regime(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": MarkovTransition(func=next_health),
+            "health": StochasticTransition(func=next_health),
             "lagged_effort": next_lagged_effort,
             "education": fixed_transition("education"),
             "health_type": fixed_transition("health_type"),
@@ -470,6 +471,7 @@ def create_mahler_yum_model(
         )
         raise ValueError(msg)
     return Model(
+        edges=MODEL_EDGES,
         regimes={
             "working": build_working_regime(outer_search=outer_search),
             "retirement": build_retirement_regime(outer_search=outer_search),
@@ -477,7 +479,7 @@ def create_mahler_yum_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
         enable_jit=enable_jit,
         execution_config=execution_config,
         fixed_params={

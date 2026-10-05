@@ -14,6 +14,7 @@ import pytest
 
 from _lcm.execution.execution_plan import (
     CorePlanRecord,
+    count_hlo_collectives,
     summarize_transfer_costs,
 )
 from _lcm.execution.value_transfer import TransferCost, TransferOperationClass
@@ -23,6 +24,54 @@ from lcm.solver_api import SolutionResult
 from lcm_examples import tiny
 
 _FULL = 2**30
+
+
+@pytest.mark.parametrize(
+    "opcode",
+    [
+        "all-gather",
+        "all-reduce",
+        "all-to-all",
+        "reduce-scatter",
+        "collective-permute",
+        "collective-broadcast",
+    ],
+)
+@pytest.mark.parametrize("result_type", ["f32[4]{0}", "(f32[4]{0}, f32[4]{0})"])
+def test_collective_counts_include_array_and_tuple_results(
+    *, opcode: str, result_type: str
+) -> None:
+    """Count each synchronous collective once regardless of its result type."""
+    hlo_text = f"%operation.2 = {result_type} {opcode}(%argument), channel_id=1"
+
+    assert dict(count_hlo_collectives(hlo_text=hlo_text)) == {opcode: 1}
+
+
+def test_collective_counts_include_start_without_counting_done_twice() -> None:
+    """An asynchronous tuple-result collective contributes one operation."""
+    hlo_text = (
+        "%started = (f32[4]{0}, f32[4]{0}) all-reduce-start(%argument)\n"
+        "%finished = f32[4]{0} all-reduce-done(%started)\n"
+        "%other = f32[4]{0} all-reduce(%argument)\n"
+    )
+
+    assert dict(count_hlo_collectives(hlo_text=hlo_text)) == {"all-reduce": 2}
+
+
+@pytest.mark.parametrize(
+    "hlo_text",
+    [
+        None,
+        "",
+        "%copy = f32[4]{0} copy(%argument)",
+        "%gather = f32[4]{0} gather(%argument)",
+    ],
+)
+def test_collective_counts_are_empty_without_collective_operations(
+    hlo_text: str | None,
+) -> None:
+    """Unavailable text and modules with no collectives have empty counts."""
+    assert dict(count_hlo_collectives(hlo_text=hlo_text)) == {}
 
 
 class _PlanRecords(logging.Handler):
@@ -44,7 +93,8 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=tiny.RegimeId,
-        initial_regimes={model.ages.exact_values[0]: "working_life"},
+        initial_nodes={model.ages.exact_values[0]: "working_life"},
+        edges=model.graph.edges,
         execution_config=execution_config,
     )
 

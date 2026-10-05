@@ -36,10 +36,11 @@ def _model(*, enable_jit: bool = True) -> Model:
     """Return the typed life cycle with block-major execution."""
     model = life_cycle._model(typed_dead=True)
     return Model(
+        edges=model.graph.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
         execution_config=lifetime._config(
             schedule=InvariantBlockSchedule.BLOCK_MAJOR, subject_width=3
         ),

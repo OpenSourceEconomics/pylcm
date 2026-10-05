@@ -11,11 +11,13 @@ import pandas as pd
 import pytest
 
 from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKind
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation import value_reads
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -25,6 +27,7 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.skipif(
@@ -48,12 +51,12 @@ class _RegimeId:
 
 def _model(*, devices: tuple[int, ...]) -> Model:
     """Keep economic grids and state order identical in both placements."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=until_exit(
                     2,
-                    law=Choose(
+                    law=_SupportedDeterministicTransition(
                         func=lambda age: jax.numpy.where(
                             age < 1, _RegimeId.working, _RegimeId.retired
                         ),
@@ -80,14 +83,14 @@ def _model(*, devices: tuple[int, ...]) -> Model:
         },
         states={"kind": DiscreteGrid(_Kind)},
         state_transitions={"kind": fixed_transition("kind")},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(
             devices=devices,
             sharded_states=("kind",),
             axis_widths={"subject": 16},
         ),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

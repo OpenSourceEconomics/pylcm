@@ -19,12 +19,12 @@ from lcm import (
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     SimulationResult,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -32,6 +32,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import SolutionResult
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -72,7 +73,7 @@ def _model(
     latent_law = (
         {
             "end": ValueDependentTransition(
-                probability=MarkovTransition(func=_probability),
+                probability=StochasticTransition(func=_probability),
                 gate=_gate,
                 routes={
                     "only": StakeholderRoute(
@@ -94,11 +95,11 @@ def _model(
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
-    return Model(
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regimes=regimes,
         regime_id_class=DormantId,
-        initial_regimes={0: ("main", "latent") if promote else "main"},
+        initial_nodes={0: ("main", "latent") if promote else "main"},
         enable_jit=True,
         execution_config=(
             ExecutionConfig(

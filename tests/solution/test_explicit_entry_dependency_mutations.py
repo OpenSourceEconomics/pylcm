@@ -15,15 +15,16 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -120,10 +121,12 @@ def test_explicit_entry_feeds_another_explicit_entry(
     target_states = _ordered(
         items=[("shock", _process()), ("other", _process())], reverse=reverse
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
@@ -134,11 +137,11 @@ def test_explicit_entry_feeds_another_explicit_entry(
                 functions={"utility": _two_process_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     params = {
         "source": {
@@ -167,7 +170,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
     state_transitions = _ordered(
         items=[
             ("shock", {"target": _enter_shock}),
-            ("good", {"target": MarkovTransition(func=_good_probs)}),
+            ("good", {"target": StochasticTransition(func=_good_probs)}),
         ],
         reverse=reverse,
     )
@@ -175,10 +178,12 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         items=[("shock", _process()), ("good", DiscreteGrid(category_class=Good))],
         reverse=reverse,
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
@@ -188,11 +193,11 @@ def test_explicit_entry_feeds_stochastic_weight_law(
                 functions={"utility": _good_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     params = {
         "source": {
@@ -236,10 +241,12 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         ],
         reverse=reverse,
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
@@ -249,11 +256,11 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
                 functions={"utility": _wealth_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     params = {
         "source": {

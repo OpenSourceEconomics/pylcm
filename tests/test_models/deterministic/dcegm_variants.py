@@ -35,6 +35,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
+from tests.test_models.graph import with_fixture_graph
 
 # Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
 # the original `consumption <= wealth` constraint. This is the number the regime
@@ -129,9 +130,9 @@ def get_retirement_only_model(
     """Build the two-regime retirement model for the requested solver."""
     if solver == "brute_force":
         return retirement_only.get_model(n_periods)
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    return Model(
+    return with_fixture_graph(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(
@@ -142,7 +143,7 @@ def get_retirement_only_model(
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -161,7 +162,7 @@ def get_full_model(
     """
     if solver == "brute_force":
         return base.get_model(n_periods)
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     dcegm_solver = (
         DCEGM_SOLVER
@@ -169,6 +170,27 @@ def get_full_model(
         else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
+        edges={
+            "working_life": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {
+                        "working_life": tuple(ages.exact_values[:-2]),
+                        "retirement": tuple(ages.exact_values[:-2]),
+                    }
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+            "retirement": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {"retirement": tuple(ages.exact_values[:-2])}
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+        },
         regimes={
             "working_life": dcegm_working_life.replace(
                 regime_transitions=base.working_life_transitions(last_age=last_age),
@@ -182,7 +204,10 @@ def get_full_model(
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes=(
+            (ages.exact_values[0], "working_life"),
+            (ages.exact_values[0], "retirement"),
+        ),
     )
 
 

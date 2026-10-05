@@ -13,6 +13,7 @@ import pytest
 from lcm import AgeGrid, Model, OuterContinuousMargin, outer_unchanged
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
+from tests.test_models.graph import with_fixture_graph
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 _FINAL_AGE_ALIVE = 20 + (negm_kinked_toy.N_PERIODS - 2) * 5
@@ -30,7 +31,7 @@ def _model(*, no_adjustment: str) -> Model:
     functions = dict(alive.functions)
     if no_adjustment != outer_unchanged:
         functions[no_adjustment] = keep_illiquid
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": alive.replace(
                 functions=functions,
@@ -45,10 +46,10 @@ def _model(*, no_adjustment: str) -> Model:
         },
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=AgeGrid(
-            start=20, stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
+            start=20, inclusive_stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
         ),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

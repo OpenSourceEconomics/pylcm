@@ -11,18 +11,22 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -52,13 +56,13 @@ def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
             cases={
-                AgeRange(stop=2): {
-                    "retired": MarkovTransition(
+                AgeRange(exclusive_stop=2): {
+                    "retired": StochasticTransition(
                         func=lambda age, hazard: (
                             1.0 - _prob_dead(age=age, hazard=hazard)
                         )
                     ),
-                    "dead": MarkovTransition(func=_prob_dead),
+                    "dead": StochasticTransition(func=_prob_dead),
                 }
             }
         ),
@@ -84,8 +88,8 @@ def _retired_regime() -> UserRegime:
     return UserRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=3): {
-                    "dead": MarkovTransition(func=_certain_death),
+                AgeRange(exclusive_stop=3): {
+                    "dead": StochasticTransition(func=_certain_death),
                 }
             }
         ),
@@ -99,7 +103,7 @@ def _retired_regime() -> UserRegime:
 
 
 def _build_model(work: UserRegime) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "work": work,
             "retired": _retired_regime(),
@@ -107,9 +111,9 @@ def _build_model(work: UserRegime) -> Model:
                 regime_transitions=None, functions={"utility": lambda: 0.0}
             ),
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
     )
 
 
@@ -180,11 +184,11 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         functions={"utility": lambda wealth: 0.1 * wealth},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
     )
     params = {
         "work": {
@@ -255,7 +259,7 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
     work = _work_regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=2): MarkovTransition(
+                AgeRange(exclusive_stop=2): _SupportedStochasticTransition(
                     func=_prob_vector, targets=("retired", "dead")
                 )
             }

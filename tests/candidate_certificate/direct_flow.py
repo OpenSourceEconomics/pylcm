@@ -337,11 +337,11 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "9644d462fbd637cd7fa2623df580632fb68723a0a4e9ddff826ca74ee7bc8740",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
-    SUPPORT_FINGERPRINT_SOURCE: "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677",
+    SUPPORT_FINGERPRINT_SOURCE: "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114",
     UNIFORM_PROCESS_GRID_SOURCE: "03d7ac9a101a1c39c19b44df40d7bbc59203d361ca313b8b8812b1db392dcf96",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
@@ -372,7 +372,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e",
+    NBEGM_SOURCE: "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -402,7 +402,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
-    PROCESSING_SOURCE: "d6b3eda5b281bd7b466f501db2f6940d214d988ae0bdfda47a582fa2d780a051",
+    PROCESSING_SOURCE: "6df5dade856af5e5e2efa746cc34b3bdeb783d2ff28c71d253b6edda441d0565",
     GRID_SEARCH_SOURCE: "c7a276237aa612e81f3a06ae280e9b1d5c33b5112ff07d30e5263e3a750f3637",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -415,30 +415,30 @@ _SOURCE_SEALS = {
     DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
-    ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
+    ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
-    PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "c6953fa33c4300d9f262a8ac767b10c5416df18758d65f3edced6ad8f01aecfd",
+    PROBABILITY_SOURCE: "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0",
+    ENGINE_SOURCE: "2857da7099eca2bc75133bf760679ee175da084af52f4b02dcb795e400b5ce7f",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "e1370acf7cad711bf4cbd0005c47fda9827fdfa8ebeff09cb6c9d1d7ace515a8",
+    MODEL_SOURCE: "750b1edd97c5e2b6cc35fe7979ff316d06eac30390924d543c35e50d4280cffa",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "1e0e80370e293cf23583db8ea001865d6d6346b5b149d466447be1c29291fc34",
+    BACKWARD_INDUCTION_SOURCE: "3ec2e84a89446d7e7f1bb0606884626dd2b6d13348eda34538f0a220f554829d",
     PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
-    INITIAL_CONDITIONS_SOURCE: "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4",
-    RESULT_SOURCE: "fe2ccc2b23b40f346088ea66310c9b43bedbc351b549882baafe7ef3fb91e5eb",
+    INITIAL_CONDITIONS_SOURCE: "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90",
+    RESULT_SOURCE: "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "f755c4a35a8ef395d2990d08e725f999a2deb4aff803df5940edbf3e1c4ccd2e",
-    FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
+    FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
     SOLUTION_CONTRACT_SOURCE: "f4495a539c00cb8ef88750aae9e059424ce320fff0194dcd74d51ea961e6dc94",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
-    DISCRETE_GRID_SOURCE: "eae40c1da0344d222768fe42cc905bde6e79b86c186b13c86bfc1605e6727ebe",
+    DISCRETE_GRID_SOURCE: "b3bda092808d4a42f94a372e28d569eb95d330c6f6a05aae64eb9353b38c13df",
     CONTINUOUS_GRID_SOURCE: "8c395b9388f9f040656ac5303e25b20caa33ea6bebe1b5b41b7b5e01d551b5b7",
     PIECEWISE_GRID_SOURCE: "dd4f5444c3186c40973e4b2d9a283f240cf54ff2cda3ed14172b96d653dce5b5",
     PROCESSES_INIT_SOURCE: "fbce6ed4c889cf4c30f5242c142b4dcf2fa9e186b75cd17be1557f827abff00a",
@@ -446,12 +446,12 @@ _SOURCE_SEALS = {
     PROCESS_IID_SOURCE: "2023a7010fc720877c176bffa70f846e8eae260c649af8bb994c484a52b4e8c1",
     PROCESS_AR1_SOURCE: "ea9235cfde4494f962f015fcbf443328b1802f6b97e9afab807c1bf160f59171",
     VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095",
     PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58",
-    MODEL_PROCESSING_SOURCE: "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a",
+    PANDAS_UTILS_SOURCE: "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c",
+    MODEL_PROCESSING_SOURCE: "4410e68ccd52f54ba5217d393015b8bbc06f7a434c5e8fbeba7a4bde9f9595dd",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3348,18 +3348,18 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "de1a7c3081d8afd9bd33b33f0a34962c968fbeaca0c464d8283b6761af772aa6",
+            "a14c6db19e7fec17a34db339883d79769e907f6aa996d40a0077a889c59da976",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
+                "Model.__init__": "fdae6a9973d9b94534db87ee1b543f4fc121d1022c2129f47a4dc41706dc80ae",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "39ce7d42cf3e374881d09bc35274389dcbc21dcb02c4a28e4ea82e24a458fdd9",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
-                "Model._solve_compiled": "40fd81f73833f9c017f6ca9ed8041dd9844ed62b169c82dedb0f61f7a5035be1",
+                "Model._solve_compiled": "d8884c7367c4c310e1f6d81954f37f3f7258a9cc7ead2e401061698c8e3cab44",
                 "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
                 "Model._process_params": "955131a77406adb4e76ff4ebf53cddcd14f7c4063051c80b3eb874001db6147a",
@@ -3399,9 +3399,9 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # admitted writer used by ordinary inputs. Recursion keeps that writer and
     # completed leaves stay owned until the complete mapping is published.
     PANDAS_UTILS_SOURCE: (
-        "598502e34b44650f31bd20b497e6bf99657d01d15c9d47d50f8f04ebbd66a098",
+        "62dd02e0fcac92fbc04c37d56668bc4d5670902703a9aefedc7db67a7803245c",
         {
-            "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
+            "initial_conditions_from_dataframe": "c51e33317040628594886e078c77fd87a9d1d86c20b05f1d7d9921cf3741de17",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
             "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
             "convert_series_in_params": "30530b016415924c609dd56f200289643f3ea9dd506d104742a2e30e1889f78c",
@@ -4001,12 +4001,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "de1a7c3081d8afd9bd33b33f0a34962c968fbeaca0c464d8283b6761af772aa6",
+        "a14c6db19e7fec17a34db339883d79769e907f6aa996d40a0077a889c59da976",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
+            "Model.__init__": "fdae6a9973d9b94534db87ee1b543f4fc121d1022c2129f47a4dc41706dc80ae",
             "Model.simulate": "39ce7d42cf3e374881d09bc35274389dcbc21dcb02c4a28e4ea82e24a458fdd9",
         },
     ),
@@ -4038,12 +4038,12 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e96a65bcb68e66603e4c72135b8249b93140060c77d2add093871f8afd4d9d6c",
+        "90a92d1f2e9fb3472a10faac78b482adc639958344db37588178da2ed91d7f00",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "a14f75290417e0d6c56a5883fc3a358223fca4225c1ba7f0cc8697fc02e813bc",
-            "_prepare_solve_programs": "6f4c7d17d78879ca22bab4f6925c57d7f6b8f480ccd29b893ea4bd111fee686a",
+            "_compile_all_functions": "c073e5e510a9e8efcdc3a3657fb78b1ed664b8ff2396357d932c86d0cc8aa8fe",
+            "_prepare_solve_programs": "b8037f9538927815534d7d49525ac6c84726e5c8dfa6ffd1689eaae69182cda5",
         },
     ),
     EAGER_CORE_SOURCE: (
@@ -4123,11 +4123,11 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e96a65bcb68e66603e4c72135b8249b93140060c77d2add093871f8afd4d9d6c",
+        "90a92d1f2e9fb3472a10faac78b482adc639958344db37588178da2ed91d7f00",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "d79ef1f946e4fe935d4d15c8fdc5c1793e7e4007f866a96b77cc355240fdd47f",
+            "solve": "768952338eb094d647d936461d9d2f43d75fe6d40b73a4c5b431056eef28bee3",
             "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
             "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
             "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
@@ -4375,12 +4375,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "de1a7c3081d8afd9bd33b33f0a34962c968fbeaca0c464d8283b6761af772aa6",
+        "a14c6db19e7fec17a34db339883d79769e907f6aa996d40a0077a889c59da976",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
+            "Model.__init__": "fdae6a9973d9b94534db87ee1b543f4fc121d1022c2129f47a4dc41706dc80ae",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4395,7 +4395,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e96a65bcb68e66603e4c72135b8249b93140060c77d2add093871f8afd4d9d6c",
+        "90a92d1f2e9fb3472a10faac78b482adc639958344db37588178da2ed91d7f00",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4523,7 +4523,7 @@ _FINITE_REPLAY_CONTRACTS = {
         },
     ),
     MODEL_PROCESSING_SOURCE: (
-        "bc99d81cbc3fcc129306b1391376fa723750ad749fcece8df5067ecedeca0dcd",
+        "d702d3decb3c9cb93f9d7728cf942e1b4007caba688afc5c044d567fb58dbe2a",
         {
             "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
         },
@@ -4561,7 +4561,7 @@ def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "7f989d5232660b19c428cc2cd1ed7c0d5528c7d39228ee8f6a5527cc7a82f96a"
+        != "33bd091672a3e7e08d08a9f7b169ceb1d7fe37e8be08243b1b0bba3cf8a5fc4e"
     ):
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors
@@ -4606,10 +4606,17 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "a14f75290417e0d6c56a5883fc3a358223fca4225c1ba7f0cc8697fc02e813bc",
-            "_prepare_solve_programs": "6f4c7d17d78879ca22bab4f6925c57d7f6b8f480ccd29b893ea4bd111fee686a",
+            "_compile_all_functions": "c073e5e510a9e8efcdc3a3657fb78b1ed664b8ff2396357d932c86d0cc8aa8fe",
+            "_prepare_solve_programs": "b8037f9538927815534d7d49525ac6c84726e5c8dfa6ffd1689eaae69182cda5",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
+            "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            # The structural blueprint is where every program is materialized
+            # and its top-ranked candidate resolved against abstract inputs; a
+            # warm solve binds the stored blueprint, so the recipe, its key and
+            # its per-call binding are one corridor with the resolver above.
+            "_build_structural_blueprint": "929c01769199b79f0d972b9f659162fe80eb4130d0460a36c48464fc29800dd0",
+            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
+            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
             "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
             "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
@@ -4636,9 +4643,30 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
         },
     )
+    # A stored blueprint outlives its solve, so it may hold only abstract,
+    # immutable recipe facts: no ledger, donation, lowering key or cursor.
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="backward output-layout transport",
+            class_name="_StructuralBlueprint",
+            fields=(
+                "programs: tuple[CoreProgram, ...]",
+                "layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]",
+                "resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]",
+                "internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]",
+                "frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]",
+                "frontier_lengths: MappingProxyType[_CoreTriple, int]",
+                "transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]",
+                "representative_metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]",
+            ),
+            methods=(),
+            decorators=("dataclasses.dataclass(frozen=True, kw_only=True)",),
+        )
+    )
     if (
         _transport_module_surface(tree)
-        != "e96a65bcb68e66603e4c72135b8249b93140060c77d2add093871f8afd4d9d6c"
+        != "90a92d1f2e9fb3472a10faac78b482adc639958344db37588178da2ed91d7f00"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6526,17 +6554,20 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e96a65bcb68e66603e4c72135b8249b93140060c77d2add093871f8afd4d9d6c",
+        "90a92d1f2e9fb3472a10faac78b482adc639958344db37588178da2ed91d7f00",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "d79ef1f946e4fe935d4d15c8fdc5c1793e7e4007f866a96b77cc355240fdd47f",
+            "solve": "768952338eb094d647d936461d9d2f43d75fe6d40b73a4c5b431056eef28bee3",
             "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
             "_iter_edge_topologies": "1f00ea1efc353c24b0709e83b46dd417118147f9a7e7a6079d6a57e8132150ed",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "a14f75290417e0d6c56a5883fc3a358223fca4225c1ba7f0cc8697fc02e813bc",
-            "_prepare_solve_programs": "6f4c7d17d78879ca22bab4f6925c57d7f6b8f480ccd29b893ea4bd111fee686a",
-            "_resolve_output_layouts_and_lowering_keys": "56b7552ed8ecf020578c5c788fc80550af34ecb9a66b7938dbadf46bd71eb0be",
+            "_compile_all_functions": "c073e5e510a9e8efcdc3a3657fb78b1ed664b8ff2396357d932c86d0cc8aa8fe",
+            "_prepare_solve_programs": "b8037f9538927815534d7d49525ac6c84726e5c8dfa6ffd1689eaae69182cda5",
+            "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            "_build_structural_blueprint": "929c01769199b79f0d972b9f659162fe80eb4130d0460a36c48464fc29800dd0",
+            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
+            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
         },
     ),
     "src/_lcm/solution/diagnostics.py": (
@@ -6549,7 +6580,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/fingerprint.py": (
-        "71eda0631daebb0cd5a39f4cbe1504c74bf9080539ce34eebbd0e272fbf62719",
+        "b50c56824dd6de1000c1861477941ca829d164de6896de6237286a36d53336e0",
         {
             "fingerprint_solution_support": "7ccac4755a555ca12f935e9d9f039f0ab4aa5ba4b1c198d3873fac016294ddd7",
             "fingerprint_model": "4ef219fa9a2379a7586f35808b39b5acb30936d49f1bb18a81161ad3ddc33c83",
@@ -6599,27 +6630,27 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "16d1d58e5403b86b103cc368ddedf19c6b6c040fc098e4f509b8fde148e8bc88",
+            "_validate_state_transition_single": "ec73e10371dbdcf60ca1a443116c2e1bbf379291ed1df1856c3c6b7a16c55eb0",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
             "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",
             "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
             "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
-            "_check_state_probs": "06eeaf665f584431c94681be57a943ebb0a58a55c9e81a8dbf91bebf31701d58",
+            "_check_state_probs": "95af24958448e8ba5d8c7d385eb998c9d0597063c6f5157a2bee1af963a37608",
         },
     ),
     "src/lcm/model.py": (
-        "de1a7c3081d8afd9bd33b33f0a34962c968fbeaca0c464d8283b6761af772aa6",
+        "a14c6db19e7fec17a34db339883d79769e907f6aa996d40a0077a889c59da976",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "ba905454f9e979f23e5c32c60e08c248729df6df1c649d15ae06b3e71ced9b4d",
+            "Model.__init__": "fdae6a9973d9b94534db87ee1b543f4fc121d1022c2129f47a4dc41706dc80ae",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
             "Model.solve": "cfa8328580957529d792cb6ecbdf0106f3c6458f56ec03b25e2f700d605f6a32",
             "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
-            "Model._solve_compiled": "40fd81f73833f9c017f6ca9ed8041dd9844ed62b169c82dedb0f61f7a5035be1",
+            "Model._solve_compiled": "d8884c7367c4c310e1f6d81954f37f3f7258a9cc7ead2e401061698c8e3cab44",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",

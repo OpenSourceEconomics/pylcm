@@ -25,8 +25,8 @@ from lcm import (
     ByAge,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -40,6 +40,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -115,7 +116,7 @@ def next_wealth_brute(
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 # Source-regime savings-stage reads (drive the asset-row solve)
@@ -218,9 +219,9 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         # `dead` regime.
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=50): {
-                    "old": MarkovTransition(func=young_stay_prob),
-                    "dead": MarkovTransition(func=young_death_prob),
+                AgeRange(exclusive_stop=50): {
+                    "old": StochasticTransition(func=young_stay_prob),
+                    "dead": StochasticTransition(func=young_death_prob),
                 }
             }
         ),
@@ -268,8 +269,8 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "old": MarkovTransition(func=next_old_stay_prob),
-                "dead": MarkovTransition(func=next_old_death_prob),
+                "old": StochasticTransition(func=next_old_stay_prob),
+                "dead": StochasticTransition(func=next_old_death_prob),
             },
             exits=("dead",),
             start=50,
@@ -317,12 +318,12 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         if factor_is_fixed
         else {}
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"young": young, "old": old, "dead": dead},
         ages=_ages(),
         regime_id_class=CrossRegimeId,
         fixed_params=fixed_params,
-        initial_regimes={40: "young"},
+        initial_nodes={40: "young"},
     )
 
 

@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 
 from _lcm.config import TEST_DATA
-from lcm import AgeGrid, MarkovTransition, Model
+from lcm import AgeGrid, Model, StochasticTransition
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import FloatND
+from lcm.typing import FloatND, UserAge
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base, dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
@@ -37,6 +37,23 @@ ANALYTICAL_CASES = {
     "iskhakov_2017_five_periods": {"n_periods": 6, "disutility_of_work": 1.0},
     "iskhakov_2017_low_delta": {"n_periods": 4, "disutility_of_work": 0.1},
 }
+
+
+def _lifecycle_edges(
+    *, ages: AgeGrid
+) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+    """Keep work and retirement before the final death-only source age."""
+    return {
+        "working_life": {
+            "working_life": tuple(ages.exact_values[:-2]),
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+        "retirement": {
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+    }
 
 
 def _load_analytical(*, case: str, kind: str) -> np.ndarray:
@@ -103,12 +120,13 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
     """
     n_periods = 4
     n_brute_unstable_nodes = 12
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
     working_transitions = base.working_life_transitions(last_age=last_age)
 
     mixed = Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": base.working_life.replace(
                 regime_transitions=working_transitions
@@ -117,8 +135,8 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
                 regime_transitions=until_exit(
                     last_age,
                     law={
-                        "retirement": MarkovTransition(func=_retirement_stay_prob),
-                        "dead": MarkovTransition(func=_retirement_death_prob),
+                        "retirement": StochasticTransition(func=_retirement_stay_prob),
+                        "dead": StochasticTransition(func=_retirement_death_prob),
                     },
                     exits=("dead",),
                 ),
@@ -127,7 +145,7 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
@@ -151,13 +169,14 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
 
 def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     """Equivalent-spec pair with EV1 taste shocks on the working regime."""
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
     working_transitions = base.working_life_transitions(last_age=last_age)
     retirement_transitions = base.retirement_transitions(last_age=last_age)
 
     brute = Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": base.working_life.replace(
                 regime_transitions=working_transitions, taste_shocks=shocks
@@ -169,9 +188,10 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     dcegm = Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": dcegm_variants.dcegm_working_life.replace(
                 regime_transitions=working_transitions, taste_shocks=shocks
@@ -183,7 +203,7 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
         },
         ages=ages,
         regime_id_class=base.RegimeId,
-        initial_regimes={ages.exact_values[0]: ("working_life", "retirement")},
+        initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     return {"brute_force": brute, "dcegm": dcegm}
 

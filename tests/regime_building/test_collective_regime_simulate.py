@@ -17,7 +17,7 @@ simulated household:
    then interpolates the SAME boolean `gate` at the realized candidate
    target-state draw to decide ACTUAL regime routing: the target when open, a
    leg's fallback regime (with its own projected states) when closed.
-3. **The stochastic offer draw** — a target-only `MarkovTransition` state
+3. **The stochastic offer draw** — a target-only `StochasticTransition` state
    (e.g. a drawn spouse type) is realized by the ordinary,
    collective-agnostic `calculate_next_states` machinery; nothing
    gated-edge-specific is needed for the draw itself.
@@ -42,13 +42,15 @@ import lcm.model as model_module
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -71,7 +73,7 @@ from lcm.solver_api import (
     SolutionResult,
     ValueStore,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -82,6 +84,7 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -171,7 +174,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_couple_regime, targets=("couple_terminal",)
                 )
             }
@@ -204,7 +207,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     and, at the terminal period, again choose `work`; V_1 = (40, 80) for
     both.
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_couple_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -276,7 +279,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
     regime's `V_arr` is already `(n_subjects,)`). Pinned at `log_level="debug"`,
     the strictest level, which raises on any validation failure.
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_couple_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -370,9 +373,9 @@ def _make_consent_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -431,7 +434,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
 
 
 def _solve_consent():
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_consent_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -591,9 +594,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -627,8 +630,8 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     married_ir = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -672,8 +675,8 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -688,7 +691,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
+        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
     single_m_terminal = single_f_terminal.replace()
@@ -704,7 +707,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
 
 
 def _solve_dissolution():
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -968,9 +971,9 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -1041,7 +1044,7 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
 
 
 def _solve_consent_discrete_axis():
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_consent_regimes_with_discrete_target_axis()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -1161,12 +1164,12 @@ class DissolutionRegimeId:
 
 
 def _make_dissolution_model() -> Model:
-    ages = AgeGrid(start=0, stop=3, step="Y")
-    return Model(
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    return with_fixture_graph(
         regimes=_make_dissolution_regimes(),
         ages=ages,
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={ages.exact_values[0]: "married"},
+        initial_nodes={ages.exact_values[0]: "married"},
     )
 
 
@@ -1448,7 +1451,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
     solo = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_solo_regime, targets=("solo_terminal",)
                 )
             }
@@ -1473,7 +1476,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     the split branch added for collective regimes — this pins that the
     singleton path is untouched by the fix.
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_solo_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
@@ -1584,7 +1587,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
             2,
             law={
                 "src": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_stay),
+                    probability=StochasticTransition(func=_prob_stay),
                     gate=_repeat_gate,
                     routes={
                         "only": StakeholderRoute(
@@ -1595,7 +1598,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": MarkovTransition(func=_prob_exit_boundary),
+                "src_exit": StochasticTransition(func=_prob_exit_boundary),
             },
             exits=("src_exit",),
         ),
@@ -1638,7 +1641,7 @@ def test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_
       `V_1(2) = 2.95` and period-2 terminal value `0.5 * 2 = 1.0`. Period-0
       own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
     """
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_repeating_self_loop_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)

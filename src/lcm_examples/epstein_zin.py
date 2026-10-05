@@ -43,9 +43,9 @@ from lcm import (
     CESAggregator,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import (
@@ -168,8 +168,8 @@ def get_model(
     alive = Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=MarkovTransition(func=next_regime, targets=("alive", "dead")),
-            then=MarkovTransition(func=next_regime, targets=("dead",)),
+            law=StochasticTransition(func=next_regime),
+            then=StochasticTransition(func=next_regime),
         ),
         states={
             "wealth": wealth_grid,
@@ -177,7 +177,7 @@ def get_model(
         },
         state_transitions={
             "wealth": next_wealth,
-            "health": {"alive": MarkovTransition(func=health_probs)},
+            "health": {"alive": StochasticTransition(func=health_probs)},
         },
         actions={"consumption": consumption_grid},
         constraints={"budget_constraint": budget_constraint},
@@ -191,10 +191,20 @@ def get_model(
         functions={"utility": utility_dead},
     )
     return Model(
+        edges={
+            "alive": {
+                "dead": tuple(range(25, last_age)),
+                **(
+                    {"alive": tuple(range(25, last_age - 1))}
+                    if tuple(range(25, last_age - 1))
+                    else {}
+                ),
+            },
+        },
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=25, stop=last_age, step="Y"),
+        ages=AgeGrid(start=25, inclusive_stop=last_age, step="Y"),
         regime_id_class=EZRegimeId,
-        initial_regimes={25: "alive"},
+        initial_nodes={25: "alive"},
     )
 
 

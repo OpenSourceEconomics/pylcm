@@ -14,7 +14,7 @@ from _lcm.execution.execution_plan import resolve_execution_config
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig, WidthSearch, WidthSearchPolicy
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId, get_multi_regime_model
 
 
@@ -80,12 +80,13 @@ def test_model_rejects_an_unknown_sharded_state() -> None:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     with pytest.raises(ExecutionPlanningError, match="sharded_states names 'nope'"):
         Model(
+            edges=base.graph.edges,
             regimes=base.user_regimes,
             ages=base.ages,
             regime_id_class=MultiRegimeId,
             fixed_params=dict(base.fixed_params),
             execution_config=ExecutionConfig(sharded_states=("nope",)),
-            initial_regimes=initial_regimes_of(model=base),
+            initial_nodes=initial_nodes_of(model=base),
         )
 
 
@@ -94,12 +95,13 @@ def test_model_rejects_an_unknown_axis_width() -> None:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     with pytest.raises(ExecutionPlanningError, match="axis_widths names 'nope'"):
         Model(
+            edges=base.graph.edges,
             regimes=base.user_regimes,
             ages=base.ages,
             regime_id_class=MultiRegimeId,
             fixed_params=dict(base.fixed_params),
             execution_config=ExecutionConfig(axis_widths={"nope": 4}),
-            initial_regimes=initial_regimes_of(model=base),
+            initial_nodes=initial_nodes_of(model=base),
         )
 
 
@@ -108,12 +110,13 @@ def test_model_rejects_an_invisible_device_id() -> None:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     with pytest.raises(ExecutionPlanningError, match="device id 999 is not visible"):
         Model(
+            edges=base.graph.edges,
             regimes=base.user_regimes,
             ages=base.ages,
             regime_id_class=MultiRegimeId,
             fixed_params=dict(base.fixed_params),
             execution_config=ExecutionConfig(devices=(999,)),
-            initial_regimes=initial_regimes_of(model=base),
+            initial_nodes=initial_nodes_of(model=base),
         )
 
 
@@ -136,6 +139,7 @@ def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
     """Two models differing only in `ExecutionConfig` share a fingerprint."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     tuned = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
@@ -144,7 +148,7 @@ def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
             device_memory_bytes=1 << 30,
             axis_widths={"action_product": 2, "subject": 2},
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
 
     assert tuned._model_structure_fingerprint == base._model_structure_fingerprint

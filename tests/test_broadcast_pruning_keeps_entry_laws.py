@@ -21,14 +21,15 @@ from lcm import (
     ByAge,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -82,12 +83,16 @@ def _entry_health(wealth: float) -> FloatND:
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_always_retire)}}
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "retired": StochasticTransition(func=_always_retire)
+                }
+            }
         ),
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
-            "health": {"retired": MarkovTransition(func=_entry_health)},
+            "health": {"retired": StochasticTransition(func=_entry_health)},
         },
         "actions": {"consumption": _CONSUMPTION_GRID},
         "functions": {"utility": _utility_without_health},
@@ -114,11 +119,11 @@ def _entry_targets(*, regime: Regime, state_name: str) -> set[str]:
 
 
 def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         **model_slots,
     )
 
@@ -221,7 +226,7 @@ def test_an_unkeyed_entry_law_survives_toward_a_retaining_target() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": MarkovTransition(func=_entry_health),
+                    "health": StochasticTransition(func=_entry_health),
                 }
             ),
             "retired": _retired_regime(),
@@ -231,7 +236,7 @@ def test_an_unkeyed_entry_law_survives_toward_a_retaining_target() -> None:
     working = model.user_regimes["working"]
 
     assert model.pruned_variables["working"] == frozenset({"health"})
-    assert isinstance(working.state_transitions["health"], MarkovTransition)
+    assert isinstance(working.state_transitions["health"], StochasticTransition)
 
 
 def test_an_identity_law_goes_with_the_state_it_fixes() -> None:
@@ -284,7 +289,9 @@ def test_a_kept_entry_law_leaves_no_dangling_reference() -> None:
                 state_transitions={
                     "wealth": _next_wealth,
                     "health": {
-                        "retired": MarkovTransition(func=_entry_health_from_endowment)
+                        "retired": StochasticTransition(
+                            func=_entry_health_from_endowment
+                        )
                     },
                     "endowment": fixed_transition("endowment"),
                 }
@@ -318,7 +325,9 @@ def test_an_entry_law_reading_the_state_itself_keeps_the_state() -> None:
             "working": _working_regime(
                 state_transitions={
                     "wealth": _next_wealth,
-                    "health": {"retired": MarkovTransition(func=_persistent_health)},
+                    "health": {
+                        "retired": StochasticTransition(func=_persistent_health)
+                    },
                 }
             ),
             "retired": _retired_regime(),

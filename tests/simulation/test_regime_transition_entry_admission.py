@@ -11,7 +11,16 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
-from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -23,6 +32,7 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -54,10 +64,10 @@ def _inputs(
     probabilities = (
         _valid_regime_probabilities if valid else _invalid_costly_regime_probabilities
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
-                regime_transitions=MarkovTransition(
+                regime_transitions=_SupportedStochasticTransition(
                     func=probabilities, targets=("done",)
                 ),
                 functions={"utility": _utility},
@@ -68,9 +78,9 @@ def _inputs(
             ),
         },
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     return (
         model,
@@ -144,10 +154,10 @@ def _numerical_inputs(
     *, budget: int | None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
-                regime_transitions=MarkovTransition(
+                regime_transitions=_SupportedStochasticTransition(
                     func=_parameterized_regime_probabilities, targets=("done",)
                 ),
                 functions={"utility": _alive_payoff},
@@ -158,9 +168,9 @@ def _numerical_inputs(
             ),
         },
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     return (
         model,

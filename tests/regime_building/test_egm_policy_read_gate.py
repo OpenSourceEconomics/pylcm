@@ -9,9 +9,11 @@ import dataclasses
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -33,6 +35,7 @@ from tests.test_models.deterministic.dcegm_variants import (
     dead,
 )
 from tests.test_models.ds2024_housing import build_model
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PORTABLE_DCEGM_SOLVER = dataclasses.replace(
@@ -159,7 +162,7 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
             regime_transitions=until_exit(
                 50,
-                law=Choose(
+                law=_SupportedDeterministicTransition(
                     func=_next_regime_reads_wealth, targets=("retirement", "dead")
                 ),
                 exits=("dead",),
@@ -192,11 +195,11 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
         states={"wealth": WEALTH_GRID, "skill": skill_grid},
         functions={"utility": _skill_bequest_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"retirement": alive, "dead": dead_regime},
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -213,11 +216,11 @@ def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
 
 def _model_from_alive(*, alive, dead_states=None) -> Model:
     dead_regime = dead if dead_states is None else dead.replace(states=dead_states)
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": alive, "dead": dead_regime},
-        ages=AgeGrid(start=40, stop=50, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={40: "retirement"},
+        initial_nodes={40: "retirement"},
     )
 
 

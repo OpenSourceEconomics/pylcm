@@ -59,6 +59,7 @@ _SCRIPT = textwrap.dedent(
 
     def build(*, execution_config, fixed_params):
         return Model(
+            edges={"working_life": {"dead": START_AGE}},
             regimes={
                 "working_life": working_life.replace(
                     regime_transitions=working_life_transitions(
@@ -72,9 +73,9 @@ _SCRIPT = textwrap.dedent(
                 ),
                 "dead": dead,
             },
-            ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+            ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
             regime_id_class=RegimeId,
-            initial_regimes={START_AGE: "working_life"},
+            initial_nodes={START_AGE: "working_life"},
             fixed_params=fixed_params,
             execution_config=execution_config,
         )

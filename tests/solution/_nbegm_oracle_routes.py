@@ -153,6 +153,19 @@ SUPPORTED_ROUTES: Mapping[str, RouteIdentity] = MappingProxyType(
             params=_kw(tax_lump=1.0),
             period=0,
         ),
+        "stochastic_node_draw": _ride(
+            module="nbegm_stochastic_node_toy",
+            income_timing="draw",
+            params=_kw(income_timing="draw"),
+            period=0,
+        ),
+        "stochastic_node_draw_jump": _ride(
+            module="nbegm_stochastic_node_toy",
+            income_timing="draw",
+            tax_kind="jump",
+            params=_kw(tax_lump=1.0, income_timing="draw"),
+            period=0,
+        ),
         "ride_discrete": _ride(module=_RIDE_DISCRETE),
         "ride_discrete_action_in_costate": _ride(
             module=_RIDE_DISCRETE, action_in_costate=True

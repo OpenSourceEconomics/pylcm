@@ -28,7 +28,7 @@ caller supplied, bit for bit.
 
 import dataclasses
 import functools
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import jax
@@ -46,6 +46,62 @@ type _BitsND = Int[Array, "..."]
 _FLOAT32_BYTES = 4
 _FLOAT32_MANTISSA_BITS = 23
 _FLOAT64_MANTISSA_BITS = 52
+
+# Gross departures from unit regime mass are specification errors. Continuation
+# aggregators normalize their weights, so missing mass would otherwise disappear
+# from the solved value. The loose tolerance guards the model rather than rounding.
+_MAX_REGIME_MASS_DEVIATION = 1.0e-3
+
+
+def regime_mass_is_a_distribution(
+    *, probability_mass: FloatND, has_negative_probability: BoolND
+) -> BoolND:
+    """Return whether retained targets carry unit mass and no negative weight.
+
+    Unit mass is accepted within the regime-mass tolerance, at every log level.
+    Non-negativity arrives as a decision read from each weight's own bits: an
+    arithmetic reduction could flush a negative subnormal into signed zero.
+    NaN or infinite mass fails the unit-mass decision.
+
+    Args:
+        probability_mass: The retained targets' probabilities, summed.
+        has_negative_probability: Whether any target carried the sign bit on a
+            nonzero magnitude.
+
+    Returns:
+        Whether the retained targets carry a probability distribution.
+
+    """
+    is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
+    return is_unit & ~has_negative_probability
+
+
+def probabilities_form_distribution(
+    *, probabilities: Iterable[FloatND], dtype: DTypeLike
+) -> BoolND:
+    """Accumulate target probabilities and test their elementwise distribution.
+
+    Inputs are broadcast in their supplied order. Each sign is read before
+    accumulation, preserving negative subnormal weights. An empty iterable
+    carries zero mass and returns false.
+
+    Args:
+        probabilities: Target weights with broadcast-compatible shapes.
+        dtype: Floating dtype of the initial scalar mass accumulator.
+
+    Returns:
+        Elementwise distribution validity over the broadcast target weights.
+
+    """
+    probability_mass = jnp.asarray(0.0, dtype=dtype)
+    has_negative_probability = jnp.zeros((), dtype=bool)
+    for prob in probabilities:
+        probability_mass = probability_mass + prob
+        has_negative_probability = has_negative_probability | is_negative(prob)
+    return regime_mass_is_a_distribution(
+        probability_mass=probability_mass,
+        has_negative_probability=has_negative_probability,
+    )
 
 
 def log_of_nonnegative(values: FloatND) -> FloatND:
@@ -134,8 +190,12 @@ def is_negative(values: FloatND) -> BoolND:
     transition that places negative mass on a target.
     """
     arr = jnp.asarray(values)
-    sign_bit = jax.lax.bitcast_convert_type(arr, _int_dtype(arr)) < 0
-    return sign_bit & (_magnitude_bits(arr) != 0)
+    unsigned_dtype = jnp.uint32 if arr.dtype.itemsize == _FLOAT32_BYTES else jnp.uint64
+    bits = jax.lax.bitcast_convert_type(arr, unsigned_dtype)
+    signed_zero_bits = jnp.asarray(
+        1 << (8 * arr.dtype.itemsize - 1), dtype=unsigned_dtype
+    )
+    return bits > signed_zero_bits
 
 
 def is_live(values: FloatND) -> BoolND:

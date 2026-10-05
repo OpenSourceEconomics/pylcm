@@ -17,7 +17,7 @@ from jax import numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -152,8 +152,8 @@ def create_model(
         },
         regime_transitions=ByAge.until(
             stop_age_exclusive=final_age_alive + 10,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
-            then=Choose(func=next_regime, targets=("dead",)),
+            law=DeterministicTransition(func=next_regime),
+            then=DeterministicTransition(func=next_regime),
         ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
@@ -165,10 +165,20 @@ def create_model(
     )
 
     return Model(
+        edges={
+            "alive": {
+                "dead": tuple(range(20, final_age_alive + 1, 10)),
+                **(
+                    {"alive": tuple(range(20, final_age_alive, 10))}
+                    if tuple(range(20, final_age_alive, 10))
+                    else {}
+                ),
+            },
+        },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
-        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
+        initial_nodes={20: "alive"},
+        ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=(
             ExecutionConfig() if execution_config is None else execution_config

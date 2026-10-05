@@ -22,12 +22,14 @@ from _lcm.regime_building.processing import (
     _wrap_regime_transition_probs,
     process_regimes,
 )
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.variables import from_regime, get_grids
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     LinearAggregator,
     LinearExpectation,
     Phased,
@@ -133,7 +135,7 @@ def test_get_grids_reorder(binary_category_class):
 
 
 def test_process_regimes():
-    ages = AgeGrid(start=0, stop=4, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
             regime_transitions=working_life_transitions(last_age=4)
@@ -233,7 +235,11 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
 
     early = UserRegime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): Choose(func=regime_transition, targets=("late",))}
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=regime_transition, targets=("late",)
+                )
+            }
         ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
         state_transitions={"x": next_x},
@@ -242,7 +248,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     late = UserRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): Choose(
+                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
                     func=regime_transition, targets=("done",)
                 )
             }
@@ -252,7 +258,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         functions={"utility": lambda x: x},
     )
     done = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     finalized_user_regimes = finalize_regimes(
         user_regimes={"early": early, "late": late, "done": done},
         derived_categoricals={},

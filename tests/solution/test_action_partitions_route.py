@@ -128,13 +128,14 @@ def _many_actions(**config: Any) -> Model:
 
 
 def _rebuilt(
-    *, model: Model, regime_id_class: type, initial_regimes: dict, **config: Any
+    *, model: Model, regime_id_class: type, initial_nodes: dict, **config: Any
 ) -> Model:
     return Model(
+        edges=model.graph.edges,
         regimes=dict(model.user_regimes),
         ages=model.ages,
         regime_id_class=regime_id_class,
-        initial_regimes=initial_regimes,
+        initial_nodes=initial_nodes,
         execution_config=ExecutionConfig(**config),
     )
 
@@ -144,7 +145,7 @@ def _collective(**config: Any) -> Model:
     return _rebuilt(
         model=model,
         regime_id_class=collective_fixtures.CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
         **config,
     )
 
@@ -154,7 +155,7 @@ def _folded(**config: Any) -> Model:
     return _rebuilt(
         model=model,
         regime_id_class=collective_fixtures.ShockRegimeId,
-        initial_regimes={0: "shocked"},
+        initial_nodes={0: "shocked"},
         **config,
     )
 
@@ -163,7 +164,7 @@ def _dcegm(**config: Any) -> Model:
     return _rebuilt(
         model=dcegm_paper_twin.get_model("dcegm"),
         regime_id_class=dcegm_paper_twin.TwinRegimeId,
-        initial_regimes={20: ("working_life", "retirement")},
+        initial_nodes={20: ("working_life", "retirement")},
         **config,
     )
 

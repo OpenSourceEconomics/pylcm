@@ -12,7 +12,7 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 
 @pytest.mark.parametrize("count", [1, 6])
@@ -21,13 +21,14 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
             axis_widths={"subject": 2}, device_memory_bytes=2**32
         ),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")
