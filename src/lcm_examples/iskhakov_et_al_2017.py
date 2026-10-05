@@ -22,7 +22,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -141,7 +141,7 @@ def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarIn
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
+_DEFAULT_AGE_GRID = AgeGrid(start=40, inclusive_stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 
@@ -149,11 +149,10 @@ def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work, retire or die until the age before `last_age`, then die."""
     return ByAge.until(
         stop_age_exclusive=last_age,
-        law=Choose(
+        law=DeterministicTransition(
             func=next_regime_from_working,
-            targets=("working_life", "retirement", "dead"),
         ),
-        then=Choose(func=next_regime_from_working, targets=("dead",)),
+        then=DeterministicTransition(func=next_regime_from_working),
     )
 
 
@@ -161,8 +160,8 @@ def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
     """Stay retired or die until the age before `last_age`, then die."""
     return ByAge.until(
         stop_age_exclusive=last_age,
-        law=Choose(func=next_regime_from_retirement, targets=("retirement", "dead")),
-        then=Choose(func=next_regime_from_retirement, targets=("dead",)),
+        law=DeterministicTransition(func=next_regime_from_retirement),
+        then=DeterministicTransition(func=next_regime_from_retirement),
     )
 
 
@@ -275,9 +274,30 @@ def get_model(n_periods: int) -> Model:
         A configured Model instance.
 
     """
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
+        edges={
+            "working_life": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {
+                        "working_life": tuple(ages.exact_values[:-2]),
+                        "retirement": tuple(ages.exact_values[:-2]),
+                    }
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+            "retirement": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {"retirement": tuple(ages.exact_values[:-2])}
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+        },
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(last_age=last_age)
@@ -289,7 +309,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
 
@@ -313,9 +333,30 @@ def get_dcegm_model(n_periods: int) -> Model:
         A configured Model instance.
 
     """
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
+        edges={
+            "working_life": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {
+                        "working_life": tuple(ages.exact_values[:-2]),
+                        "retirement": tuple(ages.exact_values[:-2]),
+                    }
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+            "retirement": {
+                "dead": tuple(ages.exact_values[:-1]),
+                **(
+                    {"retirement": tuple(ages.exact_values[:-2])}
+                    if ages.exact_values[:-2]
+                    else {}
+                ),
+            },
+        },
         regimes={
             "working_life": dcegm_working_life.replace(
                 regime_transitions=working_life_transitions(last_age=last_age)
@@ -327,7 +368,7 @@ def get_dcegm_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
 

@@ -24,9 +24,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -39,11 +41,14 @@ from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy as toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _ALIVE_TRANSITIONS = until_exit(
     20 + (toy.N_PERIODS - 1) * 5,
-    law=Choose(func=toy.next_regime, targets=("alive", "dead")),
+    law=_SupportedDeterministicTransition(
+        func=toy.next_regime, targets=("alive", "dead")
+    ),
     exits=("dead",),
 )
 
@@ -140,12 +145,12 @@ def _build_brute_model(alpha: float) -> Model:
 
 
 def _model(alive: Regime) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": toy._build_dead_regime()},
         regime_id_class=toy.RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": toy.FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

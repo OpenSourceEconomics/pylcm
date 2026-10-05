@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -107,7 +107,7 @@ WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
 
-_DEFAULT_AGE_GRID = AgeGrid(start=25, stop=65, step="20Y")
+_DEFAULT_AGE_GRID = AgeGrid(start=25, inclusive_stop=65, step="20Y")
 _RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 
@@ -115,8 +115,8 @@ def working_life_transitions(*, retirement_age: UserAge | float) -> ByAge:
     """Work until the age before `retirement_age`, then retire."""
     return ByAge.until(
         stop_age_exclusive=retirement_age,
-        law=Choose(func=next_regime, targets=("working_life", "retirement")),
-        then=Choose(func=next_regime, targets=("retirement",)),
+        law=DeterministicTransition(func=next_regime),
+        then=DeterministicTransition(func=next_regime),
     )
 
 
@@ -159,7 +159,9 @@ def get_model(
         A configured Model instance.
 
     """
-    age_grid = AgeGrid(start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step)
+    age_grid = AgeGrid(
+        start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
+    )
     retirement_age = age_grid.exact_values[-1]
 
     wl = working_life.replace(
@@ -167,10 +169,20 @@ def get_model(
     )
 
     return Model(
+        edges={
+            "working_life": {
+                "retirement": tuple(age_grid.exact_values[:-1]),
+                **(
+                    {"working_life": tuple(age_grid.exact_values[:-2])}
+                    if age_grid.exact_values[:-2]
+                    else {}
+                ),
+            },
+        },
         regimes={"working_life": wl, "retirement": retirement},
         ages=age_grid,
         regime_id_class=RegimeId,
-        initial_regimes={age_grid.exact_values[0]: "working_life"},
+        initial_nodes={age_grid.exact_values[0]: "working_life"},
         description="A tiny consumption-savings model.",
     )
 
@@ -190,7 +202,9 @@ def get_params(
         Parameter dict ready for model.solve().
 
     """
-    age_grid = AgeGrid(start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step)
+    age_grid = AgeGrid(
+        start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
+    )
     return {
         "discount_factor": 0.95,
         "risk_aversion": 1.5,

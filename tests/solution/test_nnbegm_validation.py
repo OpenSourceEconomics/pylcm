@@ -21,10 +21,13 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -42,6 +45,7 @@ from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import n_nbegm_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -61,7 +65,9 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
         },
         regime_transitions=until_exit(
             25,
-            law=Choose(func=n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=n_nbegm_toy.next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -263,12 +269,12 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
         functions={"utility": n_nbegm_toy.terminal_utility},
     )
     with pytest.raises(ModelInitializationError, match="belongs to the inner margin"):
-        Model(
+        with_fixture_graph(
             regimes={"alive": alive, "dead": dead},
             regime_id_class=n_nbegm_toy.RegimeId,
-            ages=AgeGrid(start=20, stop=25, step="5Y"),
+            ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
-            initial_regimes={20: "alive"},
+            initial_nodes={20: "alive"},
         )
 
 

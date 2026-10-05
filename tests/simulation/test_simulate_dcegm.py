@@ -25,6 +25,7 @@ import pytest
 
 from lcm import AgeGrid, Model, Phased, post_decision_lower_bound
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from tests.test_models.graph import with_fixture_graph
 
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
@@ -310,7 +311,7 @@ def _simulation_savings_with_double_consumption(
 
 
 def _phase_variant_savings_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     retirement = dcegm_variants.dcegm_retirement.replace(
         regime_transitions=retirement_transitions(last_age=last_age),
@@ -328,11 +329,11 @@ def _phase_variant_savings_model(n_periods: int) -> Model:
             ),
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": retirement, "dead": dcegm_variants.dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 

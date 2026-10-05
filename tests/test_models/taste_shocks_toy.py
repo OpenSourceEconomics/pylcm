@@ -17,9 +17,11 @@ Importable only once `lcm.taste_shocks` exists.
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -90,7 +92,11 @@ def next_regime(age: int) -> ScalarInt:  # noqa: ARG001
 
 alive = UserRegime(
     regime_transitions=until_exit(
-        41, law=Choose(func=next_regime, targets=("alive", "done")), exits=("done",)
+        41,
+        law=_SupportedDeterministicTransition(
+            func=next_regime, targets=("alive", "done")
+        ),
+        exits=("done",),
     ),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -112,13 +118,14 @@ done = UserRegime(
 
 def get_model(*, execution_config: ExecutionConfig | None = None) -> Model:
     return Model(
+        edges={"alive": {"done": 40}},
         regimes={"alive": alive, "done": done},
-        ages=AgeGrid(start=40, stop=41, step="Y"),
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=ToyRegimeId,
         execution_config=ExecutionConfig()
         if execution_config is None
         else execution_config,
-        initial_regimes={40: "alive"},
+        initial_nodes={40: "alive"},
     )
 
 

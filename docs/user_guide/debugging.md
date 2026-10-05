@@ -18,7 +18,8 @@ model = Model(
     regimes={...},
     ages=ages,
     regime_id_class=RegimeId,
-    initial_regimes=initial_regimes,
+    edges=edges,
+    initial_nodes=initial_nodes,
     enable_jit=False,  # readable tracebacks, but slower
 )
 ```
@@ -279,7 +280,8 @@ model = Model(
     regimes={...},
     ages=ages,
     regime_id_class=RegimeId,
-    initial_regimes=initial_regimes,
+    edges=edges,
+    initial_nodes=initial_nodes,
     enable_jit=False,
 )
 
@@ -462,7 +464,7 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
   inactive regime. The message includes the source regime, age range, and a table of
   failing entries.
 
-- **`InvalidStateTransitionProbabilitiesError`**: A `MarkovTransition` produces an
+- **`InvalidStateTransitionProbabilitiesError`**: A `StochasticTransition` produces an
   output with the wrong outcome-axis size, values outside [0, 1], rows that don't sum to
   1, or `probs_array[…]` subscripts that don't match the signature parameter order.
 

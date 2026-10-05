@@ -16,14 +16,15 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _RUNTIME_PROCESS = NormalIIDProcess(n_points=3, gauss_hermite=False)
@@ -57,12 +58,12 @@ def _reset_shock(shock: ScalarFloat) -> ScalarFloat:
 
 
 def _build(*, source_states, source_state_transitions) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states=source_states,
@@ -75,9 +76,9 @@ def _build(*, source_states, source_state_transitions) -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

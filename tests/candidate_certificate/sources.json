@@ -14,7 +14,7 @@
           },
           {
             "path": "src/_lcm/engine.py",
-            "sha256": "c6953fa33c4300d9f262a8ac767b10c5416df18758d65f3edced6ad8f01aecfd"
+            "sha256": "2857da7099eca2bc75133bf760679ee175da084af52f4b02dcb795e400b5ce7f"
           },
           {
             "path": "src/_lcm/execution/abstract_program_inputs.py",
@@ -86,7 +86,7 @@
           },
           {
             "path": "src/_lcm/grids/discrete.py",
-            "sha256": "eae40c1da0344d222768fe42cc905bde6e79b86c186b13c86bfc1605e6727ebe"
+            "sha256": "b3bda092808d4a42f94a372e28d569eb95d330c6f6a05aae64eb9353b38c13df"
           },
           {
             "path": "src/_lcm/grids/piecewise.py",
@@ -98,11 +98,11 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
+            "sha256": "4410e68ccd52f54ba5217d393015b8bbc06f7a434c5e8fbeba7a4bde9f9595dd"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
-            "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
+            "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
           },
           {
             "path": "src/_lcm/params/processing.py",
@@ -110,7 +110,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67"
+            "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -118,7 +118,7 @@
           },
           {
             "path": "src/_lcm/probability.py",
-            "sha256": "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2"
+            "sha256": "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0"
           },
           {
             "path": "src/_lcm/processes/__init__.py",
@@ -154,11 +154,11 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "d6b3eda5b281bd7b466f501db2f6940d214d988ae0bdfda47a582fa2d780a051"
+            "sha256": "6df5dade856af5e5e2efa746cc34b3bdeb783d2ff28c71d253b6edda441d0565"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
-            "sha256": "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb"
+            "sha256": "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5"
           },
           {
             "path": "src/_lcm/simulation/action_grids.py",
@@ -230,7 +230,7 @@
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
-            "sha256": "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4"
+            "sha256": "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90"
           },
           {
             "path": "src/_lcm/simulation/membership.py",
@@ -362,7 +362,7 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677"
+            "sha256": "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -382,7 +382,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e"
+            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -414,7 +414,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "9644d462fbd637cd7fa2623df580632fb68723a0a4e9ddff826ca74ee7bc8740"
+            "sha256": "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -442,7 +442,7 @@
           },
           {
             "path": "src/_lcm/zero_safe.py",
-            "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+            "sha256": "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad"
           },
           {
             "path": "src/lcm/_solver_api/authority.py",
@@ -462,7 +462,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "f595efaee002b4ae5086df9ed682a14e74304a98abdaa5f40f480a23a1679947"
+            "sha256": "9220eeb54326dcf4b7456d364f2d90265a216e99dfaf09c4aa8259152935a2a9"
           },
           {
             "path": "src/lcm/result.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "8eccc1cdc7d8efffe9ba445e083a242e20de52f1d0d9b3567d6ad31d892c4688"
+        "source_inventory_sha256": "66ac6edac2e017678eac3e59bc3fd34aeac5994fd97e473409bcd9d0fce9cc1f"
       },
       "fast": {
         "candidate_sources": [
@@ -484,7 +484,7 @@
           },
           {
             "path": "src/_lcm/engine.py",
-            "sha256": "c6953fa33c4300d9f262a8ac767b10c5416df18758d65f3edced6ad8f01aecfd"
+            "sha256": "2857da7099eca2bc75133bf760679ee175da084af52f4b02dcb795e400b5ce7f"
           },
           {
             "path": "src/_lcm/execution/abstract_program_inputs.py",
@@ -556,7 +556,7 @@
           },
           {
             "path": "src/_lcm/grids/discrete.py",
-            "sha256": "eae40c1da0344d222768fe42cc905bde6e79b86c186b13c86bfc1605e6727ebe"
+            "sha256": "b3bda092808d4a42f94a372e28d569eb95d330c6f6a05aae64eb9353b38c13df"
           },
           {
             "path": "src/_lcm/grids/piecewise.py",
@@ -568,11 +568,11 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
+            "sha256": "4410e68ccd52f54ba5217d393015b8bbc06f7a434c5e8fbeba7a4bde9f9595dd"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
-            "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
+            "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
           },
           {
             "path": "src/_lcm/params/processing.py",
@@ -580,7 +580,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67"
+            "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -588,7 +588,7 @@
           },
           {
             "path": "src/_lcm/probability.py",
-            "sha256": "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2"
+            "sha256": "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0"
           },
           {
             "path": "src/_lcm/processes/__init__.py",
@@ -624,11 +624,11 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "d6b3eda5b281bd7b466f501db2f6940d214d988ae0bdfda47a582fa2d780a051"
+            "sha256": "6df5dade856af5e5e2efa746cc34b3bdeb783d2ff28c71d253b6edda441d0565"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
-            "sha256": "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb"
+            "sha256": "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5"
           },
           {
             "path": "src/_lcm/simulation/action_grids.py",
@@ -700,7 +700,7 @@
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
-            "sha256": "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4"
+            "sha256": "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90"
           },
           {
             "path": "src/_lcm/simulation/membership.py",
@@ -832,7 +832,7 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677"
+            "sha256": "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -852,7 +852,7 @@
           },
           {
             "path": "src/_lcm/solution/nbegm.py",
-            "sha256": "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e"
+            "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
           },
           {
             "path": "src/_lcm/solution/period_replay.py",
@@ -884,7 +884,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "9644d462fbd637cd7fa2623df580632fb68723a0a4e9ddff826ca74ee7bc8740"
+            "sha256": "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -912,7 +912,7 @@
           },
           {
             "path": "src/_lcm/zero_safe.py",
-            "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+            "sha256": "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad"
           },
           {
             "path": "src/lcm/_solver_api/authority.py",
@@ -932,7 +932,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "f595efaee002b4ae5086df9ed682a14e74304a98abdaa5f40f480a23a1679947"
+            "sha256": "9220eeb54326dcf4b7456d364f2d90265a216e99dfaf09c4aa8259152935a2a9"
           },
           {
             "path": "src/lcm/result.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "8eccc1cdc7d8efffe9ba445e083a242e20de52f1d0d9b3567d6ad31d892c4688"
+        "source_inventory_sha256": "66ac6edac2e017678eac3e59bc3fd34aeac5994fd97e473409bcd9d0fce9cc1f"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "8eccc1cdc7d8efffe9ba445e083a242e20de52f1d0d9b3567d6ad31d892c4688",
+  "source_inventory_sha256": "66ac6edac2e017678eac3e59bc3fd34aeac5994fd97e473409bcd9d0fce9cc1f",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -958,7 +958,7 @@
     },
     {
       "path": "src/_lcm/engine.py",
-      "sha256": "c6953fa33c4300d9f262a8ac767b10c5416df18758d65f3edced6ad8f01aecfd"
+      "sha256": "2857da7099eca2bc75133bf760679ee175da084af52f4b02dcb795e400b5ce7f"
     },
     {
       "path": "src/_lcm/execution/abstract_program_inputs.py",
@@ -1030,7 +1030,7 @@
     },
     {
       "path": "src/_lcm/grids/discrete.py",
-      "sha256": "eae40c1da0344d222768fe42cc905bde6e79b86c186b13c86bfc1605e6727ebe"
+      "sha256": "b3bda092808d4a42f94a372e28d569eb95d330c6f6a05aae64eb9353b38c13df"
     },
     {
       "path": "src/_lcm/grids/piecewise.py",
@@ -1042,11 +1042,11 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "b50af1d4cf52f3ce99674f76a786c63c343c99b92fb29a9f078afb99d8d81c9a"
+      "sha256": "4410e68ccd52f54ba5217d393015b8bbc06f7a434c5e8fbeba7a4bde9f9595dd"
     },
     {
       "path": "src/_lcm/pandas_utils.py",
-      "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
+      "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
     },
     {
       "path": "src/_lcm/params/processing.py",
@@ -1054,7 +1054,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "dfc1aadd93d6c66b772f7f7a40c9178a15f06c6968d07504e635aeed465acf67"
+      "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -1062,7 +1062,7 @@
     },
     {
       "path": "src/_lcm/probability.py",
-      "sha256": "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2"
+      "sha256": "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0"
     },
     {
       "path": "src/_lcm/processes/__init__.py",
@@ -1098,11 +1098,11 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "d6b3eda5b281bd7b466f501db2f6940d214d988ae0bdfda47a582fa2d780a051"
+      "sha256": "6df5dade856af5e5e2efa746cc34b3bdeb783d2ff28c71d253b6edda441d0565"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
-      "sha256": "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb"
+      "sha256": "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5"
     },
     {
       "path": "src/_lcm/simulation/action_grids.py",
@@ -1174,7 +1174,7 @@
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
-      "sha256": "25d3cfacd6b70c75a16e5897de865449a25b06329c7d3fb0f705f43bbdfdc3b4"
+      "sha256": "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90"
     },
     {
       "path": "src/_lcm/simulation/membership.py",
@@ -1306,7 +1306,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "8c787a6db7b9d338b6299eb29d09ce24b7a713cf5a2fd30aadc910dd4ba47677"
+      "sha256": "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -1326,7 +1326,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "b596a44384f2417173a017c52650ac31878bfed61e3597485ade1edfb2b4180e"
+      "sha256": "80b654385af48c89e3c6b62f780718ce204e5aac95f353821d689909db43fb11"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
@@ -1358,7 +1358,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "9644d462fbd637cd7fa2623df580632fb68723a0a4e9ddff826ca74ee7bc8740"
+      "sha256": "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -1386,7 +1386,7 @@
     },
     {
       "path": "src/_lcm/zero_safe.py",
-      "sha256": "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33"
+      "sha256": "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad"
     },
     {
       "path": "src/lcm/_solver_api/authority.py",
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "f595efaee002b4ae5086df9ed682a14e74304a98abdaa5f40f480a23a1679947"
+      "sha256": "9220eeb54326dcf4b7456d364f2d90265a216e99dfaf09c4aa8259152935a2a9"
     },
     {
       "path": "src/lcm/result.py",

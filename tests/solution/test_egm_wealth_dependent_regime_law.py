@@ -7,11 +7,21 @@ as the equivalent per-target Markov law.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, ByAge, Choose, LinSpacedGrid, MarkovTransition, Model, Regime
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    ByAge,
+    LinSpacedGrid,
+    Regime,
+    StochasticTransition,
+)
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.solution import test_egm_solver as egm_toy
+from tests.test_models.graph import with_fixture_graph
 
 _PER_TARGET_LAW = "per_target"
 _DETERMINISTIC_LAW = "deterministic"
@@ -52,13 +62,17 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
     wealth_grid = LinSpacedGrid(start=2.0, stop=60.0, n_points=8)
     keep, stop = (
         (
-            Choose(func=_next_regime_by_wealth, targets=("saving",)),
-            Choose(func=_next_regime_by_wealth, targets=("done",)),
+            _SupportedDeterministicTransition(
+                func=_next_regime_by_wealth, targets=("saving",)
+            ),
+            _SupportedDeterministicTransition(
+                func=_next_regime_by_wealth, targets=("done",)
+            ),
         )
         if law == _DETERMINISTIC_LAW
         else (
-            {"saving": MarkovTransition(func=_prob_keep_saving)},
-            {"done": MarkovTransition(func=_prob_stop_saving)},
+            {"saving": StochasticTransition(func=_prob_keep_saving)},
+            {"done": StochasticTransition(func=_prob_stop_saving)},
         )
     )
     saving = ConsumptionSavingsRegime(
@@ -84,12 +98,12 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
         functions={"utility": egm_toy.terminal_utility},
         solver=GridSearch(),
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"saving": saving, "done": done},
         regime_id_class=egm_toy.RegimeId,
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         fixed_params={"last_age": 3.0},
-        initial_regimes={0: "saving"},
+        initial_nodes={0: "saving"},
     )
     law_params = {"return_liquid": 0.03, "retirement_income": 0.0}
     params = {

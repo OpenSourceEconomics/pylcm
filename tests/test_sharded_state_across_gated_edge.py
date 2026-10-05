@@ -49,7 +49,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -58,6 +58,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -200,7 +201,7 @@ def build_model(
     )
     leaving = (
         ValueDependentTransition(
-            probability=MarkovTransition(func=_half_before_age_two),
+            probability=StochasticTransition(func=_half_before_age_two),
             gate=_gate_open_above_the_middle,
             routes={
                 "only": StakeholderRoute(
@@ -212,14 +213,14 @@ def build_model(
             },
         )
         if gated
-        else MarkovTransition(func=_half_before_age_two)
+        else StochasticTransition(func=_half_before_age_two)
     )
     solo = Regime(
         regime_transitions=until_exit(
             3,
             law={
-                "solo": MarkovTransition(func=_all_before_age_two),
-                "dead": MarkovTransition(func=_none_before_age_two),
+                "solo": StochasticTransition(func=_all_before_age_two),
+                "dead": StochasticTransition(func=_none_before_age_two),
             },
             exits=("dead",),
         ),
@@ -235,9 +236,9 @@ def build_model(
         regime_transitions=until_exit(
             2,
             law={
-                "pair": MarkovTransition(func=_half_before_age_two),
+                "pair": StochasticTransition(func=_half_before_age_two),
                 "mate": leaving,
-                "dead": MarkovTransition(func=_half_from_age_one),
+                "dead": StochasticTransition(func=_half_from_age_one),
             },
             exits=("mate", "dead"),
         ),
@@ -256,8 +257,8 @@ def build_model(
         regime_transitions=until_exit(
             3,
             law={
-                "mate": MarkovTransition(func=_all_before_age_two),
-                "dead": MarkovTransition(func=_none_before_age_two),
+                "mate": StochasticTransition(func=_all_before_age_two),
+                "dead": StochasticTransition(func=_none_before_age_two),
             },
             exits=("dead",),
         ),
@@ -274,16 +275,16 @@ def build_model(
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"solo": solo, "pair": pair, "mate": mate, "dead": dead},
         states={
             "x": DiscreteGrid(category_class=_Category),
             "level": DiscreteGrid(category_class=_Level),
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
-        initial_regimes={0: "pair"},
+        initial_nodes={0: "pair"},
     )
 
 

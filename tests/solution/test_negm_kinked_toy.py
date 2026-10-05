@@ -24,9 +24,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     LiquidMargin,
@@ -50,6 +52,7 @@ from lcm.typing import (
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED, assert_agrees_to_ulp
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -117,7 +120,9 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(func=negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=negm_kinked_toy.next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -150,12 +155,12 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=negm_kinked_toy.RegimeId,
-        ages=AgeGrid(start=20, stop=30, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=30, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 
@@ -222,7 +227,9 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(func=negm_kinked_toy.next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=negm_kinked_toy.next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         constraints={
@@ -239,12 +246,12 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=negm_kinked_toy.RegimeId,
-        ages=AgeGrid(start=20, stop=30, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=30, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

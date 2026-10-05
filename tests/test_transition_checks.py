@@ -1,6 +1,6 @@
 """Automatic state transition probability validation.
 
-Exercises the pre-solve numerical sweep over `MarkovTransition` state
+Exercises the pre-solve numerical sweep over `StochasticTransition` state
 transitions, the process-time AST subscript-order check, and the way the
 `log_level` validation policy turns failures into warnings or raises.
 """
@@ -12,14 +12,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
@@ -32,6 +34,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -89,21 +92,23 @@ def _model_with_state_probs(next_health_func) -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=next_health_func),
+            "health": StochasticTransition(func=next_health_func),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "terminal": _terminal_regime()},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -130,7 +135,7 @@ def test_valid_state_probs_at_boundary_pass() -> None:
 def test_runtime_check_catches_invalidity_hidden_at_some_grid_points() -> None:
     """An ensemble valid at some continuous-grid points and invalid at others raises.
 
-    The `MarkovTransition` for `health` is conditioned on the continuous
+    The `StochasticTransition` for `health` is conditioned on the continuous
     `wealth` grid: it returns a valid row for `wealth <= 5` and a row summing
     to 0.7 for `wealth > 5`. Only sweeping the full `wealth` grid surfaces the
     failure — a spot check at the first grid point (`wealth == 1`) would pass.
@@ -243,13 +248,15 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=swapped_probs),
+            "health": StochasticTransition(func=swapped_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_local_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_local_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
@@ -260,11 +267,11 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subscript"):
-        Model(
+        with_fixture_graph(
             regimes={"alive": alive, "terminal": terminal},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_LocalRegimeId,
-            initial_regimes={0: "alive"},
+            initial_nodes={0: "alive"},
         )
 
 
@@ -286,7 +293,7 @@ def test_ast_check_is_permissive_when_no_probs_array_subscript() -> None:
 
 
 def test_per_target_dict_validates_each_entry() -> None:
-    """Each MarkovTransition inside a per-target dict is validated independently."""
+    """Each StochasticTransition inside a per-target dict is validated independently."""
 
     @categorical(ordered=False)
     class _Heir:
@@ -322,10 +329,14 @@ def test_per_target_dict_validates_each_entry() -> None:
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
         state_transitions={
             "wealth": next_wealth_passthrough,
-            "heir_present": {"dead": MarkovTransition(func=bad_heir_probs)},
+            "heir_present": {"dead": StochasticTransition(func=bad_heir_probs)},
         },
         regime_transitions=until_exit(
-            1, law=Choose(func=_to_dead, targets=("alive", "dead")), exits=("dead",)
+            1,
+            law=_SupportedDeterministicTransition(
+                func=_to_dead, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
@@ -336,11 +347,11 @@ def test_per_target_dict_validates_each_entry() -> None:
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
@@ -409,21 +420,23 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "terminal": _terminal_regime()},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def _model_with_fixed_param_health_probs() -> Model:
-    """Build a model whose `health` MarkovTransition reads from `fixed_params`.
+    """Build a model whose `health` StochasticTransition reads from `fixed_params`.
 
     `transition_bias` lives in `fixed_params`, not the per-iteration
     `params` dict. Solve sees it via `regime.resolved_fixed_params`; the
@@ -440,29 +453,31 @@ def _model_with_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=health_probs),
+            "health": StochasticTransition(func=health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "terminal": _terminal_regime()},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
 def test_state_validator_resolves_params_from_fixed_params(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A MarkovTransition reading a `fixed_params` entry is numerically validated.
+    """A StochasticTransition reading a `fixed_params` entry is numerically validated.
 
     The skip-and-warn branch must not fire just because the parameter
     sits in `fixed_params` rather than the per-iteration `params` dict —
@@ -503,13 +518,15 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": {"terminal": MarkovTransition(func=health_probs)},
+            "health": {"terminal": StochasticTransition(func=health_probs)},
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
@@ -518,19 +535,19 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "terminal": terminal},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
 def test_per_target_state_validator_resolves_params_from_fixed_params(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Per-target dict MarkovTransitions are numerically validated like simple ones.
+    """Per-target dict StochasticTransitions are numerically validated like simple ones.
 
     The skip-and-warn branch must not fire just because the source regime
     declares the transition under a per-target dict — the validator
@@ -568,22 +585,24 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=bad_health_probs),
+            "health": StochasticTransition(func=bad_health_probs),
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("alive", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "terminal": _terminal_regime()},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.6},
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):

@@ -30,22 +30,25 @@ import pandas as pd
 import pytest
 
 import tests.conftest
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -115,8 +118,12 @@ def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge.until(
             stop_age_exclusive=2,
-            law=Choose(func=_retire_at_one, targets=("working",)),
-            then=Choose(func=_retire_at_one, targets=("retired",)),
+            law=_SupportedDeterministicTransition(
+                func=_retire_at_one, targets=("working",)
+            ),
+            then=_SupportedDeterministicTransition(
+                func=_retire_at_one, targets=("retired",)
+            ),
         ),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
@@ -131,7 +138,9 @@ def _retired(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
             cases={
-                AgeRange(start=2, stop=3): Choose(func=_die_at_three, targets=("dead",))
+                AgeRange(start=2, exclusive_stop=3): _SupportedDeterministicTransition(
+                    func=_die_at_three, targets=("dead",)
+                )
             }
         ),
         "states": {"wealth": _WEALTH},
@@ -155,13 +164,13 @@ def _build(
     *, regimes: dict[str, Regime], sharded: tuple[str, ...], **config: Any
 ) -> Model:
     """Build the three-regime model on a fixed device set and grid vocabulary."""
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(sharded_states=sharded, **config),
         states={"kind": DiscreteGrid(category_class=_Kind)},
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -186,18 +195,18 @@ def forward_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Mode
 
 def mirror_model(*, devices: tuple[int, ...], sharded: tuple[str, ...]) -> Model:
     """`kind` read only by the retirement regime, which the working regime enters."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": _working(),
             "retired": _retired(functions={"utility": _utility_by_kind}),
             "dead": _dead(),
         },
         states={"kind": DiscreteGrid(category_class=_Kind)},
-        state_transitions={"kind": {"retired": MarkovTransition(func=_entry_kind)}},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        state_transitions={"kind": {"retired": StochasticTransition(func=_entry_kind)}},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -213,7 +222,7 @@ def build_unread_sharded_state() -> Model:
 def build_pruned_continuous_sharded_state() -> Model:
     """Build a model sharding a continuous state one regime prunes."""
     assets = LinSpacedGrid(start=1.0, stop=50.0, n_points=4)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": _working(
                 functions={
@@ -230,10 +239,10 @@ def build_pruned_continuous_sharded_state() -> Model:
             "dead": _dead(),
         },
         states={"assets": assets},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=(0,), sharded_states=("assets",)),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

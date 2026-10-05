@@ -22,14 +22,15 @@ from lcm import (
     CertaintyEquivalent,
     DiscreteGrid,
     LinearExpectation,
-    MarkovTransition,
     Model,
     PowerMean,
     Regime,
+    StochasticTransition,
     UniformIIDProcess,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -72,18 +73,20 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     def _health_probabilities() -> FloatND:
         return jnp.asarray(health_probabilities)
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},
-                    "health": {"target": MarkovTransition(func=_health_probabilities)},
+                    "health": {
+                        "target": StochasticTransition(func=_health_probabilities)
+                    },
                 },
                 functions={"utility": _zero_utility},
                 certainty_equivalent=certainty_equivalent,
@@ -97,9 +100,9 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
                 functions={"utility": _income_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

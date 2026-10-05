@@ -31,11 +31,11 @@ from beartype.roar import BeartypeCallHintParamViolation
 
 import tests.conftest as test_config
 from _lcm.execution.core_program import core_program_graph
+from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from _lcm.solution import backward_induction, block_major
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -62,6 +62,7 @@ from lcm.typing import (
 from tests.simulation import test_type_grouped_simulation as life_cycle
 from tests.solution import test_invariant_blocking as stage3
 from tests.test_models import independent_types
+from tests.test_models.graph import with_fixture_graph
 
 _BLOCK_MAJOR = InvariantBlockSchedule.BLOCK_MAJOR
 _PERIOD_MAJOR = InvariantBlockSchedule.PERIOD_MAJOR
@@ -95,10 +96,11 @@ def _life_cycle_model(
     """The grouped-simulation life cycle with a typed dead regime."""
     model = life_cycle._model(typed_dead=True, pref_law=pref_law)
     return Model(
+        edges=model.graph.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
         execution_config=_config(schedule=schedule, budget=budget, subject_width=3),
     )
 
@@ -778,7 +780,7 @@ class _LongRegimeId:
     terminal: ScalarInt
 
 
-_LONG_AGES = AgeGrid(start=0, stop=40, step="Y")
+_LONG_AGES = AgeGrid(start=0, inclusive_stop=40, step="Y")
 _LONG_WEALTH = LinSpacedGrid(start=0, stop=10, n_points=4000)
 
 
@@ -811,8 +813,12 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
     working = Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(func=lambda: _LongRegimeId.working, targets=("working",)),
-            then=Choose(func=lambda: _LongRegimeId.terminal, targets=("terminal",)),
+            law=_SupportedDeterministicTransition(
+                func=lambda: _LongRegimeId.working, targets=("working",)
+            ),
+            then=_SupportedDeterministicTransition(
+                func=lambda: _LongRegimeId.terminal, targets=("terminal",)
+            ),
         ),
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         state_transitions={
@@ -828,11 +834,11 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         functions={"utility": _long_bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "terminal": terminal},
         ages=_LONG_AGES,
         regime_id_class=_LongRegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         # Fixed widths lower the same programs with and without a budget, so
         # the budget only decides what is admitted.
         execution_config=_config(

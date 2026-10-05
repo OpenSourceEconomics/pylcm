@@ -17,6 +17,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   one leave the solve unchanged. Unsupported requests are refused at model
   construction. See [Share a large action product over
   devices](docs/user_guide/tuning.md).
+### A shock read only through its next-period draw stays in the regime
+
+- A law may read the draw `next_<process>` of a process state, for instance costs
+  realized after the period's choices and paid out of next period's wealth. Reading the
+  draw is now a read of the state: the regime that reads it keeps the state, whether the
+  state is declared at model level (broadcast pruning) or at regime level (the
+  unused-variable check). A persistent process's draw is conditional on the state's
+  current node. An IID process's draw is not, but it is still taken from the carried
+  state, so the state keeps its axis and the value is constant along it.
+- Toward a target that does not carry the process, the draw exists only inside the
+  transition: it is taken from the source's process at the source's current node, read
+  by the target's laws and discarded. A terminal regime valuing only wealth therefore
+  carries only wealth. `GridSearch`, `DCEGM` and `NBEGM` solve and simulate such
+  edges.
+- `DCEGM` and `NBEGM` accept a liquid law that reads a draw, persisted or local to the
+  edge: the Euler state and its savings derivative are evaluated at every node of the
+  draws the law reads. `NBEGM`'s save-to-cliff targets are inverted per node. Under the
+  EGM solvers only the liquid law may read a draw; any other law reading one is refused
+  at construction.
 
 ### Opt-in type-local GridSearch
 
@@ -43,18 +62,39 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   regime without it, budgeted or ungrouped simulation, `log_path`) are refused. See
   [Solve, simulate and release one code at a time](docs/user_guide/tuning.md).
 
+### Phase-specific model graphs and transition declarations
+
+- Ordinary per-target `Phased` laws may declare different solve and simulation
+  destinations, with state handoffs local to each phase. Every physically visited
+  node is valued, together with its recursively required perceived continuations.
+- Construction-fixed, exactly zero scalar probability edges are omitted from
+  reachability. State, action, age and free-parameter dependencies retain their
+  declared edges; invalid all-zero lotteries still raise at execution.
+- Breaking API: `Choose` becomes `DeterministicTransition`, `MarkovTransition`
+  becomes `StochasticTransition`, and `initial_regimes` becomes `initial_nodes`.
+  Both transition wrappers support decorator factories and carry numerical kernels
+  only. Plain functions remain deterministic. Required `Model.edges` maps each
+  source to destinations and their source-age selectors, optionally through `Phased`.
+  `model.graph` provides immutable declared edges, effective reachability and
+  fixed-zero pruning reasons.
+- Probability mass validation is shared by the solver consumers. Compiled validation
+  now reliably rejects negative subnormal probabilities at both precisions.
+
 ### Required starting problems and keyword-only age-indexed declarations
 
-- `Model(..., initial_regimes=...)` is required and has no default. It maps age
-  selectors (exact age, tuple, `range`, `AgeRange(start=..., stop=...)`) to one regime
-  name or a nonempty sequence of names; the Cartesian pairs are the admissible roots,
+- `Model(..., initial_nodes=...)` is required and has no default. It accepts exact
+  `(age, regime)` pairs or maps age selectors (exact age, tuple, `range`,
+  `AgeRange(start=..., exclusive_stop=...)`) to one regime name or a nonempty
+  sequence of names; the resulting pairs are the admissible roots,
   published as `model.initial_nodes`. `None`, a bare name, an empty mapping, unknown
   names and off-grid ages raise.
+- `AgeGrid.inclusive_stop` includes the final grid age; `AgeRange.exclusive_stop`
+  excludes its upper selector bound.
 - Solved problems are derived from the roots — physical successors plus declared value
   reads — rather than from transition schedules. `ByAge` selects laws only;
   `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
 - Terminality is exactly `regime_transitions is None`.
-- `ByAge`, `ByAge.until`, `AgeRange`, `Choose` and `MarkovTransition` take keyword
+- `ByAge`, `ByAge.until`, `AgeRange`, `DeterministicTransition` and `StochasticTransition` take keyword
   arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
   uses `then` at the last source age below `stop_age_exclusive`. See
   [Migrating to age-indexed regimes](docs/user_guide/migrating_dated_regimes.md).
@@ -908,12 +948,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `None` now masks a model-level entry instead.
 
 - Regime transitions take a third form: a per-target dict
-  `{target_regime: MarkovTransition(func=prob_func)}` whose key set declares the regime's
+  `{target_regime: StochasticTransition(func=prob_func)}` whose key set declares the regime's
   reachable targets — omitted regimes are structurally unreachable. Per-target dicts in
   `state_transitions` hand state values across regime boundaries, including into states
   the source regime does not carry and across grids that differ between regimes.
 
-- A bare callable or bare `MarkovTransition` on `Regime.transition` declares
+- A bare callable or bare `StochasticTransition` on `Regime.transition` declares
   conservative support over every regime active in the next period, so every temporally
   compatible candidate must have a valid state handoff (a carried state, a
   deterministic/stochastic law, or an explicit target-local/entry law). Use a per-target
@@ -976,7 +1016,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 - A simulated agent prices its continuation under the law it *believes*, while the world
   it moves through follows the law that is *true*. `Phased` state transitions accept
-  `MarkovTransition` laws, so perceived mortality, perceived health or income risk, and
+  `StochasticTransition` laws, so perceived mortality, perceived health or income risk, and
   misread policy rules are expressible: give the `solve` variant the agent's beliefs and
   the `simulate` variant the data-generating process. See the phase-grammar explanation
   in the docs.

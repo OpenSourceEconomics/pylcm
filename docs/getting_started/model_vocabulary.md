@@ -26,14 +26,14 @@ assembled.
 
 A regime is useful when the available states, actions, equations, or transition laws
 change qualitatively: employment versus retirement, single versus married, alive versus
-dead. The regime's name is the key in `Model(regimes=...)`; its transition says which
-regime can follow.
+dead. The regime's name is the key in `Model(regimes=...)`; its transition supplies
+numerical behavior within the destinations declared by `Model.edges`.
 
 ## Grids and transition laws answer different questions
 
 A grid states which values a variable may take. A transition law states how its next
 value is produced. Deterministic laws are ordinary callables; stochastic laws use
-`MarkovTransition`, a stochastic process, or `JointTransition` when several outcomes
+`StochasticTransition`, a stochastic process, or `JointTransition` when several outcomes
 must share one draw.
 
 ## Solvers constrain how the economics is declared
@@ -47,3 +47,6 @@ solver configuration.
 Read [Choose your starting declaration](next_steps.md) before writing a larger model.
 The [User Guide](../user_guide/index.md) then develops each object, while the
 [Reference](../reference/index.md) states the exact contracts.
+
+`Model(edges={source: {target: source_ages}}, initial_nodes=((age, regime), ...))`
+declares connectivity and admissible starts separately from numerical transition laws.

@@ -266,6 +266,11 @@ class DCEGM(OneMarginSolver):
         )
 
     @property
+    def supports_transition_local_lotteries(self) -> bool:
+        """The child read enumerates an edge's local draws as node axes."""
+        return True
+
+    @property
     def publishes_simulation_policy(self) -> bool:
         """The kernel can publish an off-grid EGM policy on every active period.
 

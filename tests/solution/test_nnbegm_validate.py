@@ -8,9 +8,11 @@ NBEGM. Building the model must reject it either way.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
     Model,
     categorical,
@@ -27,6 +29,7 @@ from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
@@ -112,7 +115,11 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         post_decision_state="liquid_savings",
     )
     transitions = until_exit(
-        25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+        25,
+        law=_SupportedDeterministicTransition(
+            func=next_regime, targets=("alive", "dead")
+        ),
+        exits=("dead",),
     )
     states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
     state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}
@@ -164,12 +171,12 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=25, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
         fixed_params={"means_test": 5.0, "medical_expense": 1.0},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

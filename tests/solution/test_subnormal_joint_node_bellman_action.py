@@ -20,12 +20,13 @@ import numpy as np
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -126,17 +127,19 @@ def _model(*, node_is_reachable: bool = True) -> Model:
     levels = DiscreteGrid(category_class=_Level)
     health_probs = _health_probs if node_is_reachable else _unreachable_health_probs
     mood_probs = _mood_probs if node_is_reachable else _unreachable_mood_probs
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
-                    21, law={"dead": MarkovTransition(func=_certain)}, exits=("dead",)
+                    21,
+                    law={"dead": StochasticTransition(func=_certain)},
+                    exits=("dead",),
                 ),
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={
-                    "health": MarkovTransition(func=health_probs),
-                    "mood": MarkovTransition(func=mood_probs),
+                    "health": StochasticTransition(func=health_probs),
+                    "mood": StochasticTransition(func=mood_probs),
                 },
                 functions={"utility": _bet_payoff},
             ),
@@ -146,9 +149,9 @@ def _model(*, node_is_reachable: bool = True) -> Model:
                 functions={"utility": _terminal_payoff},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

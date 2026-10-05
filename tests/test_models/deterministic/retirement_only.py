@@ -11,7 +11,10 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, ByAge, Choose, Model, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, ByAge, Model, categorical
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt, UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
@@ -22,6 +25,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
     next_wealth,
     utility_retirement,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -42,8 +46,12 @@ def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
     """Stay retired or die until the age before `last_age`, then die."""
     return ByAge.until(
         stop_age_exclusive=last_age,
-        law=Choose(func=next_regime_from_retirement, targets=("retirement", "dead")),
-        then=Choose(func=next_regime_from_retirement, targets=("dead",)),
+        law=_SupportedDeterministicTransition(
+            func=next_regime_from_retirement, targets=("retirement", "dead")
+        ),
+        then=_SupportedDeterministicTransition(
+            func=next_regime_from_retirement, targets=("dead",)
+        ),
     )
 
 
@@ -59,9 +67,9 @@ retirement = UserRegime(
 
 @functools.cache
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    return Model(
+    return with_fixture_graph(
         regimes={
             "retirement": retirement.replace(
                 regime_transitions=retirement_transitions(last_age=last_age)
@@ -70,7 +78,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 

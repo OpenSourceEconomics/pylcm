@@ -15,19 +15,21 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
-    Choose,
     CollectiveUtility,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -41,6 +43,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -78,7 +81,9 @@ def _perceived_law(*, choice: Any = _realized_choice) -> ByAge:
         cases={
             1: Phased(
                 solve="end",
-                simulate=Choose(func=choice, targets=("end", "other_end")),
+                simulate=_SupportedDeterministicTransition(
+                    func=choice, targets=("end", "other_end")
+                ),
             )
         }
     )
@@ -103,12 +108,12 @@ def _demand_model(
         roots[1] = "perceived"
     if redundant_root:
         roots[2] = "end"
-    return Model(
+    return with_fixture_graph(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_DemandId,
-        initial_regimes=roots,
+        initial_nodes=roots,
         regimes={
             "source": _wealth_regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
@@ -336,7 +341,9 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
             cases={
                 age: Phased(
                     solve="end",
-                    simulate=Choose(func=choice, targets=("end", "other_end")),
+                    simulate=_SupportedDeterministicTransition(
+                        func=choice, targets=("end", "other_end")
+                    ),
                 )
                 for age, choice in ((1, _realized_choice), (2, _late_choice))
             }
@@ -352,10 +359,10 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
             )
         },
     )
-    return Model(
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_DemandId,
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
         regimes={
             "source": _wealth_regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
@@ -406,10 +413,10 @@ def _collective_demand_model(*, promote: bool) -> Model:
     roots: dict[object, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
-    return Model(
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_DemandId,
-        initial_regimes=roots,
+        initial_nodes=roots,
         regimes={
             "source": _collective_regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")}),
@@ -516,20 +523,20 @@ def _age_grid_model(
         else (_left_from_wealth, _right_from_wealth)
     )
     roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
-    return Model(
+    return with_fixture_graph(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_ProbabilityId,
-        initial_regimes=roots,
+        initial_nodes=roots,
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
                     cases={
                         0: "left",
                         1: {
-                            "left": MarkovTransition(func=left),
-                            "right": MarkovTransition(func=right),
+                            "left": StochasticTransition(func=left),
+                            "right": StochasticTransition(func=right),
                         },
                     }
                 ),
@@ -591,24 +598,24 @@ def _stray_carried_right(*, carried_share: ContinuousState) -> FloatND:
 
 def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
     """The solve law is (1/2, 1/2); the realized law reads the carried share."""
-    return Model(
+    return with_fixture_graph(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_ProbabilityId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         regimes={
             "working": Regime(
                 regime_transitions=Phased(
                     solve={
-                        "left": MarkovTransition(func=_half),
-                        "right": MarkovTransition(func=_half),
+                        "left": StochasticTransition(func=_half),
+                        "right": StochasticTransition(func=_half),
                     },
                     simulate={
-                        "left": MarkovTransition(
+                        "left": StochasticTransition(
                             func=_stray_carried_left if stray else _carried_left
                         ),
-                        "right": MarkovTransition(
+                        "right": StochasticTransition(
                             func=_stray_carried_right if stray else _carried_right
                         ),
                     },
@@ -717,17 +724,17 @@ def _feasibility_model(
     left = _bad_on_feasible_left if bad_feasible else _feasible_left
     right = _bad_on_feasible_right if bad_feasible else _feasible_right
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
-    return Model(
+    return with_fixture_graph(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_ProbabilityId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         regimes={
             "working": Regime(
                 regime_transitions={
-                    "left": MarkovTransition(func=left),
-                    "right": MarkovTransition(func=right),
+                    "left": StochasticTransition(func=left),
+                    "right": StochasticTransition(func=right),
                 },
                 states={"wealth": grid},
                 state_transitions={"wealth": fixed_transition("wealth")},

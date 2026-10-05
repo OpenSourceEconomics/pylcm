@@ -12,7 +12,8 @@ slice. Regime-level declarations are never pruned. The needed-set is a
 cross-regime, cross-phase fixed point: a state unused inside a regime is
 still required when a candidate target keeps it and the law of motion toward
 that target reads it, and the target may keep it on the strength of the other
-phase slice.
+phase slice. A process state is also needed where its next-period draw is read,
+since the draw is taken from the state.
 
 `root_functions` is the single definition of those root computations. The
 pruning walk here and the variable-usage check in `_lcm.model_processing`
@@ -21,7 +22,7 @@ as a read.
 """
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast, no_type_check
@@ -165,7 +166,9 @@ def prune_broadcast_variables(
 
     A broadcast variable is pruned from a regime when no root computation of
     either phase slice transitively reads it — in that regime or through a
-    law of motion toward a candidate target that keeps it. Pruning drops the
+    law of motion toward a candidate target that keeps it. A read of a process
+    state's next-period draw `next_<state>` is a read of the state, because the
+    draw is taken from it. Pruning drops the
     variable's grid, and for states the part of the regime's law entry that
     the pruned state took with it — an entry law toward a target that retains
     the state stays, so which entry laws a model has does not depend on
@@ -564,6 +567,7 @@ def _phase_fixed_point(
                 candidates=broadcast_variables[regime_name],
                 grown_here=grown[regime_name],
             )
+            needed |= states_read_through_their_draw(regime=user_regime, reads=needed)
             newly_kept = candidates & needed
             if newly_kept:
                 grown[regime_name] = grown[regime_name] | newly_kept
@@ -621,6 +625,43 @@ def _state_conditioned_names(
             ):
                 names.add(grid.state_conditioned.on)
     return frozenset(names)
+
+
+def states_read_through_their_draw(
+    *, regime: UserRegime, reads: Collection[str]
+) -> frozenset[StateName]:
+    """Collect the process states whose next-period draw is among `reads`.
+
+    A process state's law of motion is the process itself, so no function node
+    `next_<state>` exists for a DAG walk to step through to the state: a read of
+    the draw ends in a leaf. The draw is still taken from the state's process at
+    the state's current node — conditionally on it for a persistent process — so
+    reading the draw is a read of the state, and the regime that reads it keeps
+    the state. That holds for an IID process too: its lagged value does not
+    inform the draw, but the engine draws `next_<state>` from the carried state,
+    so the axis stays and the value is constant along it.
+
+    Args:
+        regime: The regime whose states are inspected.
+        reads: Names the regime's computations read, including `next_<state>`
+            leaves.
+
+    Returns:
+        Names of the regime's process states whose `next_<state>` is read.
+
+    """
+    return frozenset(
+        name
+        for name, grid in regime.states.items()
+        if f"next_{name}" in reads and _is_process(grid)
+    )
+
+
+def _is_process(grid: object) -> bool:
+    """Whether a state declaration is a process in either phase."""
+    if isinstance(grid, Phased):
+        return _is_process(grid.solve) or _is_process(grid.simulate)
+    return isinstance(grid, _ContinuousStochasticProcess)
 
 
 def _resolved_at_representative_age(

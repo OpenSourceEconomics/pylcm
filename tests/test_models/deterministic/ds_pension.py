@@ -42,8 +42,8 @@ from lcm import (
     ExecutionConfig,
     LinearAggregator,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -57,6 +57,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
@@ -309,7 +310,7 @@ def get_model(
     liquid_retiring = laws.get("next_liquid_retiring", next_liquid_retiring)
     pension_working = laws.get("next_pension_working", next_pension_working)
     liquid_retired = laws.get("next_liquid_retired", next_liquid_retired)
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     retirement_age = ages.exact_values[retirement_period]
     final_age = ages.exact_values[-1]
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
@@ -335,8 +336,8 @@ def get_model(
         constraints={"feasible": feasible_working},
         regime_transitions=ByAge.until(
             stop_age_exclusive=retirement_age,
-            law={"working": MarkovTransition(func=prob_stay_working)},
-            then={"retired": MarkovTransition(func=prob_retire)},
+            law={"working": StochasticTransition(func=prob_stay_working)},
+            then={"retired": StochasticTransition(func=prob_retire)},
         ),
         functions={
             "utility": utility_working,
@@ -361,8 +362,8 @@ def get_model(
         regime_transitions=until_exit(
             final_age,
             law={
-                "retired": MarkovTransition(func=prob_stay_retired),
-                "dead": MarkovTransition(func=prob_die),
+                "retired": StochasticTransition(func=prob_stay_retired),
+                "dead": StochasticTransition(func=prob_die),
             },
             exits=("dead",),
             start=retirement_age,
@@ -395,14 +396,14 @@ def get_model(
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         koopmans_aggregator=koopmans_aggregator,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

@@ -13,6 +13,9 @@ from dataclasses import dataclass, replace
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.contract import (
     SolutionKernels,
     SolverBuildContext,
@@ -22,7 +25,6 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     LinSpacedGrid,
     Model,
     categorical,
@@ -42,6 +44,7 @@ from lcm.solvers import (
     TwoMarginSolver,
 )
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
 _ACTION_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -134,7 +137,9 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         state_transitions={"wealth": {"done": next_wealth}},
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=0, stop=1): Choose(func=next_regime, targets=("done",))
+                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=next_regime, targets=("done",)
+                )
             }
         ),
         functions={
@@ -156,11 +161,11 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"saving": saving_regime, "done": done_regime},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "saving"},
+        initial_nodes={0: "saving"},
     )
 
 

@@ -5,9 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -36,6 +38,7 @@ from tests.simulation.initial_conditions._models import (
     make_state_only_constraint_model,
 )
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _CONSTRAINT_PARAMS = {"discount_factor": 0.95, "final_age_alive": 1}
@@ -413,7 +416,9 @@ def _sealed_model() -> Model:
     working = UserRegime(
         regime_transitions=until_exit(
             19,
-            law=Choose(func=next_regime, targets=("working", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working", "dead")
+            ),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
@@ -423,11 +428,11 @@ def _sealed_model() -> Model:
         constraints={"feasible": feasible},
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
-        ages=AgeGrid(start=18, stop=20, step="Y"),
+        ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={18: "working"},
+        initial_nodes={18: "working"},
     )
 
 
@@ -491,7 +496,9 @@ def _age_specialized_model() -> Model:
     working_life = UserRegime(
         regime_transitions=until_exit(
             75,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
@@ -509,11 +516,11 @@ def _age_specialized_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_life, "dead": dead},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
-        initial_regimes={25: "working_life", 35: "working_life"},
+        initial_nodes={25: "working_life", 35: "working_life"},
     )
 
 
@@ -573,11 +580,11 @@ def _collective_population_without_roles(model: Model) -> dict[str, jnp.ndarray]
 )
 def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -> None:
     """A population `simulate` refuses for a missing role is refused by both methods."""
-    model = Model(
+    model = with_fixture_graph(
         regimes=make_dissolution_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
     )
     initial = _collective_population_without_roles(model)
 
