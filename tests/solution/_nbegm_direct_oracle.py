@@ -322,7 +322,7 @@ def direct_oracle_period(  # noqa: PLR0915
                 plan=plan,
                 combo_pool=combo_pool,
                 carries=carries,
-                jumps=geometry.jumps,
+                source_positions=dict(zip(statics.ride_names, index, strict=True)),
                 breakpoints=branch_geometry.breakpoints,
                 liquid_grid=liquid_grid,
                 savings_grid=savings_grid,
@@ -616,7 +616,7 @@ def _cell_continuation(
     plan: Any,
     combo_pool: Mapping[str, Any],
     carries: Mapping[str, HostCarry],
-    jumps: np.ndarray,
+    source_positions: Mapping[str, int],
     breakpoints: np.ndarray,
     liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
@@ -646,7 +646,9 @@ def _cell_continuation(
                 plan=plan,
                 regime_name=kernel.regime_name,
                 combo_pool=pool,
-                jumps=jumps,
+                child_carry=carries[kernel.regime_name],
+                ride_names=statics.ride_names,
+                source_positions=source_positions,
                 savings_grid=savings_grid,
                 dtype=dtype,
             )
@@ -685,33 +687,74 @@ def _cliff_savings_targets(
     plan: Any,
     regime_name: str,
     combo_pool: Mapping[str, Any],
-    jumps: np.ndarray,
+    child_carry: HostCarry,
+    ride_names: tuple[str, ...],
+    source_positions: Mapping[str, int],
     savings_grid: np.ndarray,
     dtype: Any,
 ) -> np.ndarray:
-    """Savings targets a few float steps inside each side of every own-regime jump.
+    """Savings targets a few float steps inside each side of every child jump.
 
-    The self-read child's liquid law is affine in savings; each jump's savings
-    preimage is offered from both sides, displaced by four units of the law's
-    rounding (in savings units) but never more than a quarter of the distance to
-    the nearest other preimage. Targets off the savings grid, or under a
-    non-increasing law, are NaN.
+    The jumps are read off the solved child carry, row by row: every combination
+    of the child's stochastic nodes and the edge's local draws the liquid law
+    reads reaches one child row, at the deterministic next-state codes, and that
+    row's published jump preimages are inverted through the liquid law at that
+    combination. A passive (continuous, non-stochastic) ride axis stays at the
+    source cell's node. Each jump's savings preimage is offered from both sides,
+    displaced by four units of the law's rounding (in savings units) but never
+    more than a quarter of the distance to the nearest other preimage. Targets
+    off the savings grid, or under a non-increasing law, are NaN; a target pair
+    repeated by a node that moves neither the law nor the child row is offered
+    once.
     """
     read = plan.child_reads[regime_name]
-    nodes = _euler_draw_nodes(read=read, combo_pool=combo_pool)
-    return np.concatenate(
-        [
-            _cliff_targets_at_node(
-                read=read,
-                pool={**combo_pool, **dict(zip(nodes, draws, strict=True))},
-                post_decision_name=plan.post_decision_name,
-                jumps=jumps,
-                savings_grid=savings_grid,
-                dtype=dtype,
-            )
-            for draws in itertools.product(*nodes.values())
-        ]
+    if child_carry.breakpoints is None:
+        return np.zeros(0)
+    next_states = read.next_state_func(
+        **combo_pool, **{plan.post_decision_name: jnp.asarray(0.0, dtype=dtype)}
     )
+    deterministic_codes = {
+        name: int(np.asarray(next_states[f"next_{name}"]))
+        for name, is_stochastic in zip(
+            read.discrete_state_names, read.stochastic_flags, strict=True
+        )
+        if not is_stochastic
+    }
+    carried = {
+        f"next_{name}": list(values)
+        for name, values in zip(
+            read.stochastic_state_names, read.stochastic_node_values, strict=True
+        )
+    }
+    local = _euler_draw_nodes(read=read, combo_pool=combo_pool)
+    local = {name: values for name, values in local.items() if name not in carried}
+    axes = {**carried, **local}
+    rows: list[np.ndarray] = []
+    seen: set[bytes] = set()
+    for positions in itertools.product(*(range(len(v)) for v in axes.values())):
+        node = dict(zip(axes, positions, strict=True))
+        draws = {name: axes[name][position] for name, position in node.items()}
+        child_row = tuple(
+            node[f"next_{name}"]
+            if f"next_{name}" in carried
+            else deterministic_codes.get(name, source_positions[name])
+            for name in ride_names
+        )
+        targets = _cliff_targets_at_node(
+            read=read,
+            pool={
+                **combo_pool,
+                **{name: draws[name] for name in read.euler_draw_names},
+            },
+            post_decision_name=plan.post_decision_name,
+            jumps=child_carry.breakpoints[child_row],
+            savings_grid=savings_grid,
+            dtype=dtype,
+        )
+        if targets.tobytes() not in seen:
+            seen.add(targets.tobytes())
+            rows.append(targets)
+    return np.concatenate(rows)
 
 
 def _euler_draw_nodes(

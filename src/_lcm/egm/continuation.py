@@ -1509,7 +1509,7 @@ def _accumulate_ez_partials_block(
 
 def euler_draw_nodes(
     *, read: _ChildRead, combo_pool: Mapping[str, Any]
-) -> dict[TransitionFunctionName, FloatND]:
+) -> dict[TransitionFunctionName, FloatND | IntND]:
     """Node values of each draw the child's Euler-state law reads.
 
     A draw of a stochastic state the child carries takes that state's nodes; a
