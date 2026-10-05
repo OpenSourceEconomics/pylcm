@@ -91,12 +91,16 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
 
     - Drops ``XLA_PYTHON_CLIENT_MEM_FRACTION`` so the isolated subprocess can
       use all device memory (the parent ASV process may cap itself).
-    - Disables preallocation so ``peak_bytes_in_use`` tracks real demand.
+    - Enables preallocation, overriding the ASV parent's on-demand setting, so
+      the subprocess allocates from one contiguous pool as production does and
+      pylcm's default device-memory budget is admitted. ``peak_bytes_in_use``
+      counts the chunks handed to buffers, not the pool; carved from one pool,
+      each chunk is the requested size, so the peak tracks demand.
     - Appends ``--xla_gpu_autotune_level=0`` to ``XLA_FLAGS`` (preserving any
       existing flags) so the compile footprint is deterministic.
     """
     env = {k: v for k, v in base_env.items() if k != "XLA_PYTHON_CLIENT_MEM_FRACTION"}
-    env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     autotune_off = "--xla_gpu_autotune_level=0"
     existing = env.get("XLA_FLAGS", "")
     env["XLA_FLAGS"] = f"{existing} {autotune_off}".strip()
@@ -106,8 +110,10 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
 def default_budget_execution_kwargs() -> dict[str, object]:
     """Return the device-default budget as an explicit `execution_config` keyword.
 
-    Benchmarks run with preallocation off, where `device_memory_bytes="device"`
-    refuses; an explicit budget of the same size is admitted there. The result is
+    Benchmarks measured inside the ASV process run with preallocation off, where
+    `device_memory_bytes="device"` refuses; an explicit budget of the same size is
+    admitted there. Inside the measurement subprocess, which preallocates, it
+    resolves to the same budget as the default. The result is
     empty when nothing needs replacing: a revision without the device default
     (the paired GridSearch harness builds historical revisions too) or a backend
     reporting no pool limit, as CPU, where the default resolves unbudgeted.
