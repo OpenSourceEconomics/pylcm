@@ -40,8 +40,11 @@ ASV wiring notes:
 - `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
   debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
   likewise gets its own three-phase profile.
-- XLA autotuning is disabled and preallocation is off in the measurement
-  subprocess, preserving the previous GPU-memory benchmark semantics.
+- XLA autotuning is disabled and preallocation is on in the measurement
+  subprocess, and the model is built with pylcm's default `ExecutionConfig`, so
+  planning and admission follow the production path: the budget derives from the
+  preallocated device pool. The model is only built inside that subprocess and
+  in `benchmarks.preflight`, which runs with JAX's default preallocation.
 """
 
 import atexit
@@ -111,8 +114,7 @@ def _build() -> tuple[object, object, object]:
     from lcm import DiscreteGrid
 
     model = create_benchmark_model(
-        pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
-        **_gpu_mem.default_budget_execution_kwargs(),
+        pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType)
     )
     edge_periods = model.reachability.solution.periods_for_edge(
         source="retiree_oamc_forced_forcedout",
