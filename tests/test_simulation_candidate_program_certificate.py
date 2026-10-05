@@ -1391,6 +1391,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "constant_program:lower_compile_mesh_context_omitted",
         "type_local_decision:ordinary_decision_shadows_type_local",
         "type_local_decision:reducer_reads_ordinary_q_and_f",
+        "structural_blueprint:cache_hit_ignores_key",
+        "structural_blueprint:schema_drops_dtype",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == (
