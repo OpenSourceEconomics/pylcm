@@ -1388,6 +1388,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage():
         "native_values:live_source_budget_omitted",
         "native_values:host_receives_accelerator_ceiling",
         "constant_program:lower_compile_mesh_context_omitted",
+        "structural_blueprint:cache_hit_ignores_key",
+        "structural_blueprint:schema_drops_dtype",
     }
     assert not set(registered) & set(supplemental)
     assert {spec["path"] for spec in (registered | supplemental).values()} == (
