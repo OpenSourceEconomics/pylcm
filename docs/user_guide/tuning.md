@@ -287,9 +287,12 @@ What moves where:
 - every value crosses from the device to the host once, and each simulation from a saved
   or returned result uploads one code's values at a time;
 - the host holds every value of the result for as long as the result is referenced;
-- `solution.values.materialize()` places every value on the device at once, and is
-  refused before anything is placed when they exceed the device budget. Read values one
-  at a time with `solution.value(period=..., regime=...)` instead.
+- `solution.value(period=..., regime=...)` places one value on its devices, and
+  `solution.values.materialize()` places every value at once. Each is refused before
+  anything is placed when what it places exceeds the device budget on a device, counted
+  per device on the value's sharding. When several values fit only one at a time, read
+  them singly; when one value alone does not fit, save the result with
+  `SolutionResult.save`, which writes every value from the host, or raise the budget.
 
 The schedule is refused at model construction unless a state is named in
 `invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
