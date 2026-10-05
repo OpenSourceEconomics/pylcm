@@ -337,7 +337,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "520dafa8a0405cb9ee63013d79c2ccb1d62e98462e683babb1e8e534f5abb158",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "f918c97419e5b31e7b855de406330cfbdf0ba4cf331a3c5ca30316b971ceb074",
     SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
     SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
     SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
@@ -418,7 +418,7 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0",
-    ENGINE_SOURCE: "2857da7099eca2bc75133bf760679ee175da084af52f4b02dcb795e400b5ce7f",
+    ENGINE_SOURCE: "a7930e7ac05f923f2404a3e4b21cf0d6204eb71336bba1fc6937176aae25b2a4",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
@@ -3379,7 +3379,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         ENGINE_SOURCE: (
-            "cf1fbe37cb6a1aaafe165e65bf78d3251181c16e5e497a7938fb017199e322f9",
+            "76123cde12e31b8e37018c7ebd60a1280d503e6e240253fafc7075f767a95fd7",
             {},
         ),
     }
@@ -6495,7 +6495,7 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
 _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
     "src/_lcm/engine.py": (
-        "cf1fbe37cb6a1aaafe165e65bf78d3251181c16e5e497a7938fb017199e322f9",
+        "76123cde12e31b8e37018c7ebd60a1280d503e6e240253fafc7075f767a95fd7",
         {
             "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
             "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
@@ -6630,7 +6630,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "ec73e10371dbdcf60ca1a443116c2e1bbf379291ed1df1856c3c6b7a16c55eb0",
+            "_validate_state_transition_single": "50445397697b613d4cbf288b974a336403da31debafdce0b895a0f9b971873df",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
             "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",

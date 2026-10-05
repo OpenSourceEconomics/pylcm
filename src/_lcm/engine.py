@@ -1221,6 +1221,14 @@ class _StochasticStateTransition:
     which case the AST subscript-order check is permissively skipped.
     """
 
+    derived_categorical_codes: MappingProxyType[str, IntND] = MappingProxyType({})
+    """Every declared code of each derived categorical the function reads.
+
+    The validator sweeps these codes as extra grid axes. They are a superset of
+    the codes the regime functions reach, which is sufficient for the
+    pointwise checks on the law's output.
+    """
+
     phase: Literal["solve", "simulate"] | None = None
     """Phase this kernel belongs to; `None` for a phase-invariant law.
 

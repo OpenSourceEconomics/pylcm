@@ -1807,6 +1807,8 @@ def _validate_state_transition_single(
             grid_args[name] = states[name]
         elif name in state_action_space.actions:
             grid_args[name] = state_action_space.actions[name]
+        elif name in transition.derived_categorical_codes:
+            grid_args[name] = transition.derived_categorical_codes[name]
         elif name in regime_params:
             scalar_kwargs[name] = regime_params[name]
         else:
@@ -2095,16 +2097,18 @@ def _state_probability_binding(
     """
     arguments: list[tuple[str, object]] = []
     bound_inputs: list[object] = [transition.func]
-    actions = state_action_space.actions
+    grids = {
+        **transition.derived_categorical_codes,
+        **state_action_space.actions,
+        **state_action_space.states,
+    }
     for name in signature_names:
         if name == "period":
             value: object = period
         elif name == "age":
             value = age
-        elif name in state_action_space.states:
-            value = state_action_space.states[name]
-        elif name in actions:
-            value = actions[name]
+        elif name in grids:
+            value = grids[name]
         elif name in regime_params:
             value = regime_params[name]
         else:

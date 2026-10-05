@@ -628,3 +628,121 @@ def test_a_subnormal_probability_is_a_valid_row() -> None:
     V = model.solve(log_level="debug", params={"discount_factor": 0.95}).values
 
     assert not bool(jnp.any(jnp.isnan(jnp.asarray(V[0]["alive"]))))
+
+
+@categorical(ordered=False)
+class _Effort:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _effort(consumption: ContinuousAction) -> ScalarInt:
+    # Never `high` on the consumption grid: the validator must still check the
+    # law at `high`, because it sweeps every declared code of a derived
+    # categorical rather than only the codes the regime functions reach.
+    return jnp.where(consumption > 10.0, _Effort.high, _Effort.low)
+
+
+def _income(wealth: ContinuousState) -> FloatND:
+    return 0.1 * wealth
+
+
+def _model_with_function_reading_health_probs(next_health_func) -> Model:
+    """Build a model whose `health` law reads regime-function outputs.
+
+    `effort` is a derived categorical (a regime function with a declared
+    `DiscreteGrid`); `income` is a plain continuous function output.
+    """
+    alive = UserRegime(
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": StochasticTransition(func=next_health_func),
+        },
+        functions={"utility": _utility_alive, "effort": _effort, "income": _income},
+        derived_categoricals={"effort": DiscreteGrid(category_class=_Effort)},
+        constraints={"budget": _budget},
+        regime_transitions=until_exit(
+            1,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "terminal")
+            ),
+            exits=("terminal",),
+        ),
+    )
+    return with_fixture_graph(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+    )
+
+
+def test_state_validator_checks_law_reading_derived_categorical(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A law reading a derived categorical is numerically validated, not skipped."""
+
+    def health_probs(*, health: DiscreteState, effort: ScalarInt) -> FloatND:
+        good = jnp.where(effort == _Effort.high, 0.9, 0.7)
+        return jnp.where(
+            health == _Health.good,
+            jnp.stack([1.0 - good, good]),
+            jnp.array([0.5, 0.5]),
+        )
+
+    model = _model_with_function_reading_health_probs(health_probs)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_raises_on_invalid_law_at_unreached_derived_code() -> None:
+    """Invalid probabilities at any declared derived-categorical code raise."""
+
+    def health_probs(
+        *,
+        health: DiscreteState,  # noqa: ARG001
+        effort: ScalarInt,
+    ) -> FloatND:
+        return jnp.where(
+            effort == _Effort.high, jnp.array([0.5, 0.2]), jnp.array([0.3, 0.7])
+        )
+
+    model = _model_with_function_reading_health_probs(health_probs)
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' in regime 'alive' .* do not sum to 1",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def test_state_validator_skips_law_reading_non_categorical_function_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A law reading a plain function output is skipped with a warning."""
+
+    def health_probs(
+        *,
+        health: DiscreteState,  # noqa: ARG001
+        income: FloatND,  # noqa: ARG001
+    ) -> FloatND:
+        return jnp.array([0.3, 0.7])
+
+    model = _model_with_function_reading_health_probs(health_probs)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [
+        r.message for r in caplog.records if "not numerically validated" in r.message
+    ]
+    assert skips == [
+        (
+            "StochasticTransition for state 'health' in regime 'alive' not "
+            "numerically validated: parameter 'income' is not a recognized grid "
+            "or model parameter."
+        )
+    ]
