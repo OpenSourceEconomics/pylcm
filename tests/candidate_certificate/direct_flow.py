@@ -201,6 +201,7 @@ SOLVE_PENDING_WORK_SOURCE = "src/_lcm/execution/pending_work.py"
 
 NATIVE_VALUES_SOURCE = "src/_lcm/solution/native_values.py"
 NATIVE_ARCHIVE_SOURCE = "src/_lcm/persistence/solution.py"
+STRUCTURAL_BLUEPRINTS_SOURCE = "src/_lcm/solution/structural_blueprints.py"
 
 _ACTION_GRID_SOURCES = (ACTION_GRID_SOURCE,)
 
@@ -220,6 +221,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     *_UNIFORM_PROCESS_SOURCES,
     NATIVE_VALUES_SOURCE,
     NATIVE_ARCHIVE_SOURCE,
+    STRUCTURAL_BLUEPRINTS_SOURCE,
     SOLVE_PENDING_WORK_SOURCE,
     POLICY_DIAGNOSTICS_SOURCE,
     EAGER_CORE_SOURCE,
@@ -342,6 +344,7 @@ _SOURCE_SEALS = {
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
     NATIVE_ARCHIVE_SOURCE: "6abc7475b96ecc69763648c56522889df88726fb34fdaf4e33f496683baf307a",
+    STRUCTURAL_BLUEPRINTS_SOURCE: "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004",
     SOLVE_PENDING_WORK_SOURCE: "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb",
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "7744426281b262014e974e461b966dba3ca0f063ec01d7606caf67676d67aba6",
@@ -454,9 +457,9 @@ EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 50
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 52
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "b176bba30443cc35e8148ad34e8e3fdd69bb0639a118e984b4b9379ffd5349e9"
+    "26baebd7501163422b6af272bf76f3f5d176deaf1bddaefb02f0c608303dbbd1"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
@@ -4144,6 +4147,24 @@ _COMBINED_INPUT_CONTRACTS = {
             "_to_jax_without_narrowing": "1b25088759f37cb0e69618da38903e96e763aba1e0de238f5660190596a82071",
         },
     ),
+    # A warm solve binds a stored structural blueprint on a key hit. The key
+    # is the inputs' abstract schema plus frozen policy values, so changed
+    # parameter values with an unchanged schema hit; a changed shape, dtype,
+    # weak type or placement misses. The store, its lookup and both key
+    # derivations are one corridor.
+    STRUCTURAL_BLUEPRINTS_SOURCE: (
+        "0be03a0f240e2be927493de83264a79b548dc07ee0b4cfa717d5d64c658af358",
+        {
+            "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
+            "StructuralBlueprintCache.get": "d854c5c738f2d093d31a64d6999ffc4d1dcff29509fb5d3cfc91fe8ad8ce2dcf",
+            "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
+            "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
+            "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
+            "abstract_schema": "8cc83dd74696815ae043e0018c36c338368df95f8ec2ca62616010f5731cfa6c",
+            "_leaf_schema": "bf4b44554b4f894745d4f61261889a0ab7f88e4c1cac6cb13f6bf13c2fc5c2bc",
+            "frozen_policy": "20d8d9fb6447eaaa3dbf374c55171e51de1708b48b1b7b194a285fb1bddcc406",
+        },
+    ),
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
         "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
         {
@@ -6434,6 +6455,16 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         "src/_lcm/simulation/runtime.py",
         "        with jax.set_mesh(mesh):",
         "        with jax.set_mesh(None):",
+    ),
+    "structural_blueprint:cache_hit_ignores_key": (
+        STRUCTURAL_BLUEPRINTS_SOURCE,
+        "            blueprint = self._entries.get(key)\n",
+        "            blueprint = next(reversed(self._entries.values()), None)\n",
+    ),
+    "structural_blueprint:schema_drops_dtype": (
+        STRUCTURAL_BLUEPRINTS_SOURCE,
+        "            leaf.shape,\n            leaf.dtype,\n",
+        "            leaf.shape,\n",
     ),
 }
 

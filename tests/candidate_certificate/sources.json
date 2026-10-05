@@ -401,6 +401,10 @@
             "sha256": "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870"
           },
           {
+            "path": "src/_lcm/solution/structural_blueprints.py",
+            "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
+          },
+          {
             "path": "src/_lcm/solution/v_topology.py",
             "sha256": "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343"
           },
@@ -469,8 +473,8 @@
             "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
           }
         ],
-        "source_count": 116,
-        "source_inventory_sha256": "a44641189591a7c12e9c8900082f2fba9cdb2f0d94b736c64e4c9343335f6d7d"
+        "source_count": 117,
+        "source_inventory_sha256": "4424291c1bb61d5557a4b6f87430182bcea2d228e286cbba6bcaf309eb144421"
       },
       "fast": {
         "candidate_sources": [
@@ -871,6 +875,10 @@
             "sha256": "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870"
           },
           {
+            "path": "src/_lcm/solution/structural_blueprints.py",
+            "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
+          },
+          {
             "path": "src/_lcm/solution/v_topology.py",
             "sha256": "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343"
           },
@@ -939,14 +947,14 @@
             "sha256": "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31"
           }
         ],
-        "source_count": 116,
-        "source_inventory_sha256": "a44641189591a7c12e9c8900082f2fba9cdb2f0d94b736c64e4c9343335f6d7d"
+        "source_count": 117,
+        "source_inventory_sha256": "4424291c1bb61d5557a4b6f87430182bcea2d228e286cbba6bcaf309eb144421"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "a44641189591a7c12e9c8900082f2fba9cdb2f0d94b736c64e4c9343335f6d7d",
+  "source_inventory_sha256": "4424291c1bb61d5557a4b6f87430182bcea2d228e286cbba6bcaf309eb144421",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1343,6 +1351,10 @@
     {
       "path": "src/_lcm/solution/retained_buffers.py",
       "sha256": "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870"
+    },
+    {
+      "path": "src/_lcm/solution/structural_blueprints.py",
+      "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
     },
     {
       "path": "src/_lcm/solution/v_topology.py",
