@@ -45,9 +45,11 @@ question Q4): the standard form is concave and consistent with the listed
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -75,6 +77,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors (years). Working life starts at 20, retirement at 60, and
@@ -348,9 +351,11 @@ def build_model(
         model.
     """
     if n_periods is None:
-        ages = AgeGrid(start=START_AGE, stop=TERMINAL_AGE, step="Y")
+        ages = AgeGrid(start=START_AGE, inclusive_stop=TERMINAL_AGE, step="Y")
     else:
-        ages = AgeGrid(start=START_AGE, stop=START_AGE + n_periods - 1, step="Y")
+        ages = AgeGrid(
+            start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y"
+        )
     final_age = int(ages.exact_values[-1])
     retirement_age = min(RETIREMENT_AGE, final_age - 1)
 
@@ -430,7 +435,9 @@ def build_model(
     working = NestedConsumptionSavingsRegime(
         regime_transitions=until_exit(
             retirement_age,
-            law=Choose(func=next_regime, targets=("working",)),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working",)
+            ),
             exits=("retired",),
         ),
         states={
@@ -460,7 +467,9 @@ def build_model(
     retired = NestedConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(func=next_regime_from_retired, targets=("retired",)),
+            law=_SupportedDeterministicTransition(
+                func=next_regime_from_retired, targets=("retired",)
+            ),
             exits=("dead",),
             start=retirement_age,
         ),
@@ -486,12 +495,12 @@ def build_model(
         functions={"utility": bequest},
     )
 
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingRegimeId,
         execution_config=execution_config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

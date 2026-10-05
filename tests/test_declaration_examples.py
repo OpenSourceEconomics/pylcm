@@ -1,7 +1,8 @@
 """Docs, examples, tests and error messages use the keyword-only declaration API.
 
 Every call to a multi-argument declaration constructor (`Model`, `ByAge`,
-`ByAge.until`, `AgeRange`, `Choose`, `MarkovTransition`) names its arguments,
+`ByAge.until`, `AgeRange`, `DeterministicTransition`, `StochasticTransition`) names
+its arguments,
 and no prose states an endpoint convention contradicting `ByAge.until`: the age
 `stop_age_exclusive` is excluded and the last source below it uses `then`.
 """
@@ -20,7 +21,14 @@ from tests.ci.keyword_only_convention import (
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DECLARATIONS = frozenset(
-    {"Model", "ByAge", "until", "AgeRange", "Choose", "MarkovTransition"}
+    {
+        "Model",
+        "ByAge",
+        "until",
+        "AgeRange",
+        "DeterministicTransition",
+        "StochasticTransition",
+    }
 )
 # A call a test makes positionally on purpose, to assert it is rejected, carries
 # this suppression on its line.
@@ -44,15 +52,15 @@ def test_scanner_reports_positional_declaration_calls() -> None:
     code = (
         "ByAge.until(62, law=a, then=b)\n"
         "AgeRange(51, 62)\n"
-        "Choose(func=f, targets=('a',))\n"
-        "MarkovTransition(f, targets=('a',))\n"
+        "DeterministicTransition(func=f)\n"
+        "StochasticTransition(f)\n"
         "Model(...)\n"
         "Model({}, ages)  # ty: ignore[too-many-positional-arguments]\n"
     )
     assert _positional_declaration_calls(code=code) == (
         "until",
         "AgeRange",
-        "MarkovTransition",
+        "StochasticTransition",
     )
 
 

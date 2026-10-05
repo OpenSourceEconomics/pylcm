@@ -98,7 +98,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -113,7 +113,7 @@ from tests.regime_building.test_simulate_gate_param_and_leg_selection import (
 )
 
 _BETA = 0.95
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The realized, OFF-GRID candidate `x` every subject lands on.
 _REALIZED_X = 0.6
@@ -224,9 +224,9 @@ def _make_shift_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_ref_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -535,9 +535,9 @@ def _make_projector_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_always_closed_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -873,9 +873,9 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_ref_only,
                         routes={
                             "only": StakeholderRoute(
@@ -1032,9 +1032,9 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_always_closed_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -1162,7 +1162,9 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": IrregSpacedGrid(n_points=2)},
@@ -1221,7 +1223,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     identically named ones (which would empty the mask — the assertion below is
     the difference between a feasible cell and a dissolved household).
     """
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_e2_ref_grid_regimes()
     flat_params = MappingProxyType(
         {
@@ -1342,9 +1344,9 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_target_helper,
                         routes={
                             "only": StakeholderRoute(
@@ -1433,9 +1435,9 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_ref_value_only,
                         routes={
                             "only": StakeholderRoute(
@@ -1579,9 +1581,9 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_outside,
                         gate_references={
                             # Injected operand named exactly like the target's
@@ -1684,9 +1686,9 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_shadowed_threshold,
                         routes={
                             "only": StakeholderRoute(
@@ -1755,9 +1757,9 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_uses_v_target,
                         gate_references={
                             # Aliases the built-in target-value operand `V_target`.
@@ -1887,9 +1889,9 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_x_operand,
                         gate_references={
                             # Aliases the TARGET STATE `x` (not a value/D operand,
@@ -2018,9 +2020,9 @@ def _make_gate_param_aliases_target_state_regimes(
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_x,
                         routes={
                             "only": StakeholderRoute(
@@ -2144,9 +2146,9 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=gate,
                         routes={
                             "only": StakeholderRoute(
@@ -2207,9 +2209,9 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_v_only,
                         routes={
                             "only": StakeholderRoute(
@@ -2262,9 +2264,9 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
     src = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_reads_v_arg_state,
                         routes={
                             "only": StakeholderRoute(
@@ -2423,9 +2425,9 @@ def test_source_param_near_engine_name_still_solves():
     regimes["src"] = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_gate_near,
                         routes={
                             "only": StakeholderRoute(

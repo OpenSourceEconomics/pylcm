@@ -9,16 +9,17 @@ import pandas as pd
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     CESAggregator,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    Model,
     Phased,
     PowerMean,
     categorical,
@@ -34,6 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -164,7 +166,9 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 1,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         functions=functions,
@@ -190,12 +194,12 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         states=dead_states,
     )
 
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_life_regime, "dead": dead_regime},
-        ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
-        initial_regimes={0: "working_life"},
+        initial_nodes={0: "working_life"},
     )
 
 
@@ -650,7 +654,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     alive = UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=lambda age: jnp.where(
                     age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
                 ),
@@ -669,11 +673,11 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     discount_factor = pd.Series(
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
@@ -703,7 +707,7 @@ def _solve_with_aggregator_slot(
     alive = UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=lambda age: jnp.where(
                     age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
                 ),
@@ -723,11 +727,11 @@ def _solve_with_aggregator_slot(
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
     params = {

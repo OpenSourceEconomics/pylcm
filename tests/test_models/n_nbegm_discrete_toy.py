@@ -17,9 +17,11 @@ investment, and the branch on dense grids, and is the agreement oracle.
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     Model,
     Regime,
@@ -115,7 +117,9 @@ def build_model(
     }
     transitions = until_exit(
         final_age_alive + 5,
-        law=Choose(func=smooth.next_regime, targets=("alive", "dead")),
+        law=_SupportedDeterministicTransition(
+            func=smooth.next_regime, targets=("alive", "dead")
+        ),
         exits=("dead",),
     )
     if variant == "brute":
@@ -166,9 +170,19 @@ def build_model(
         functions={"utility": smooth.terminal_utility},
     )
     return Model(
+        edges={
+            "alive": {
+                "dead": tuple(range(20, final_age_alive + 1, 5)),
+                **(
+                    {"alive": tuple(range(20, final_age_alive, 5))}
+                    if final_age_alive > 20
+                    else {}
+                ),
+            },
+        },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=smooth.RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )

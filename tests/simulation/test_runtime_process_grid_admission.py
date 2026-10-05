@@ -14,6 +14,9 @@ import jax.core
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import (
     measure_buffer_footprint,
@@ -23,7 +26,6 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     LinSpacedGrid,
     Model,
     Regime,
@@ -38,6 +40,7 @@ from tests.simulation.test_process_grid_entry_admission import (
     _COMPOSITE_CASES,
     _inputs,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _RUNTIME_CASES = _COMPOSITE_CASES[1:]
 
@@ -232,12 +235,14 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
         "companion": RouwenhorstAR1Process(n_points=2, rho=0.0, sigma=1.0),
         "assets": LinSpacedGrid(start=0, stop=1, n_points=2),
     }
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=0, stop=1): Choose(
+                        AgeRange(
+                            start=0, exclusive_stop=1
+                        ): _SupportedDeterministicTransition(
                             func=_support_next_regime, targets=("done",)
                         )
                     }
@@ -254,9 +259,9 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
             ),
         },
         regime_id_class=_LifecycleRegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=2**28),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     for mu, expected in ((0.0, [0.0, 0.0]), (2.0, [1.0, 2.5]), (0.0, [0.0, 0.0])):
         result = model.simulate(

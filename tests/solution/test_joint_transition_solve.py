@@ -19,11 +19,11 @@ from lcm import (
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
 )
@@ -41,6 +41,7 @@ from lcm.typing import (
     UserParams,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -101,12 +102,12 @@ def _build_model(
     probabilities: Callable[[], FloatND] = _joint_probabilities,
     support: object = _SUPPORT,
 ) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
-                    law={"target": MarkovTransition(func=_certain_target)},
+                    law={"target": StochasticTransition(func=_certain_target)},
                     exits=("target",),
                 ),
                 functions={"utility": lambda: jnp.asarray(0.0)},
@@ -133,11 +134,11 @@ def _build_model(
                 functions={"utility": lambda wealth, income: wealth + 2 * income},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -368,14 +369,14 @@ def _bdy_gate_always_open(V_target_f: FloatND) -> jnp.ndarray:
 
 
 def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "single": Regime(
                 regime_transitions=until_exit(
                     1,
                     law={
                         "couple": ValueDependentTransition(
-                            probability=MarkovTransition(func=_bdy_certain_couple),
+                            probability=StochasticTransition(func=_bdy_certain_couple),
                             gate=_bdy_gate_always_open,
                             routes={
                                 "f": StakeholderRoute(
@@ -430,11 +431,11 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                 },
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=BDYRegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "single"},
+        initial_nodes={0: "single"},
     )
 
 

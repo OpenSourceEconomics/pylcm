@@ -38,6 +38,7 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _N_WEALTH = 8
@@ -108,7 +109,7 @@ def _model(
 ) -> Model:
     """Build a two-period GridSearch model whose cell axis has extent `_N_WEALTH`."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -123,13 +124,13 @@ def _model(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
             axis_width_ceilings=axis_width_ceilings,
             device_memory_bytes=device_memory_bytes,
         ),
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

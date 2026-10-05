@@ -33,7 +33,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.collective_fixtures import (
     TWO_STAKEHOLDER_V_PERIOD_0,
@@ -41,6 +41,7 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
@@ -246,7 +247,7 @@ def _make_consent_model() -> Model:
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(func=_certain_transition),
+                    probability=StochasticTransition(func=_certain_transition),
                     gate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -287,15 +288,15 @@ def _make_consent_model() -> Model:
             )
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "single": single,
             "single_terminal": single_terminal,
             "married_terminal": married_terminal,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
-        initial_regimes={0: "single"},
+        initial_nodes={0: "single"},
     )
 
 

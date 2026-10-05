@@ -48,9 +48,9 @@ from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
     AgeSpecializedGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     JointTransition,
-    MarkovTransition,
+    StochasticTransition,
     fail_if_phased_wraps_a_schedule,
 )
 from lcm.typing import UserFunction
@@ -65,8 +65,9 @@ class Regime:
     (`_lcm.engine.Regime`) used internally by the solver and simulator.
 
     State transitions are specified via `state_transitions`, mapping state names to
-    transition functions. A bare callable is deterministic; wrap in `MarkovTransition`
-    for stochastic transitions. `fixed_transition(state_name)` marks a fixed state
+    transition functions. A bare state callable is deterministic; wrap in
+    `StochasticTransition` for stochastic transitions. `fixed_transition(state_name)`
+    marks a fixed state
     (identity law). Stochastic processes have intrinsic transitions and must not
     appear in `state_transitions`.
 
@@ -82,47 +83,51 @@ class Regime:
     # so the validator can reject them with an explanation.
     regime_transitions: (
         RegimeName
-        | Choose
+        | DeterministicTransition
         | ByAge
         | UserFunction
-        | MarkovTransition
+        | StochasticTransition
         | Phased
         | Mapping[
             RegimeName,
-            MarkovTransition | UserFunction | Phased | ValueDependentTransition,
+            StochasticTransition | UserFunction | Phased | ValueDependentTransition,
         ]
         | ValueDependentTransition
         | None
     )
     """Regime transition, or `None` for terminal regimes.
 
-    Nonterminal forms, which also declare where the regime is solved and where
-    it may go:
+    Nonterminal forms declare numerical behavior. `Model.edges` alone declares
+    which destinations are available at each source age:
 
-    - regime name ⇒ deterministic move to that regime
-    - `Choose(func=func, targets=...)` ⇒ deterministic, `func` returns the global
-      regime code of one of `targets`
-    - `MarkovTransition(func=func, targets=...)` ⇒ stochastic, `func` returns a
-      probability vector over all regimes, nonzero only on `targets`
-    - per-target dict ⇒ stochastic, maps target regime names to either
-      `MarkovTransition`-wrapped functions returning that target's probability,
-      or `ValueDependentTransition` declarations that additionally gate and
-      route the selected target. The key set is the regime's support. A bare
-      probability callable is accepted only inside `ValueDependentTransition`
-      and wrapped in the derived `decomposed_transition` view.
-    - `ByAge(cases={...})` ⇒ one of the above per selected age
+    - a regime name specifies a deterministic destination;
+    - a plain function or `DeterministicTransition(func=func)` returns its global
+      regime code;
+    - `StochasticTransition(func=func)` returns a probability vector in the full
+      global regime-code order;
+    - a per-target mapping supplies scalar `StochasticTransition` probability
+      laws or `ValueDependentTransition` declarations;
+    - `ByAge(cases=..., default=...)` selects complete laws by source age.
 
-    A plain nonterminal law covers every non-final age; a `ByAge` covers
-    exactly the ages its cases select. Every declared target must be solved at
-    the next age, and every target needs a valid state handoff (a carried
-    state, a deterministic/stochastic law, or an explicit target-local/entry
-    law). Runtime-zero transition probabilities do not narrow this topology;
-    only the declaration does. A bare callable or a vector `MarkovTransition`
-    without `targets` is the engine's lowered form of these declarations;
-    `Model` rejects it as a user declaration.
+    The targetless decorator factories `deterministic_transition()` and
+    `stochastic_transition()` construct the corresponding shared state/regime
+    wrappers. A deterministic selector must choose a graph-supported destination;
+    a vector law must be zero outside graph support. Per-target probability cells
+    supply the declared edges and do not define topology themselves.
 
-    `Phased` gives each phase its own variant (matching form required; for
-    per-target dicts, identical key sets). A value-dependent target must be
+    Every demanded target needs a value at the next grid age and a valid state
+    handoff. Runtime-zero probabilities do not narrow topology. Ordinary scalar
+    per-target probabilities can be pruned when their complete dependency DAG
+    uses only construction-fixed leaves and yields exactly zero. Dynamic and
+    coordinate-indexed dependencies retain their edges; invalid or all-zero laws
+    retain validation, and pruning never renormalizes mass. `model.graph` exposes
+    both the immutable declared edges and the effective phase graphs.
+
+    `Phased` gives each phase its own variant with matching transition forms;
+    ordinary per-target mappings may have different target sets and handoffs.
+    Decisions follow perceived solve edges; histories follow realized simulate
+    edges. Every visited node is solved with its perceived dependencies, while
+    value-only nodes create no realized visits. A value-dependent target must be
     value-dependent in both phases or neither. Its two declarations share the
     identical gate and equal routes, references, and off-grid contract; only
     their probabilities may differ.
@@ -147,11 +152,11 @@ class Regime:
     state_transitions: Mapping[
         StateName,
         UserFunction
-        | MarkovTransition
+        | StochasticTransition
         | Phased
         # `Phased` inside a per-target dict passes the type check so the
         # validator can reject it with the outermost-only explanation.
-        | Mapping[RegimeName, UserFunction | MarkovTransition | Phased]
+        | Mapping[RegimeName, UserFunction | StochasticTransition | Phased]
         | None,
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions or per-target dicts.
@@ -159,7 +164,7 @@ class Regime:
     Every non-process target-state cell must have exactly one producer: an ordinary
     entry here or an output of `joint_transitions`. `fixed_transition(state_name)`
     marks a fixed state (identity law). Wrap in
-    `MarkovTransition` for stochastic transitions. Per-target dicts map target
+    `StochasticTransition` for stochastic transitions. Per-target dicts map target
     regime names to transition functions — every reachable target must be listed.
     `Phased` gives each phase its own law of motion; it wraps the whole entry
     (outermost only, never inside a per-target dict).
@@ -591,10 +596,10 @@ class Regime:
         self,
     ) -> (
         UserFunction
-        | MarkovTransition
+        | StochasticTransition
         | Phased
         | ByAge
-        | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+        | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
         | None
     ):
         """`regime_transitions` with every `ValueDependentTransition` taken apart.
@@ -604,9 +609,9 @@ class Regime:
         second belongs to `gated_edges`; what stays here is the selection
         probability, in the per-target cell the canonical pipeline reads. A
         bare probability callable is wrapped, because that cell's grammar takes
-        a `MarkovTransition`. A declaration the engine cannot read directly (a
-        `ByAge` schedule, a regime name, a `Choose`) is read through its
-        period-independent `declaration_view` first.
+        a `StochasticTransition`. A declaration the engine cannot read directly (a
+        `ByAge` schedule, a regime name, a `DeterministicTransition`) is read
+        through its period-independent `declaration_view` first.
 
         Deterministic and idempotent, like the other two views.
         """
@@ -670,7 +675,7 @@ class Regime:
         A gate is a route: it says where a household goes when consent fails,
         and the fallback belongs to the route. A terminal regime has no next
         period for a route to reach, and a coarse transition — a bare callable
-        or a `MarkovTransition` — names no target for the gate to be keyed by.
+        or a `StochasticTransition` — names no target for the gate to be keyed by.
         """
         if not self.gated_edges:
             return
@@ -854,6 +859,7 @@ class Regime:
                 states=self.states,
                 state_transitions=self.state_transitions,
                 joint_output_names=joint_output_names,
+                phase=phase,
             )
             result |= {
                 name: _resolve_phase_variant(value=func, phase=phase)
@@ -1069,10 +1075,10 @@ def decompose_transition(
     transition: object,
 ) -> (
     UserFunction
-    | MarkovTransition
+    | StochasticTransition
     | Phased
     | ByAge
-    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
     | None
 ):
     """Replace every `ValueDependentTransition` by the probability it declares.
@@ -1099,23 +1105,23 @@ def _decomposed_transition_side(
     transition: object,
 ) -> (
     UserFunction
-    | MarkovTransition
+    | StochasticTransition
     | Phased
     | ByAge
-    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
     | None
 ):
     """Replace one phase's `ValueDependentTransition` cells by their probabilities.
 
     Args:
         transition: One phase's regime transition — a per-target mapping, a
-            coarse callable or `MarkovTransition`, an age schedule, or `None`
+            coarse callable or `StochasticTransition`, an age schedule, or `None`
             for a terminal regime.
 
     Returns:
         The same transition with every `ValueDependentTransition` cell replaced
         by the selection probability it declares, wrapped in a
-        `MarkovTransition` where the declaration gave a bare callable. An age
+        `StochasticTransition` where the declaration gave a bare callable. An age
         schedule has each of its laws taken apart. Anything else that is not a
         per-target mapping is returned unchanged.
     """
@@ -1123,7 +1129,7 @@ def _decomposed_transition_side(
         return transition.with_mapped_laws(func=decompose_transition)
     if not isinstance(transition, Mapping):
         return cast(
-            "UserFunction | MarkovTransition | Phased | ByAge | None",
+            "UserFunction | StochasticTransition | Phased | ByAge | None",
             transition,
         )
     if not any(
@@ -1133,14 +1139,15 @@ def _decomposed_transition_side(
         # phase-variation scan able to ask whether the author wrote one object
         # for both phases, which a freshly built copy would always deny.
         return cast(
-            "Mapping[RegimeName, MarkovTransition | UserFunction | Phased]", transition
+            "Mapping[RegimeName, StochasticTransition | UserFunction | Phased]",
+            transition,
         )
     return MappingProxyType(
         {
             target: (
                 _as_markov_transition(cell.probability)
                 if isinstance(cell, ValueDependentTransition)
-                else cast("MarkovTransition | UserFunction | Phased", cell)
+                else cast("StochasticTransition | UserFunction | Phased", cell)
             )
             for target, cell in transition.items()
         }
@@ -1148,12 +1155,12 @@ def _decomposed_transition_side(
 
 
 def _as_markov_transition(
-    probability: UserFunction | MarkovTransition,
-) -> MarkovTransition:
-    """Wrap a bare probability callable in the cell grammar's `MarkovTransition`."""
-    if isinstance(probability, MarkovTransition):
+    probability: UserFunction | StochasticTransition,
+) -> StochasticTransition:
+    """Wrap a bare probability callable in the cell grammar's `StochasticTransition`."""
+    if isinstance(probability, StochasticTransition):
         return probability
-    return MarkovTransition(func=probability)
+    return StochasticTransition(func=probability)
 
 
 def _resolve_phase_variant(

@@ -14,17 +14,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LogNormalIIDProcess,
-    MarkovTransition,
-    Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -59,9 +61,9 @@ def _oracle() -> float:
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
     transition = (
-        Choose(func=_target_id, targets=("target",))
+        _SupportedDeterministicTransition(func=_target_id, targets=("target",))
         if coarse
-        else {"target": MarkovTransition(func=_one)}
+        else {"target": StochasticTransition(func=_one)}
     )
     process = LogNormalIIDProcess(
         n_points=3,
@@ -69,7 +71,7 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         mu=0.0,
         sigma=1.0,
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -81,11 +83,11 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
                 functions={"utility": _shock},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
     got = float(np.asarray(solution[0]["source"]))

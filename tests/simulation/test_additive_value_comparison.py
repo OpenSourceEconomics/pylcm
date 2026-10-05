@@ -27,7 +27,7 @@ from _lcm.typing import FlatParams
 from benchmarks.asv._simulation_witnesses import multi_regime
 from lcm import CESAggregator, LinearAggregator, Model
 from lcm.result import SimulationResult
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
 
 
@@ -321,6 +321,7 @@ def test_other_aggregator_refuses_additive_witness_contract() -> None:
     """A nonlinear user declaration cannot acquire the additive error scale."""
     original, params, _ = multi_regime()
     model = Model(
+        edges=original.graph.edges,
         regimes={
             name: regime
             if regime.terminal
@@ -330,7 +331,7 @@ def test_other_aggregator_refuses_additive_witness_contract() -> None:
         ages=original.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=original.fixed_params,
-        initial_regimes=initial_regimes_of(model=original),
+        initial_nodes=initial_nodes_of(model=original),
     )
     with pytest.raises(AssertionError):
         assert_additive_witness(

@@ -16,6 +16,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation import programs as simulation_programs
 from _lcm.simulation.period_inputs import GATE_ROUTE, gate_reads
 from _lcm.simulation.program_types import SimulationPrograms
@@ -29,7 +32,7 @@ from _lcm.simulation.programs import (
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
@@ -43,6 +46,7 @@ from lcm.typing import (
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import taste_shocks_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # A regime whose solve kernel streams its action product, and one whose
@@ -261,7 +265,9 @@ def _branching_regime() -> UserRegime:
     return UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(func=_branch_next_regime, targets=("stay", "switch", "done")),
+            law=_SupportedDeterministicTransition(
+                func=_branch_next_regime, targets=("stay", "switch", "done")
+            ),
             exits=("done",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
@@ -275,7 +281,7 @@ def _branching_regime() -> UserRegime:
 @functools.cache
 def _two_target_model() -> Model:
     """Build a model whose first period reaches two state-carrying regimes."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "stay": _branching_regime(),
             "switch": _branching_regime(),
@@ -284,8 +290,8 @@ def _two_target_model() -> Model:
             ),
         },
         regime_id_class=_BranchRegimeId,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        initial_regimes={0: "stay"},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        initial_nodes={0: "stay"},
     )
 
 

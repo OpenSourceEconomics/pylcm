@@ -37,6 +37,11 @@ from _lcm.execution.execution_plan import (
     visible_device_pool_limits,
 )
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
+from _lcm.model_graph import (
+    ModelGraph,
+    prepare_graph,
+    resolve_graph_edges,
+)
 from _lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
@@ -89,9 +94,7 @@ from _lcm.regime_building.processing import (
 from _lcm.regime_building.schedules import (
     gated_source_periods,
     lower_demanded_transitions,
-    resolve_demand,
     resolve_initial_nodes,
-    resolve_regime_schedules,
 )
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
@@ -250,7 +253,7 @@ from lcm.solvers import GridSearch
 from lcm.typing import (
     Bool1D,
     FloatND,
-    InitialRegimes,
+    InitialNodes,
     IntND,
     UserFacingParamsTemplate,
     UserFunction,
@@ -488,6 +491,14 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
+    initial_nodes: frozenset[tuple[object, RegimeName]]
+    """Exact admissible starting age-regime pairs."""
+
+    @property
+    def graph(self) -> ModelGraph:
+        """Return the immutable declared and effective model graph."""
+        return self._graph
+
     _regimes: MappingProxyType[RegimeName, Regime]
     """Canonical, processed regimes used by solve and simulate.
 
@@ -544,7 +555,8 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_regimes: InitialRegimes,
+        initial_nodes: InitialNodes,
+        edges: object,
     ) -> None:
         """Initialize the Model.
 
@@ -559,12 +571,17 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_regimes: The admissible starting age-regime pairs, as a
-                nonempty mapping from age selector (as in `ByAge`) to a regime
-                name or a nonempty sequence of names. Each rule contributes its
-                selected grid ages times names; rules are unioned. Published as the
+            initial_nodes: The admissible starting age-regime pairs, as a
+                nonempty sequence of `(age, regime)` pairs. A mapping from
+                age selectors to regime names also selects admissible pairs.
+                Published as the
                 exact pairs in `self.initial_nodes`. Required: there is no
                 default starting universe.
+            edges: Mapping from source regime to destination regime to source-age
+                selector. A bare mapping broadcasts to both phases; `Phased`
+                declares perceived solve and realized simulation topology separately.
+                The edge lands at the next grid age. Stored as an immutable,
+                validated graph in `self.graph`.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -647,21 +664,20 @@ class Model:
             StructuralBlueprintCache()
         )
 
-        # The declared starts, then each regime's available laws and support,
-        # read once from the raw `regime_transitions`. The single canonical
-        # coverage schedule threaded through pruning, validation and
-        # model-structure preparation is the solve demand of the starts,
-        # resolved below; only the laws it selects are lowered to the engine's
-        # period-independent vocabulary.
-        initial_nodes = resolve_initial_nodes(
-            initial_regimes=initial_regimes, regime_names=tuple(regimes), ages=ages
+        # The declared starts and Model.edges provide roots and support.
+        # Numerical regime_transitions and ByAge select the available laws.
+        # One canonical coverage schedule carries the resulting solve demand
+        # through pruning, validation and model-structure preparation; only
+        # demanded laws are lowered to the engine's period-independent form.
+        resolved_initial_nodes = resolve_initial_nodes(
+            initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
         )
+        graph_edges = resolve_graph_edges(edges=edges, regimes=regimes, ages=ages)
         regime_names_to_ids = {
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        schedules = resolve_regime_schedules(user_regimes=regimes, ages=ages)
-        declared_transitions = {
+        user_transitions = {
             name: regime.regime_transitions for name, regime in regimes.items()
         }
 
@@ -677,27 +693,19 @@ class Model:
             user_regimes=regimes,
             model_slots=model_slots,
         )
-        # Solve demand: the problems the declared starts require, physically or
-        # through a value read. Same-period references are read off the merged
-        # regimes, so model-level constraints contribute theirs.
-        schedules = resolve_demand(
-            schedules=schedules,
-            initial_nodes=initial_nodes,
-            same_period_refs_by_regime={
-                name: tuple(ref.regime for ref in regime.same_period_refs.values())
-                for name, regime in merged_regimes.items()
-            },
-            terminal_regimes=frozenset(
-                name for name, regime in regimes.items() if regime.terminal
-            ),
+        prepared_graph = prepare_graph(
+            regimes=merged_regimes,
+            edges=graph_edges,
             ages=ages,
+            initial_nodes=resolved_initial_nodes,
+            fixed_params=self.fixed_params,
         )
-        active_periods_by_regime = schedules.coverage_by_regime
+        merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         # Lowering reads only the demanded periods, so a case no required
         # problem selects contributes no argument, parameter or kernel.
         demanded_transitions = lower_demanded_transitions(
             schedules=schedules,
-            declared_transitions=declared_transitions,
+            declared_transitions=prepared_graph.declarations,
             code_by_name=regime_names_to_ids,
         )
         # A regime no subject visits owes its backward problem only, so none of
@@ -715,7 +723,7 @@ class Model:
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
         )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
@@ -742,7 +750,7 @@ class Model:
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
         )
         self.regime_names_to_ids = MappingProxyType(
@@ -786,7 +794,7 @@ class Model:
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
             ages=self.ages,
-            active_periods_by_regime=active_periods_by_regime,
+            active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
@@ -802,22 +810,30 @@ class Model:
                 for period, name in schedules.visited_nodes
             ),
         )
+        self._graph = ModelGraph(
+            edges=graph_edges,
+            initial_nodes=resolved_initial_nodes,
+            reachability=self.reachability,
+            pruned_edges=prepared_graph.pruned_edges,
+        )
         # Public regimes keep each transition as declared; the engine copy
         # holds the lowered law every internal consumer reads.
         self.user_regimes = MappingProxyType(
             {
-                name: regime.replace(regime_transitions=declared_transitions[name])
+                name: regime.replace(regime_transitions=user_transitions[name])
                 for name, regime in self._engine_user_regimes.items()
             }
         )
-        self.initial_nodes = initial_nodes
+        self.initial_nodes = resolved_initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
             user_regimes=self._engine_user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
-            params_already_consumed=params_consumed_by_binder,
+            params_already_consumed=(
+                params_consumed_by_binder | prepared_graph.consumed_param_keys
+            ),
             prepared_structure=prepared_structure,
             execution=self._execution,
         )
@@ -3340,7 +3356,7 @@ class Model:
                 for period, name in refused
             )
             raise InvalidInitialConditionsError(
-                "Subjects start at (age, regime) pairs that `initial_regimes` does "
+                "Subjects start at (age, regime) pairs that `initial_nodes` does "
                 f"not admit as starts:\n{details}"
             )
 

@@ -8,7 +8,7 @@ canonical target-granular form `Mapping[RegimeName, law]`:
 - a `fixed_transition` entry desugars into per-target identity laws
 
 The regime transition itself is canonicalized the same way: a coarse form
-(bare callable or `MarkovTransition`) becomes a `Mapping[RegimeName, cell]`
+(bare callable or `StochasticTransition`) becomes a `Mapping[RegimeName, cell]`
 over all regimes whose cells share one underlying transition object (one
 evaluation, indexed per target), a user per-target dict passes through, and
 a terminal regime keeps `None`.
@@ -34,8 +34,8 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    MarkovTransition,
     Phased,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -122,8 +122,8 @@ def test_per_target_dict_is_restricted_to_named_targets() -> None:
     specs = _two_regime_model_specs(
         {
             "regime_transitions": {
-                "retire": MarkovTransition(func=lambda age: jnp.asarray(0.6)),  # noqa: ARG005
-                "dead": MarkovTransition(func=lambda age: jnp.asarray(0.4)),  # noqa: ARG005
+                "retire": StochasticTransition(func=lambda age: jnp.asarray(0.6)),  # noqa: ARG005
+                "dead": StochasticTransition(func=lambda age: jnp.asarray(0.4)),  # noqa: ARG005
             },
             "state_transitions": {"wealth": {"retire": _next_wealth}},
         }
@@ -159,7 +159,7 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
 
 
 def test_markov_law_broadcasts_as_markov() -> None:
-    """A stochastic law stays `MarkovTransition`-wrapped in every cell."""
+    """A stochastic law stays `StochasticTransition`-wrapped in every cell."""
     overrides: dict[str, Any] = {
         "states": {
             "wealth": _wealth_grid(),
@@ -167,7 +167,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
         },
         "state_transitions": {
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=_health_probs),
+            "health": StochasticTransition(func=_health_probs),
         },
         "functions": {
             "utility": lambda consumption, health: jnp.log(consumption)  # noqa: ARG005
@@ -178,7 +178,7 @@ def test_markov_law_broadcasts_as_markov() -> None:
         {"work": _regime(**overrides), "retire": _regime(**overrides), "dead": dead}
     )
     canonical = specs["work"].solution.state_transitions["health"]
-    assert all(isinstance(law, MarkovTransition) for law in canonical.values())
+    assert all(isinstance(law, StochasticTransition) for law in canonical.values())
 
 
 def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
@@ -211,14 +211,14 @@ def test_carried_state_law_lives_only_in_the_simulation_slice() -> None:
 
 
 def test_coarse_markov_regime_transition_canonicalizes_to_shared_cells() -> None:
-    """A coarse `MarkovTransition` regime transition becomes a per-target mapping.
+    """A coarse `StochasticTransition` regime transition becomes a per-target mapping.
 
     The canonical mapping covers all regimes (a coarse form declares every
     regime reachable) and every cell references the same underlying
     transition object, so the engine evaluates it once and indexes per
     target.
     """
-    transition = MarkovTransition(func=lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
+    transition = StochasticTransition(func=lambda age: jnp.asarray([0.5, 0.3, 0.2]))  # noqa: ARG005
     specs = _two_regime_model_specs(
         {
             "regime_transitions": transition,
@@ -282,8 +282,8 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
 
 def test_per_target_regime_transition_passes_through() -> None:
     """A user per-target regime transition stays a mapping of exactly its cells."""
-    to_retire = MarkovTransition(func=lambda age: jnp.asarray(0.6))  # noqa: ARG005
-    to_dead = MarkovTransition(func=lambda age: jnp.asarray(0.4))  # noqa: ARG005
+    to_retire = StochasticTransition(func=lambda age: jnp.asarray(0.6))  # noqa: ARG005
+    to_dead = StochasticTransition(func=lambda age: jnp.asarray(0.4))  # noqa: ARG005
     specs = _two_regime_model_specs(
         {
             "regime_transitions": {"retire": to_retire, "dead": to_dead},

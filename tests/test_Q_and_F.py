@@ -16,6 +16,7 @@ from _lcm.params.processing import (
     get_flat_param_names,
     process_params,
 )
+from _lcm.probability import regime_mass_is_a_distribution
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
@@ -24,24 +25,25 @@ from _lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
-    _regime_mass_is_a_distribution,
     _unit_regime_mass_or_nan,
     get_compute_intermediates,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
-    Choose,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.model import Model
-from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StochasticTransition
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -61,12 +63,13 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import choose_among, until_exit
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    ages = AgeGrid(start=0, stop=4, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
             regime_transitions=working_life_transitions(last_age=4)
@@ -335,7 +338,7 @@ class _PartialCoverageRegimeId:
 
 def _build_partial_coverage_model(
     *,
-    work_transition: dict[str, MarkovTransition],
+    work_transition: dict[str, StochasticTransition],
     next_regime_func: Callable,
 ) -> tuple[Model, dict]:
     """Build a model whose "work" regime covers `health` only toward "work".
@@ -362,7 +365,7 @@ def _build_partial_coverage_model(
         state_transitions={
             "wealth": _next_wealth,
             "health": {
-                "work": MarkovTransition(func=_health_probs),
+                "work": StochasticTransition(func=_health_probs),
             },
         },
         actions={
@@ -382,14 +385,16 @@ def _build_partial_coverage_model(
         },
         state_transitions={
             "wealth": _next_wealth,
-            "health": MarkovTransition(func=_health_probs),
+            "health": StochasticTransition(func=_health_probs),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
         regime_transitions=until_exit(
             3,
-            law=Choose(func=next_regime_func, targets=("work", "retire", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime_func, targets=("work", "retire", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": _utility},
@@ -399,11 +404,11 @@ def _build_partial_coverage_model(
         functions={"utility": lambda: 0.0},
     )
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
         regime_id_class=_PartialCoverageRegimeId,
-        ages=AgeGrid(start=0, stop=3, step="Y"),
-        initial_regimes={0: ("work", "retire")},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        initial_nodes={0: ("work", "retire")},
     )
     params = {
         "discount_factor": 0.9,
@@ -426,8 +431,8 @@ def test_partial_state_laws_solve_with_declared_targets():
         )
 
     work_transition = {
-        "work": MarkovTransition(func=lambda age: jnp.where(age >= 2, 0.0, 1.0)),
-        "dead": MarkovTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+        "work": StochasticTransition(func=lambda age: jnp.where(age >= 2, 0.0, 1.0)),
+        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
     }
     model, params = _build_partial_coverage_model(
         work_transition=work_transition, next_regime_func=_next_regime
@@ -926,10 +931,10 @@ def _model_emitting_total_regime_mass(
         regime_transitions=until_exit(
             2,
             law={
-                "alive": MarkovTransition(
+                "alive": StochasticTransition(
                     func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
                 ),
-                "dead": MarkovTransition(
+                "dead": StochasticTransition(
                     func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
                 ),
             },
@@ -946,11 +951,11 @@ def _model_emitting_total_regime_mass(
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_MassRegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -1062,7 +1067,7 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
     no_negative = jnp.zeros((), dtype=bool)
     assert bool(
-        _regime_mass_is_a_distribution(
+        regime_mass_is_a_distribution(
             probability_mass=accumulated, has_negative_probability=no_negative
         )
     )

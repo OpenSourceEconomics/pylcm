@@ -28,6 +28,7 @@ from _lcm.probability import (
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
+    regime_mass_is_a_distribution,
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
@@ -2658,7 +2659,7 @@ class _ComputeCE:
             # the initialized `CE`. The mask is `False` there regardless, since
             # a mass of zero is not unit mass.
             CE = jnp.where(
-                _regime_mass_is_a_distribution(
+                regime_mass_is_a_distribution(
                     probability_mass=probability_mass,
                     has_negative_probability=has_negative_probability,
                 ),
@@ -2740,7 +2741,7 @@ class _TargetContinuation:
     """
 
 
-def _draw_dependencies_by_law(
+def draw_dependencies_by_law(
     *,
     bundle: MappingProxyType[TransitionFunctionName, TransitionFunction],
     functions: EconFunctionsMapping,
@@ -3196,7 +3197,7 @@ def _build_target_continuation(
         lottery_weights=lottery_weights,
         stochastic_names=lottery_variables,
     )
-    dependencies_by_law = _draw_dependencies_by_law(
+    dependencies_by_law = draw_dependencies_by_law(
         bundle=bundle, functions=functions, stochastic_names=lottery_variables
     )
     # A declared entry is a coordinate like any other, so a law reading a
@@ -3714,54 +3715,6 @@ def _always_feasible() -> bool:
     return True
 
 
-# Gross departures from unit regime mass are a specification error, not rounding:
-# every aggregation route divides the continuation by the mass it received, so the
-# lost mass is divided straight back out and the survivors renormalize. The solved
-# value function then comes back finite, plausible, and independent of what went
-# missing. `validate_transitions` catches it, but `log_level="off"` skips that, so
-# this poisons the arithmetic itself and cannot be gated away.
-#
-# The tolerance is deliberately loose. It is a backstop against a wrong model, not
-# a numerical check: `1e-3` never fires on accumulated float error over a handful
-# of targets, while a mass of 0.977 — small enough to look plausible, large enough
-# to move every value in the model — becomes NaN.
-_MAX_REGIME_MASS_DEVIATION = 1.0e-3
-
-
-def _regime_mass_is_a_distribution(
-    *, probability_mass: FloatND, has_negative_probability: BoolND
-) -> BoolND:
-    """Whether the retained targets carry a distribution rather than merely unit mass.
-
-    Two conditions, both holding at every log level because they are computed
-    rather than validated:
-
-    - the represented mass is one, within tolerance;
-    - no target carries a negative weight.
-
-    Together they give the full range: non-negative weights summing to one each
-    lie in `[0, 1]`. Unit mass alone does not, since 1.5 and -0.5 sum to one,
-    and a NaN weight fails both tests rather than passing the first by accident.
-
-    Non-negativity arrives as a decision rather than as a weight to inspect.
-    Taken here it would have to be taken on a number the accumulation already
-    reduced, and reducing with `jnp.minimum` turns a negative probability the
-    dtype cannot hold as a normal number into `-0` — which is a zero, and would
-    pass. The caller reads each target's sign off its own bits instead.
-
-    Args:
-        probability_mass: The retained targets' probabilities, summed.
-        has_negative_probability: Whether any of them carried the sign bit on a
-            nonzero magnitude.
-
-    Returns:
-        Whether the retained targets carry a probability distribution.
-
-    """
-    is_unit = jnp.abs(probability_mass - 1.0) <= _MAX_REGIME_MASS_DEVIATION
-    return is_unit & ~has_negative_probability
-
-
 def _aggregate_joint_lottery(
     *,
     certainty_equivalent: CertaintyEquivalent,
@@ -3865,7 +3818,7 @@ def _unit_regime_mass_or_nan(
     For the per-target route, which divides by the mass it accumulated.
     """
     return jnp.where(
-        _regime_mass_is_a_distribution(
+        regime_mass_is_a_distribution(
             probability_mass=probability_mass,
             has_negative_probability=has_negative_probability,
         ),

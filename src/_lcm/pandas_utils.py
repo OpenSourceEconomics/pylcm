@@ -114,7 +114,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     _validate_state_columns(
         state_columns=state_columns,
         user_regimes=user_regimes,
-        initial_regimes=df["regime_name"].tolist(),
+        initial_nodes=df["regime_name"].tolist(),
     )
 
     n_subjects = len(df)
@@ -1042,11 +1042,11 @@ def _validate_state_columns(
     *,
     state_columns: set[str],
     user_regimes: Mapping[RegimeName, UserRegime],
-    initial_regimes: list[RegimeName],
+    initial_nodes: list[RegimeName],
 ) -> None:
     """Validate that DataFrame columns match model states."""
     expected = _collect_state_names(
-        user_regimes=user_regimes, initial_regimes=initial_regimes
+        user_regimes=user_regimes, initial_nodes=initial_nodes
     )
 
     unknown = state_columns - expected
@@ -1061,7 +1061,7 @@ def _validate_state_columns(
     missing = expected - state_columns
     if missing:
         required_by: dict[str, list[str]] = {name: [] for name in missing}
-        for regime_name in set(initial_regimes):
+        for regime_name in set(initial_nodes):
             for name in user_regimes[regime_name].states:
                 if name in required_by:
                     required_by[name].append(regime_name)
@@ -1084,7 +1084,7 @@ def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
 def _collect_state_names(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    initial_regimes: list[RegimeName],
+    initial_nodes: list[RegimeName],
 ) -> set[str]:
     """Collect all state names from initial regimes.
 
@@ -1096,7 +1096,7 @@ def _collect_state_names(
 
     """
     names: set[str] = set(PSEUDO_STATE_NAMES)
-    for regime_name in set(initial_regimes):
+    for regime_name in set(initial_nodes):
         names.update(user_regimes[regime_name].states.keys())
     return names
 

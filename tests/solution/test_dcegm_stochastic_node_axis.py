@@ -15,7 +15,10 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import core_program_graph
-from lcm import AgeGrid, Choose, ExecutionConfig, Model
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, ExecutionConfig, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
 from lcm.typing import FloatND
@@ -36,6 +39,7 @@ from tests.solution.test_egm_process_states import (
     savings,
     utility_consumption_only,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -59,12 +63,14 @@ def _model(width: int | None = None) -> Model:
         if width is None
         else ExecutionConfig(axis_widths={STOCHASTIC_NODE_AXIS: width})
     )
-    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -83,12 +89,12 @@ def _model(width: int | None = None) -> Model:
             post_decision_state="savings",
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": working, "dead": dead},
         ages=ages,
         regime_id_class=ProcessRegimeId,
         execution_config=config,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )
 
 

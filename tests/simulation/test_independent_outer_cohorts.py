@@ -14,13 +14,15 @@ import pytest
 
 import _lcm.simulation.runtime as simulation_runtime
 import _lcm.simulation.simulate as simulation
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation import chunk_admission
 from _lcm.simulation.random import _generate_windowed_simulation_keys
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -31,6 +33,7 @@ from lcm import (
 )
 from lcm.typing import ScalarInt
 from tests.test_models import n_nbegm_toy as toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -48,12 +51,12 @@ class _RegimeId:
 
 
 def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=until_exit(
                     2,
-                    law=Choose(
+                    law=_SupportedDeterministicTransition(
                         func=lambda age: jnp.where(
                             age < 1, _RegimeId.working, _RegimeId.retired
                         ),
@@ -80,7 +83,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
         },
         states={"kind": DiscreteGrid(_Kind)},
         state_transitions={"kind": fixed_transition("kind")},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(
             devices=devices,
@@ -88,7 +91,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
             axis_widths={} if width is None else {"subject": width},
             device_memory_bytes=2**30,
         ),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

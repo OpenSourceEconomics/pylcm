@@ -9,7 +9,7 @@ spouse) against each partner's own outside option.
 **What this adds on top of the surrounding machinery.** The gated-edge fold
 `Wbar = jnp.where(gate, V_target, V_fallback)` is built on the TARGET
 regime's full state grid, and the continuation already averages a
-non-terminal regime's continuation over any `MarkovTransition`-declared
+non-terminal regime's continuation over any `StochasticTransition`-declared
 stochastic state, INCLUDING a "target-only" state declared solely in a
 per-target `state_transitions` dict entry (a state that is BORN at the
 transition — not carried from the source's own state space; see
@@ -21,7 +21,7 @@ Wbar in `next_regime_to_V_arr`, and the ordinary `get_Q_and_F` /
 the SAME stochastic-weights/productmap logic either way.
 
 So the marriage-offer mechanism below is closing a GAP IN TESTING, not a gap
-in the engine: a spouse-type offer, drawn via a `MarkovTransition` on a
+in the engine: a spouse-type offer, drawn via a `StochasticTransition` on a
 target-only state conditioned on the single's own education, feeding a
 gated (mutual-consent) edge. `test_stochastic_marriage_offer_*` proves this
 composition numerically, hand-computed. `test_job_offer_gates_...` pins the
@@ -52,15 +52,16 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
-    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -70,7 +71,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -79,6 +80,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
+from tests.test_models.graph import with_fixture_graph
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
 # with a spouse-type draw feeding the mutual-consent gated edge.
@@ -165,9 +167,9 @@ def _make_offer_regimes() -> dict[str, Regime]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -199,7 +201,9 @@ def _make_offer_regimes() -> dict[str, Regime]:
             # own state space. It is BORN at the single_f -> married_terminal
             # transition, drawn from the offer distribution conditioned on
             # the single's own (carried) education.
-            "spouse_type": {"married_terminal": MarkovTransition(func=_offer_probs)},
+            "spouse_type": {
+                "married_terminal": StochasticTransition(func=_offer_probs)
+            },
         },
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
@@ -268,7 +272,7 @@ _EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([2.7575, 5.42])
 
 
 def _solve_offer_regimes(*, enable_jit: bool = False):
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regime_names = list(_make_offer_regimes())
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -342,12 +346,12 @@ def test_stochastic_marriage_offer_matches_public_model_api():
         single_m_terminal: ScalarInt
         married_terminal: ScalarInt
 
-    ages = AgeGrid(start=0, stop=2, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    model = with_fixture_graph(
         regimes=_make_offer_regimes(),
         ages=ages,
         regime_id_class=OfferRegimeId,
-        initial_regimes={ages.exact_values[0]: "single_f"},
+        initial_nodes={ages.exact_values[0]: "single_f"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(
@@ -368,8 +372,8 @@ def test_stochastic_marriage_offer_matches_under_jit():
 
 
 # Job-offer stochastic state: feasibility (not just felicity) conditions on a
-# MarkovTransition-drawn discrete state (EKL eq. 24). The collective +
-# MarkovTransition-into-utility case is already covered end-to-end by
+# StochasticTransition-drawn discrete state (EKL eq. 24). The collective +
+# StochasticTransition-into-utility case is already covered end-to-end by
 # `test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder`
 # in `test_nonterminal_collective_solve.py` (nothing collective-specific about
 # it); this test pins the FEASIBILITY-gating half.
@@ -405,13 +409,13 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): Choose(
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=lambda: JobRegimeId.job_terminal, targets=("job_terminal",)
                 )
             }
         ),
         states={"offer": DiscreteGrid(category_class=Offer)},
-        state_transitions={"offer": MarkovTransition(func=_offer_arrival_probs)},
+        state_transitions={"offer": StochasticTransition(func=_offer_arrival_probs)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_job},
         constraints={"work_requires_offer": _work_requires_offer},
@@ -437,12 +441,12 @@ _EXPECTED_V_JOB_PERIOD_0 = np.array([4.23, 8.23])
 
 def test_job_offer_gates_feasible_actions_and_solves():
     """A drawn discrete job-offer state gates action feasibility (EKL eq. 24)."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    model = with_fixture_graph(
         regimes=_make_job_offer_regimes(),
         ages=ages,
         regime_id_class=JobRegimeId,
-        initial_regimes={ages.exact_values[0]: "job"},
+        initial_nodes={ages.exact_values[0]: "job"},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(
@@ -451,7 +455,7 @@ def test_job_offer_gates_feasible_actions_and_solves():
 
 
 # Scope fence: an endogenous / self-referential offer distribution (reading the
-# household's OWN solved value) is not representable through `MarkovTransition`
+# household's OWN solved value) is not representable through `StochasticTransition`
 # — it can only read states/actions/params through the ordinary DAG, never a
 # `Q_<s>` action value (that access is `value_constraints`-only). This pins
 # the natural failure mode rather than a bespoke check.
@@ -469,7 +473,7 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     """A `Q_<s>`-conditioned (self-referential) offer distribution is unrepresentable.
 
     `Q_<s>` is injected only into `value_constraints` predicates; an
-    ordinary state-transition / `MarkovTransition` function has no such
+    ordinary state-transition / `StochasticTransition` function has no such
     injection — it resolves through the regime's plain DAG (states, actions,
     params, helper functions). `process_regimes` itself does not eagerly call
     the transition closures, so the ill-formed `Q_f` argument is NOT caught at
@@ -488,11 +492,13 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
         state_transitions={
             "education": fixed_transition("education"),
             "spouse_type": {
-                "married_terminal": MarkovTransition(func=_self_referential_offer_probs)
+                "married_terminal": StochasticTransition(
+                    func=_self_referential_offer_probs
+                )
             },
         },
     )
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     # Build succeeds — the ill-formed argument is not caught until solve.
     processed = process_regimes(
         prepared_structure=build_prepared_structure(

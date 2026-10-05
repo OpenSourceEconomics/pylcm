@@ -24,11 +24,12 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
-AGES = AgeGrid(start=40, stop=50, step="5Y")
+AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
 BONUS_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
@@ -91,7 +92,7 @@ def _build_model(*, with_bystander: bool) -> Model:
                 45,
                 law={
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_certain_target),
+                        probability=StochasticTransition(func=_certain_target),
                         gate=_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -126,12 +127,12 @@ def _build_model(*, with_bystander: bool) -> Model:
             states={"marriage_bonus": BONUS_GRID},
             functions={"utility": _utility_bystander},
         )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
         ages=AGES,
         regime_id_class=RegimeIdWithBystander if with_bystander else RegimeId,
         # Nothing transitions into the bystander; it is solved only as a start.
-        initial_regimes=(
+        initial_nodes=(
             {40: "source", AgeRange(start=40): "bystander"}
             if with_bystander
             else {40: "source"}

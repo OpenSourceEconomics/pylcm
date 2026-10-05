@@ -81,7 +81,7 @@ def _call(kernel: _TerminalCarryPeriodKernel) -> object:
         next_regime_to_continuation=MappingProxyType({}),
         flat_params=MappingProxyType({"dead": MappingProxyType({})}),
         period=0,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         logger=get_logger(log_level="off"),
     )
 

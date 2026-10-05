@@ -453,7 +453,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
         DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model, fixed_transition,
     )
     from lcm.solvers import GridSearch
-    from tests.test_models.initial_regimes import initial_regimes_of
+    from tests.test_models.initial_nodes import initial_nodes_of
     from tests.test_models.nbegm_common import (
         RegimeId, feasible, make_alive_dead_model, next_liquid_from_savings,
         savings, utility,
@@ -473,6 +473,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
             liquid_grid=liquid,
         )
         model = Model(
+            edges=template.graph.edges,
             regimes={{
                 name: replace(regime, states={{
                     key: grid for key, grid in regime.states.items() if key != "liquid"
@@ -481,7 +482,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
             }},
             states={{"liquid": liquid}}, ages=template.ages,
             regime_id_class=RegimeId,
-            initial_regimes=initial_regimes_of(model=template),
+            initial_nodes=initial_nodes_of(model=template),
             execution_config=ExecutionConfig(sharded_states=("liquid",)),
         )
     else:
@@ -507,7 +508,7 @@ import dataclasses
 
 import jax.numpy as jnp
 from lcm import DiscreteGrid, ExecutionConfig, IrregSpacedGrid, Model
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.nbegm_common import RegimeId
 
 # Under a memory budget, `simulate` commits the parameters to the subject mesh
@@ -529,6 +530,7 @@ template = toy.build_model(
 two_mesh_params = toy.build_params()
 two_mesh_params["alive"]["consumption"] = {"points": jnp.linspace(0.1, 30.0, 16)}
 simulated = Model(
+    edges=template.graph.edges,
     regimes={
         name: dataclasses.replace(
             regime,
@@ -543,7 +545,7 @@ simulated = Model(
     states={"kind": DiscreteGrid(category_class=toy.ConsumerKind)},
     ages=template.ages,
     regime_id_class=RegimeId,
-    initial_regimes=initial_regimes_of(model=template),
+    initial_nodes=initial_nodes_of(model=template),
     execution_config=ExecutionConfig(
         sharded_states=("kind",), devices=(0, 1), device_memory_bytes=2**31
     ),

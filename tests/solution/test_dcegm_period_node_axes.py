@@ -17,8 +17,8 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -38,6 +38,7 @@ from tests.solution.test_dcegm_axis_width_policy import (
     utility,
 )
 from tests.solution.test_dcegm_core_program import _run
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -86,11 +87,13 @@ def _model(
 ) -> Model:
     grid = LinSpacedGrid(start=1.0, stop=20.0, n_points=4)
     old_domain = ShortHealth if short_old_health else Health
-    young = {"young": MarkovTransition(func=young_probability)}
-    old = {"old": MarkovTransition(func=old_probability)}
+    young = {"young": StochasticTransition(func=young_probability)}
+    old = {"old": StochasticTransition(func=old_probability)}
     parent_cases: dict[AgeSelector, object] = {
-        AgeRange(start=40, stop=50): young | old if overlapping_children else young,
-        AgeRange(start=50, stop=60): old,
+        AgeRange(start=40, exclusive_stop=50): young | old
+        if overlapping_children
+        else young,
+        AgeRange(start=50, exclusive_stop=60): old,
     }
     if parent_period is not None:
         parent_cases = {
@@ -106,8 +109,8 @@ def _model(
         state_transitions={
             "wealth": next_wealth,
             "health": {
-                "young": MarkovTransition(func=three_health),
-                "old": MarkovTransition(
+                "young": StochasticTransition(func=three_health),
+                "old": StochasticTransition(
                     func=two_health if short_old_health else three_health
                 ),
             },
@@ -128,14 +131,14 @@ def _model(
             post_decision_state="savings",
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "parent": parent,
             "young": parent.replace(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=50, stop=51): {
-                            "dead": MarkovTransition(func=death_probability)
+                        AgeRange(start=50, exclusive_stop=51): {
+                            "dead": StochasticTransition(func=death_probability)
                         }
                     }
                 ),
@@ -144,9 +147,9 @@ def _model(
             "old": parent.replace(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=50 if overlapping_children else 60, stop=70): {
-                            "dead": MarkovTransition(func=death_probability)
-                        }
+                        AgeRange(
+                            start=50 if overlapping_children else 60, exclusive_stop=70
+                        ): {"dead": StochasticTransition(func=death_probability)}
                     }
                 ),
                 states={"wealth": grid, "health": DiscreteGrid(old_domain)},
@@ -158,11 +161,11 @@ def _model(
                 functions={"utility": final_bequest},
             ),
         },
-        ages=AgeGrid(start=40, stop=70, step="10Y"),
+        ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
         # The parent is a start at each age it declares a law for.
-        initial_regimes={
+        initial_nodes={
             (40, 50) if parent_period is None else 40 + 10 * parent_period: "parent"
         },
     )

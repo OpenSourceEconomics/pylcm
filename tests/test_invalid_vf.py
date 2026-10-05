@@ -2,7 +2,10 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.grids import LinSpacedGrid
-from lcm import Choose, Model, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -14,6 +17,7 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -80,7 +84,9 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         },
         regime_transitions=until_exit(
             n_periods - 1,
-            law=Choose(func=next_regime, targets=("non_terminal", "terminal")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("non_terminal", "terminal")
+            ),
             exits=("terminal",),
         ),
     )
@@ -90,7 +96,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         functions={"utility": lambda: 0.0},
     )
 
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods, step="Y")
 
     return {"non_terminal": non_terminal, "terminal": terminal}, ages
 
@@ -117,14 +123,14 @@ def nan_value_model(
     invalid_regime = regimes["non_terminal"].replace(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "non_terminal": invalid_regime,
             "terminal": regimes["terminal"],
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "non_terminal"},
+        initial_nodes={ages.exact_values[0]: "non_terminal"},
     )
 
 
@@ -150,14 +156,14 @@ def inf_value_model(
     inf_regime = regimes["non_terminal"].replace(
         functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "non_terminal": inf_regime,
             "terminal": regimes["terminal"],
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "non_terminal"},
+        initial_nodes={ages.exact_values[0]: "non_terminal"},
     )
 
 

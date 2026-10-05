@@ -291,7 +291,9 @@ def test_exact_budget_boundary_is_checked_on_every_device(*, fixed: int) -> None
         cost=lambda n, _a: {0: 30, 1: fixed if n == 12 else 30, 2: 30},
     )
     plan = _select(profiler=profiler)
-    assert plan.profile.n_subjects == (12 if fixed == 80 else 9)
+    # The two-subject pin aligns to three devices before the frontier doubles.
+    assert plan.receipt.candidates == (3, 6, 12)
+    assert plan.profile.n_subjects == (12 if fixed == 80 else 6)
     receipt = plan.receipt.attempts[0].devices[1]
     assert receipt.required_bytes == 5 + fixed + 5 + 10
     assert plan.receipt.attempts[0].admitted is (fixed == 80)

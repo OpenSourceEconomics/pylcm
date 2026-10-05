@@ -21,10 +21,19 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Phased, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Phased,
+    categorical,
+)
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -103,7 +112,9 @@ def _make_model(*, H_func=beta_delta_H):
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             2,
-            law=Choose(func=next_regime, targets=("working", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": utility},
@@ -122,11 +133,11 @@ def _make_model(*, H_func=beta_delta_H):
         functions={"utility": terminal_utility},
     )
 
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

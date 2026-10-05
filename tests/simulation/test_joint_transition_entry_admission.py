@@ -27,9 +27,9 @@ from lcm import (
     ExecutionConfig,
     JointTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -44,6 +44,7 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -122,10 +123,12 @@ def _inputs(
     budget: int | None,
     devices: tuple[int, ...] | None = None,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_certain_target)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_certain_target)
+                },
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -151,9 +154,9 @@ def _inputs(
             ),
         },
         regime_id_class=_RegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
     params: UserParams = {
         "source": {

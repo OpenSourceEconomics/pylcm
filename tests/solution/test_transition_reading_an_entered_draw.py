@@ -18,14 +18,15 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts symmetric nodes on `(0, 1, 2)`,
@@ -70,12 +71,12 @@ def _next_wealth_via_helper(scaled: ScalarFloat) -> ScalarFloat:
 
 
 def _build(*, functions, next_wealth) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 state_transitions={"wealth": {"target": next_wealth}},
@@ -87,9 +88,9 @@ def _build(*, functions, next_wealth) -> Model:
                 functions={"utility": _wealth_plus_shock},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -134,12 +135,12 @@ _RUNTIME_SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False)
 
 def _build_reading_a_runtime_draw() -> Model:
     """Both regimes carry the same process, whose law arrives at runtime."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states={"shock": _RUNTIME_SHOCK},
@@ -152,9 +153,9 @@ def _build_reading_a_runtime_draw() -> Model:
                 functions={"utility": _wealth_plus_shock},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

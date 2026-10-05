@@ -35,15 +35,16 @@ from lcm import (
     DiscreteGrid,
     LinearAggregator,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -147,7 +148,7 @@ def _entry_uniform() -> FloatND:
 def _law_reads(*, law: object) -> frozenset[str]:
     """Collect every argument name a `state_transitions` entry reads.
 
-    A law is a plain callable, a `MarkovTransition`, a per-target mapping of
+    A law is a plain callable, a `StochasticTransition`, a per-target mapping of
     either, a `Phased` pair of any of those, or `None`.
     """
     if isinstance(law, Phased):
@@ -160,7 +161,8 @@ def _law_reads(*, law: object) -> frozenset[str]:
     if law is None:
         return frozenset()
     func = cast(
-        "Callable[..., object]", law.func if isinstance(law, MarkovTransition) else law
+        "Callable[..., object]",
+        law.func if isinstance(law, StochasticTransition) else law,
     )
     return frozenset(inspect.signature(func).parameters)
 
@@ -196,22 +198,26 @@ def _entry_targets(*, regime: Regime, state_name: str, phase: str) -> set[str]:
 
 _PHASED_HEALTH_LAW_FORMS = {
     "phased-keyed": Phased(
-        solve={"retired": MarkovTransition(func=_entry_from_endowment)},
-        simulate={"retired": MarkovTransition(func=_entry_from_wealth)},
+        solve={"retired": StochasticTransition(func=_entry_from_endowment)},
+        simulate={"retired": StochasticTransition(func=_entry_from_wealth)},
     ),
     "phased-raw": Phased(
-        solve=MarkovTransition(func=_entry_from_endowment),
-        simulate=MarkovTransition(func=_entry_from_wealth),
+        solve=StochasticTransition(func=_entry_from_endowment),
+        simulate=StochasticTransition(func=_entry_from_wealth),
     ),
-    "keyed": {"retired": MarkovTransition(func=_entry_from_endowment)},
-    "raw": MarkovTransition(func=_entry_from_endowment),
+    "keyed": {"retired": StochasticTransition(func=_entry_from_endowment)},
+    "raw": StochasticTransition(func=_entry_from_endowment),
 }
 
 
 def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
     spec: dict[str, Any] = {
         "regime_transitions": ByAge(
-            cases={AgeRange(stop=1): {"retired": MarkovTransition(func=_certain)}}
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "retired": StochasticTransition(func=_certain)
+                }
+            }
         ),
         "states": {"wealth": _WEALTH_GRID},
         "actions": {"consumption": _CONSUMPTION_GRID},
@@ -241,15 +247,15 @@ def _phased_model(
     *, health_law: object = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
 ) -> Model:
     """`health` and `endowment` promoted to model-level states."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": _working_regime(health_law=health_law),
             "retired": _retired_regime(),
         },
         states={"health": _HEALTH_GRID, "endowment": _ENDOWMENT_GRID},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -262,7 +268,7 @@ def _regime_level_model(
     model-level slot first, so the control declares the promoted state ahead of
     `wealth` to compare value arrays without transposing them.
     """
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": _working_regime(
                 health_law=health_law,
@@ -272,9 +278,9 @@ def _regime_level_model(
                 states={"health": _HEALTH_GRID, "wealth": _WEALTH_GRID}
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 
@@ -328,14 +334,14 @@ def test_declaration_placement_leaves_the_entry_law_inputs_unchanged() -> None:
 
 def _couple_model() -> Model:
     """One source, two terminal targets, each keeping a different state."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "couple": Regime(
                 regime_transitions=until_exit(
                     1,
                     law={
-                        "widow": MarkovTransition(func=_even_split),
-                        "widower": MarkovTransition(func=_even_split),
+                        "widow": StochasticTransition(func=_even_split),
+                        "widower": StochasticTransition(func=_even_split),
                     },
                     exits=("widow", "widower"),
                 ),
@@ -346,12 +352,20 @@ def _couple_model() -> Model:
                     "wealth": _next_wealth,
                     "endowment": fixed_transition("endowment"),
                     "health": Phased(
-                        solve={"widow": MarkovTransition(func=_entry_from_endowment)},
-                        simulate={"widow": MarkovTransition(func=_entry_from_wealth)},
+                        solve={
+                            "widow": StochasticTransition(func=_entry_from_endowment)
+                        },
+                        simulate={
+                            "widow": StochasticTransition(func=_entry_from_wealth)
+                        },
                     ),
                     "pension": Phased(
-                        solve={"widower": MarkovTransition(func=_entry_from_endowment)},
-                        simulate={"widower": MarkovTransition(func=_entry_from_wealth)},
+                        solve={
+                            "widower": StochasticTransition(func=_entry_from_endowment)
+                        },
+                        simulate={
+                            "widower": StochasticTransition(func=_entry_from_wealth)
+                        },
                     ),
                 },
             ),
@@ -375,9 +389,9 @@ def _couple_model() -> Model:
             "pension": _PENSION_GRID,
             "endowment": _ENDOWMENT_GRID,
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 
@@ -433,7 +447,11 @@ def _chain_regimes() -> dict[str, Regime]:
     return {
         "early": Regime(
             regime_transitions=ByAge(
-                cases={AgeRange(stop=1): {"middle": MarkovTransition(func=_certain)}}
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "middle": StochasticTransition(func=_certain)
+                    }
+                }
             ),
             states={"wealth": _WEALTH_GRID},
             actions={"consumption": _CONSUMPTION_GRID},
@@ -442,15 +460,19 @@ def _chain_regimes() -> dict[str, Regime]:
                 "wealth": _next_wealth,
                 "endowment": fixed_transition("endowment"),
                 "flag": Phased(
-                    solve={"middle": MarkovTransition(func=_entry_uniform)},
-                    simulate={"middle": MarkovTransition(func=_entry_from_endowment)},
+                    solve={"middle": StochasticTransition(func=_entry_uniform)},
+                    simulate={
+                        "middle": StochasticTransition(func=_entry_from_endowment)
+                    },
                 ),
             },
         ),
         "middle": Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(start=1, stop=2): {"late": MarkovTransition(func=_certain)}
+                    AgeRange(start=1, exclusive_stop=2): {
+                        "late": StochasticTransition(func=_certain)
+                    }
                 }
             ),
             states={"wealth": _WEALTH_GRID},
@@ -460,8 +482,8 @@ def _chain_regimes() -> dict[str, Regime]:
                 "wealth": _next_wealth,
                 "flag": fixed_transition("flag"),
                 "late_flag": Phased(
-                    solve={"late": MarkovTransition(func=_entry_flag_from_flag)},
-                    simulate={"late": MarkovTransition(func=_entry_uniform)},
+                    solve={"late": StochasticTransition(func=_entry_flag_from_flag)},
+                    simulate={"late": StochasticTransition(func=_entry_uniform)},
                 ),
             },
         ),
@@ -478,16 +500,16 @@ _CHAIN_MODEL_STATES = {
     "late_flag": DiscreteGrid(category_class=_Flag),
     "endowment": _ENDOWMENT_GRID,
 }
-_CHAIN_AGES = AgeGrid(start=0, stop=2, step="Y")
+_CHAIN_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 def _chain_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes=_chain_regimes(),
         states=_CHAIN_MODEL_STATES,
         ages=_CHAIN_AGES,
         regime_id_class=_ChainRegimeId,
-        initial_regimes={0: "early"},
+        initial_nodes={0: "early"},
     )
 
 

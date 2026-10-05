@@ -17,11 +17,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     LinSpacedGrid,
     Model,
     Phased,
@@ -30,6 +32,7 @@ from lcm import (
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -44,7 +47,11 @@ def _next_regime(age: float) -> ScalarInt:
 
 
 WORKING_TRANSITIONS = until_exit(
-    64, law=Choose(func=_next_regime, targets=("working", "dead")), exits=("dead",)
+    64,
+    law=_SupportedDeterministicTransition(
+        func=_next_regime, targets=("working", "dead")
+    ),
+    exits=("dead",),
 )
 
 
@@ -121,11 +128,11 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
             constraints={"feasible_consumption": _consumption_leq_wealth},
             functions={"utility": _utility, "pension_wealth": _impute_pension_wealth},
         )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": _DEAD},
-        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,
-        initial_regimes={60: "working"},
+        initial_nodes={60: "working"},
     )
 
 
@@ -218,11 +225,11 @@ def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
 
 def test_simulate_compiled_runtime_carries_carried_state() -> None:
     """Compiled next-state dispatch consumes the seeded simulation-only state."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={"working": _build_pension_regime(), "dead": _DEAD},
-        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,
-        initial_regimes={60: "working"},
+        initial_nodes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -282,8 +289,12 @@ def _build_handover_model() -> Model:
     working = UserRegime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=64,
-            law=Choose(func=_next_regime_from_working, targets=("working",)),
-            then=Choose(func=_next_regime_from_working, targets=("retired",)),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime_from_working, targets=("working",)
+            ),
+            then=_SupportedDeterministicTransition(
+                func=_next_regime_from_working, targets=("retired",)
+            ),
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -305,7 +316,9 @@ def _build_handover_model() -> Model:
     retired = UserRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=64, stop=66): Choose(
+                AgeRange(
+                    start=64, exclusive_stop=66
+                ): _SupportedDeterministicTransition(
                     func=_next_regime_from_retired, targets=("dead",)
                 )
             }
@@ -319,11 +332,11 @@ def _build_handover_model() -> Model:
         state_transitions={"pension_wealth": _evolve_pension_wealth},
         functions={"utility": _retired_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "retired": retired, "dead": _DEAD3},
-        ages=AgeGrid(start=60, stop=66, step="2Y"),
+        ages=AgeGrid(start=60, inclusive_stop=66, step="2Y"),
         regime_id_class=_ThreeRegimeId,
-        initial_regimes={60: "working"},
+        initial_nodes={60: "working"},
     )
 
 
@@ -388,11 +401,11 @@ def test_additional_targets_read_carried_value() -> None:
     regime = regime.replace(
         functions={**regime.functions, "pension_double": _pension_double}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"working": regime, "dead": _DEAD},
-        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,
-        initial_regimes={60: "working"},
+        initial_nodes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -433,11 +446,11 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
     regime = regime.replace(
         constraints={**regime.constraints, "pension_cap": _pension_leq_four}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"working": regime, "dead": _DEAD},
-        ages=AgeGrid(start=60, stop=64, step="2Y"),
+        ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,
-        initial_regimes={60: "working"},
+        initial_nodes={60: "working"},
     )
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
@@ -473,7 +486,9 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
     working = UserRegime(
         regime_transitions=until_exit(
             64,
-            law=Choose(func=_next_regime, targets=("working", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("working", "dead")
+            ),
             exits=("dead",),
         ),
         states={
@@ -494,11 +509,11 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
         functions={"utility": _utility},
     )
     with pytest.raises(ModelInitializationError, match="next value of a carried state"):
-        Model(
+        with_fixture_graph(
             regimes={"working": working, "dead": _DEAD},
-            ages=AgeGrid(start=60, stop=64, step="2Y"),
+            ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
             regime_id_class=RegimeId,
-            initial_regimes={60: "working"},
+            initial_nodes={60: "working"},
         )
 
 

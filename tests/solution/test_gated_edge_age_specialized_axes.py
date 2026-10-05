@@ -22,16 +22,17 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentTransition,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
@@ -172,9 +173,9 @@ def _build_model() -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "saver": MarkovTransition(func=_probability_of_staying_put),
+                "saver": StochasticTransition(func=_probability_of_staying_put),
                 "account": ValueDependentTransition(
-                    probability=MarkovTransition(
+                    probability=StochasticTransition(
                         func=_probability_of_opening_the_account
                     ),
                     gate=_balance_clears_the_floor,
@@ -207,11 +208,11 @@ def _build_model() -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"saver": saver, "account": account, "annuity": annuity},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "saver"},
+        initial_nodes={0: "saver"},
     )
 
 

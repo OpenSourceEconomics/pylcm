@@ -26,9 +26,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 N_POINTS = 5
@@ -37,7 +38,7 @@ DISCOUNT_FACTOR = 0.9
 SEED = 7
 LAST_ALIVE_AGE = 2
 WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-AGES = AgeGrid(start=0, stop=3, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
 @categorical(ordered=False)
@@ -72,8 +73,8 @@ def _build_model(*, fold: bool) -> Model:
         regime_transitions=until_exit(
             3,
             law={
-                "alive": MarkovTransition(func=_probability_alive),
-                "dead": MarkovTransition(func=_probability_dead),
+                "alive": StochasticTransition(func=_probability_alive),
+                "dead": StochasticTransition(func=_probability_dead),
             },
             exits=("dead",),
         ),
@@ -96,11 +97,11 @@ def _build_model(*, fold: bool) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         ages=AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

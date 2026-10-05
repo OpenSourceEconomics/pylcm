@@ -25,11 +25,11 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
+    DeterministicTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -77,7 +77,6 @@ from lcm.typing import (
     StateName,
 )
 from tests.test_models import n_nbegm_toy
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -270,14 +269,22 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     transition = (
         ByAge.until(
             stop_age_exclusive=_N_PERIODS,
-            law={"alive": MarkovTransition(func=stay_alive)},
-            then={"dead": MarkovTransition(func=stay_alive)},
+            law={"alive": StochasticTransition(func=stay_alive)},
+            then={"dead": StochasticTransition(func=stay_alive)},
         )
         if self_looping
-        else Choose(func=next_regime_dead, targets=("dead",))
+        else DeterministicTransition(func=next_regime_dead)
     )
     last_age = _N_PERIODS if self_looping else _N_PERIODS - 1
     return Model(
+        edges={
+            "alive": {
+                "dead": _N_PERIODS - 1,
+                "alive": tuple(range(_N_PERIODS - 1)),
+            }
+        }
+        if self_looping
+        else {"alive": {"dead": tuple(range(last_age))}},
         regimes={
             "alive": Regime(
                 regime_transitions=transition,
@@ -295,11 +302,11 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 ),
             ),
         },
-        ages=AgeGrid(start=0, stop=last_age, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=last_age, step="Y"),
         regime_id_class=RegimeId,
         # Every acting age is a start, so each one is solved even where the
         # regime dies into the terminal one after a single period.
-        initial_regimes={AgeRange(stop=last_age): "alive"},
+        initial_nodes={AgeRange(exclusive_stop=last_age): "alive"},
     )
 
 
@@ -743,13 +750,15 @@ class _MarginalDemandingSolver(WealthSolver):
 def _continuation_target_model(*, target_solver: Solver) -> Model:
     """A two-regime model whose target publishes `target_solver`'s continuation."""
     return Model(
+        edges={
+            "alive": {
+                "alive": tuple(range(_N_PERIODS - 2)),
+                "dead": tuple(range(_N_PERIODS - 1)),
+            }
+        },
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    _N_PERIODS - 1,
-                    law=Choose(func=next_regime_dead, targets=("alive", "dead")),
-                    exits=("dead",),
-                ),
+                regime_transitions=DeterministicTransition(func=next_regime_dead),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
@@ -762,9 +771,9 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
                 solver=target_solver,
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 
@@ -816,13 +825,15 @@ _CONSUMPTION = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
 
 def _choice_model(*, solver: Solver) -> Model:
     return Model(
+        edges={
+            "alive": {
+                "alive": tuple(range(_N_PERIODS - 2)),
+                "dead": tuple(range(_N_PERIODS - 1)),
+            }
+        },
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    _N_PERIODS - 1,
-                    law=Choose(func=_die_at_the_end, targets=("alive", "dead")),
-                    exits=("dead",),
-                ),
+                regime_transitions=DeterministicTransition(func=_die_at_the_end),
                 states={"wealth": _WEALTH},
                 actions={"consumption": _CONSUMPTION},
                 state_transitions={"wealth": next_wealth},
@@ -835,9 +846,9 @@ def _choice_model(*, solver: Solver) -> Model:
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

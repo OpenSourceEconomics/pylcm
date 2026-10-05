@@ -38,7 +38,7 @@ from lcm import (
     categorical,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -48,6 +48,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Nodes 0, 1, 2 on every regime's grid.
@@ -103,14 +104,14 @@ def _projection_model(projection) -> Model:
     pullback surface over the nodes `{0, 1, 2}` is `[0, 1, 4]` and interpolating
     it at `0.5` gives `0.5`, while the branch pays `V(0.5**2) = 0.25`.
     """
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     1,
                     law={
                         "target": ValueDependentTransition(
-                            probability=MarkovTransition(func=_certain_target),
+                            probability=StochasticTransition(func=_certain_target),
                             gate=_closed_above_one,
                             routes={
                                 "only": StakeholderRoute(
@@ -140,9 +141,9 @@ def _projection_model(projection) -> Model:
                 functions={"utility": _fallback_value},
             ),
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ProjectionRegimeId,
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 
@@ -273,14 +274,14 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
 
 def _coupled_model(saving_points) -> Model:
     """A collective target whose feasible set is empty at the middle node."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     1,
                     law={
                         "pair": ValueDependentTransition(
-                            probability=MarkovTransition(func=_to_pair),
+                            probability=StochasticTransition(func=_to_pair),
                             gate=_no_dissolution,
                             routes={
                                 "only": StakeholderRoute(
@@ -332,9 +333,9 @@ def _coupled_model(saving_points) -> Model:
                 functions={"utility": _outside_option_m},
             ),
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=CoupledRegimeId,
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 

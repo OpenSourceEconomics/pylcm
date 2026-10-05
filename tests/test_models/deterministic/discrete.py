@@ -12,7 +12,16 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, ByAge, Choose, DiscreteGrid, Model, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    ByAge,
+    DiscreteGrid,
+    Model,
+    categorical,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
     BoolND,
@@ -30,6 +39,7 @@ from tests.test_models.deterministic.regression import (
     next_wealth,
     utility,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -110,7 +120,9 @@ def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work until the age before `last_age`, then die."""
     return until_exit(
         last_age,
-        law=Choose(func=next_regime, targets=("working_life", "dead")),
+        law=_SupportedDeterministicTransition(
+            func=next_regime, targets=("working_life", "dead")
+        ),
         exits=("dead",),
     )
 
@@ -146,9 +158,9 @@ dead = UserRegime(
 
 @functools.cache
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=50, stop=50 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=50, inclusive_stop=50 + (n_periods - 1) * 10, step="10Y")
     final_age_alive = 50 + (n_periods - 2) * 10
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -159,7 +171,7 @@ def get_model(n_periods: int) -> Model:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
 

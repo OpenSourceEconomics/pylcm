@@ -28,7 +28,7 @@ from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -127,15 +127,15 @@ def _sector_model(
     continuation read selects one type's block. Without it, the terminal value
     is type-free and every reader shares it whole.
     """
-    ages = AgeGrid(start=0, stop=3, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
     last_age = ages.exact_values[-1]
     working = Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=last_age,
-            law=Choose(func=lambda: _RegimeId.working, targets=("working",)),
-            then=Choose(func=lambda: _RegimeId.terminal, targets=("terminal",)),
+            law=DeterministicTransition(func=lambda: _RegimeId.working),
+            then=DeterministicTransition(func=lambda: _RegimeId.terminal),
         ),
         # `sector` is declared first, so it leads the discrete axes and
         # `pref_type` is the second value axis.
@@ -166,9 +166,15 @@ def _sector_model(
     )
     return Model(
         regimes={"working": working, "terminal": terminal},
+        edges={
+            "working": {
+                "working": tuple(ages.exact_values[:-2]),
+                "terminal": (ages.exact_values[-2],),
+            }
+        },
         ages=ages,
         regime_id_class=_RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
         execution_config=execution_config or ExecutionConfig(),
     )
 
@@ -199,9 +205,10 @@ def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     model = independent_types.get_model()
     return Model(
         regimes=model.user_regimes,
+        edges=model.graph.edges,
         ages=model.ages,
         regime_id_class=independent_types.RegimeId,
-        initial_regimes={model.ages.exact_values[0]: "working"},
+        initial_nodes={model.ages.exact_values[0]: "working"},
         execution_config=execution_config,
     )
 
@@ -739,12 +746,10 @@ def _two_carrier_regime(*, stay: str) -> Regime:
     return Regime(
         regime_transitions=ByAge.until(
             stop_age_exclusive=2,
-            law=Choose(
-                func=_stay_left if stay == "left" else _stay_right, targets=(stay,)
+            law=DeterministicTransition(
+                func=_stay_left if stay == "left" else _stay_right
             ),
-            then=Choose(
-                func=lambda: _TwoCarrierRegimeId.terminal, targets=("terminal",)
-            ),
+            then=DeterministicTransition(func=lambda: _TwoCarrierRegimeId.terminal),
         ),
         states={"pref_type": pref_type, "wealth": wealth},
         state_transitions={
@@ -759,8 +764,9 @@ def _two_carrier_regime(*, stay: str) -> Regime:
 
 def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
     """Two type-carrying regimes read one typed terminal in the same period."""
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     return Model(
+        edges={name: {name: (0,), "terminal": (1,)} for name in ("left", "right")},
         regimes={
             "left": _two_carrier_regime(stay="left"),
             "right": _two_carrier_regime(stay="right"),
@@ -777,7 +783,7 @@ def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
         },
         ages=ages,
         regime_id_class=_TwoCarrierRegimeId,
-        initial_regimes={0: ("left", "right")},
+        initial_nodes={0: ("left", "right")},
         execution_config=execution_config,
     )
 
