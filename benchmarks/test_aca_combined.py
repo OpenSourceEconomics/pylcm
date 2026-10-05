@@ -236,8 +236,8 @@ class _BuildStoppedError(Exception):
 def test_aca_build_uses_the_default_execution_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ACA benchmark builds its model with pylcm's default `ExecutionConfig`,
-    the device-derived budget production runs under."""
+    """The ACA benchmark passes no execution policy, so the model factory's own
+    default, which production runs under, derives the device-memory budget."""
     import types
 
     import lcm

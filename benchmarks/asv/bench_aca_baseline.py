@@ -41,10 +41,11 @@ ASV wiring notes:
   debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
   likewise gets its own three-phase profile.
 - XLA autotuning is disabled and preallocation is on in the measurement
-  subprocess, and the model is built with pylcm's default `ExecutionConfig`, so
-  planning and admission follow the production path: the budget derives from the
-  preallocated device pool. The model is only built inside that subprocess and
-  in `benchmarks.preflight`, which runs with JAX's default preallocation.
+  subprocess, and the model is built without an execution policy, so planning
+  and admission follow the production path: aca-model's default policy derives
+  the budget from the preallocated device pool. The model is only built inside
+  that subprocess and in `benchmarks.preflight`, which runs with JAX's default
+  preallocation.
 """
 
 import atexit
