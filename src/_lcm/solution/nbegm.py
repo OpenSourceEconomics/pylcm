@@ -938,6 +938,14 @@ class NBEGM(OneMarginSolver):
                     statics.n_published_jumps > 0
                     and context.regime_name in plan.child_reads
                 )
+                if cliff_candidates:
+                    _fail_if_cliffs_move_with_euler_draws(
+                        sources=group_spec.sources,
+                        euler_draw_names=plan.child_reads[
+                            context.regime_name
+                        ].euler_draw_names,
+                        regime_name=context.regime_name,
+                    )
                 envelope_build = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
                     schedule_spec=group_spec,
@@ -4680,6 +4688,54 @@ def _sorted_thresholds(*, raw: Float1D, order_sensitive: bool) -> Float1D:
         return jnp.sort(a=raw)
     ascending = jnp.all(jnp.diff(raw) > 0.0)
     return jnp.where(ascending, jnp.sort(a=raw), jnp.nan)
+
+
+def _fail_if_cliffs_move_with_euler_draws(
+    *,
+    sources: tuple[_NBEGMSource, ...],
+    euler_draw_names: frozenset[str],
+    regime_name: RegimeName,
+) -> None:
+    """Reject save-to-cliff candidates whose child cliffs depend on a drawn state.
+
+    The save-to-cliff candidates invert the regime's own liquid law at every node
+    of the draws it reads, against the jump breakpoints of the source cell. When a
+    jump's threshold is indexed by, or its schedule variable reads, a state whose
+    draw `next_<state>` the liquid law reads, each node lands on a child row with
+    its own breakpoints, which the source cell's breakpoints do not represent.
+
+    Args:
+        sources: The regime's breakpoint sources.
+        euler_draw_names: The draws the regime's own liquid law reads.
+        regime_name: Name of the regime, for the message.
+
+    Raises:
+        RegimeInitializationError: If a jump breakpoint depends on a state whose
+            draw the liquid law reads.
+
+    """
+    drawn_states = {
+        name.removeprefix("next_"): name
+        for name in euler_draw_names
+        if name.startswith("next_")
+    }
+    for source in sources:
+        if source.kind != "jump":
+            continue
+        for state in (source.threshold_index_state, *source.derived_state_names):
+            if state in drawn_states:
+                msg = (
+                    f"Regime '{regime_name}' has a jump breakpoint "
+                    f"'{source.threshold_param_name}' that varies with the state "
+                    f"'{state}', and its liquid law reads the draw "
+                    f"'{drawn_states[state]}'. NBEGM save-to-cliff candidates for "
+                    "a liquid law reading a draw whose child cliff breakpoints vary "
+                    "across the draw's nodes are not supported yet. Make the "
+                    "liquid law independent of the draw, make the breakpoint "
+                    f"independent of '{state}', or use GridSearch() for this "
+                    "regime."
+                )
+                raise RegimeInitializationError(msg)
 
 
 def _fail_if_single_liquid_schedules_unsupported(
