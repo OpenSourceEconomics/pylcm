@@ -176,6 +176,13 @@ def canonicalize_phased_regimes(
             canonical_slice = dataclasses.replace(
                 phase_slice,
                 state_transitions=cast("MappingProxyType", canonical_transitions),
+                markov_draw_laws=MappingProxyType(
+                    {
+                        state_name: law
+                        for state_name, law in _split_laws(phase_slice)[0].items()
+                        if isinstance(law, StochasticTransition)
+                    }
+                ),
                 joint_transitions=canonical_joint,
                 regime_transition=_canonicalize_regime_transition(
                     regime_transition=phase_slice.regime_transition,

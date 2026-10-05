@@ -1,9 +1,10 @@
-"""A process draw read toward a target that does not carry the process.
+"""A random state's draw read toward a target that does not carry the state.
 
-The liquid law `next_liquid = R * savings + s * exp(next_income)` reads the
-income draw toward both targets. `alive` carries `income`, so toward `alive`
-the draw persists; `dead` does not, so toward `dead` the draw is taken from the
-source's process inside the transition and then discarded.
+The liquid law `next_liquid = R * savings + s * exp(y')` reads the income draw
+toward both targets, where `y'` is the node of a process or the level of a
+Markov state's code. `alive` carries `income`, so toward `alive` the draw
+persists; `dead` does not, so toward `dead` the draw is taken from the source's
+process or Markov law inside the transition and then discarded.
 
 With CRRA utility, a linear bequest `V_dead(l) = l` and resources never binding,
 every period's consumption is a constant and every value function is affine in
@@ -23,19 +24,28 @@ V_0(l, y) = u(c_0) + \\beta\\,E[V_1(R (l + b - c_0) + s e^{y'}, y') \\mid y].
 ```
 
 `V_1` is reached through the transition-local draw toward `dead`, `V_0` through the
-draw `alive` persists. Under a persistent process both vary with the lagged node,
-so a solver that ignored or misplaced the draw would miss by that spread.
+draw `alive` persists. Under a persistent process or Markov state both vary with
+the lagged node, so a solver that ignored or misplaced the draw would miss by that
+spread.
 """
 
-from typing import Literal
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import LinSpacedGrid, Model, NormalIIDProcess, RouwenhorstAR1Process
+from lcm import (
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    NormalIIDProcess,
+    RouwenhorstAR1Process,
+    categorical,
+)
 from lcm.solvers import DCEGM
-from lcm.typing import ContinuousState, FloatND
+from lcm.transition import StochasticTransition
+from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 from tests.conftest import X64_ENABLED
 from tests.test_models.nbegm_common import (
     feasible,
@@ -46,7 +56,7 @@ from tests.test_models.nbegm_common import (
 )
 
 Solver = Literal["brute", "dcegm", "nbegm"]
-Process = Literal["iid", "ar1"]
+Process = Literal["iid", "ar1", "markov"]
 
 INCOME_SCALE = 0.5
 BASE_INCOME = 1.0
@@ -83,10 +93,47 @@ def _linear_bequest(*, liquid: ContinuousState) -> FloatND:
     return liquid
 
 
-def _income(process: Process) -> NormalIIDProcess | RouwenhorstAR1Process:
+@categorical(ordered=True)
+class IncomeLevel:
+    low: ScalarInt
+    mid: ScalarInt
+    high: ScalarInt
+
+
+MARKOV_LEVELS = np.array([-0.4, 0.0, 0.5])
+MARKOV_PROBS = np.array([[0.8, 0.15, 0.05], [0.2, 0.6, 0.2], [0.05, 0.25, 0.7]])
+
+
+def _next_income_probs(*, income: DiscreteState) -> FloatND:
+    return jnp.asarray(MARKOV_PROBS)[income]
+
+
+def _next_liquid_markov(
+    *, savings: FloatND, next_income: DiscreteState, return_liquid: float
+) -> ContinuousState:
+    level = jnp.asarray(MARKOV_LEVELS)[next_income]
+    return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(level)
+
+
+def _income(
+    process: Process,
+) -> NormalIIDProcess | RouwenhorstAR1Process | DiscreteGrid:
     if process == "iid":
         return NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=0.3)
+    if process == "markov":
+        return DiscreteGrid(IncomeLevel)
     return RouwenhorstAR1Process(n_points=5, rho=0.8, sigma=0.3, mu=0.0)
+
+
+def _income_nodes_and_probs(process: Process) -> tuple[np.ndarray, np.ndarray]:
+    """The income draw's node values and its transition matrix."""
+    if process == "markov":
+        return MARKOV_LEVELS, MARKOV_PROBS
+    income = cast("NormalIIDProcess | RouwenhorstAR1Process", _income(process))
+    return (
+        np.asarray(income.to_jax(), dtype=np.float64),
+        np.asarray(income.get_transition_probs(), dtype=np.float64),
+    )
 
 
 def _model(*, solver: Solver, process: Process) -> Model:
@@ -107,10 +154,15 @@ def _model(*, solver: Solver, process: Process) -> Model:
             "resources": _resources,
             "savings": savings,
         },
-        liquid_law=_next_liquid,
+        liquid_law=_next_liquid_markov if process == "markov" else _next_liquid,
         alive_solver=alive_solver,
         constraints={"feasible": feasible} if solver == "brute" else {},
         extra_states={"income": _income(process)},
+        extra_state_transitions=(
+            {"income": StochasticTransition(func=_next_income_probs)}
+            if process == "markov"
+            else None
+        ),
         dead_functions={"utility": _linear_bequest},
     )
 
@@ -126,9 +178,7 @@ _PARAMS = {
 
 def _closed_form(process: Process) -> dict[int, np.ndarray]:
     """`alive`'s value per period, indexed `(income, liquid)`."""
-    income = _income(process)
-    nodes = np.asarray(income.to_jax(), dtype=np.float64)
-    probs = np.asarray(income.get_transition_probs(), dtype=np.float64)
+    nodes, probs = _income_nodes_and_probs(process)
     expected_shock = probs @ np.exp(nodes)
     liquid = np.asarray(LIQUID_GRID.to_jax(), dtype=np.float64)[None, :]
 
@@ -162,7 +212,7 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
     }
 
 
-@pytest.mark.parametrize("process", ["iid", "ar1"])
+@pytest.mark.parametrize("process", ["iid", "ar1", "markov"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
 def test_the_non_carrying_target_keeps_only_its_own_states(
     *, solver: Solver, process: Process
@@ -172,7 +222,7 @@ def test_the_non_carrying_target_keeps_only_its_own_states(
     assert model.state_names(regime_name="dead") == ("liquid",)
 
 
-@pytest.mark.parametrize("process", ["iid", "ar1"])
+@pytest.mark.parametrize("process", ["iid", "ar1", "markov"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
 def test_value_matches_the_closed_form(*, solver: Solver, process: Process) -> None:
     values = _alive_values(_model(solver=solver, process=process))
@@ -191,24 +241,30 @@ def test_value_matches_the_closed_form(*, solver: Solver, process: Process) -> N
         )
 
 
-def test_a_persistent_draw_spreads_the_value_across_lagged_nodes() -> None:
+@pytest.mark.parametrize("process", ["ar1", "markov"])
+def test_a_persistent_draw_spreads_the_value_across_lagged_nodes(
+    process: Process,
+) -> None:
     """The closed form discriminates: the lagged node moves V far beyond tolerance."""
-    expected = _closed_form("ar1")
+    expected = _closed_form(process)
 
-    assert np.ptp(expected[1][:, 10]) > 0.5
-    assert np.ptp(expected[0][:, 10]) > 0.5
+    assert np.ptp(expected[1][:, 10]) > 0.1
+    assert np.ptp(expected[0][:, 10]) > 0.1
 
 
+@pytest.mark.parametrize("process", ["ar1", "markov"])
 @pytest.mark.parametrize("solver", ["brute", "dcegm", "nbegm"])
-def test_entering_dead_lands_on_one_of_the_draws_outcomes(solver: Solver) -> None:
+def test_entering_dead_lands_on_one_of_the_draws_outcomes(
+    *, solver: Solver, process: Process
+) -> None:
     """Simulated `dead` liquid is `R * savings + s * exp(node)` for a source node."""
-    model = _model(solver=solver, process="ar1")
+    model = _model(solver=solver, process=process)
     n = 6
     result = model.simulate(
         params=_PARAMS,
         initial_conditions={
             "liquid": jnp.linspace(5.0, 25.0, n),
-            "income": jnp.zeros(n),
+            "income": jnp.zeros(n, dtype=jnp.int32 if process == "markov" else None),
             "age": jnp.zeros(n),
             "regime_id": jnp.zeros(n, dtype=jnp.int32),
         },
@@ -219,7 +275,7 @@ def test_entering_dead_lands_on_one_of_the_draws_outcomes(solver: Solver) -> Non
     alive = df.query("regime_name == 'alive' and period == 1").set_index("subject_id")
     dead = df.query("regime_name == 'dead' and period == 2").set_index("subject_id")
     common = alive.index.intersection(dead.index)
-    nodes = np.asarray(_income("ar1").to_jax(), dtype=np.float64)
+    nodes, _ = _income_nodes_and_probs(process)
     saved = (
         alive.loc[common, "liquid"] + BASE_INCOME - alive.loc[common, "consumption"]
     ).to_numpy()

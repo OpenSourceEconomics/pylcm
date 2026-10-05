@@ -2918,6 +2918,48 @@ def _state_handoff_errors(
     return error_messages
 
 
+def _fail_if_a_law_reads_a_draw_the_edge_lacks(
+    *,
+    source_regime_name: RegimeName,
+    flat_nested_transitions: Mapping[str, UserFunction],
+    functions: Mapping[str, UserFunction],
+    state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
+    continuation_targets: Collection[RegimeName],
+    source_draws: Collection[tuple[RegimeName, StateName]],
+) -> None:
+    """Refuse a state law that reads `next_<state>` where the edge has none.
+
+    A law toward a target may read the next-period value of a state the target
+    carries, or a draw of a random state the source takes on that edge. Any other
+    `next_<state>` has no value on the edge.
+
+    Raises:
+        ModelInitializationError: Naming every transition cell, the `next_`
+            argument it reads and the target that does not carry the state.
+
+    """
+    state_names = sorted({name for grids in state_grids.values() for name in grids})
+    errors = []
+    for qname, law in flat_nested_transitions.items():
+        target, *_, law_name = tree_path_from_qname(qname)
+        if target not in continuation_targets:
+            continue
+        reads = _names_read_by(roots=(law,), functions=functions)
+        errors += [
+            f"The state law '{law_name}' from '{source_regime_name}' to '{target}' "
+            f"reads 'next_{state}', but '{target}' does not carry '{state}' and no "
+            f"draw of '{state}' is taken on that edge. Declare '{state}' on "
+            f"'{target}', or make '{state}' a random state of '{source_regime_name}' "
+            "whose law is declared once for every target."
+            for state in state_names
+            if f"next_{state}" in reads
+            and state not in state_grids.get(target, {})
+            and (target, state) not in source_draws
+        ]
+    if errors:
+        raise ModelInitializationError(format_messages(errors))
+
+
 def _runtime_param_entry_error(
     *,
     phase_name: PhaseName,
@@ -3288,6 +3330,7 @@ def _build_solution_phase(  # noqa: PLR0915
         constraints=spec.solution.constraints,
         evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.solution.state_transitions,
+        markov_draw_laws=spec.solution.markov_draw_laws,
         joint_transitions=spec.solution.joint_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -4386,6 +4429,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         constraints=spec.simulation.constraints,
         evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.simulation.state_transitions,
+        markov_draw_laws=spec.simulation.markov_draw_laws,
         joint_transitions=spec.simulation.joint_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -5241,6 +5285,7 @@ def _process_regime_core(
     evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
+    markov_draw_laws: Mapping[StateName, StochasticTransition],
     joint_transitions: Mapping[RegimeName, Mapping[str, JointTransition]],
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
@@ -5268,6 +5313,9 @@ def _process_regime_core(
             terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
             detect per-target dicts and stochastic transitions.
+        markov_draw_laws: Markov laws declared once for every target, by state;
+            the source of a Markov draw toward a target that does not carry the
+            state.
         nested_transitions: Per-target transition bundles for internal
             processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
@@ -5539,27 +5587,40 @@ def _process_regime_core(
         }
     )
 
-    # A law toward a target may read the draw of a process the source carries
-    # but the target does not. The draw then exists only inside the transition:
-    # it is taken from the source's process at the source's current value,
-    # consumed by the target's laws, and not persisted, because the target has
-    # no axis to store it on.
+    # A law toward a target may read the draw of a random state the source
+    # carries but the target does not: a process, or a Markov state. The draw
+    # then exists only inside the transition: it is taken from the source's law
+    # at the source's current value, consumed by the target's laws, and not
+    # persisted, because the target has no axis to store it on.
     source_draw_grids = _source_draws_read_by_target_laws(
         flat_nested_transitions=flat_nested_transitions,
         functions=processed_functions,
-        source_process_grids={
-            process: grid
-            for process, grid in state_grids[source_regime_name].items()
-            if process in carried_processes
-            and isinstance(grid, _ContinuousStochasticProcess)
+        source_random_grids={
+            state: grid
+            for state, grid in state_grids[source_regime_name].items()
+            if (
+                state in carried_processes
+                and isinstance(grid, _ContinuousStochasticProcess)
+            )
+            or state in markov_draw_laws
         },
         state_grids=state_grids,
         continuation_targets=continuation_targets,
+    )
+    _fail_if_a_law_reads_a_draw_the_edge_lacks(
+        source_regime_name=source_regime_name,
+        flat_nested_transitions=flat_nested_transitions,
+        functions=processed_functions,
+        state_grids=state_grids,
+        continuation_targets=continuation_targets,
+        source_draws=frozenset(source_draw_grids),
     )
     source_draw_keys = _add_source_draw_functions(
         processed_functions=processed_functions,
         source_draw_grids=source_draw_grids,
         source_grids=all_grids[source_regime_name],
+        markov_draw_laws=markov_draw_laws,
+        regime_params_template=regime_params_template,
     )
 
     # Bundle insertion order fixes the continuation's lottery reduction axes.
@@ -5725,23 +5786,23 @@ def _source_draws_read_by_target_laws(
     *,
     flat_nested_transitions: Mapping[str, UserFunction],
     functions: Mapping[str, UserFunction],
-    source_process_grids: Mapping[ProcessName, _ContinuousStochasticProcess],
+    source_random_grids: Mapping[StateName, Grid],
     state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
     continuation_targets: Collection[RegimeName],
-) -> dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess]:
-    """Find the source processes whose draw a law toward a non-carrier reads.
+) -> dict[tuple[RegimeName, StateName], Grid]:
+    """Find the source's random states whose draw a law toward a non-carrier reads.
 
-    A target that carries the process receives its draw as a persisted lottery,
-    and a target with its own law for `next_<process>` names the value itself;
-    neither needs a draw here. Every other target whose laws read
-    `next_<process>`, directly or through regime functions, needs the draw
-    taken from the source's process inside the transition.
+    A random state is a process or a Markov state. A target that carries the
+    state receives its draw as a persisted lottery, and a target with its own law
+    for `next_<state>` names the value itself; neither needs a draw here. Every
+    other target whose laws read `next_<state>`, directly or through regime
+    functions, needs the draw taken from the source's law inside the transition.
 
     Returns:
-        The source process grid, keyed by `(target, process)`.
+        The source state's grid, keyed by `(target, state)`.
 
     """
-    draws: dict[tuple[RegimeName, ProcessName], _ContinuousStochasticProcess] = {}
+    draws: dict[tuple[RegimeName, StateName], Grid] = {}
     for target in sorted(continuation_targets):
         laws = {
             name: law
@@ -5749,42 +5810,62 @@ def _source_draws_read_by_target_laws(
             if tree_path_from_qname(name)[0] == target
         }
         reads = _names_read_by(roots=laws.values(), functions=functions)
-        for process, grid in source_process_grids.items():
+        for state, grid in source_random_grids.items():
             if (
-                process not in state_grids.get(target, {})
-                and f"{target}__next_{process}" not in flat_nested_transitions
-                and f"next_{process}" in reads
+                state not in state_grids.get(target, {})
+                and f"{target}__next_{state}" not in flat_nested_transitions
+                and f"next_{state}" in reads
             ):
-                draws[(target, process)] = grid
+                draws[(target, state)] = grid
     return draws
 
 
 def _add_source_draw_functions(
     *,
     processed_functions: dict[str, EconFunction],
-    source_draw_grids: Mapping[
-        tuple[RegimeName, ProcessName], _ContinuousStochasticProcess
-    ],
+    source_draw_grids: Mapping[tuple[RegimeName, StateName], Grid],
     source_grids: Mapping[StateOrActionName, Grid],
+    markov_draw_laws: Mapping[StateName, StochasticTransition],
+    regime_params_template: RegimeParamsTemplate,
 ) -> tuple[str, ...]:
     """Add each transition-local draw's node axis, support and weights.
 
-    The axis enumerates the source process's nodes, the support provider gives
-    their values, and the weights are the source process's row at the source's
-    current value. Returns the keys of the axis and support functions, which
-    belong to the target's transition bundle.
+    The axis enumerates the draw's support, the support provider gives the node
+    values, and the weights are the source's law at the source's current value:
+
+    - a process: its nodes, and its transition row;
+    - a Markov state: its codes, and the probabilities of its law declared once
+      for every target, with that law's parameters.
+
+    Returns the keys of the axis and support functions, which belong to the
+    target's transition bundle.
     """
     keys: list[str] = []
-    for (target, process), grid in source_draw_grids.items():
-        axis_name = f"{target}__next_{process}"
-        support_name = f"{target}__support_next_{process}"
-        processed_functions[axis_name] = _joint_support_indices(grid.n_points)
-        processed_functions[support_name] = _get_source_process_nodes(
-            name=process, grid=grid
-        )
-        processed_functions[f"weight_{axis_name}"] = _get_weights_func_for_process(
-            name=process, grid=grid, grids=source_grids
-        )
+    for (target, state), grid in source_draw_grids.items():
+        axis_name = f"{target}__next_{state}"
+        support_name = f"{target}__support_next_{state}"
+        if isinstance(grid, _ContinuousStochasticProcess):
+            processed_functions[axis_name] = _joint_support_indices(grid.n_points)
+            processed_functions[support_name] = _get_source_process_nodes(
+                name=state, grid=grid
+            )
+            processed_functions[f"weight_{axis_name}"] = _get_weights_func_for_process(
+                name=state, grid=grid, grids=source_grids
+            )
+        else:
+            codes = cast("DiscreteGrid", grid).to_jax()
+            processed_functions[axis_name] = _joint_support_indices(codes.shape[0])
+            processed_functions[support_name] = _literal_joint_support(
+                support=codes, node_annotation="DiscreteState"
+            )
+            processed_functions[f"weight_{axis_name}"] = _rename_params_to_qnames(
+                func=markov_draw_laws[state],
+                regime_params_template=regime_params_template,
+                param_key=axis_name,
+                names_key=_extract_template_names_key(
+                    func_name=axis_name, regime_params_template=regime_params_template
+                ),
+            )
         keys += [axis_name, support_name]
     return tuple(keys)
 
@@ -5973,15 +6054,16 @@ def _build_transition_plans(
                 qualified_name = qname_from_tree_path((target, next_state_name))
                 support_provider_name = f"support_{next_state_name}"
                 weight_name = f"weight_{qualified_name}"
+                source_grid = all_grids[source_regime_name][source_draw[1]]
+                is_process = isinstance(source_grid, _ContinuousStochasticProcess)
                 lotteries[next_state_name] = TransitionLotteryInfo(
                     name=next_state_name,
                     qualified_name=qualified_name,
                     support_provider=bundle[support_provider_name],
                     support_signature=SupportSignature(
-                        size=cast(
-                            "_ContinuousStochasticProcess",
-                            all_grids[source_regime_name][source_draw[1]],
-                        ).n_points
+                        size=source_grid.n_points
+                        if is_process
+                        else cast("DiscreteGrid", source_grid).to_jax().shape[0]
                     ),
                     probabilities=processed_functions[weight_name],
                     support_origin=SupportOrigin.SOURCE_PROCESS,
@@ -5993,7 +6075,9 @@ def _build_transition_plans(
                     ),
                     weight_name=weight_name,
                     support_provider_name=support_provider_name,
-                    node_annotation="ContinuousState",
+                    node_annotation="ContinuousState"
+                    if is_process
+                    else "DiscreteState",
                 )
                 continue
             if next_state_name.startswith("support_next_") and (
@@ -6491,7 +6575,12 @@ def _declaration_param_expansions(
     all_regime_names: frozenset[RegimeName],
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[FunctionName, tuple[str, ...]]:
-    """Retain granular parameter names as declaration provenance."""
+    """Retain granular parameter names as declaration provenance.
+
+    A Markov law declared once for every target binds its parameters toward
+    every candidate target: a target carrying the state receives the law, and a
+    target that does not may read the state's draw on that edge.
+    """
     expansions: dict[FunctionName, set[str]] = {}
     for phase_name in ("solution", "simulation"):
         source_slice: RegimePhaseSpec = getattr(specs[source_regime_name], phase_name)
@@ -6507,7 +6596,9 @@ def _declaration_param_expansions(
                 continue
             for target in candidate_targets:
                 target_slice: RegimePhaseSpec = getattr(specs[target], phase_name)
-                if state_name in target_slice.grid_states:
+                if state_name in target_slice.grid_states or isinstance(
+                    law, StochasticTransition
+                ):
                     expansions.setdefault(law_name, set()).add(
                         qname_from_tree_path((target, law_name))
                     )
