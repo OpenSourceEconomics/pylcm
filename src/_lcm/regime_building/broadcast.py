@@ -12,8 +12,8 @@ slice. Regime-level declarations are never pruned. The needed-set is a
 cross-regime, cross-phase fixed point: a state unused inside a regime is
 still required when a candidate target keeps it and the law of motion toward
 that target reads it, and the target may keep it on the strength of the other
-phase slice. A process state is also needed where its next-period draw is read,
-since the draw is taken from the state.
+phase slice. A random state — a process or a Markov state — is also needed where
+its next-period draw is read, since the draw is taken from the state.
 
 `root_functions` is the single definition of those root computations. The
 pruning walk here and the variable-usage check in `_lcm.model_processing`
@@ -45,7 +45,11 @@ from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedFunction, JointTransition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    JointTransition,
+    StochasticTransition,
+)
 from lcm.typing import UserFunction
 
 # Which `Phased` side each `PhasedRegimeSpec` slice is built from.
@@ -166,7 +170,7 @@ def prune_broadcast_variables(
 
     A broadcast variable is pruned from a regime when no root computation of
     either phase slice transitively reads it — in that regime or through a
-    law of motion toward a candidate target that keeps it. A read of a process
+    law of motion toward a candidate target that keeps it. A read of a random
     state's next-period draw `next_<state>` is a read of the state, because the
     draw is taken from it. Pruning drops the
     variable's grid, and for states the part of the regime's law entry that
@@ -630,12 +634,13 @@ def _state_conditioned_names(
 def states_read_through_their_draw(
     *, regime: UserRegime, reads: Collection[str]
 ) -> frozenset[StateName]:
-    """Collect the process states whose next-period draw is among `reads`.
+    """Collect the random states whose next-period draw is among `reads`.
 
-    A process state's law of motion is the process itself, so no function node
-    `next_<state>` exists for a DAG walk to step through to the state: a read of
-    the draw ends in a leaf. The draw is still taken from the state's process at
-    the state's current node — conditionally on it for a persistent process — so
+    A random state is a process or a Markov state, whose law of motion is a
+    probability distribution rather than a function: no function node
+    `next_<state>` exists for a DAG walk to step through to the state, so a read
+    of the draw ends in a leaf. The draw is still taken from the state's law at
+    the state's current value — conditionally on it for a persistent law — so
     reading the draw is a read of the state, and the regime that reads it keeps
     the state. That holds for an IID process too: its lagged value does not
     inform the draw, but the engine draws `next_<state>` from the carried state,
@@ -647,13 +652,14 @@ def states_read_through_their_draw(
             leaves.
 
     Returns:
-        Names of the regime's process states whose `next_<state>` is read.
+        Names of the regime's random states whose `next_<state>` is read.
 
     """
     return frozenset(
         name
         for name, grid in regime.states.items()
-        if f"next_{name}" in reads and _is_process(grid)
+        if f"next_{name}" in reads
+        and (_is_process(grid) or _is_markov_law(regime.state_transitions.get(name)))
     )
 
 
@@ -662,6 +668,15 @@ def _is_process(grid: object) -> bool:
     if isinstance(grid, Phased):
         return _is_process(grid.solve) or _is_process(grid.simulate)
     return isinstance(grid, _ContinuousStochasticProcess)
+
+
+def _is_markov_law(law: object) -> bool:
+    """Whether a law of motion is a Markov law, toward any target in either phase."""
+    if isinstance(law, Phased):
+        return _is_markov_law(law.solve) or _is_markov_law(law.simulate)
+    if isinstance(law, Mapping):
+        return any(_is_markov_law(cell) for cell in law.values())
+    return isinstance(law, StochasticTransition)
 
 
 def _resolved_at_representative_age(
