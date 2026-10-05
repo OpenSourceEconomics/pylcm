@@ -4147,24 +4147,6 @@ _COMBINED_INPUT_CONTRACTS = {
             "_to_jax_without_narrowing": "1b25088759f37cb0e69618da38903e96e763aba1e0de238f5660190596a82071",
         },
     ),
-    # A warm solve binds a stored structural blueprint on a key hit. The key
-    # is the inputs' abstract schema plus frozen policy values, so changed
-    # parameter values with an unchanged schema hit; a changed shape, dtype,
-    # weak type or placement misses. The store, its lookup and both key
-    # derivations are one corridor.
-    STRUCTURAL_BLUEPRINTS_SOURCE: (
-        "0be03a0f240e2be927493de83264a79b548dc07ee0b4cfa717d5d64c658af358",
-        {
-            "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
-            "StructuralBlueprintCache.get": "d854c5c738f2d093d31a64d6999ffc4d1dcff29509fb5d3cfc91fe8ad8ce2dcf",
-            "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
-            "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
-            "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
-            "abstract_schema": "8cc83dd74696815ae043e0018c36c338368df95f8ec2ca62616010f5731cfa6c",
-            "_leaf_schema": "bf4b44554b4f894745d4f61261889a0ab7f88e4c1cac6cb13f6bf13c2fc5c2bc",
-            "frozen_policy": "20d8d9fb6447eaaa3dbf374c55171e51de1708b48b1b7b194a285fb1bddcc406",
-        },
-    ),
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
         "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
         {
@@ -4492,6 +4474,39 @@ def _combined_input_errors(*, tree: ast.Module, source: str) -> list[str]:
     )
     if _transport_module_surface(tree) != surface:
         errors.append("simulation copy and chunk profile: module bindings changed")
+    return errors
+
+
+_STRUCTURAL_BLUEPRINT_CONTRACTS = {
+    # A warm solve binds a stored structural blueprint on a key hit. The key
+    # is the inputs' abstract schema plus frozen policy values, so changed
+    # parameter values with an unchanged schema hit; a changed shape, dtype,
+    # weak type or placement misses. The store, its lookup and both key
+    # derivations are one corridor.
+    STRUCTURAL_BLUEPRINTS_SOURCE: (
+        "0be03a0f240e2be927493de83264a79b548dc07ee0b4cfa717d5d64c658af358",
+        {
+            "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
+            "StructuralBlueprintCache.get": "d854c5c738f2d093d31a64d6999ffc4d1dcff29509fb5d3cfc91fe8ad8ce2dcf",
+            "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
+            "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
+            "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
+            "abstract_schema": "8cc83dd74696815ae043e0018c36c338368df95f8ec2ca62616010f5731cfa6c",
+            "_leaf_schema": "bf4b44554b4f894745d4f61261889a0ab7f88e4c1cac6cb13f6bf13c2fc5c2bc",
+            "frozen_policy": "20d8d9fb6447eaaa3dbf374c55171e51de1708b48b1b7b194a285fb1bddcc406",
+        },
+    ),
+}
+
+
+def _structural_blueprint_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Authenticate the structural-blueprint store and its key derivations."""
+    surface, callables = _STRUCTURAL_BLUEPRINT_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="structural blueprint cache", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append("structural blueprint cache: module bindings changed")
     return errors
 
 
@@ -5500,6 +5515,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         tree = parsed.get(relative)
         if tree is not None:
             new_errors = _combined_input_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
+    for relative in _STRUCTURAL_BLUEPRINT_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _structural_blueprint_errors(tree=tree, source=relative)
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
