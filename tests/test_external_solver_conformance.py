@@ -25,10 +25,10 @@ from lcm import (
     AgeSpecializedGrid,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
@@ -97,6 +97,7 @@ from tests.conformance_solver import (
     TerminalCounterSolver,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
@@ -385,14 +386,14 @@ def _model(
     utility: Callable[..., object] = _utility,
 ) -> Model:
     """Build the same tiny lifecycle around any solver under comparison."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "active": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS,
                     law={
-                        "active": MarkovTransition(func=_stay_active),
-                        "retired": MarkovTransition(func=_enter_retirement),
+                        "active": StochasticTransition(func=_stay_active),
+                        "retired": StochasticTransition(func=_enter_retirement),
                     },
                     exits=("retired",),
                 ),
@@ -429,9 +430,9 @@ def _model(
                 solver=TerminalCounterSolver(),
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "active"},
+        initial_nodes={0: "active"},
     )
 
 

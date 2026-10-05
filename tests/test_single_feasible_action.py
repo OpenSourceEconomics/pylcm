@@ -27,9 +27,11 @@ import pytest
 from _lcm.grids import IrregSpacedGrid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.regime_building.ndimage import map_coordinates
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -46,6 +48,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -106,7 +109,9 @@ def _build_model(
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(func=_next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
     )
@@ -114,11 +119,11 @@ def _build_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     consumption_points = jnp.linspace(consumption_lo, consumption_hi, n_consumption)
     params = {
@@ -367,7 +372,9 @@ def _build_alive_dead_model(
         constraints={"borrowing_constraint": _alive_borrow},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(func=_alive_to_dead, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_alive_to_dead, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
     )
@@ -379,12 +386,12 @@ def _build_alive_dead_model(
             "pref_type": DiscreteGrid(category_class=PrefType),
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=AliveDeadRegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     cw_arr = jnp.asarray(consumption_weight)
     params = {
@@ -520,7 +527,9 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         constraints={"borrow": borrow},
         regime_transitions=until_exit(
             last_alive_age + 1,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
     )
@@ -528,11 +537,11 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RuntimeRegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     params = {
         "discount_factor": 0.95,

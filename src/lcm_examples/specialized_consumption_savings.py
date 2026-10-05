@@ -3,7 +3,14 @@
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, Choose, ExecutionConfig, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
+)
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -74,7 +81,7 @@ ONE_MARGIN = LiquidMargin(
 def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, one-margin model solved by plain EGM."""
     working = ConsumptionSavingsRegime(
-        regime_transitions=Choose(func=next_regime, targets=("dead",)),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -94,10 +101,11 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
         functions={"utility": terminal_utility},
     )
     return Model(
+        edges={"working": {"dead": 0}},
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        initial_nodes={0: "working"},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         enable_jit=enable_jit,
     )
 
@@ -171,7 +179,7 @@ def build_kinked_tax_model(
     a budget would admit.
     """
     working = ConsumptionSavingsRegime(
-        regime_transitions=Choose(func=next_regime, targets=("dead",)),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"liquid": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"liquid": next_liquid},
@@ -197,10 +205,11 @@ def build_kinked_tax_model(
         functions={"utility": tax_terminal_utility},
     )
     return Model(
+        edges={"working": {"dead": 0}},
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        initial_nodes={0: "working"},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         enable_jit=enable_jit,
         execution_config=execution_config,
     )
@@ -306,7 +315,7 @@ OUTER_MARGIN = OuterContinuousMargin(
 def build_nested_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, two-margin model solved by nested EGM."""
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=Choose(func=next_regime, targets=("dead",)),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -343,10 +352,11 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
         functions={"utility": nested_terminal_utility},
     )
     return Model(
+        edges={"working": {"dead": 0}},
         regimes={"working": working, "dead": dead},
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        initial_nodes={0: "working"},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         enable_jit=enable_jit,
     )
 

@@ -27,10 +27,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import AGES, Work
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -111,9 +112,9 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
     worker = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "retired": ValueDependentTransition(
-                        probability=MarkovTransition(func=_probability_one),
+                        probability=StochasticTransition(func=_probability_one),
                         gate=_gate_reading_bonus,
                         routes={
                             "self": StakeholderRoute(
@@ -139,7 +140,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "worker": worker,
             "retired": _make_retired_regime(states={"wage": _WAGE_GRID}),
@@ -149,7 +150,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         regime_id_class=GatedRegimeId,
         states={"bonus": _BONUS_GRID},
         state_transitions={"bonus": fixed_transition("bonus")},
-        initial_regimes={0: "worker"},
+        initial_nodes={0: "worker"},
     )
 
 
@@ -163,9 +164,9 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
     worker = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "retired": ValueDependentTransition(
-                        probability=MarkovTransition(func=_probability_one),
+                        probability=StochasticTransition(func=_probability_one),
                         gate=_gate_comparing_values,
                         routes={
                             "self": StakeholderRoute(
@@ -191,7 +192,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "worker": worker,
             "retired": _make_retired_regime(
@@ -201,7 +202,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         },
         ages=AGES,
         regime_id_class=GatedRegimeId,
-        initial_regimes={0: "worker"},
+        initial_nodes={0: "worker"},
     )
 
 

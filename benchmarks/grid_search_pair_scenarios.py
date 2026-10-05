@@ -200,7 +200,8 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     import lcm
     from lcm import (
         AgeGrid,
-        Choose,
+        ByAge,
+        DeterministicTransition,
         DiscreteGrid,
         LinSpacedGrid,
         Model,
@@ -209,7 +210,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         fixed_transition,
     )
     from lcm.typing import ScalarInt
-    from tests.test_models.schedules import until_exit
 
     @categorical(ordered=False)
     class RegimeId:
@@ -252,13 +252,14 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         # The external harness also builds the historical pre-ExecutionConfig base.
         type_grid_kwargs["distributed"] = True
     permanent_type = DiscreteGrid(**type_grid_kwargs)
+    ages = AgeGrid(start=0, inclusive_stop=5, step="Y")
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=until_exit(
-                    5,
-                    law=Choose(func=next_regime, targets=("working", "retired")),
-                    exits=("retired",),
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law=DeterministicTransition(func=next_regime),
+                    then="retired",
                 ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": next_wealth},
@@ -272,11 +273,17 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
                 functions={"utility": retired_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=5, step="Y"),
+        ages=ages,
         regime_id_class=RegimeId,
         states={"permanent_type": permanent_type},
         state_transitions={"permanent_type": fixed_transition("permanent_type")},
-        initial_regimes={0: "working"},
+        initial_nodes=((0, "working"),),
+        edges={
+            "working": {
+                "working": ages.exact_values[:-2],
+                "retired": ages.exact_values[:-1],
+            },
+        },
         **execution_kwargs,
     )
     return model, {"discount_factor": 0.95}
@@ -287,7 +294,8 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
 
     from lcm import (
         AgeGrid,
-        Choose,
+        ByAge,
+        DeterministicTransition,
         LinSpacedGrid,
         Model,
         NormalIIDProcess,
@@ -295,7 +303,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         categorical,
     )
     from lcm.typing import ScalarInt
-    from tests.test_models.schedules import until_exit
 
     @categorical(ordered=False)
     class RegimeId:
@@ -319,13 +326,14 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
 
     wealth = LinSpacedGrid(start=1.0, stop=100.0, n_points=500)
     consumption = LinSpacedGrid(start=0.1, stop=100.0, n_points=500)
+    ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=until_exit(
-                    4,
-                    law=Choose(func=next_regime, targets=("working", "retired")),
-                    exits=("retired",),
+                regime_transitions=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law=DeterministicTransition(func=next_regime),
+                    then="retired",
                 ),
                 states={
                     "wealth": wealth,
@@ -348,9 +356,15 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
                 functions={"utility": retired_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes=((0, "working"),),
+        edges={
+            "working": {
+                "working": ages.exact_values[:-2],
+                "retired": ages.exact_values[:-1],
+            },
+        },
         **_gpu_mem.default_budget_execution_kwargs(),
     )
     return model, {"discount_factor": 0.95}

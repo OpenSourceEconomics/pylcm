@@ -18,7 +18,7 @@ is valid because the problem is smooth and concave, has one continuous state and
 and has no discrete choice.
 
 ```python
-from lcm import AgeGrid, Choose, Model
+from lcm import AgeGrid, DeterministicTransition, Model
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     post_decision_lower_bound,
@@ -41,7 +41,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=Choose(func=next_regime, targets=("dead",)),
+    regime_transitions=DeterministicTransition(func=next_regime),
     states={"wealth": WEALTH_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"wealth": next_wealth},
@@ -65,8 +65,9 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
-    initial_regimes={0: "working"},
-    ages=AgeGrid(start=0, stop=1, step="Y"),
+    edges={"working": {"dead": 0}},
+    initial_nodes=((0, "working"),),
+    ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
 )
 
 params = example_params()
@@ -107,7 +108,7 @@ exemption:
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, Choose, Model
+from lcm import AgeGrid, DeterministicTransition, Model
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     LiquidMargin,
@@ -170,7 +171,7 @@ margin = LiquidMargin(
 )
 
 working = ConsumptionSavingsRegime(
-    regime_transitions=Choose(func=next_regime, targets=("dead",)),
+    regime_transitions=DeterministicTransition(func=next_regime),
     states={"liquid": LIQUID_GRID},
     actions={"consumption": CONSUMPTION_GRID},
     state_transitions={"liquid": next_liquid},
@@ -197,8 +198,9 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
-    initial_regimes={0: "working"},
-    ages=AgeGrid(start=0, stop=1, step="Y"),
+    edges={"working": {"dead": 0}},
+    initial_nodes=((0, "working"),),
+    ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
 )
 
 params = {
@@ -240,7 +242,7 @@ post-decision illiquid stock, `NEGM` runs a one-dimensional `DCEGM` liquid solve
 then compares the outer candidates.
 
 ```python
-from lcm import AgeGrid, Choose, Model
+from lcm import AgeGrid, DeterministicTransition, Model
 from lcm.consumption_savings_regime import (
     NestedConsumptionSavingsRegime,
     post_decision_lower_bound,
@@ -271,7 +273,7 @@ from lcm_examples.specialized_consumption_savings import (
 )
 
 working = NestedConsumptionSavingsRegime(
-    regime_transitions=Choose(func=next_regime, targets=("dead",)),
+    regime_transitions=DeterministicTransition(func=next_regime),
     states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
     actions={
         "consumption": CONSUMPTION_GRID,
@@ -312,8 +314,9 @@ dead = Regime(
 model = Model(
     regimes={"working": working, "dead": dead},
     regime_id_class=RegimeId,
-    initial_regimes={0: "working"},
-    ages=AgeGrid(start=0, stop=1, step="Y"),
+    edges={"working": {"dead": 0}},
+    initial_nodes=((0, "working"),),
+    ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
 )
 
 params = example_params()

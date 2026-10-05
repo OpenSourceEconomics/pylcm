@@ -23,7 +23,10 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope.fues import refine_envelope
-from lcm import AgeGrid, Choose, IrregSpacedGrid, LinSpacedGrid, Model
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, IrregSpacedGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
@@ -34,6 +37,7 @@ from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     next_regime_from_retirement,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Number of model periods; the last one is spent in the terminal `dead` regime.
@@ -102,14 +106,14 @@ def budget_constraint(*, consumption: ContinuousAction, resources: FloatND) -> B
 @functools.cache
 def _get_means_tested_model(variant: str) -> Model:
     """Build the means-tested model for one solver variant (`dcegm`/`brute`)."""
-    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
     if variant == "brute":
         regime = UserRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(
+                law=_SupportedDeterministicTransition(
                     func=next_regime_from_retirement, targets=("retirement", "dead")
                 ),
                 exits=("dead",),
@@ -124,7 +128,7 @@ def _get_means_tested_model(variant: str) -> Model:
         regime = ConsumptionSavingsRegime(
             regime_transitions=until_exit(
                 last_age,
-                law=Choose(
+                law=_SupportedDeterministicTransition(
                     func=next_regime_from_retirement, targets=("retirement", "dead")
                 ),
                 exits=("dead",),
@@ -149,11 +153,11 @@ def _get_means_tested_model(variant: str) -> Model:
                 post_decision_state="savings",
             ),
         )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 
@@ -166,12 +170,12 @@ def _get_corner_model() -> Model:
     savings node — the degenerate-inversion guard must carry the entire
     solution through the constrained segment.
     """
-    ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     regime = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=next_regime_from_retirement, targets=("retirement", "dead")
             ),
             exits=("dead",),
@@ -196,11 +200,11 @@ def _get_corner_model() -> Model:
             post_decision_state="savings",
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 

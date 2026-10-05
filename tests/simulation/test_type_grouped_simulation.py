@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 
 import tests.conftest as test_config
+from _lcm.regime_building.transition_support import _SupportedStochasticTransition
 from _lcm.simulation import value_reads
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.random import generate_simulation_keys
@@ -29,10 +30,10 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
     load_solution,
@@ -47,6 +48,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _LAST_AGE = 4
@@ -179,7 +181,7 @@ def _model(
         "work": Regime(
             regime_transitions=until_exit(
                 _LAST_AGE,
-                law=MarkovTransition(
+                law=_SupportedStochasticTransition(
                     func=_survival_beside_outside if outside else _survival,
                     targets=("work", "dead"),
                 ),
@@ -195,7 +197,7 @@ def _model(
                 "pref_type": fixed_transition("pref_type")
                 if pref_law is None
                 else pref_law,
-                "health": MarkovTransition(func=_next_health),
+                "health": StochasticTransition(func=_next_health),
             },
             actions=consumption,
             functions={"utility": _work_utility},
@@ -213,7 +215,7 @@ def _model(
         regimes["outside"] = Regime(
             regime_transitions=until_exit(
                 _LAST_AGE,
-                law=MarkovTransition(
+                law=_SupportedStochasticTransition(
                     func=_outside_survival, targets=("outside", "dead")
                 ),
                 exits=("dead",),
@@ -224,11 +226,11 @@ def _model(
             functions={"utility": _outside_utility},
             constraints={"feasible": _feasible},
         )
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=_OutsideRegimeId if outside else _RegimeId,
-        initial_regimes={0: ("work", "outside") if outside else "work"},
+        initial_nodes={0: ("work", "outside") if outside else "work"},
         execution_config=ExecutionConfig(
             invariant_block_widths={"pref_type": 1} if blocked else {},
             axis_widths={"subject": subject_width},

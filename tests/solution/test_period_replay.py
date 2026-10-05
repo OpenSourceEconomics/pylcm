@@ -31,7 +31,8 @@ from tests.test_models.deterministic.discrete import (
     get_model,
     get_params,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 
 _N_PERIODS = 3
 
@@ -46,10 +47,11 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     base = get_model(n_periods=_N_PERIODS)
     model = Model(
         regimes=base.user_regimes,
+        edges=base.graph.edges,
         ages=base.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = get_params(n_periods=_N_PERIODS)
     solution = model.solve(params=params, log_level="off").values
@@ -193,11 +195,11 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     """
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "single_f@0")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_full_topology_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
-        initial_regimes={0: ("single_f", "single_m")},
+        initial_nodes={0: ("single_f", "single_m")},
     )
     params = {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
     solution = model.solve(params=params, log_level="off").values

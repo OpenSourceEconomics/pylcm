@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.phases import normalize_regime_phases
-from lcm import JointTransition, MarkovTransition, Phased
+from lcm import JointTransition, Phased, StochasticTransition
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import FloatND
@@ -134,7 +134,7 @@ def test_joint_transition_target_must_be_declared_reachable() -> None:
     """An edge-owned joint kernel cannot name a structurally unreachable target."""
     with pytest.raises(RegimeInitializationError, match=r"reachable.*couple"):
         _regime(
-            regime_transitions={"single": MarkovTransition(func=_probabilities)},
+            regime_transitions={"single": StochasticTransition(func=_probabilities)},
             joint_transitions={"couple": {"match": _kernel()}},
         )
 

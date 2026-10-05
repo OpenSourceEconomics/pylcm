@@ -36,7 +36,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.solver_api import DISSOLUTION_FLAG, ResultRetention
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -44,6 +44,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _BETA = 0.95
@@ -166,7 +167,7 @@ def _make_consent_model() -> tuple[Model, dict]:
             1,
             law={
                 "married_terminal": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_one),
+                    probability=StochasticTransition(func=_prob_one),
                     gate=_consent_gate,
                     routes={
                         "f": StakeholderRoute(
@@ -216,16 +217,16 @@ def _make_consent_model() -> tuple[Model, dict]:
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "single_f": single_f,
             "single_f_terminal": single_f_terminal,
             "single_m_terminal": single_m_terminal,
             "married_terminal": married_terminal,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
-        initial_regimes={0: "single_f"},
+        initial_nodes={0: "single_f"},
     )
     return model, {"discount_factor": _BETA}
 
@@ -235,9 +236,9 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_ir": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -271,8 +272,8 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     married_ir = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "married_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -316,8 +317,8 @@ def _make_dissolution_model() -> tuple[Model, dict]:
     single_f = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "single_f_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -332,10 +333,10 @@ def _make_dissolution_model() -> tuple[Model, dict]:
         functions={"utility": _u_zero},
     )
     single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": MarkovTransition(func=_prob_one)},
+        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "married": married,
             "married_ir": married_ir,
@@ -345,9 +346,9 @@ def _make_dissolution_model() -> tuple[Model, dict]:
             "single_m": single_m,
             "single_m_terminal": single_f_terminal.replace(),
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
     )
     params = {"discount_factor": _BETA, "delta_f": 0.5, "delta_m": 0.2}
     return model, params

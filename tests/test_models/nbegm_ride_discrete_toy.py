@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import lcm
 from _lcm.grids.base import Grid
 from lcm import DiscreteGrid, LinSpacedGrid, Model, NormalIIDProcess, categorical
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -482,7 +482,7 @@ def build_model(  # noqa: C901, PLR0912
     if action_in_health_transition:
         extra_states["health"] = DiscreteGrid(category_class=Health)
         extra_state_transitions["health"] = {
-            "alive": MarkovTransition(func=prob_health_action),
+            "alive": StochasticTransition(func=prob_health_action),
         }
     if action_in_costate:
         extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
@@ -522,8 +522,8 @@ def build_model(  # noqa: C901, PLR0912
 
     if action_in_regime_transition:
         survival_transition = {
-            "alive": MarkovTransition(func=prob_stay_alive_action),
-            "dead": MarkovTransition(func=prob_die_action),
+            "alive": StochasticTransition(func=prob_stay_alive_action),
+            "dead": StochasticTransition(func=prob_die_action),
         }
     elif transition_reads_liquid:
         stay, die = (
@@ -532,8 +532,8 @@ def build_model(  # noqa: C901, PLR0912
             else (prob_stay_alive_liquid, prob_die_liquid)
         )
         survival_transition = {
-            "alive": MarkovTransition(func=stay),
-            "dead": MarkovTransition(func=die),
+            "alive": StochasticTransition(func=stay),
+            "dead": StochasticTransition(func=die),
         }
     else:
         survival_transition = None

@@ -14,15 +14,16 @@ import pytest
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -78,10 +79,12 @@ PARAMS = {
 
 
 def _build_model(*, enable_jit: bool) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
-                regime_transitions={"target": MarkovTransition(func=_one_probability)},
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "other": {"target": _enter_other},
@@ -95,11 +98,11 @@ def _build_model(*, enable_jit: bool) -> Model:
                 functions={"utility": _target_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

@@ -8,8 +8,8 @@ from lcm import (
     ExecutionConfig,
     JointTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -18,6 +18,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -54,7 +55,9 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
 def _model(solver: EGM | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            1, law={"target": MarkovTransition(func=_certain_target)}, exits=("target",)
+            1,
+            law={"target": StochasticTransition(func=_certain_target)},
+            exits=("target",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
@@ -83,13 +86,13 @@ def _model(solver: EGM | GridSearch) -> Model:
         states={"estate": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         functions={"utility": _target_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"source": source, "target": target},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 

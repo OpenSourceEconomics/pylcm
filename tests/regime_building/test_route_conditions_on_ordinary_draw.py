@@ -20,7 +20,7 @@ modes follow:
     and vice versa.
 
 No other collective-regimes test can see this, because EKL's own topology
-declares the gated edge's target via an ordinary `MarkovTransition` at
+declares the gated edge's target via an ordinary `StochasticTransition` at
 PROBABILITY 1 (see module docstrings in `test_collective_regime_simulate.py`
 / `test_row_split_synthetic.py`: "offer arrives with certainty; only consent
 is modeled") -- so `ordinary_draw == target_id` holds for every row the gate
@@ -66,7 +66,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
     _solve_and_process,
@@ -277,7 +277,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     """
     edges = {
         "target_a": ValueDependentTransition(
-            probability=MarkovTransition(func=_prob_half),
+            probability=StochasticTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -288,7 +288,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
             },
         ),
         "target_b": ValueDependentTransition(
-            probability=MarkovTransition(func=_prob_half),
+            probability=StochasticTransition(func=_prob_half),
             gate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
@@ -301,7 +301,9 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
     }
     src = Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): {name: edges[name] for name in edge_order}}
+            cases={
+                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
+            }
         ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
@@ -338,7 +340,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
 
 
 def _solve_dual_edge(*, edge_order: tuple[str, str]):
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regime_names = ["src", "target_a", "target_b", "fallback_a", "fallback_b"]
     regimes_dict = _make_dual_edge_regimes(edge_order=edge_order)
     regimes, regime_names_to_ids = _solve_and_process(

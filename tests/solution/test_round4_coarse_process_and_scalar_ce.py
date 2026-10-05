@@ -24,11 +24,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
-    Model,
     NormalIIDProcess,
     Regime,
     TauchenAR1Process,
@@ -39,6 +40,7 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
@@ -110,7 +112,9 @@ def _solve_coarse_into_process_only_target(
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "gone")
+            ),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -123,11 +127,11 @@ def _solve_coarse_into_process_only_target(
         states={"shock": process},
         functions={"utility": lambda shock: shock + level},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": gone},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {
@@ -191,7 +195,9 @@ def _solve_with_entry_law(level: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "gone")
+            ),
             exits=("gone",),
         ),
         states={"wealth": _WEALTH_GRID},
@@ -211,11 +217,11 @@ def _solve_with_entry_law(level: float):
         },
         functions={"utility": lambda shock: shock + level},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": gone},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {
@@ -303,7 +309,9 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     alive = Regime(
         regime_transitions=until_exit(
             41,
-            law=Choose(func=_tiny_next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=_tiny_next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         states={"wealth": _TINY_WEALTH},
@@ -318,11 +326,11 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         states={"wealth": LinSpacedGrid(start=0.0, stop=5.0, n_points=5)},
         functions={"utility": _tiny_terminal_utility},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=40, stop=41, step="Y"),
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_TinyRegimeId,
-        initial_regimes={40: "alive"},
+        initial_nodes={40: "alive"},
     )
     params = {
         "alive": {

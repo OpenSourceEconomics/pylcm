@@ -42,6 +42,7 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,7 +55,7 @@ type _Candidate = tuple[tuple[str, int, str], Hashable]
 def _reordered_actions_model() -> Model:
     """The identity toy with its two actions declared in the opposite order."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -69,9 +70,9 @@ def _reordered_actions_model() -> Model:
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 
@@ -84,7 +85,7 @@ def _rewaged_model() -> Model:
     """The identity toy with a different wage function body."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     functions = {**working_life.functions, "wage": _steeper_wage}
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -100,15 +101,15 @@ def _rewaged_model() -> Model:
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 
 def _fixed_discount_model(*, discount_factor: float) -> Model:
     """The identity toy with its discount factor fixed at construction."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -123,10 +124,12 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, stop=START_AGE + _N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(
+            start=START_AGE, inclusive_stop=START_AGE + _N_PERIODS - 1, step="Y"
+        ),
         regime_id_class=RegimeId,
         fixed_params={"discount_factor": discount_factor},
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
 
 

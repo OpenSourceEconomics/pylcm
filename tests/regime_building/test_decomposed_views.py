@@ -26,7 +26,7 @@ from lcm.regime import (
     decompose_functions,
     decompose_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, FloatND
 
 
@@ -82,9 +82,9 @@ _REFERENCE = ProjectedRegimeValue(
 )
 
 
-def _cells(transition: object) -> Mapping[str, MarkovTransition]:
+def _cells(transition: object) -> Mapping[str, StochasticTransition]:
     """The per-target cells a decomposed per-target transition holds."""
-    return cast("Mapping[str, MarkovTransition]", decompose_transition(transition))
+    return cast("Mapping[str, StochasticTransition]", decompose_transition(transition))
 
 
 def _phases(transition: object) -> Phased:
@@ -176,7 +176,7 @@ def test_decomposing_constraints_twice_changes_nothing():
 
 def test_a_value_dependent_transition_leaves_its_selection_probability():
     """The cell the canonical pipeline reads is the declared probability."""
-    probability = MarkovTransition(func=_prob_one)
+    probability = StochasticTransition(func=_prob_one)
     raw = {
         "couple": ValueDependentTransition(
             probability=probability, gate=_gate, routes={"f": _ROUTE_F}
@@ -187,7 +187,7 @@ def test_a_value_dependent_transition_leaves_its_selection_probability():
 
 
 def test_a_bare_probability_is_wrapped_into_the_cell_grammar():
-    """A per-target cell takes a `MarkovTransition`, so a callable is wrapped."""
+    """A per-target cell takes a `StochasticTransition`, so a callable is wrapped."""
     raw = {
         "couple": ValueDependentTransition(
             probability=_prob_one, gate=_gate, routes={"f": _ROUTE_F}
@@ -199,7 +199,7 @@ def test_a_bare_probability_is_wrapped_into_the_cell_grammar():
 
 def test_an_ordinary_target_cell_passes_through_untouched():
     """Only the value-dependent cells are rewritten."""
-    cell = MarkovTransition(func=_prob_one)
+    cell = StochasticTransition(func=_prob_one)
 
     assert _cells({"couple": cell})["couple"] is cell
 
@@ -216,8 +216,8 @@ def test_a_coarse_transition_passes_through_untouched():
 
 def test_each_phase_of_a_phased_transition_is_decomposed_on_its_own():
     """A value-dependent transition may be declared inside `Phased`."""
-    solve_probability = MarkovTransition(func=_prob_one)
-    simulate_probability = MarkovTransition(func=_prob_one)
+    solve_probability = StochasticTransition(func=_prob_one)
+    simulate_probability = StochasticTransition(func=_prob_one)
     raw = Phased(
         solve={
             "couple": ValueDependentTransition(
@@ -241,7 +241,7 @@ def test_each_phase_of_a_phased_transition_is_decomposed_on_its_own():
 @pytest.mark.parametrize(
     "raw",
     [
-        {"couple": MarkovTransition(func=_prob_one)},
+        {"couple": StochasticTransition(func=_prob_one)},
         None,
         _prob_one,
     ],
@@ -261,14 +261,14 @@ def test_a_transition_with_nothing_to_decompose_is_the_very_same_object():
     per-target transition look phase-varying, so the view returns its input
     untouched when there is no declaration in it.
     """
-    raw = {"couple": MarkovTransition(func=_prob_one)}
+    raw = {"couple": StochasticTransition(func=_prob_one)}
 
     assert decompose_transition(raw) is raw
 
 
 def test_one_object_written_into_both_phases_still_reads_as_one():
     """The two phases of an undecomposed `Phased` stay identical objects."""
-    shared = {"couple": MarkovTransition(func=_prob_one)}
+    shared = {"couple": StochasticTransition(func=_prob_one)}
     raw = Phased(solve=shared, simulate=shared)
     decomposed = _phases(raw)
 

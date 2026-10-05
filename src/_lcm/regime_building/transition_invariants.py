@@ -144,10 +144,10 @@ def _fail_if_joint_node_scopes_are_crossed(
 
     for target, bundle in transitions.items():
         plan = transition_plans[target]
+        # Every lottery of this edge names a node it may read: a draw local to
+        # another edge may share its name with one this target persists.
         target_local_nodes = frozenset(
-            lottery.name
-            for lottery in plan.lotteries.values()
-            if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+            lottery.name for lottery in plan.lotteries.values()
         )
         consumers: dict[str, UserFunction] = dict(bundle)
         weight_names = {lottery.weight_name for lottery in plan.lotteries.values()} | {

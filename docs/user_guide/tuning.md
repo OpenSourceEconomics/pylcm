@@ -58,7 +58,8 @@ model = Model(
     regimes=regimes,
     ages=ages,
     regime_id_class=RegimeId,
-    initial_regimes=initial_regimes,
+    edges=edges,
+    initial_nodes=initial_nodes,
     execution_config=ExecutionConfig(axis_widths={"action_product": 8}),
 )
 ```
@@ -142,18 +143,18 @@ Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 
 A product-coded Markov state often combines a component that never changes, such as a
 fixed effect or a permanent type, with components that do. With a plain
-`MarkovTransition`, the law keeps the fixed part by giving zero probability to every
+`StochasticTransition`, the law keeps the fixed part by giving zero probability to every
 code outside the current group. Declaring this structure lets continuation lookup select
 the current group and makes the fixed component available for sharding.
 
 Declare the group of each code with `fixed_component`:
 
 ```python
-from lcm import MarkovTransition
+from lcm import StochasticTransition
 
 # Codes 0-3 = 2 * kind + health; `kind` never changes.
 state_transitions = {
-    "kind_health": MarkovTransition(
+    "kind_health": StochasticTransition(
         func=next_kind_health, fixed_component=(0, 0, 1, 1)
     ),
 }

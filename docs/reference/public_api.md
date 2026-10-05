@@ -54,25 +54,27 @@ documentation and tests.
 
 ## Transitions, phases, and structured declarations
 
-| Public name                                                           | Canonical documentation            |
-| --------------------------------------------------------------------- | ---------------------------------- |
-| [`lcm.MarkovTransition`](transitions.md#api-state-transitions)        | Stochastic transition wrapper      |
-| [`lcm.JointTransition`](transitions.md#api-joint-transitions)         | Shared-draw joint law              |
-| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)            | Laws by exact age                  |
-| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)         | Half-open age interval             |
-| [`lcm.Choose`](transitions.md#api-dated-regime-transitions)           | Deterministic regime choice        |
-| [`lcm.fixed_transition`](transitions.md#api-state-transitions)        | Identity law                       |
-| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization) | Age-varying function               |
-| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)     | Age-varying grid                   |
-| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)        | Solve/simulate variants            |
-| [`lcm.Condition`](conditions.md)                                      | Structured Boolean expression      |
-| [`lcm.ref`](conditions.md#api-condition-syntax)                       | Named reference                    |
-| [`lcm.implies`](conditions.md#api-condition-syntax)                   | Conditional requirement            |
-| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)          | Structured case boundary           |
-| [`lcm.piece`](case_pieces.md#api-piece-formulas)                      | Piece decorator                    |
-| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)              | Reviewed smooth-helper attestation |
-| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)  | Schedule breakpoint                |
-| [`lcm.piecewise_affine`](piecewise_affine.md)                         | Piecewise-affine schedule          |
+| Public name                                                            | Canonical documentation            |
+| ---------------------------------------------------------------------- | ---------------------------------- |
+| [`lcm.StochasticTransition`](transitions.md#api-state-transitions)     | Stochastic transition wrapper      |
+| [`lcm.JointTransition`](transitions.md#api-joint-transitions)          | Shared-draw joint law              |
+| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)             | Numerical laws by exact source age |
+| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)          | Half-open age interval             |
+| [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)  | Deterministic transition wrapper   |
+| [`lcm.deterministic_transition`](transitions.md#api-state-transitions) | Deterministic transition decorator |
+| [`lcm.stochastic_transition`](transitions.md#api-state-transitions)    | Stochastic transition decorator    |
+| [`lcm.fixed_transition`](transitions.md#api-state-transitions)         | Identity law                       |
+| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)  | Age-varying function               |
+| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)      | Age-varying grid                   |
+| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)         | Solve/simulate variants            |
+| [`lcm.Condition`](conditions.md)                                       | Structured Boolean expression      |
+| [`lcm.ref`](conditions.md#api-condition-syntax)                        | Named reference                    |
+| [`lcm.implies`](conditions.md#api-condition-syntax)                    | Conditional requirement            |
+| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)           | Structured case boundary           |
+| [`lcm.piece`](case_pieces.md#api-piece-formulas)                       | Piece decorator                    |
+| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)               | Reviewed smooth-helper attestation |
+| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)   | Schedule breakpoint                |
+| [`lcm.piecewise_affine`](piecewise_affine.md)                          | Piecewise-affine schedule          |
 
 ## Preferences, results, and persistence
 

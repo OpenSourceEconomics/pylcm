@@ -21,15 +21,16 @@ from lcm import (
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserFunction
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -145,12 +146,12 @@ def _make_model(
         }
     left, right = (_bad_left, _bad_right) if bad_feasible else (_left, _right)
     checked = {
-        "left": MarkovTransition(func=left),
-        "right": MarkovTransition(func=right),
+        "left": StochasticTransition(func=left),
+        "right": StochasticTransition(func=right),
     }
     constant = {
-        "left": MarkovTransition(func=_half),
-        "right": MarkovTransition(func=_half),
+        "left": StochasticTransition(func=_half),
+        "right": StochasticTransition(func=_half),
     }
     late_law = (
         checked
@@ -160,10 +161,10 @@ def _make_model(
             simulate=checked if law_phase == "simulate" else constant,
         )
     )
-    return Model(
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+    return with_fixture_graph(
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={(0, 1): "working"} if earlier_root else {1: "working"},
+        initial_nodes={(0, 1): "working"} if earlier_root else {1: "working"},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         fixed_params={"spending_scale": spending_scale} if fixed else {},

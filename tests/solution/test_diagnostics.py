@@ -14,10 +14,14 @@ from pathlib import Path
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -58,18 +62,22 @@ def _make_model() -> Model:
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("alive", "dead")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
 
 

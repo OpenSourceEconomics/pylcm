@@ -19,9 +19,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -37,6 +39,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -131,7 +134,7 @@ def _make_dead_regime() -> UserRegime:
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 @functools.cache
@@ -150,7 +153,7 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     retirement = regime_type(
         regime_transitions=until_exit(
             last_age,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=next_regime_from_retirement, targets=("dead", "retirement")
             ),
             exits=("dead",),
@@ -193,12 +196,12 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
         regime_id_class=RegimeId,
         fixed_params=_fixed_scale() if scale_is_fixed else {},
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 

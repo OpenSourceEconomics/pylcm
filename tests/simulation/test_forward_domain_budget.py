@@ -16,13 +16,13 @@ from lcm import (
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
-    Model,
     Phased,
     Regime,
     categorical,
     fixed_transition,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -77,11 +77,11 @@ def _model(*, budgeted, promote, reverse, width):
         if budgeted
         else ExecutionConfig()
     )
-    return Model(
+    return with_fixture_graph(
         enable_jit=True,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DomainId,
-        initial_regimes=roots,
+        initial_nodes=roots,
         regimes=regimes,
         execution_config=execution_config,
     )

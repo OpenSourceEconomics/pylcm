@@ -9,24 +9,25 @@ from dags.tree import QNAME_DELIMITER
 
 from _lcm.grids import IrregSpacedGrid
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
 from lcm import (
-    Choose,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    Model,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.regime import MarkovTransition
 from lcm.regime import Regime as UserRegime
+from lcm.regime import StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -35,6 +36,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -69,15 +71,15 @@ def test_regime_name_does_not_contain_separator():
         regime_transitions=None,
         functions={"utility": lambda: 0},
     )
-    ages = AgeGrid(start=0, stop=5, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=5, step="Y")
 
     # Regime name containing separator should raise at Model creation
     with pytest.raises(ModelInitializationError, match=QNAME_DELIMITER):
-        Model(
+        with_fixture_graph(
             regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
-            initial_regimes={ages.exact_values[0]: "work__test"},
+            initial_nodes={ages.exact_values[0]: "work__test"},
         )
 
 
@@ -185,7 +187,7 @@ def test_regime_requires_utility_in_functions():
 
 def test_markov_transition_rejects_non_callable():
     with pytest.raises(RegimeInitializationError, match="func"):
-        MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
+        StochasticTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 def test_identity_transition_call():
@@ -403,7 +405,9 @@ def test_regime_with_fixed_states_only():
         constraints={"borrowing": fixed_borrowing},
         regime_transitions=until_exit(
             final_age + 1,
-            law=Choose(func=fixed_next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=fixed_next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": fixed_utility},
@@ -413,11 +417,11 @@ def test_regime_with_fixed_states_only():
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"working_life": working_regime, "dead": dead_regime},
-        ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
-        initial_regimes={0: "working_life"},
+        initial_nodes={0: "working_life"},
     )
     V = model.solve(
         log_level="debug",

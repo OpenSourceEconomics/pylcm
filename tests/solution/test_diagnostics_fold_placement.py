@@ -39,7 +39,7 @@ _SCRIPT = textwrap.dedent(
     assert committed_single.committed and committed_sharded.committed
 
     rows, mins, maxs, means, any_nan, any_inf = _init_diagnostic_accumulators()
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     common = dict(
         ages=ages,
         diagnostics_enabled=True,

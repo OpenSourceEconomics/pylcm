@@ -14,9 +14,11 @@ from collections.abc import Hashable
 
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeSpecializedFunction,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -31,6 +33,7 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.collective_fixtures import AGES, FOLDED_SHOCK, ShockRegimeId, Work
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # The two-node liquid state whose law of motion does the offending read.
@@ -77,7 +80,9 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
     shocked = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("shocked", "shocked_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("shocked", "shocked_terminal")
+            ),
             exits=("shocked_terminal",),
         ),
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
@@ -90,11 +95,11 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
         states={"wealth": WEALTH_GRID},
         functions={"utility": _terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
-        initial_regimes={0: "shocked"},
+        initial_nodes={0: "shocked"},
     )
 
 

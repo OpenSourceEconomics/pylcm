@@ -21,6 +21,9 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation.program_types import (
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
@@ -33,7 +36,6 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     InvariantBlockSchedule,
     LinSpacedGrid,
@@ -53,7 +55,8 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models import independent_types
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.graph import with_fixture_graph
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
 
 
@@ -98,10 +101,10 @@ def test_simulation_preserves_nested_fixed_parameters(
     if subject_sharding and jax.local_device_count() < 2:
         pytest.skip("requires two actual devices for subject sharding")
     grid = LinSpacedGrid(start=0, stop=2, n_points=3)
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "working": UserRegime(
-                regime_transitions=Choose(
+                regime_transitions=_SupportedDeterministicTransition(
                     func=lambda: independent_types.RegimeId.terminal,
                     targets=("terminal",),
                 ),
@@ -133,9 +136,9 @@ def test_simulation_preserves_nested_fixed_parameters(
                 functions={"utility": _fixed_cost_terminal},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=independent_types.RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         enable_jit=enable_jit,
         fixed_params={"working": {"fixed_cost_of_work": {"reference_age": -1.0}}},
         execution_config=ExecutionConfig(
@@ -213,12 +216,14 @@ def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
 
 def test_user_subject_width_name_remains_an_economic_action() -> None:
     """A legal user action cannot be consumed as an internal static tile width."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": UserRegime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(start=0, stop=1): Choose(
+                        AgeRange(
+                            start=0, exclusive_stop=1
+                        ): _SupportedDeterministicTransition(
                             func=_width_collision_next_regime, targets=("done",)
                         )
                     }
@@ -233,12 +238,12 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
                 functions={"utility": _width_collision_terminal_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_WidthCollisionRegimeId,
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(
@@ -262,11 +267,12 @@ def test_simulate_dispatches_the_declared_program_body(
     """Runtime dispatch executes each declared family on real subjects."""
     model, params, initial = WITNESSES["multi_regime"]()
     model = Model(
+        edges=model.graph.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=model.fixed_params,
-        initial_regimes=initial_regimes_of(model=model),
+        initial_nodes=initial_nodes_of(model=model),
     )
     solution = model.solve(params=params, log_level="off")
     body_ids = {

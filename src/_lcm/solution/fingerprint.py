@@ -246,6 +246,19 @@ _JAX_PUBLIC_NUMERIC_TYPE_OBJECTS = tuple(
     value for value in _JAX_PUBLIC_NUMERIC_VALUES if isinstance(value, type)
 )
 _NUMPY_UFUNCS = tuple(value for value in vars(np).values() if type(value) is np.ufunc)
+# Capture public extension objects, not objects merely claiming a NumPy name.
+# Their C dispatch machinery is version-sealed like ufuncs; the exposed Python
+# implementation must retain the identity and executable bytes captured here.
+_NUMPY_ARRAY_FUNCTION_DISPATCHER_TYPE = type(np.linspace)
+_NUMPY_ARRAY_FUNCTION_DISPATCHERS = tuple(
+    (name, value, implementation, implementation.__code__)
+    for name, value in sorted(vars(np).items())
+    if not name.startswith("_")
+    and type(value) is _NUMPY_ARRAY_FUNCTION_DISPATCHER_TYPE
+    and isinstance(
+        implementation := getattr(value, "_implementation", None), types.FunctionType
+    )
+)
 _NUMPY_SCALAR_TYPES = tuple(
     value
     for value in vars(np).values()
@@ -1180,6 +1193,8 @@ class _SemanticHasher:
                 payload=str(state.get("__name__", "")).encode(),
             )
             self.visit(value=properties)
+        elif kind == "numpy-array-function":
+            self._visit_numpy_array_function(value)
         else:
             ufunc = cast("np.ufunc", value)
             self.visit(
@@ -1195,6 +1210,37 @@ class _SemanticHasher:
             )
         self.frame(label="native-numeric-callable-end")
         return True
+
+    def _visit_numpy_array_function(self, value: object) -> None:
+        """Seal a captured dispatcher without admitting mutable opaque state."""
+        state = vars(value)
+        metadata_fields = {
+            "__annotate__",
+            "__doc__",
+            "__module__",
+            "__name__",
+            "__qualname__",
+            "__type_params__",
+            "__wrapped__",
+        }
+        if unexpected := set(state) - metadata_fields:
+            raise TypeError(
+                "Cannot durably fingerprint NumPy array-function dispatcher "
+                f"with unknown state field(s): {sorted(unexpected)}."
+            )
+        for name, candidate, implementation, _code in _NUMPY_ARRAY_FUNCTION_DISPATCHERS:
+            if value is candidate:
+                if state.get("__wrapped__") is not implementation:
+                    raise TypeError(
+                        "A NumPy array-function dispatcher has changed wrapped "
+                        "implementation."
+                    )
+                self.frame(
+                    label="canonical-numpy-array-function",
+                    payload=f"numpy.{name}".encode(),
+                )
+                self._visit_native_python_function_seal(implementation)
+                return
 
     def _visit_custom_jvp(self, value: object) -> None:
         """Hash an exact JAX custom-JVP wrapper through its semantic callables."""
@@ -2136,7 +2182,23 @@ def _native_numeric_callable_kind(value: object) -> str | None:
         value=value, candidates=_NUMPY_UFUNCS
     ):
         return "numpy-ufunc"
-    return None
+    return "numpy-array-function" if _is_captured_numpy_array_function(value) else None
+
+
+def _is_captured_numpy_array_function(value: object) -> bool:
+    """Recognize unchanged genuine public NumPy array-function dispatchers."""
+    if type(value) is not _NUMPY_ARRAY_FUNCTION_DISPATCHER_TYPE:
+        return False
+    implementation = getattr(value, "_implementation", None)
+    code = getattr(implementation, "__code__", None)
+    return any(
+        value is candidate
+        and implementation is captured_implementation
+        and code is captured_code
+        for _name, candidate, captured_implementation, captured_code in (
+            _NUMPY_ARRAY_FUNCTION_DISPATCHERS
+        )
+    )
 
 
 def _is_native_numeric_type(value: object) -> bool:

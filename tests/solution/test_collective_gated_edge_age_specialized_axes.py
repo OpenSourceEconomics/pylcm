@@ -35,11 +35,11 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    StochasticTransition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -53,6 +53,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
@@ -244,9 +245,9 @@ def _build_gate_ref_model() -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "couple": MarkovTransition(func=_probability_of_staying_put),
+                "couple": StochasticTransition(func=_probability_of_staying_put),
                 "account": ValueDependentTransition(
-                    probability=MarkovTransition(func=_probability_of_leaving),
+                    probability=StochasticTransition(func=_probability_of_leaving),
                     gate=_index_clears_the_hurdle,
                     routes={
                         "f": StakeholderRoute(
@@ -309,7 +310,7 @@ def _build_gate_ref_model() -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_m},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "couple": couple,
             "account": account,
@@ -317,9 +318,9 @@ def _build_gate_ref_model() -> Model:
             "annuity_f": annuity_f,
             "annuity_m": annuity_m,
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GateRefRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 
@@ -356,9 +357,9 @@ def _build_dissolution_model() -> Model:
         regime_transitions=until_exit(
             2,
             law={
-                "couple": MarkovTransition(func=_probability_of_staying_put),
+                "couple": StochasticTransition(func=_probability_of_staying_put),
                 "pair": ValueDependentTransition(
-                    probability=MarkovTransition(func=_probability_of_leaving),
+                    probability=StochasticTransition(func=_probability_of_leaving),
                     gate=_household_consents,
                     routes={
                         "f": StakeholderRoute(
@@ -391,8 +392,8 @@ def _build_dissolution_model() -> Model:
     pair = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=3): {
-                    "pair_terminal": MarkovTransition(func=_certainty)
+                AgeRange(start=1, exclusive_stop=3): {
+                    "pair_terminal": StochasticTransition(func=_certainty)
                 }
             }
         ),
@@ -426,7 +427,7 @@ def _build_dissolution_model() -> Model:
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_m},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "couple": couple,
             "pair": pair,
@@ -434,9 +435,9 @@ def _build_dissolution_model() -> Model:
             "single_f": single_f,
             "single_m": single_m,
         },
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_DissolutionRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 

@@ -35,7 +35,7 @@ from tests.ci.simulation_timings import (
     UNSTABLE_HOST_MARKER,
     TimingMeasurement,
 )
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -209,11 +209,12 @@ def test_cold_simulate_call_compiles() -> None:
     """A simulate call on a freshly built model issues backend compilations."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
+        edges=base.graph.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = get_multi_regime_params("normal")
     solution = model.solve(params=params, log_level="off")

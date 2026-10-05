@@ -4,7 +4,7 @@ On-path `-inf` is admissible throughout the collective-regimes extension (a
 feasible zero-consumption state, an all-infeasible dissolution cell whose
 value is masked to `-inf` before being folded/averaged away, ...), and an
 exact-zero weight is equally admissible (an inactive regime-transition target,
-a zero-probability `MarkovTransition` node, a zero-weight quadrature node, an
+a zero-probability `StochasticTransition` node, a zero-weight quadrature node, an
 on-grid interpolation corner, a zero Pareto weight). Whenever such a weight
 multiplies such a value, naive floating-point arithmetic computes
 `0.0 * -inf = nan` (or `+inf`), which then poisons whatever sum it feeds —

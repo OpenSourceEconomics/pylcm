@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm import probability
 from _lcm.probability import (
     is_below_smallest_normal,
     is_live,
@@ -33,6 +34,55 @@ from _lcm.probability import (
     scaled_by_power_of_two,
     scaled_exact_product,
 )
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [
+        ((0.25, 0.75), True),
+        ((1.0, -0.0), True),
+        ((0.25, 0.5), False),
+        ((1.5, -0.5), False),
+        ((1.0, float("nan")), False),
+        ((float("inf"),), False),
+        ((), False),
+    ],
+)
+def test_target_probabilities_form_a_distribution(
+    *, compiled: bool, weights: tuple[float, ...], expected: bool
+) -> None:
+    """Targets carry unit mass and no negative, infinite or NaN weight."""
+
+    def evaluate() -> Any:
+        return probability.probabilities_form_distribution(
+            probabilities=(jnp.asarray(weight, dtype=_dtype()) for weight in weights),
+            dtype=_dtype(),
+        )
+
+    got = jax.jit(evaluate)() if compiled else evaluate()
+    assert bool(got) is expected
+
+
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_negative_subnormal_invalidates_each_target_lottery(*, compiled: bool) -> None:
+    """Elementwise signs survive broadcast mass accumulation at both precisions."""
+    magnitudes = (_smallest_subnormal(), _interior_subnormal(), _largest_subnormal())
+    weights = jnp.asarray(
+        [weight for rare in magnitudes for weight in (rare, np.negative(rare), -0.0)],
+        dtype=_dtype(),
+    )
+    assert bool(is_negative(weights)[1])
+    assert not bool(is_represented_zero(weights)[0])
+
+    def evaluate(weights: Any) -> Any:
+        return probability.probabilities_form_distribution(
+            probabilities=iter((jnp.asarray(1.0, dtype=_dtype()), weights)),
+            dtype=_dtype(),
+        )
+
+    got = jax.jit(evaluate)(weights) if compiled else evaluate(weights)
+    np.testing.assert_array_equal(got, [True, False, True] * len(magnitudes))
 
 
 def _dtype() -> np.dtype:

@@ -59,9 +59,11 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -86,6 +88,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors. The working life starts at 20, retires at 60, and the
@@ -245,11 +248,11 @@ def build_model(  # noqa: C901
     _fail_if_too_few_housing_levels(n_housing=n_housing)
 
     if n_periods is None:
-        ages = AgeGrid(start=START_AGE, stop=TERMINAL_AGE, step="Y")
+        ages = AgeGrid(start=START_AGE, inclusive_stop=TERMINAL_AGE, step="Y")
         retirement_age = RETIREMENT_AGE
         final_age = TERMINAL_AGE
     else:
-        ages = AgeGrid(start=START_AGE, stop=START_AGE + n_periods, step="Y")
+        ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods, step="Y")
         # Split the short horizon: roughly the first half works, then retires,
         # with the terminal bequest regime at the final age.
         retirement_age = START_AGE + max(1, n_periods // 2)
@@ -398,7 +401,9 @@ def build_model(  # noqa: C901
         working = UserRegime(
             regime_transitions=until_exit(
                 retirement_age,
-                law=Choose(func=next_regime, targets=("working",)),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working",)
+                ),
                 exits=("retired",),
             ),
             states={
@@ -422,7 +427,9 @@ def build_model(  # noqa: C901
         retired = UserRegime(
             regime_transitions=until_exit(
                 final_age,
-                law=Choose(func=next_regime_from_retired, targets=("retired",)),
+                law=_SupportedDeterministicTransition(
+                    func=next_regime_from_retired, targets=("retired",)
+                ),
                 exits=("dead",),
                 start=retirement_age,
             ),
@@ -436,12 +443,12 @@ def build_model(  # noqa: C901
             functions={**shared_econ, "income": _retirement_income},
             solver=GridSearch(),
         )
-        return Model(
+        return with_fixture_graph(
             regimes={"working": working, "retired": retired, "dead": dead},
             ages=ages,
             regime_id_class=HousingFuesRegimeId,
             execution_config=execution_config,
-            initial_regimes={ages.exact_values[0]: "working"},
+            initial_nodes={ages.exact_values[0]: "working"},
         )
 
     inner_solver = DCEGM(
@@ -452,7 +459,9 @@ def build_model(  # noqa: C901
     working = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             retirement_age,
-            law=Choose(func=next_regime, targets=("working",)),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working",)
+            ),
             exits=("retired",),
         ),
         states={
@@ -484,7 +493,9 @@ def build_model(  # noqa: C901
     retired = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             final_age,
-            law=Choose(func=next_regime_from_retired, targets=("retired",)),
+            law=_SupportedDeterministicTransition(
+                func=next_regime_from_retired, targets=("retired",)
+            ),
             exits=("dead",),
             start=retirement_age,
         ),
@@ -509,12 +520,12 @@ def build_model(  # noqa: C901
             post_decision_state="savings",
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingFuesRegimeId,
         execution_config=execution_config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

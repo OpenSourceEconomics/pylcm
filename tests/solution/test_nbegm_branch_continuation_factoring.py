@@ -140,7 +140,10 @@ def _reads(*names: str) -> Callable[..., Any]:
 
 _QUIET: dict[str, Any] = {
     "regime_transition": _reads("age"),
-    "target_laws": {"alive": _reads("savings", "kind"), "dead": _reads("savings")},
+    "target_laws": {
+        "alive": (_reads("savings", "kind"),),
+        "dead": (_reads("savings"),),
+    },
     "target_weight_laws": {"alive": _reads("age"), "dead": None},
     "target_resources_arg_names": {
         "alive": frozenset({"liquid", "income"}),
@@ -155,13 +158,13 @@ _CHANNEL_CASES: dict[str, dict[str, Any]] = {
     "target_law": {
         "target_laws": {
             **_QUIET["target_laws"],
-            "dead": _reads("savings", "work"),
+            "dead": (_reads("savings", "work"),),
         },
     },
     "cliff_target_map": {
         "target_laws": {
             **_QUIET["target_laws"],
-            "alive": _reads("savings", "kind", "work"),
+            "alive": (_reads("savings", "kind", "work"),),
         },
     },
     "stochastic_state_weight": {

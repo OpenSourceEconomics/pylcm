@@ -16,7 +16,7 @@ import pytest
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
 from lcm import (
     AgeGrid,
-    Choose,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -65,13 +65,14 @@ def _model(
 ) -> Model:
     grid = DiscreteGrid(category_class=_Types)
     return Model(
+        edges={"working": {"terminal": 0}},
         regimes={
             "working": Regime(
                 states={"pref_type": grid},
                 state_transitions={"pref_type": fixed_transition("pref_type")},
                 actions={"choice": DiscreteGrid(category_class=_OneAction)},
                 functions={"utility": _flow},
-                regime_transitions=Choose(func=_to_terminal, targets=("terminal",)),
+                regime_transitions=DeterministicTransition(func=_to_terminal),
             ),
             "terminal": Regime(
                 states={"pref_type": grid},
@@ -79,9 +80,9 @@ def _model(
                 regime_transitions=None,
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(
             devices=(0,),
@@ -163,10 +164,11 @@ def test_eager_schedules_and_action_partitions_preserve_all_literal_type_values(
             actions={"choice": DiscreteGrid(category_class=Actions)}
         )
         model = Model(
+            edges=base.graph.edges,
             regimes={**base.user_regimes, "working": working},
             ages=base.ages,
             regime_id_class=RegimeId,
-            initial_regimes={0: "working"},
+            initial_nodes={0: "working"},
             enable_jit=False,
             execution_config=ExecutionConfig(
                 devices=(0, 1), device_memory_bytes=None,
@@ -291,6 +293,7 @@ def test_eager_state_sharded_blocks_preserve_all_literal_type_values(
 
         base = _model(blocked=True, enable_jit=False, device_memory_bytes=None)
         model = Model(
+            edges=base.graph.edges,
             regimes={
                 "working": dataclasses.replace(base.user_regimes["working"],
                                                 functions={"utility": flow}),
@@ -300,7 +303,7 @@ def test_eager_state_sharded_blocks_preserve_all_literal_type_values(
             states={"wealth": DiscreteGrid(category_class=Wealth)},
             state_transitions={"wealth": fixed_transition("wealth")},
             ages=base.ages, regime_id_class=RegimeId,
-            initial_regimes={0: "working"}, enable_jit=False,
+            initial_nodes={0: "working"}, enable_jit=False,
             execution_config=ExecutionConfig(
                 devices=(0, 1), device_memory_bytes=None,
                 sharded_states=("wealth",), invariant_block_widths={"pref_type": 1},

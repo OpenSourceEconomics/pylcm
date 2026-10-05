@@ -13,6 +13,7 @@ import pytest
 from lcm import AgeGrid, Model, categorical
 from lcm.typing import FloatND, ScalarInt
 from tests.test_models import taste_shocks_toy
+from tests.test_models.graph import with_fixture_graph
 
 max_q = importlib.import_module("_lcm.regime_building.max_Q_over_a")
 
@@ -62,16 +63,16 @@ class _NoiseRecords:
 def _counterfactual_model(*, renamed: bool) -> Model:
     if not renamed:
         return taste_shocks_toy.get_model()
-    return Model(
+    return with_fixture_graph(
         regimes={
             "student": dataclasses.replace(
                 taste_shocks_toy.alive, regime_transitions="absorbed"
             ),
             "absorbed": taste_shocks_toy.done,
         },
-        ages=AgeGrid(start=39, stop=42, step="Y"),
+        ages=AgeGrid(start=39, inclusive_stop=42, step="Y"),
         regime_id_class=_RenamedRegimeId,
-        initial_regimes={(39, 40): "student"},
+        initial_nodes={(39, 40): "student"},
     )
 
 
