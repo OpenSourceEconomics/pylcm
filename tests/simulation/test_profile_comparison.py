@@ -69,9 +69,9 @@ def test_value_gate_rejects_changed_dtype() -> None:
         )
 
 
-@pytest.mark.parametrize("column", ["wealth", "consumption", "utility"])
-def test_panel_rejects_one_step_in_a_non_value_float_column(*, column: str) -> None:
-    """A float64 state, action or target column moved by one step fails the panel."""
+@pytest.mark.parametrize("column", ["wealth", "consumption"])
+def test_panel_rejects_one_step_in_a_state_or_action_column(*, column: str) -> None:
+    """A float64 state or action column moved by one step fails the panel."""
     reference = pd.DataFrame(
         {"subject_id": [0], "period": [0], column: np.asarray([1.0], dtype=np.float64)}
     )
@@ -96,8 +96,88 @@ def test_panel_rejects_a_non_value_dtype_change() -> None:
         )
 
 
+def _cancellation_pair() -> tuple[np.ndarray, np.ndarray]:
+    """A solved-value leaf pair whose near-zero entry moved 16 of its own steps.
+
+    The work-regime period-2 leaf of the two-regime parity model, solved at the
+    planned cell width and with the retirement regime pinned to width 2 on an
+    AVX-512 CPU: `-0.0246...` moved 16 representable steps of its own format, a
+    quarter of one spacing at the leaf's largest value `1.67...`.
+    """
+    expected = np.asarray([1.67250914, -0.024619740596607903])
+    got = np.asarray([1.67250914, -0.024619740596607848])
+    return got, expected
+
+
+def test_value_gate_bounds_a_cancellation_value_at_its_operand_magnitude() -> None:
+    """A near-zero value passes within spacings at its declared operand magnitude."""
+    got, expected = _cancellation_pair()
+    value_checker(got=got, expected=expected, n_ulp=8, operand_magnitude=1.67250914)
+
+
+def test_value_gate_counts_own_steps_without_an_operand_magnitude() -> None:
+    """Without a declared operand magnitude, 16 own steps fail an eight-step gate."""
+    got, expected = _cancellation_pair()
+    with pytest.raises(AssertionError):
+        value_checker(got=got, expected=expected, n_ulp=8)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_value_gate_rejects_nine_operand_spacings_on_a_near_zero_value(
+    *, dtype: type[np.floating]
+) -> None:
+    """A near-zero value moved by nine spacings of its operand magnitude fails."""
+    expected = np.asarray([1.5, -0.025], dtype=dtype)
+    got = expected.copy()
+    got[1] += 9 * np.spacing(np.asarray(1.5, dtype=dtype))
+    with pytest.raises(AssertionError):
+        value_checker(got=got, expected=expected, n_ulp=8, operand_magnitude=1.5)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("steps", [9, 16])
+def test_value_gate_rejects_more_than_eight_steps_below_one_at_operand_one(
+    *, dtype: type[np.floating], steps: int
+) -> None:
+    """Below a power-of-two operand magnitude, nine steps are nine spacings."""
+    reference = _steps_below_one(dtype=dtype, steps=steps)
+    with pytest.raises(AssertionError):
+        value_checker(
+            got=np.asarray(1.0, dtype=dtype),
+            expected=reference,
+            n_ulp=8,
+            operand_magnitude=1.0,
+        )
+
+
+def test_panel_accepts_two_steps_in_a_derived_target_column() -> None:
+    """A float32 `utility` target recomputed in another chunk may move a few steps.
+
+    Subject chunks of 1, 2 and 4 rows evaluate `log(consumption)` in a differently
+    vectorized kernel, which moves `utility` by up to two representable steps on
+    rows whose consumption is identical.
+    """
+    reference = pd.DataFrame(
+        {"subject_id": [0, 1], "utility": np.asarray([1.0, -0.21710844], np.float32)}
+    )
+    actual = reference.copy()
+    actual.loc[1, "utility"] = np.float32(-0.21710841)
+    frame_checker(baseline=reference, batched=actual)
+
+
+def test_panel_rejects_a_float_action_one_step_from_one() -> None:
+    """An action `1.0` delivered as `1.0000000000000002` fails the panel."""
+    reference = pd.DataFrame(
+        {"subject_id": [0], "utility": [0.5], "consumption": [1.0], "value": [2.0]}
+    )
+    actual = reference.copy()
+    actual.loc[0, "consumption"] = 1.0000000000000002
+    with pytest.raises(AssertionError):
+        frame_checker(baseline=reference, batched=actual)
+
+
 def test_panel_accepts_eight_steps_in_the_value_column() -> None:
-    """The published `value` column alone receives the eight-step allowance."""
+    """The published `value` column receives the eight-step allowance."""
     reference = pd.DataFrame(
         {"subject_id": [0], "value": _steps_below_one(dtype=np.float64, steps=8)[None]}
     )

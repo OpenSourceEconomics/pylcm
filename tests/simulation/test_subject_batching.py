@@ -2,8 +2,10 @@
 
 The ExecutionConfig subject width controls how many subjects enter the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
-structurally exact whether subjects run in one pass or in chunks. Only published
-values from independent compilations receive eight ordered steps. The model
+structurally exact whether subjects run in one pass or in chunks. Only the published
+`value` and derived targets, which each chunk's independently compiled kernel
+recomputes from exact states and actions, receive eight ordered representable
+steps. The model
 used here has both a categorical `StochasticTransition` (health) and a continuous shock
 process (income), so the per-subject RNG feeds both `jax.random.choice` and
 `draw_shock` — the case that would silently diverge if a subject's draws depended on
@@ -78,6 +80,7 @@ def _assert_columns_invariant(*, baseline: pd.DataFrame, batched: pd.DataFrame) 
         expected=baseline,
         mode="independently_compiled",
         n_ulp=8,
+        value_columns=("value", "utility"),
     )
 
 
@@ -104,8 +107,9 @@ def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
     """Eagerly computed `additional_targets` are invariant to the chunk size.
 
     The target DAG (`utility`) is evaluated over the in-regime rows in chunks of
-    `subject_batch_size` when set; an uneven split must still reproduce the
-    single-pass `utility` column for every subject-period.
+    `subject_batch_size` when set; every split reproduces the single-pass
+    `utility` column for every subject-period within the value allowance, and
+    the states and actions it is computed from exactly.
     """
     baseline = _simulate_df(subject_batch_size=0, additional_targets=["utility"])
     batched = _simulate_df(

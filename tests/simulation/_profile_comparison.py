@@ -5,13 +5,14 @@ structure:
 
 - `assert_same_bytes` — same program on the same inputs: every leaf is byte-identical,
   including signed zeros and NaN payloads.
-- `assert_value_steps` — independently compiled programs (a different block width,
+- `assert_values_agree` — independently compiled programs (a different block width,
   batch size or layout): published value leaves may differ by a bounded number of
-  ordered representable steps of their own format.
+  ordered representable steps of their own format, or of spacings at a declared
+  operand magnitude for values born by cancellation.
 
 `assert_public_frames` applies both to a published `to_dataframe()` panel: only the
-`value` column of an independently compiled run receives the step allowance; states,
-actions, regimes, subjects and derived targets stay exact.
+named value columns of an independently compiled run receive the allowance; states,
+actions, regimes and subjects stay exact.
 """
 
 from typing import Literal
@@ -21,31 +22,44 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 
-def assert_value_steps(
+def assert_values_agree(
     *,
     got: ArrayLike,
     expected: ArrayLike,
     n_ulp: int = 8,
     err_msg: str = "",
+    operand_magnitude: float | None = None,
 ) -> None:
-    """Assert two value arrays lie within `n_ulp` ordered representable steps.
+    """Assert two value leaves agree to within `n_ulp` representable steps.
 
-    The distance between two finite floats is the number of representable values of
-    their format one must step through to get from one to the other. It is computed
-    on monotone integer encodings of the IEEE bit patterns, so no operand magnitude,
-    spacing, subtraction or promotion enters: a value just below a power of two never
-    borrows the coarser spacing above it, and a large value elsewhere in the array
-    never widens another element's tolerance. Negative and positive zero are one step
-    apart.
+    By default every element is held to `n_ulp` ordered representable steps of its
+    own format, computed on monotone integer encodings of the IEEE bit patterns: a
+    value just below a power of two never borrows the coarser spacing above it,
+    and a large value elsewhere in the leaf never widens another element's budget.
+
+    `operand_magnitude` declares that the compared values are formed from operands
+    of that magnitude — a flow utility plus a discounted continuation of opposite
+    sign, say. A reordered reduction moves such a result by roundings of its
+    operands, not of the result, so an entry born near zero by cancellation moves
+    many of its own steps. An element whose magnitude stays at or below
+    `operand_magnitude` then also passes when `|got - expected|` is at most
+    `n_ulp` times `gap(operand_magnitude)`, the distance from that magnitude down
+    to its representable predecessor (the finest spacing in its binade). Elements
+    above it keep the ordered-step count.
 
     Shapes and dtypes must match exactly. Non-finite entries must agree in position
-    and sign; NaN payloads are left to `assert_same_bytes`.
+    and sign; NaN payloads are left to `assert_same_bytes`. Negative and positive
+    zero are one step apart.
 
     Args:
         got: Value leaf under the compared execution.
         expected: Value leaf under the reference execution.
-        n_ulp: Largest tolerated number of ordered representable steps.
+        n_ulp: Largest tolerated number of ordered representable steps, or of
+            spacings at `operand_magnitude` for elements below it.
         err_msg: Context appended to the failure message.
+        operand_magnitude: Magnitude of the operands the values are formed from,
+            when they are born by cancellation; `None` counts every element's
+            own steps only.
 
     """
     if type(n_ulp) is not int or n_ulp < 0:
@@ -65,13 +79,24 @@ def assert_value_steps(
         np.isneginf(actual), np.isneginf(reference), err_msg=err_msg
     )
     finite = np.isfinite(reference)
-    actual_keys = _ordered_keys(array=actual[finite])
-    reference_keys = _ordered_keys(array=reference[finite])
-    distance = np.maximum(actual_keys, reference_keys) - np.minimum(
+    actual, reference = actual[finite], reference[finite]
+    actual_keys = _ordered_keys(array=actual)
+    reference_keys = _ordered_keys(array=reference)
+    steps = np.maximum(actual_keys, reference_keys) - np.minimum(
         actual_keys, reference_keys
     )
-    worst = int(distance.max()) if distance.size else 0
-    if worst > n_ulp:
+    passes = steps <= n_ulp
+    if operand_magnitude is not None:
+        scale = np.asarray(operand_magnitude, dtype=reference.dtype)
+        gap = np.float64(scale - np.nextafter(scale, np.zeros_like(scale)))
+        # float32 differences are exact in float64; a float64 difference
+        # overflows to inf only when it is far outside any bound.
+        with np.errstate(over="ignore"):
+            distance = np.abs(actual.astype(np.float64) - reference.astype(np.float64))
+        below = np.maximum(np.abs(actual), np.abs(reference)) <= scale
+        passes |= below & (distance <= n_ulp * gap)
+    if not passes.all():
+        worst = int(steps[~passes].max())
         msg = f"{worst} ordered representable steps exceed {n_ulp} ULP. {err_msg}"
         raise AssertionError(msg)
 
@@ -104,13 +129,14 @@ def assert_public_frames(
     expected: pd.DataFrame,
     mode: Literal["same_program", "independently_compiled"],
     n_ulp: int = 8,
+    value_columns: tuple[str, ...] = ("value",),
 ) -> None:
     """Assert two published panels agree in addresses, schema and values.
 
     Index and columns must match exactly, in delivered order; nothing is sorted or
     reset. Every column's dtype must match. Float columns are byte-exact except the
-    `value` column under `mode="independently_compiled"`, which uses
-    `assert_value_steps`. Non-float columns are compared exactly.
+    `value_columns` under `mode="independently_compiled"`, which use
+    `assert_values_agree`. Non-float columns are compared exactly.
 
     Sharding and other raw-solution metadata that a DataFrame cannot carry remain the
     caller's responsibility.
@@ -120,7 +146,11 @@ def assert_public_frames(
         expected: Panel under the reference execution.
         mode: Provenance of the comparison; only independently compiled runs
             receive the value allowance.
-        n_ulp: Step allowance for the `value` column.
+        n_ulp: Ordered-step allowance for the value columns.
+        value_columns: Float columns a recompiled program recomputes from exact
+            states and actions — the published `value` and derived targets such as
+            `utility`. Every other float column is a state or action and stays
+            exact.
 
     """
     if mode not in ("same_program", "independently_compiled"):
@@ -139,8 +169,8 @@ def assert_public_frames(
             )
             raise AssertionError(msg)
         if pd.api.types.is_float_dtype(reference.dtype):
-            if name == "value" and mode == "independently_compiled":
-                assert_value_steps(
+            if name in value_columns and mode == "independently_compiled":
+                assert_values_agree(
                     got=actual.to_numpy(),
                     expected=reference.to_numpy(),
                     n_ulp=n_ulp,
