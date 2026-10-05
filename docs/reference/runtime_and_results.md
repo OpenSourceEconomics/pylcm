@@ -60,7 +60,8 @@ fresh = Model(
     regimes=template.user_regimes,
     ages=template.ages,
     regime_id_class=RegimeId,
-    initial_regimes={template.ages.exact_values[0]: "working_life"},
+    edges=template.graph.edges,
+    initial_nodes=((template.ages.exact_values[0], "working_life"),),
 )
 replay = fresh.replay_period(directory=directory, params=params, source_identity=source)
 assert record.completed and replay.reference_matches
