@@ -1,15 +1,19 @@
 import json
 import logging
 from pathlib import Path
+from types import MappingProxyType, ModuleType
 from unittest.mock import patch
 
 import h5py
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from orbax.checkpoint._src.metadata import sharding as orbax_sharding
 
 import lcm
 from _lcm import variables as _variables
+from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.persistence import snapshots as _snapshot_module
 from _lcm.persistence.io import _get_platform
 from lcm import (
@@ -153,6 +157,104 @@ def _initial_conditions():
         "age": jnp.array([0.0, 0.0]),
         "regime_id": jnp.array([_RegimeId.working] * 2),
     }
+
+
+def _save_cpu_checkpoint(
+    *, tmp_path: Path, named: bool = False
+) -> tuple[Path, jax.Array]:
+    """Save literal values through the public simulation checkpoint interface."""
+    cpu = jax.local_devices(backend="cpu")[0]
+    placement = cpu
+    if named:
+        placement = jax.sharding.NamedSharding(
+            jax.sharding.Mesh(
+                np.asarray(jax.local_devices(backend="cpu")), ("subject",)
+            ),
+            jax.sharding.PartitionSpec("subject"),
+        )
+    values = jax.device_put(np.array([-0.0, 3.125], dtype=np.float32), placement)
+    model, _params = _build_tiny_model(enable_jit=False)
+    raw = PeriodRegimeSimulationData(
+        V_arr=values,
+        actions=MappingProxyType({"consumption": jax.device_put(jnp.ones(2), cpu)}),
+        states=MappingProxyType({"wealth": jax.device_put(jnp.array([2.0, 3.0]), cpu)}),
+        in_regime=jax.device_put(jnp.array([True, True]), cpu),
+        own_stakeholder=jax.device_put(jnp.array([-1, -1], dtype=jnp.int32), cpu),
+        nested_policy_fallback=jax.device_put(jnp.array([False, False]), cpu),
+    )
+    result = _PublicSimulationResult(
+        raw_results=MappingProxyType(
+            {"working": MappingProxyType({0: raw}), "retired": MappingProxyType({})}
+        ),
+        regimes=model._regimes,
+        flat_params=MappingProxyType({"working": MappingProxyType({})}),
+        period_to_regime_to_V_arr=MappingProxyType(
+            {0: MappingProxyType({"working": values})}
+        ),
+        ages=model.ages,
+        simulation_output_dtypes={},
+    )
+    return result.save(directory=tmp_path / "result"), values
+
+
+@pytest.mark.parametrize("solution_only", [False, True])
+@pytest.mark.parametrize("named", [False, True])
+def test_cpu_checkpoint_preserves_its_device_when_default_enumeration_excludes_cpu(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, solution_only: bool, named: bool
+) -> None:
+    """Restore CPU leaf bytes and placement independently of the default backend."""
+    directory, values = _save_cpu_checkpoint(tmp_path=tmp_path, named=named)
+
+    # Only Orbax's external default enumeration differs; actual CPU devices exist.
+    orbax_jax = ModuleType("jax")
+    orbax_jax.__dict__.update(vars(jax))
+    monkeypatch.setattr(orbax_jax, "local_devices", list)
+    monkeypatch.setattr(orbax_sharding, "jax", orbax_jax)
+    if solution_only:
+        loaded_values = _PublicSimulationResult.load_solution(directory=directory)
+        restored = loaded_values[0]["working"]
+    else:
+        loaded = _PublicSimulationResult.load(directory=directory)
+        restored = loaded.raw_results["working"][0].V_arr
+
+    assert (
+        restored.shape,
+        restored.dtype,
+        np.asarray(restored).tobytes(),
+        restored.sharding,
+    ) == (
+        (2,),
+        np.dtype("float32"),
+        np.array([-0.0, 3.125], dtype=np.float32).tobytes(),
+        values.sharding,
+    )
+
+
+@pytest.mark.parametrize("solution_only", [False, True])
+@pytest.mark.parametrize("device_name", ["cpu:999", "cuda:999"])
+def test_a_checkpoint_with_an_unavailable_saved_device_is_refused(
+    *, tmp_path: Path, solution_only: bool, device_name: str
+) -> None:
+    """Refuse unavailable saved devices without gathering onto another device."""
+    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path)
+    path = directory / ("V_arr" if solution_only else "arrays") / "_sharding"
+    shardings = json.loads(path.read_text())
+    path.write_text(
+        json.dumps(
+            {
+                key: json.dumps({**json.loads(value), "device_str": device_name})
+                for key, value in shardings.items()
+            }
+        )
+    )
+
+    loader = (
+        _PublicSimulationResult.load_solution
+        if solution_only
+        else _PublicSimulationResult.load
+    )
+    with pytest.raises(ValueError, match=r"unavailable|was not found"):
+        loader(directory=directory)
 
 
 @pytest.fixture

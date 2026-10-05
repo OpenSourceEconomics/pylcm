@@ -3532,6 +3532,128 @@ def _retained_base_space_arrays(*, regime: Regime) -> object:
     return space.states, space.discrete_actions, space.continuous_actions
 
 
+def _prepare_solve_programs(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_fingerprint: str,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    enable_jit: bool,
+    execution: ResolvedExecution,
+    retain_replay: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    logger: logging.Logger,
+    process_grid_resolver: ProcessGridResolver | None = None,
+    call_id: CallId | None = None,
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
+    dict[_CoreTriple, CoreProgram],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+]:
+    """Resolve the full production graph and bind its primary and fallback keys.
+
+    Return the same mutable frontier-owned maps to each caller. No candidate is
+    lowered or compiled here, and no extra owner survives ordinary solve's unpack.
+    """
+    # Collect every kernel's native graph, narrowed to the retention's scope.
+    with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
+        all_programs: dict[_CoreTriple, CoreProgram] = {}
+        for regime_name, regime in regimes.items():
+            for period in regime.active_periods:
+                graph = _select_period_programs(
+                    regime=regime,
+                    regime_name=regime_name,
+                    period=period,
+                    retain_replay=retain_replay,
+                    persistable_artifact_refs=persistable_artifact_refs,
+                )
+                for core_name, program in graph.items():
+                    all_programs[(regime_name, period, core_name)] = program
+
+    # Materialize each named core's exact program before representative selection.
+    # The resulting function, arguments, roles, specialization, and layout form
+    # one lowering source of truth.
+    with solve_phase(name="structural_resolution", logger=logger, call_id=call_id):
+        (
+            all_layouts,
+            lowering_keys,
+            resolved_programs,
+            internal_templates,
+            input_liveness,
+            donations,
+            representative_metadata,
+            frontier,
+        ) = _resolve_output_layouts_and_lowering_keys(
+            all_programs=all_programs,
+            regimes=regimes,
+            program_fingerprint=program_fingerprint,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            budget_bytes=execution.device_memory_bytes,
+            execution_widths=execution,
+            enable_jit=enable_jit,
+            continuous_sharded_state=execution.continuous_sharded_state,
+            donate_buffers=execution.donate_buffers,
+            retain_all_artifacts=retain_all_artifacts,
+            persistable_artifact_refs=persistable_artifact_refs,
+            process_grid_resolver=process_grid_resolver,
+        )
+
+        _fail_if_one_key_covers_two_callables(
+            lowering_keys=lowering_keys, resolved_programs=resolved_programs
+        )
+        fallback_programs = {
+            candidate: resolved_programs[candidate]
+            for candidate, decisions in donations.items()
+            if _donated_arguments(donations=decisions)
+        }
+        fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
+            dict.fromkeys(fallback_programs, ())
+        )
+        fallback_argument_keys: dict[_CoreTriple, Hashable] = {}
+        fallback_keys = _lowering_keys(
+            resolved_programs=fallback_programs,
+            internal_templates=internal_templates,
+            layouts=all_layouts,
+            donations=fallback_donations,
+            regimes=regimes,
+            program_fingerprint=program_fingerprint,
+            argument_keys=fallback_argument_keys,
+        )
+        frontier.bind_fallbacks(
+            fallback_keys=fallback_keys,
+            fallback_donations=fallback_donations,
+            argument_keys=fallback_argument_keys,
+        )
+
+    return (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        all_programs,
+        fallback_programs,
+    )
+
+
 def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -3612,79 +3734,36 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         carrying the same plans.
 
     """
-    # Collect every kernel's native graph, narrowed to the retention's scope.
-    with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
-        all_programs: dict[_CoreTriple, CoreProgram] = {}
-        for regime_name, regime in regimes.items():
-            for period in regime.active_periods:
-                graph = _select_period_programs(
-                    regime=regime,
-                    regime_name=regime_name,
-                    period=period,
-                    retain_replay=retain_replay,
-                    persistable_artifact_refs=persistable_artifact_refs,
-                )
-                for core_name, program in graph.items():
-                    all_programs[(regime_name, period, core_name)] = program
-
-    # Materialize each named core's exact program before representative selection.
-    # The resulting function, arguments, roles, specialization, and layout form
-    # one lowering source of truth.
-    with solve_phase(name="structural_resolution", logger=logger, call_id=call_id):
-        (
-            all_layouts,
-            lowering_keys,
-            resolved_programs,
-            internal_templates,
-            input_liveness,
-            donations,
-            representative_metadata,
-            frontier,
-        ) = _resolve_output_layouts_and_lowering_keys(
-            all_programs=all_programs,
-            regimes=regimes,
-            program_fingerprint=program_fingerprint,
-            flat_params=flat_params,
-            ages=ages,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-            budget_bytes=execution.device_memory_bytes,
-            execution_widths=execution,
-            enable_jit=enable_jit,
-            continuous_sharded_state=execution.continuous_sharded_state,
-            donate_buffers=execution.donate_buffers,
-            retain_all_artifacts=retain_all_artifacts,
-            persistable_artifact_refs=persistable_artifact_refs,
-            process_grid_resolver=process_grid_resolver,
-        )
-
-        _fail_if_one_key_covers_two_callables(
-            lowering_keys=lowering_keys, resolved_programs=resolved_programs
-        )
-        fallback_programs = {
-            candidate: resolved_programs[candidate]
-            for candidate, decisions in donations.items()
-            if _donated_arguments(donations=decisions)
-        }
-        fallback_donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]] = (
-            dict.fromkeys(fallback_programs, ())
-        )
-        fallback_argument_keys: dict[_CoreTriple, Hashable] = {}
-        fallback_keys = _lowering_keys(
-            resolved_programs=fallback_programs,
-            internal_templates=internal_templates,
-            layouts=all_layouts,
-            donations=fallback_donations,
-            regimes=regimes,
-            program_fingerprint=program_fingerprint,
-            argument_keys=fallback_argument_keys,
-        )
-        frontier.bind_fallbacks(
-            fallback_keys=fallback_keys,
-            fallback_donations=fallback_donations,
-            argument_keys=fallback_argument_keys,
-        )
+    (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        _all_programs,
+        _fallback_programs,
+    ) = _prepare_solve_programs(
+        regimes=regimes,
+        program_fingerprint=program_fingerprint,
+        flat_params=flat_params,
+        ages=ages,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+        enable_jit=enable_jit,
+        execution=execution,
+        retain_replay=retain_replay,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+        logger=logger,
+        process_grid_resolver=process_grid_resolver,
+        call_id=call_id,
+    )
+    fallback_keys = frontier.fallback_keys
+    fallback_donations = frontier.fallback_donations
 
     # Bound candidates, in rank order, of each core. The frontier appends to these
     # lists as refusals ask for narrower candidates; `frontier_lengths` is the

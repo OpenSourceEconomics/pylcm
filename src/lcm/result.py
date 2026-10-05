@@ -407,8 +407,7 @@ class SimulationResult:
         with (source / "metadata.pkl").open("rb") as fh:
             metadata: _SavedMetadata = cloudpickle.load(fh)
 
-        checkpointer = ocp.StandardCheckpointer()
-        array_tree = checkpointer.restore(source / "arrays")
+        array_tree = _restore_array_tree(input_dir=source / "arrays")
 
         raw_results = _array_tree_to_raw_results(array_tree["raw_results"])
         period_to_regime_to_V_arr = _load_period_to_regime_to_V_arr(
@@ -609,11 +608,46 @@ def _load_period_to_regime_to_V_arr(
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Inverse of `_save_period_to_regime_to_V_arr`.
 
-    Each leaf is restored onto the sharding it was saved with; loading runs on the
-    same backend the checkpoint was written from (a GPU box for solve/simulate).
+    Each leaf is restored onto its saved sharding, including CPU leaves when
+    the default backend is GPU.
     """
-    array_tree = ocp.StandardCheckpointer().restore(input_dir)
+    array_tree = _restore_array_tree(input_dir=input_dir)
     return _array_tree_to_period_V(array_tree)
+
+
+def _restore_array_tree(*, input_dir: Path) -> dict[str, Any]:
+    """Restore recorded placements using explicit CPU backend device lookup."""
+    checkpointer = ocp.StandardCheckpointer()
+
+    def restore_target(leaf: object) -> object:
+        if not isinstance(leaf, ocp.metadata.value.ArrayMetadata):
+            return leaf
+        sharding = leaf.sharding
+        if isinstance(sharding, ocp.metadata.SingleDeviceShardingMetadata):
+            device_name = sharding.device_str.replace("TFRT_CPU_", "cpu:")
+            if device_name.startswith("cpu:"):
+                devices = {
+                    str(device).replace("TFRT_CPU_", "cpu:"): device
+                    for device in jax.local_devices(backend="cpu")
+                }
+                if device_name not in devices:
+                    msg = f"Saved CPU device {device_name} is unavailable"
+                    raise ValueError(msg)
+                restored_sharding = jax.sharding.SingleDeviceSharding(
+                    devices[device_name]
+                )
+            else:
+                restored_sharding = sharding.to_jax_sharding()
+        else:
+            restored_sharding = None if sharding is None else sharding.to_jax_sharding()
+        return jax.ShapeDtypeStruct(leaf.shape, leaf.dtype, sharding=restored_sharding)
+
+    metadata = checkpointer.metadata(input_dir).item_metadata
+    if metadata is None:
+        msg = "Checkpoint array metadata is unavailable"
+        raise ValueError(msg)
+    target = jax.tree.map(restore_target, metadata.tree)
+    return checkpointer.restore(input_dir, target=target)
 
 
 def _raw_results_to_array_tree(

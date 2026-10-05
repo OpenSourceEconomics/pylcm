@@ -168,3 +168,38 @@ The verifier preserves all320 production-source bytes throughout its run. Local
 CPU proofs use the actual candidate imports with an honestly reused older
 distribution/generated-version namespace; committed native metadata admission
 must come from the fresh isolated Marvin prebuild.
+
+## Default-GPU restoration of CPU checkpoints (2026-10-04)
+
+At e870bcd3, prebuild28088925, full native admission28088926 and matched
+full reference28088927 completed0:0, and all55 CI contexts succeeded.
+Production28089009 then ran on mlgpu010/013/024 with eight distinct A40s
+per node. Planning and all three complete workers succeeded, including
+194.068886 seconds of common backward-induction overlap. The parent failed
+1:0 after0:32:47 because the subsequent comparison could not restore the
+reference's saved CPU arrays through Orbax's default-only GPU device list.
+Collection itself completed, and complete value comparison preceded the
+failure; complete raw/panel parity and final publication remain required.
+
+Both public checkpoint load paths use explicit recorded restore targets.
+Single-device CPU leaves resolve the exact saved device against the CPU
+backend; other shardings retain their recorded conversion and unavailable
+devices remain refused. Genuine RED reproduces both load failures in
+0:00:01.013. Nine affected cases pass at each precision (fp32 0:00:09.920,
+fp64 0:00:09.932), asserting literal bytes, shape, dtype and placement.
+Final serial verification rejects all600 actual mutation controls in0:09:10.03;
+source/portability9 cases pass in0:00:13.425 and CI smoke18 in0:00:00.321,
+with zero failures/errors/skips. Seals, anchors, narrow repin, generator, Ruff,
+format, keyword convention and whole Ty pass. Only result.py byte seals and
+derived inventories change; all116 paths and rejection declarations remain.
+A stale callback exemption comment was removed after the first keyword check;
+that failure is retained and the full600 run was repeated on the final bytes.
+Real default-GPU archive restoration and a fresh complete campaign remain
+required before production acceptance.
+Historical receipts and failed artifacts are retained without alteration.
+
+Performance evaluation targets warm runtime. First-call time minus compile
+spans is not a warm call. Existing steady simulation-chunk timings are
+qualified phase observations, not a complete repeated public-call speedup.
+Evidence: parent stage8a-checkpoint-cpu-restore/ and attempt-4 terminal,
+worker and warm-runtime ledgers.
