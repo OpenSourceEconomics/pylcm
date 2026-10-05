@@ -9,13 +9,14 @@ import functools
 from types import MappingProxyType
 from typing import Any
 
-import numpy as np
 import pytest
 
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
-from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import (
+    assert_value_steps as assert_agrees_to_ulp,
+)
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -127,15 +128,12 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
     assert set(pinned_values) == set(planned_values)
     for period, by_regime in planned_values.items():
         for regime_name, expected in by_regime.items():
-            # Values near zero are born by cancellation between the flow utility and
-            # the discounted continuation, so the gap is measured at the spacing of
-            # those operands rather than at the compared element's own magnitude.
+            # This execution-equivalence gate uses ordered VALUE steps only.
             assert_agrees_to_ulp(
                 got=pinned_values[period][regime_name],
                 expected=expected,
                 n_ulp=8,
                 err_msg=f"{regime_name} period {period}",
-                operand_magnitude=float(np.abs(np.asarray(expected)).max()),
             )
 
 
