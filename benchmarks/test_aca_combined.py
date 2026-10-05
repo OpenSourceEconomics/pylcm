@@ -2,6 +2,7 @@
 
 # ruff: noqa: SLF001
 
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -226,3 +227,48 @@ def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
     assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
     assert bench_aca_baseline.AcaBaselineGpuPeakMem.version == "2"
     assert bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem.version == "2"
+
+
+class _BuildStoppedError(Exception):
+    pass
+
+
+def test_aca_build_uses_the_default_execution_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ACA benchmark passes no execution policy, so the model factory's own
+    default, which production runs under, derives the device-memory budget."""
+    import types
+
+    import lcm
+    from _lcm.execution import execution_plan
+
+    captured: dict[str, object] = {}
+
+    def _create_benchmark_model(**kwargs: object) -> object:
+        captured.update(kwargs)
+        raise _BuildStoppedError
+
+    preferences = types.ModuleType("aca_model.agent.preferences")
+    preferences.BenchmarkPrefType = object  # ty: ignore[unresolved-attribute]
+    benchmark_module = types.ModuleType("aca_model.benchmark")
+    benchmark_module.create_benchmark_model = _create_benchmark_model  # ty: ignore[unresolved-attribute]
+    benchmark_module.get_benchmark_initial_conditions = None  # ty: ignore[unresolved-attribute]
+    benchmark_module.get_benchmark_params = None  # ty: ignore[unresolved-attribute]
+    for name, module in (
+        ("aca_model", types.ModuleType("aca_model")),
+        ("aca_model.agent", types.ModuleType("aca_model.agent")),
+        ("aca_model.agent.preferences", preferences),
+        ("aca_model.benchmark", benchmark_module),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(lcm, "DiscreteGrid", lambda **_: "pref_type_grid")
+    # A device reporting a pool limit, as a GPU does, so a budget could be derived.
+    monkeypatch.setattr(
+        execution_plan, "visible_device_pool_limits", lambda: {0: 16_000_000_000}
+    )
+
+    with pytest.raises(_BuildStoppedError):
+        bench_aca_baseline._build()
+
+    assert captured == {"pref_type_grid": "pref_type_grid"}
