@@ -718,10 +718,7 @@ def _get_child_carry_reader(
         supports = read.local_support_func(**combo_pool)
         stochastic_node_values = (
             *stochastic_node_values,
-            *(
-                jnp.asarray(supports[key], dtype=canonical_float_dtype())
-                for key in read.local_support_keys
-            ),
+            *(_local_support_values(supports[key]) for key in read.local_support_keys),
         )
     weight_vecs: tuple[Float1D, ...] = ()
     if read.weights_func is not None:
@@ -935,7 +932,7 @@ class _ChildEulerState:
     next_state_key: str
     """Key of the child's Euler state in the DAG's output mapping."""
 
-    draws: Mapping[str, ScalarFloat] = MappingProxyType({})
+    draws: Mapping[str, ScalarFloat | ScalarInt] = MappingProxyType({})
     """Values of the draws the Euler-state law reads, at the node being read."""
 
     def __call__(self, savings: ScalarFloat) -> ScalarFloat:
@@ -944,7 +941,9 @@ class _ChildEulerState:
         )
         return cast("ScalarFloat", inner[self.next_state_key])
 
-    def at_node(self, *, draws: Mapping[str, ScalarFloat]) -> _ChildEulerState:
+    def at_node(
+        self, *, draws: Mapping[str, ScalarFloat | ScalarInt]
+    ) -> _ChildEulerState:
         """The Euler state with the draws it reads fixed at one node."""
         return replace(self, draws=draws)
 
@@ -1528,12 +1527,24 @@ def euler_draw_nodes(
     if read.local_support_func is not None:
         supports = read.local_support_func(**combo_pool)
         nodes |= {
-            name: jnp.asarray(supports[key], dtype=canonical_float_dtype())
+            name: _local_support_values(supports[key])
             for name, key in zip(
                 read.local_draw_names, read.local_support_keys, strict=True
             )
         }
     return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+
+
+def _local_support_values(support: FloatND | IntND) -> FloatND | IntND:
+    """A transition-local draw's node values: codes stay integer, values float.
+
+    A Markov draw's support is its codes, which laws read as indices; a process
+    draw's support is its node values, held at the canonical float dtype.
+    """
+    support = jnp.asarray(support)
+    if jnp.issubdtype(support.dtype, jnp.integer):
+        return support
+    return support.astype(canonical_float_dtype())
 
 
 def _draw_axis_names(*, read: _ChildRead) -> tuple[TransitionFunctionName, ...]:

@@ -33,8 +33,8 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
-    assert len(historical) == 554
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 116
+    assert len(historical) == 556
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 117
 
 
 @pytest.mark.parametrize("mutation", tuple(direct_flow._NORMAL_PROCESS_MUTATIONS))

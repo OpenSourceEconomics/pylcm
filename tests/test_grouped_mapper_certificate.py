@@ -20,7 +20,7 @@ def test_grouped_mapper_population_is_independent() -> None:
         direct_flow.uniform_process_mutation_specs(repo_root=root),
         direct_flow.action_grid_mutation_specs(repo_root=root),
     )
-    assert tuple(map(len, populations)) == (406, 52, 37, 10)
+    assert tuple(map(len, populations)) == (406, 54, 37, 10)
     grouped = direct_flow.grouped_mapper_mutation_specs(repo_root=root)
     assert len(grouped) == 18
     digest = hashlib.sha256(("\n".join(sorted(grouped)) + "\n").encode()).hexdigest()
