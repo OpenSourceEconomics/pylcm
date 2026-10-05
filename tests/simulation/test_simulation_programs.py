@@ -45,6 +45,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import assert_value_steps
 from tests.test_models import taste_shocks_toy
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
@@ -530,7 +531,7 @@ def test_streamed_decision_reports_the_dense_reducers_value(
         _lcm_action_block_width=width,
         **_TOY_ACTIONS,
     )
-    assert_agrees_to_ulp(got=streamed_value, expected=dense_value, n_ulp=1)
+    assert_value_steps(got=streamed_value, expected=dense_value, n_ulp=1)
 
 
 @pytest.mark.parametrize("width", [1, 3, 14])

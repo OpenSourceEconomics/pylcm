@@ -294,6 +294,9 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                     "canonical value; lazy decoder uploads are not profiled."
                 )
         else:
+            fresh = entry.fresh_value() if isinstance(entry, _LazyEntry) else None
+            if fresh is not None:
+                return cast("FloatND", fresh)
             value = _materialize_entry(entry=entry)
         if type(entry) is not _CanonicalValueEntry:
             label = f"Solution value at period={period}, regime={regime!r}"
