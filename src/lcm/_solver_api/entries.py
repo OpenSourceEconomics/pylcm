@@ -49,6 +49,15 @@ class _LazyEntry(ABC):
         """
         return None
 
+    def fresh_value(self) -> object | None:
+        """Return the value in a validated buffer no other reader can reach.
+
+        A store hands such a value out as it is, without its defensive copy.
+        `None` for an entry that cannot establish that ownership, whose value the
+        store copies instead.
+        """
+        return None
+
     @classmethod
     def _admit_joint_materialization(cls, *, entries: tuple[_LazyEntry, ...]) -> None:
         """Refuse, before any is loaded, entries of this kind that cannot coexist.
