@@ -190,6 +190,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_value_store,
 )
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
+from _lcm.solution.structural_blueprints import StructuralBlueprintCache
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
@@ -696,6 +697,11 @@ class Model:
         # Fusion verdicts read off compiled solve programs; warm solves reuse the
         # executables, so they reuse the verdicts instead of re-reading the HLO.
         self._gather_checks: GatherChecks = {}
+        # Immutable structural blueprints of earlier solves, keyed by abstract
+        # schema; a warm solve binds one instead of resolving every program.
+        self._structural_blueprints: StructuralBlueprintCache = (
+            StructuralBlueprintCache()
+        )
 
         # The declared starts and Model.edges provide roots and support.
         # Numerical regime_transitions and ByAge select the available laws.
@@ -991,6 +997,7 @@ class Model:
             "_declared_authority_lock",
             "_validated_selection_params",
             "_gather_checks",
+            "_structural_blueprints",
             "_solution_param_projection",
             "_sealed_bindings",
         ):
@@ -1014,6 +1021,7 @@ class Model:
         self._declared_authority_cache = OrderedDict()
         self._declared_authority_lock = threading.Lock()
         self._gather_checks = {}
+        self._structural_blueprints = StructuralBlueprintCache()
         self._validated_selection_params = set()
         self._solution_param_projection = solution_param_projection(self._regimes)
         stored_structure = state.get("_model_structure_fingerprint")
@@ -1514,6 +1522,7 @@ class Model:
                 process_grid_resolver=process_grid_resolver,
                 call_id=call_id,
                 gather_checks=self._gather_checks,
+                structural_blueprints=self._structural_blueprints,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
