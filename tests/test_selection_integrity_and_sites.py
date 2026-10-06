@@ -222,7 +222,7 @@ def _even_split() -> FloatND:
 
 def test_public_probability_kernel_rejects_embedded_topology() -> None:
     """Destination mappings own topology; kernels reject the former targets field."""
-    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
+    with pytest.raises(TypeError, match="targets"):
         StochasticTransition(
             func=_even_split,
             targets=("working", "working", "dead"),  # ty: ignore[unknown-argument]

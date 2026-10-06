@@ -15,7 +15,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any, Self, cast
+from typing import Any, cast
 
 import jax
 from beartype import beartype
@@ -121,25 +121,9 @@ class Transition:
         object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
 
 
-class _TargetlessLaw:
-    """Refuse destinations on a regime law; `Model(edges=...)` declares them."""
-
-    def __new__(cls, *args: object, **kwargs: object) -> Self:  # noqa: ARG004
-        if "targets" in kwargs and "targets" not in getattr(
-            cls, "__dataclass_fields__", {}
-        ):
-            raise RegimeInitializationError(
-                f"`{cls.__name__}` takes no `targets`. Declare every regime "
-                "transition in `Model(edges=...)`, which maps each source regime "
-                "to its destinations and their source ages; the law supplies "
-                "only the numbers."
-            )
-        return super().__new__(cls)
-
-
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class StochasticTransition(_TargetlessLaw):
+class StochasticTransition:
     """Wrapper marking a transition function as stochastic (Markov).
 
     Wrap a transition function in `StochasticTransition` to indicate that it returns
@@ -196,7 +180,7 @@ class StochasticTransition(_TargetlessLaw):
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class DeterministicTransition(_TargetlessLaw):
+class DeterministicTransition:
     """Mark a deterministic state or regime transition.
 
     A state law returns its next value, just like a plain state function.
