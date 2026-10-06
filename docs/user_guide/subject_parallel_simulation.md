@@ -106,10 +106,10 @@ publish that capability. An undeclared function or a host-driven/eager program i
 refused rather than silently given a new meaning. Shared-only `_SubjectTiled` functions
 retain their existing execution path.
 
-A regime declaring `gated_edges` is supported on more than one device, because the two
-programs a gated edge needs split cleanly along the same line as everything else here.
-The gate fold reads the next period's value and dissolution arrays over each target's
-own regime-level grid and writes the substituted continuation over that same grid, so it
+A regime with gated edges is supported on more than one device, because the two programs
+a gated edge needs split cleanly along the same line as everything else here. The gate
+fold reads the next period's value and dissolution arrays over each target's own
+regime-level grid and writes the substituted continuation over that same grid, so it
 carries no subject axis and is replicated. The gate route recomputes the gate at each
 subject's own realized state and writes that row's destination under an elementwise
 mask, so its per-subject operands --- the candidate next states, the new regime ids, the
