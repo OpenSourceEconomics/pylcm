@@ -808,6 +808,7 @@ class Model:
             ages=self.ages,
             active_periods_by_regime=schedules.coverage_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
+            removed_edge_reads=prepared_graph.removed_edge_reads,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
