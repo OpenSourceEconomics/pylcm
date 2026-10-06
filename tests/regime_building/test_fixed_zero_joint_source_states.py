@@ -17,13 +17,19 @@ the author would get by declaring no `high` edge at all. Pruning removes as much
 as it can up front:
 
 - wealth keeps the empty per-target law `{}` and the model stays valid;
+- declarations that would conflict over the `high` wealth cell leave with the
+  edge, so the model equals the edge-free one, while a live `high` edge keeps
+  every ownership check;
 - `driver` is read only across the removed edge, so it is unused and the model
   is rejected, exactly as the edge-free model is.
 """
 
-from collections.abc import Callable
+import contextlib
+from collections.abc import Callable, Iterator, Mapping
 from fractions import Fraction
+from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -92,6 +98,10 @@ def _lottery_wealth(*, match: dict[str, FloatND]) -> ContinuousState:
     return match["wealth"]
 
 
+def _other_lottery_wealth(*, other: dict[str, FloatND]) -> ContinuousState:
+    return other["wealth"]
+
+
 def _lottery_wealth_with_driver(
     *, match: dict[str, FloatND], driver: DiscreteState
 ) -> ContinuousState:
@@ -118,15 +128,14 @@ def _model(
     enable_jit: bool,
     omit_joint: bool = False,
     omit_driver_read: bool = False,
-    high_wealth_law: bool = False,
+    wealth_law: Mapping[str, Callable] | None = None,
+    second_joint: bool = False,
     joint_output: str = "wealth",
     with_mid: bool = False,
 ) -> Model:
     if source_kind == "wealth_source":
         states = {"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)}
-        state_transitions = (
-            {"wealth": {"high": _wealth_utility}} if high_wealth_law else {}
-        )
+        state_transitions = {} if wealth_law is None else {"wealth": wealth_law}
         utility = _wealth_utility
         output = _lottery_wealth
     else:
@@ -146,6 +155,18 @@ def _model(
                     outputs={joint_output: output},
                 )
             }
+            | (
+                {
+                    "other": JointTransition(
+                        support_size=2,
+                        support={"wealth": jnp.asarray([1.0, 3.0])},
+                        probabilities=_lottery_probabilities,
+                        outputs={"wealth": _other_lottery_wealth},
+                    )
+                }
+                if second_joint
+                else {}
+            )
         }
     )
     mid_transition = {"mid": StochasticTransition(func=_half)} if with_mid else {}
@@ -284,27 +305,6 @@ def test_driver_that_nothing_reads_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("overrides", "message"),
-    [
-        ({"high_wealth_law": True}, "multiple producers claim target-state cell"),
-        ({"joint_output": "debt"}, "'debt' of kernel 'match' is not a target state"),
-    ],
-)
-def test_malformed_joint_kernel_on_a_fixed_zero_edge_is_rejected(
-    *, overrides: dict, message: str
-) -> None:
-    """A joint lottery removed with its zero edge must still be well formed."""
-    with pytest.raises(ModelInitializationError, match=message):
-        _model(
-            source_kind="wealth_source",
-            fixed=True,
-            probability=0.0,
-            enable_jit=False,
-            **overrides,
-        )
-
-
 def test_kept_target_needing_a_state_only_a_removed_lottery_produced_is_rejected() -> (
     None
 ):
@@ -326,7 +326,7 @@ def test_kept_target_needing_a_state_only_a_removed_lottery_produced_is_rejected
         )
 
 
-def _edge_free_wealth_model() -> Model:
+def _edge_free_wealth_model(*, enable_jit: bool = False) -> Model:
     """The wealth source as authored without the `high` edge and its lottery."""
     regimes = {
         "source": Regime(
@@ -348,7 +348,7 @@ def _edge_free_wealth_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         edges={"source": {"low": 0}},
         initial_nodes=((0, "source"),),
-        enable_jit=False,
+        enable_jit=enable_jit,
     )
 
 
@@ -374,6 +374,94 @@ def test_fixed_zero_wealth_model_equals_the_edge_free_model() -> None:
         source_kind="wealth_source", fixed=True, probability=0.0, enable_jit=False
     )
     assert _outcome(model=fixed_zero) == _outcome(model=_edge_free_wealth_model())
+
+
+_TRANSFORMS = [
+    pytest.param(precision, enable_jit, id=f"fp{precision}-{mode}")
+    for precision in (32, 64)
+    for enable_jit, mode in ((False, "eager"), (True, "jit"))
+]
+
+
+@contextlib.contextmanager
+def _precision(bits: int) -> Iterator[None]:
+    """Build and solve at `bits`-bit floats, restoring the suite's setting."""
+    previous = jax.config.jax_enable_x64
+    jax.config.update("jax_enable_x64", bits == 64)
+    try:
+        yield
+    finally:
+        jax.config.update("jax_enable_x64", previous)
+
+
+# Declarations toward `high` that conflict over its wealth cell, each with the
+# error a live `high` edge raises for them.
+_CONFLICTS: dict[str, tuple[dict[str, Any], str]] = {
+    "ordinary_law_and_joint": (
+        {"wealth_law": {"high": _wealth_utility}},
+        "multiple producers claim target-state cell",
+    ),
+    "two_joint_kernels": (
+        {"second_joint": True},
+        "multiple producers claim target-state cell",
+    ),
+    "output_not_a_target_state": (
+        {"wealth_law": {}, "joint_output": "debt"},
+        "'debt' of kernel 'match' is not a target state",
+    ),
+}
+
+
+@pytest.mark.parametrize(("precision", "enable_jit"), _TRANSFORMS)
+@pytest.mark.parametrize("conflict", _CONFLICTS)
+def test_conflicting_declarations_on_a_fixed_zero_edge_give_the_edge_free_model(
+    *, conflict: str, precision: int, enable_jit: bool
+) -> None:
+    """Declarations toward a fixed-zero `high` edge leave with it.
+
+    Their conflict over the `high` wealth cell does not exist without the edge,
+    so the model builds, equals the edge-free model and values the source at
+    `[3, 4, 5]`.
+    """
+    with _precision(precision):
+        fixed_zero = _outcome(
+            model=_model(
+                source_kind="wealth_source",
+                fixed=True,
+                probability=0.0,
+                enable_jit=enable_jit,
+                **_CONFLICTS[conflict][0],
+            )
+        )
+        edge_free = _outcome(model=_edge_free_wealth_model(enable_jit=enable_jit))
+    assert (fixed_zero, np.asarray(fixed_zero[-1]).reshape(-1).tolist()) == (
+        edge_free,
+        [3.0, 4.0, 5.0],
+    )
+
+
+@pytest.mark.parametrize(
+    ("fixed", "probability"),
+    [(True, 0.5), (False, 0.0)],
+    ids=["fixed_positive", "free_parameter"],
+)
+@pytest.mark.parametrize("conflict", _CONFLICTS)
+def test_conflicting_declarations_on_a_live_edge_are_rejected(
+    *, conflict: str, fixed: bool, probability: float
+) -> None:
+    """A live `high` edge keeps every ownership check on its target cells.
+
+    A free probability is live even where its runtime value is zero.
+    """
+    overrides, message = _CONFLICTS[conflict]
+    with pytest.raises(ModelInitializationError, match=message):
+        _model(
+            source_kind="wealth_source",
+            fixed=fixed,
+            probability=probability,
+            enable_jit=False,
+            **overrides,
+        )
 
 
 def _edge_free_driver_model() -> Model:
