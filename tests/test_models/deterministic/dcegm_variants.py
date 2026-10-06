@@ -225,11 +225,18 @@ def get_full_params(
     interest_rate: float = 0.0,
     wage: float = 20.0,
 ) -> dict:
-    """Params for the full-model pair; valid for both solver variants."""
-    return base.get_params(
+    """Params for the full-model pair; valid for both solver variants.
+
+    The laws reading `final_age_alive` exist only where some age has several
+    outgoing edges (see `lifecycle_edges`), so a two-period model takes none.
+    """
+    params = base.get_params(
         n_periods=n_periods,
         discount_factor=discount_factor,
         disutility_of_work=disutility_of_work,
         interest_rate=interest_rate,
         wage=wage,
     )
+    if n_periods <= 2:
+        del params["final_age_alive"]
+    return params

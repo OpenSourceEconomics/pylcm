@@ -381,16 +381,11 @@ def get_params(
         Parameter dict ready for `model.solve()`.
 
     """
-    # The regime laws, and with them `final_age_alive`, exist only while an age
-    # precedes the second-to-last one; see `get_edges`.
-    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    law_params = (
-        {"final_age_alive": 40 + (n_periods - 2) * 10} if ages.exact_values[:-2] else {}
-    )
+    final_age_alive = 40 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
-        **law_params,
+        "final_age_alive": final_age_alive,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},
