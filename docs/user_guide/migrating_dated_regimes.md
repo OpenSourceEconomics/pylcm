@@ -4,18 +4,18 @@ title: Migrating regime graph declarations
 
 # Migrating regime graph declarations
 
-The model owns connectivity through a required `edges` argument. Transition functions
-and wrappers supply numerical behavior; they no longer declare structural targets.
-Initial age–regime pairs are required explicitly through `initial_nodes`.
+The model owns every regime transition through a required `edges` argument, both its
+structure and its law. Initial age–regime pairs are required explicitly through
+`initial_nodes`.
 
-## Move support onto Model
+## Move transitions onto Model
 
-Replace support attached to transition wrappers with a source–destination graph:
+Delete `regime_transitions=` from every `Regime`. Where each source age has a single
+destination, the edges alone are the law:
 
 ```python
-# Current declaration fragment.
+# Current declaration fragment: working stays until 62, then retires.
 working = Regime(
-    regime_transitions=DeterministicTransition(func=destination),
     functions={"utility": utility},
     states={"assets": assets_grid},
     state_transitions={"assets": next_assets},
@@ -34,6 +34,26 @@ model = Model(
     initial_nodes=((60, "working"),),
 )
 ```
+
+This replaces laws such as `"dead"`, `ByAge.until(law="working", then="retired")` or a
+selector that only ever returns the one available destination. A regime that declared
+`regime_transitions=None` simply has no outgoing edges.
+
+Where a source age has several destinations, move the former `regime_transitions` value
+unchanged into a `Transition` that replaces the source's destination mapping:
+
+```python
+# Fragment: a choice between continuing to work and retiring.
+edges = {
+    "working": Transition(
+        targets={"working": AgeRange(start=60, exclusive_stop=63), "retired": (61, 62)},
+        law=DeterministicTransition(func=destination),
+    ),
+}
+```
+
+A `Transition` on a source with at most one destination per age is rejected; drop its
+law instead. A `ByAge` law may leave single-destination ages unselected.
 
 Public `DeterministicTransition` and `StochasticTransition` refuse `targets` with an
 error that points to `Model(edges=...)`, the only place regime transitions are declared.
@@ -70,9 +90,11 @@ initial states still belong to `Population` and `InitialConditions`.
 ## Migrate phase differences and inspection
 
 A shared edge mapping applies to both phases. Use `Phased(solve=..., simulate=...)` on
-`edges` for perceived versus realized connectivity and provide corresponding
-phase-specific numerical laws and handoffs. Physically visited nodes require solve
-values plus their perceived dependencies; extra valued nodes do not imply realized
+`edges` for perceived versus realized connectivity; a former
+`regime_transitions=Phased(solve=..., simulate=...)` moves into each phase's
+`Transition`, or stays whole as the law of one `Transition` on shared edges. State
+handoffs stay phase-specific on the source regime. Physically visited nodes require
+solve values plus their perceived dependencies; extra valued nodes do not imply realized
 visits.
 
 Inspect `model.graph.edges.solve` and `.simulate` for declared exact source ages,

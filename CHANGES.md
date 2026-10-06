@@ -97,10 +97,26 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   source to destinations and their source-age selectors, optionally through `Phased`.
   `model.graph` provides immutable declared edges, effective reachability and
   fixed-zero pruning reasons.
-- `Model(edges=...)` is the only place regime transitions are declared. Passing
-  `targets=` to `DeterministicTransition` or `StochasticTransition`, or handing
-  `Model` a regime law tagged with its destinations, raises an error that points to
-  `Model(edges=...)`.
+- `Model(edges=...)` is the only place regime transitions are declared, structure
+  and law alike. Breaking API: `Regime` takes no `regime_transitions`; passing it
+  raises an error that points to `Model(edges=...)` and `Transition`.
+  - A source with exactly one outgoing edge at every source age is declared as a
+    plain `{target: source_ages}` mapping: the graph is the law. Deterministic
+    schedules such as `"dead"` or `ByAge.until(law="working", then="retired")`
+    are expressed by the edges alone.
+  - Where some source age has several outgoing edges, the source is declared as
+    `Transition(targets={target: source_ages, ...}, law=...)`. The law is any form
+    `regime_transitions` took: a per-target probability mapping, a selector
+    function returning a regime code (a discrete choice), a full-vector
+    `StochasticTransition`, a regime name, `ByAge` or `Phased`. A `ByAge` law must
+    select every age with several edges; ages with one edge use that edge.
+  - A `Transition` on a source whose every age has at most one outgoing edge is
+    rejected as redundant, unless its law carries a `ValueDependentTransition`.
+  - A regime with no outgoing edges is terminal.
+  - `Phased` edges carry each phase's law in that phase's `Transition`.
+  - Passing `targets=` to `DeterministicTransition` or `StochasticTransition`, or
+    handing `Model` a regime that already carries a law, raises an error that
+    points to `Model(edges=...)`.
 - Probability mass validation is shared by the solver consumers. Compiled validation
   now reliably rejects negative subnormal probabilities at both precisions.
 
@@ -117,7 +133,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Solved problems are derived from the roots — physical successors plus declared value
   reads — rather than from transition schedules. `ByAge` selects laws only;
   `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
-- Terminality is exactly `regime_transitions is None`.
+- A regime is terminal exactly when it has no outgoing edges in `Model(edges=...)`.
 - `ByAge`, `ByAge.until`, `AgeRange`, `DeterministicTransition` and `StochasticTransition` take keyword
   arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
   uses `then` at the last source age below `stop_age_exclusive`. See

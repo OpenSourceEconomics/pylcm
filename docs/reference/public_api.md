@@ -59,6 +59,7 @@ documentation and tests.
 | Public name                                                            | Canonical documentation            |
 | ---------------------------------------------------------------------- | ---------------------------------- |
 | [`lcm.StochasticTransition`](transitions.md#api-state-transitions)     | Stochastic transition wrapper      |
+| [`lcm.Transition`](transitions.md#api-regime-transitions)              | Graph edges with their regime law  |
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)          | Shared-draw joint law              |
 | [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)             | Numerical laws by exact source age |
 | [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)          | Half-open age interval             |

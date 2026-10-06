@@ -6,9 +6,8 @@ The `Regime` class defines a single regime in the model. The regime name is spec
 the key in the `regimes` dict passed to `Model`:
 
 ```python
-# Non-terminal regime
+# Non-terminal regime (its outgoing edges live in `Model(edges=...)`)
 Regime(
-    regime_transitions=next_regime_func,  # Required: regime transition function (None → terminal)
     states={  # Pure outcome-space grids
         "wealth": LinSpacedGrid(...),
         "education": DiscreteGrid(EduStatus),
@@ -27,16 +26,14 @@ Regime(
     certainty_equivalent=PowerMean(),  # Optional: overrides the model-level one
 )
 
-# Terminal regime (regime_transitions=None, no state_transitions)
+# Terminal regime (no outgoing edges, no state_transitions)
 Regime(
-    regime_transitions=None,
     functions={"utility": terminal_utility},
     states={"wealth": LinSpacedGrid(...)},
 )
 
 # Target-dependent transitions (keyed by target regime name)
 Regime(
-    regime_transitions=next_regime_func,
     states={"health": DiscreteGrid(Health)},
     state_transitions={
         "health": {
@@ -46,18 +43,38 @@ Regime(
     },
     # Additional configuration may follow.
 )
+
+# Regime transitions: structure and law, declared on the model
+Model(
+    edges={
+        # Several destinations at some source age: a `Transition` carries the law
+        "working": Transition(
+            targets={"working": AgeRange(start=25, exclusive_stop=65), "retired": 64},
+            law=next_regime_func,
+        ),
+        # One destination at every source age: the graph is the law
+        "retired": {"dead": AgeRange(start=65, exclusive_stop=90)},
+        # "dead" has no outgoing edges, so it is terminal
+    },
+    # Additional configuration may follow.
+)
 ```
 
 **Regime Requirements:**
 
-- `regime_transitions` is required: the regime transition, or `None` for terminal regimes.
-  `terminal` is a derived property (`self.regime_transitions is None`). A regime name,
-  plain deterministic function, `DeterministicTransition(func=...)`, full-vector
-  `StochasticTransition(func=...)`, or per-target scalar probability mapping supplies
-  numerical behavior. `ByAge` selects complete laws. None of these forms owns topology:
-  `Model.edges` supplies every source–destination edge and its source-age selector.
-  Ordinary scalar probability cells require `StochasticTransition`; their parameters
-  nest under the target (`template[regime][target]["next_regime"]`).
+- `Regime` takes no regime transition. `Model(edges=...)` declares every regime
+  transition, structure and law. A source maps to a plain `{target: source_ages}`
+  mapping when every source age has exactly one destination (the graph is the law), or
+  to `Transition(targets={target: source_ages, ...}, law=...)` when some source age has
+  several. A regime with no outgoing edges is terminal. A `Transition` law is a regime
+  name, plain deterministic function, `DeterministicTransition(func=...)`, full-vector
+  `StochasticTransition(func=...)`, per-target scalar probability mapping, `ByAge`
+  selecting complete laws, or `Phased` of those. The law never owns topology; the
+  targets do. A `ByAge` law must select every age with several outgoing edges; a
+  `Transition` on a source whose every age has at most one edge is rejected unless its
+  law carries a `ValueDependentTransition`. Ordinary scalar probability cells require
+  `StochasticTransition`; their parameters nest under the target
+  (`template[regime][target]["next_regime"]`).
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
   takes the model-level value. Declaring either at the regime level requires declaring
   it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
@@ -143,8 +160,11 @@ model's actual core programs declare.
 
 **Model Requirements:**
 
-- `edges` is required: `{source: {target: source_age_selector}}`, or
-  `Phased(solve=..., simulate=...)` with one such mapping per phase. Selectors are exact
+- `edges` is required: `{source: {target: source_age_selector}}` for a source with one
+  destination per source age, `{source: Transition(targets={target: selector, ...},
+  law=...)}` for a source with several at some age, or `Phased(solve=..., simulate=...)`
+  with one such mapping per phase. `model.edges` keeps them as declared, laws included;
+  `model.graph.edges` is law-free. Selectors are exact
   ages, nonempty tuples, integer ranges, or `AgeRange(start=..., exclusive_stop=...)`.
   An edge lands at the next `AgeGrid` coordinate. Terminal regimes have no outgoing edges.
 - `initial_nodes` is required with no default. Prefer explicit pairs such as
@@ -204,23 +224,11 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
 A regime whose utility is a `CollectiveUtility` has **stakeholders** — the `utilities`
 keys, in insertion order, which fix the trailing axis of `V` and of every published
-array. Everything is declared in a slot the regime already has:
+array. Everything is declared in a slot that already exists: the regime's utility and
+constraints, and the law on its `Model(edges=...)` entry:
 
 ```python
 Regime(
-    regime_transitions={
-        "couple": ValueDependentTransition(  # goes in `regime_transitions`, keyed by TARGET
-            probability=StochasticTransition(func=stays_married),
-            gate=no_dissolution,  # Boolean predicate on the target's grid
-            routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},
-            gate_references={
-                "V_alone_f": ProjectedRegimeValue(
-                    regime="single_f", projection={"wealth": half_of_wealth}
-                )
-            },
-            off_grid="pointwise",  # or "reject"
-        )
-    },
     functions={"utility": CollectiveUtility(utilities={"f": u_f, "m": u_m})},
     constraints={
         "participation_f": ValueDependentConstraint(  # goes in `constraints`
@@ -232,6 +240,32 @@ Regime(
             },
         )
     },
+)
+
+# The gated law lives on the source's edges, keyed by TARGET
+Model(
+    edges={
+        "couple": Transition(
+            # Each route's fallback regime is a declared destination too
+            targets={"couple": ages, "single_f": ages, "single_m": ages},
+            law={
+                "couple": ValueDependentTransition(
+                    probability=StochasticTransition(func=stays_married),
+                    gate=no_dissolution,  # Boolean predicate on the target's grid
+                    routes={
+                        "f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)
+                    },
+                    gate_references={
+                        "V_alone_f": ProjectedRegimeValue(
+                            regime="single_f", projection={"wealth": half_of_wealth}
+                        )
+                    },
+                    off_grid="pointwise",  # or "reject"
+                )
+            },
+        ),
+    },
+    # Additional configuration may follow.
 )
 ```
 

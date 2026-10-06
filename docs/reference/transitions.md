@@ -27,31 +27,48 @@ Per-target state-transition mappings must cover exactly the reachable targets th
 the state. Reachability comes from `Model.edges`; extra or missing target handoffs are
 errors.
 
+(api-regime-transitions)=
+
 ## Regime transitions and graph support
 
-`Regime.regime_transitions` specifies numerical behavior:
+`Model(edges=...)` declares every regime transition, structure and law. `Regime` takes
+no `regime_transitions`. A source maps to either
 
-- `None` is terminal;
-- a regime name is a deterministic destination;
+- a plain `{target: source_ages}` mapping, when it has exactly one outgoing edge at
+  every source age — the graph is the law; or
+- `Transition(targets={target: source_ages, ...}, law=...)`, when some source age has
+  several outgoing edges.
+
+A regime with no outgoing edges is terminal. A `Transition` law is one of
+
+- a regime name, a deterministic destination;
 - a plain function or `DeterministicTransition(func=func)` returns a global regime code;
 - `StochasticTransition(func=func)` returns probabilities in full global regime-code
   order;
 - a per-target mapping supplies scalar `StochasticTransition` probability functions or
-  `ValueDependentTransition` declarations.
+  `ValueDependentTransition` declarations;
+- `ByAge(...)` selecting one of these per source age, or
+  `Phased(solve=..., simulate=...)`.
+
+A `ByAge` law must select every age with several outgoing edges; an age with one edge
+uses that edge. A `Transition` on a source whose every age has at most one outgoing edge
+is rejected as redundant, unless its law carries a `ValueDependentTransition`.
 
 The targetless factories `@deterministic_transition()` and `@stochastic_transition()`
 produce the same wrappers for state and regime laws and preserve DAG signatures.
 `stochastic_transition` also accepts the state-law option `fixed_component`.
 
-Connectivity belongs exclusively to the required `Model.edges` argument:
-
 ```python
 # Fragment: use these edges with the corresponding regimes and age grid.
 edges = {
-    "working": {
-        "working": AgeRange(start=25, exclusive_stop=62),
-        "retired": (61, 62),
-    },
+    "working": Transition(
+        targets={
+            "working": AgeRange(start=25, exclusive_stop=62),
+            "retired": (61, 62),
+        },
+        law=DeterministicTransition(func=retire_if_eligible),
+    ),
+    "retired": {"dead": AgeRange(start=62, exclusive_stop=75)},
 }
 ```
 
@@ -60,18 +77,19 @@ at the next grid coordinate. A deterministic law must select an available destin
 full vector must be exactly zero outside graph support. Scalar probability mappings
 supply graph-selected cells without declaring topology themselves. Terminal regimes have
 no outgoing edges. `Phased(solve=..., simulate=...)` can give the model different
-perceived and realized edges, with matching phase-specific numerical laws and handoffs.
+perceived and realized edges; each phase's `Transition` carries that phase's law, and
+state handoffs stay phase-specific on the source regime.
 
 (api-dated-regime-transitions)=
 
 ### Age-indexed laws
 
 `ByAge(cases={selector: law, ...}, default=...)` selects complete numerical laws by
-source age. Its selectors are exact ages, tuples, integer ranges, or half-open
-`AgeRange(start=..., exclusive_stop=...)` intervals. `ByAge.until` uses `law` before
-`stop_age_exclusive`, except that the last selected source age uses `then`. It does not
-declare topology or initial nodes. `AgeGrid(inclusive_stop=...)` includes its final
-coordinate; a graph edge cannot originate there.
+source age inside a `Transition`. Its selectors are exact ages, tuples, integer ranges,
+or half-open `AgeRange(start=..., exclusive_stop=...)` intervals. `ByAge.until` uses
+`law` before `stop_age_exclusive`, except that the last selected source age uses `then`.
+It does not declare topology or initial nodes. `AgeGrid(inclusive_stop=...)` includes
+its final coordinate; a graph edge cannot originate there.
 
 Ordinary scalar cells can be pruned from the effective graph when their complete DAG
 uses only construction-fixed leaves and yields exactly represented zero. Dynamic leaves
@@ -96,7 +114,6 @@ mapping from target regime, to local joint-node name, to the `JointTransition`:
 
 ```python
 source = Regime(
-    regime_transitions={"target_regime": StochasticTransition(func=target_probability)},
     joint_transitions={
         "target_regime": {
             "joint_draw": JointTransition(
@@ -117,11 +134,12 @@ source = Regime(
 )
 ```
 
-The outer key names the reachable target regime. The inner key names the sampled joint
-node that output functions may read. Each output owns one `(target, state)` producer
-cell. A bare `state_transitions[state]` law may coexist and broadcasts only to other,
-unclaimed reachable targets. An explicit ordinary law on the same target-state cell, or
-a second joint kernel claiming that cell, is rejected.
+The source's edge into `target_regime` and its law are declared in `Model(edges=...)`,
+as for any regime transition. The outer key names the reachable target regime. The inner
+key names the sampled joint node that output functions may read. Each output owns one
+`(target, state)` producer cell. A bare `state_transitions[state]` law may coexist and
+broadcasts only to other, unclaimed reachable targets. An explicit ordinary law on the
+same target-state cell, or a second joint kernel claiming that cell, is rejected.
 
 Transition-local joint lotteries are currently implemented only by `GridSearch`.
 Selecting an EGM-family solver for a regime that declares one is rejected when the model
@@ -217,10 +235,11 @@ select the already-resolved period objects and never call `build(age)`.
 `Phased(solve=..., simulate=...)` is the outermost wrapper for declarations that may
 differ by phase:
 
-- `Model.edges` accepts perceived and realized source–destination topology;
+- `Model.edges` accepts perceived and realized source–destination topology, each phase
+  with its own `Transition` laws; ordinary per-target mappings may declare different
+  solve and simulate target keys, and a `Transition` law may itself be `Phased` with
+  matching transition forms;
 - `functions` and `state_transitions` accept phase-specific variants;
-- `regime_transitions` accepts matching transition forms; ordinary per-target mappings
-  may declare different solve and simulate target keys;
 - `koopmans_aggregator` accepts one callable per phase;
 - `states` accepts the special carried-state form
   `Phased(solve=callable, simulate=Grid)`.

@@ -17,7 +17,7 @@ a collective model has no extra constructor arguments to learn.
 | `CollectiveUtility`        | `functions={"utility": ...}`                                                      | the regime's stakeholders and their flow utilities  |
 | `ParetoObjective`          | `CollectiveUtility(objective=...)`                                                | how stakeholder action values are scalarized        |
 | `ValueDependentConstraint` | `constraints={"name": ...}`                                                       | a feasibility predicate that may read values        |
-| `ValueDependentTransition` | `regime_transitions={"target": ...}`                                              | a transition into one target, gated on values there |
+| `ValueDependentTransition` | a `Transition` law in `Model(edges=...)`, keyed by target                         | a transition into one target, gated on values there |
 | `StakeholderRoute`         | `ValueDependentTransition(routes=...)`                                            | where one source stakeholder goes on each branch    |
 | `ProjectedRegimeValue`     | a constraint's `references`, an edge's `gate_references`, or a route's `fallback` | another regime's current-period value, at a mapping |
 
@@ -234,8 +234,23 @@ gate_references: Mapping[str, ProjectedRegimeValue] = field(
 off_grid: Literal["pointwise", "reject"] = "pointwise"
 ```
 
-Declared inside `regime_transitions`, keyed by target regime name, so target selection
-and value-dependent routing are one declaration of one semantic transition.
+Declared inside the per-target law of the source's `Transition` in `Model(edges=...)`,
+keyed by target regime name, so target selection and value-dependent routing are one
+declaration of one semantic transition:
+
+```python
+edges = {
+    "couple": Transition(
+        targets={"couple": ages, "single_f": ages, "single_m": ages},
+        law={"couple": ValueDependentTransition(...)},
+    ),
+}
+```
+
+The `Transition`'s targets include the gate-open target and every route's fallback
+regime. A source whose every age has a single outgoing edge still declares a
+`Transition` when its law carries a `ValueDependentTransition`, because the gate adds
+routing that the edge alone does not state.
 
 **The key is always the gate-open target** — the regime a row enters when the gate is
 true. A dissolution edge is therefore keyed by the *continuing* collective regime under
@@ -246,9 +261,9 @@ stays together.
 `probability` accepts either a `StochasticTransition` or, as a convenience specific to
 `ValueDependentTransition`, a bare probability callable. The latter is wrapped in
 `StochasticTransition` in `decomposed_transition`, because that is the grammar the
-canonical per-target cell consumes. An ordinary per-target `regime_transitions` cell
-still requires an explicit `StochasticTransition`; a bare callable there is rejected as
-an unsupported deterministic per-target transition.
+canonical per-target cell consumes. An ordinary per-target `Transition` law cell still
+requires an explicit `StochasticTransition`; a bare callable there is rejected as an
+unsupported deterministic per-target transition.
 
 `probability` and `gate` are two distinct operations: `probability` selects whether this
 target edge is attempted at all, while `gate` keeps that target or takes the route's
@@ -258,11 +273,11 @@ stakeholder-specific fallback.
 singleton source declares exactly one route, under any key.
 
 A `ValueDependentTransition` may be repeated inside the two mappings of an outer
-`Phased(solve=..., simulate=...)` transition. A target is value-dependent in both phases
-or in neither. The two declarations must name the identical gate callable and equal
-routes, gate references, and `off_grid` contract; only `probability` may differ,
-allowing perceived and realized transition probabilities to diverge without changing the
-edge.
+`Phased(solve=..., simulate=...)` law, or in the two phases' `Transition` laws of
+`Phased` edges. A target is value-dependent in both phases or in neither. The two
+declarations must name the identical gate callable and equal routes, gate references,
+and `off_grid` contract; only `probability` may differ, allowing perceived and realized
+transition probabilities to diverge without changing the edge.
 
 ### Gate operands
 
@@ -499,10 +514,11 @@ mixing values across it.
 ## Derived engine views
 
 Each declaration above stays in the raw slot where the author wrote it. `Regime`
-construction derives stored, read-only fields from those declarations. The
-`decomposed_*` properties separately compute engine-facing views from the current raw
-slots whenever they are read. Neither kind of output is a declaration route: none can be
-passed to `Regime(...)` or to `Regime.replace`.
+construction derives stored, read-only fields from those declarations; the fields
+derived from a `ValueDependentTransition` are filled when `Model` binds the source's
+edge law. The `decomposed_*` properties separately compute engine-facing views from the
+current raw slots whenever they are read. Neither kind of output is a declaration route:
+none can be passed to `Regime(...)` or to `Regime.replace`.
 
 | Declaration                | Construction-derived fields                              | On-access engine view                                                                                          |
 | -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -511,7 +527,7 @@ passed to `Regime(...)` or to `Regime.replace`.
 | `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
-`constraints` and `regime_transitions`. The engine reads the decomposed views
+`constraints` and the `Model(edges=...)` law. The engine reads the decomposed views
 (`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
 the raw slots. Reading either a stored derived field or a decomposed view therefore
 reveals what a declaration produced without creating a second way to declare it.
