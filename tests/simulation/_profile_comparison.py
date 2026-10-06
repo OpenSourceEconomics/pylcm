@@ -7,8 +7,8 @@ structure:
   including signed zeros and NaN payloads.
 - `assert_values_agree` — independently compiled programs (a different block width,
   batch size or layout): published value leaves may differ by a bounded number of
-  ordered representable steps of their own format, or of spacings at a declared
-  operand magnitude for values born by cancellation.
+  ordered representable steps of their own format. Cancellation does not change
+  the unit of this execution-parity contract.
 
 `assert_public_frames` applies both to a published `to_dataframe()` panel: only the
 named value columns of an independently compiled run receive the allowance; states,
@@ -28,7 +28,6 @@ def assert_values_agree(
     expected: ArrayLike,
     n_ulp: int = 8,
     err_msg: str = "",
-    operand_magnitude: float | None = None,
 ) -> None:
     """Assert two value leaves agree to within `n_ulp` representable steps.
 
@@ -37,16 +36,6 @@ def assert_values_agree(
     value just below a power of two never borrows the coarser spacing above it,
     and a large value elsewhere in the leaf never widens another element's budget.
 
-    `operand_magnitude` declares that the compared values are formed from operands
-    of that magnitude — a flow utility plus a discounted continuation of opposite
-    sign, say. A reordered reduction moves such a result by roundings of its
-    operands, not of the result, so an entry born near zero by cancellation moves
-    many of its own steps. An element whose magnitude stays at or below
-    `operand_magnitude` then also passes when `|got - expected|` is at most
-    `n_ulp` times `gap(operand_magnitude)`, the distance from that magnitude down
-    to its representable predecessor (the finest spacing in its binade). Elements
-    above it keep the ordered-step count.
-
     Shapes and dtypes must match exactly. Non-finite entries must agree in position
     and sign; NaN payloads are left to `assert_same_bytes`. Negative and positive
     zero are one step apart.
@@ -54,12 +43,8 @@ def assert_values_agree(
     Args:
         got: Value leaf under the compared execution.
         expected: Value leaf under the reference execution.
-        n_ulp: Largest tolerated number of ordered representable steps, or of
-            spacings at `operand_magnitude` for elements below it.
+        n_ulp: Largest tolerated number of ordered representable value steps.
         err_msg: Context appended to the failure message.
-        operand_magnitude: Magnitude of the operands the values are formed from,
-            when they are born by cancellation; `None` counts every element's
-            own steps only.
 
     """
     if type(n_ulp) is not int or n_ulp < 0:
@@ -86,15 +71,6 @@ def assert_values_agree(
         actual_keys, reference_keys
     )
     passes = steps <= n_ulp
-    if operand_magnitude is not None:
-        scale = np.asarray(operand_magnitude, dtype=reference.dtype)
-        gap = np.float64(scale - np.nextafter(scale, np.zeros_like(scale)))
-        # float32 differences are exact in float64; a float64 difference
-        # overflows to inf only when it is far outside any bound.
-        with np.errstate(over="ignore"):
-            distance = np.abs(actual.astype(np.float64) - reference.astype(np.float64))
-        below = np.maximum(np.abs(actual), np.abs(reference)) <= scale
-        passes |= below & (distance <= n_ulp * gap)
     if not passes.all():
         worst = int(steps[~passes].max())
         msg = f"{worst} ordered representable steps exceed {n_ulp} ULP. {err_msg}"
