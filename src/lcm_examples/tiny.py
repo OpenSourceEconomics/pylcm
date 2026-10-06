@@ -11,7 +11,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
@@ -27,7 +26,6 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
-    UserAge,
 )
 
 
@@ -107,21 +105,8 @@ WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
 
-_DEFAULT_AGE_GRID = AgeGrid(start=25, inclusive_stop=65, step="20Y")
-_RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
-
-
-def working_life_transitions(*, retirement_age: UserAge | float) -> ByAge:
-    """Work until the age before `retirement_age`, then retire."""
-    return ByAge.until(
-        stop_age_exclusive=retirement_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
-
 working_life = Regime(
-    regime_transitions=working_life_transitions(retirement_age=_RETIREMENT_AGE),
+    regime_transitions=DeterministicTransition(func=next_regime),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -162,11 +147,6 @@ def get_model(
     age_grid = AgeGrid(
         start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
     )
-    retirement_age = age_grid.exact_values[-1]
-
-    wl = working_life.replace(
-        regime_transitions=working_life_transitions(retirement_age=retirement_age),
-    )
 
     return Model(
         edges={
@@ -179,7 +159,7 @@ def get_model(
                 ),
             },
         },
-        regimes={"working_life": wl, "retirement": retirement},
+        regimes={"working_life": working_life, "retirement": retirement},
         ages=age_grid,
         regime_id_class=RegimeId,
         initial_nodes={age_grid.exact_values[0]: "working_life"},

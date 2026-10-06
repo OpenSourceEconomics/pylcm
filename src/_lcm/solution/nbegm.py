@@ -123,6 +123,7 @@ from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
 )
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
@@ -233,9 +234,9 @@ class NBEGM(OneMarginSolver):
     """
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
         """The child read enumerates an edge's local draws as node axes."""
-        return True
+        return frozenset({SupportOrigin.SOURCE_PROCESS})
 
     @property
     def capabilities(self) -> SolverExecutionCapabilities:

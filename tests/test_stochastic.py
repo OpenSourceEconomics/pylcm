@@ -32,7 +32,6 @@ from lcm.typing import (
     UserAge,
     UserParams,
 )
-from lcm_examples.mortality import retirement_transitions, working_life_transitions
 from tests.conftest import X64_ENABLED
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
@@ -131,7 +130,6 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     n_periods = 4
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working_life.replace(
@@ -139,14 +137,12 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     # Create stochastic model with identity transition function
@@ -155,14 +151,12 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     model_deterministic = Model(
@@ -440,9 +434,7 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
                         cases={AgeRange(start=40, exclusive_stop=80): "dead"}
                     )
                 ),
-                "retirement": retirement.replace(
-                    regime_transitions=retirement_transitions(last_age=70)
-                ),
+                "retirement": retirement,
                 "dead": dead,
             },
             ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),

@@ -458,3 +458,63 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
     assert (2, "reference") not in model.graph.nodes
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     assert set(solution.values[2]) == {"target", "terminal"}
+
+
+def test_required_age_without_an_edge_out_names_the_missing_edge() -> None:
+    """A required regime at an age with no edge out names that missing edge."""
+    regimes = _graph_regimes()
+    regimes["work"] = regimes["work"].replace(regime_transitions="work")
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"requires 'work' at age 1, where `edges` declares no edge out of "
+        r"'work' at that age",
+    ):
+        Model(
+            regimes=regimes,
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+            regime_id_class=_GraphRegimeId,
+            initial_nodes=((0, "work"),),
+            edges={"work": {"work": 0}},
+            enable_jit=False,
+        )
+
+
+def test_edge_whose_only_source_age_is_the_final_age_is_rejected() -> None:
+    """No transition leaves the final age, so an edge selecting only it is invalid."""
+    regimes = _graph_regimes()
+    regimes["work"] = regimes["work"].replace(
+        regime_transitions=lambda: _GraphRegimeId.perceived,
+    )
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"'work' → 'realized' selects only the final age 1",
+    ):
+        Model(
+            regimes=regimes,
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_GraphRegimeId,
+            initial_nodes=((0, "work"),),
+            edges={"work": {"perceived": 0, "realized": 1}},
+            enable_jit=False,
+        )
+
+
+def _phased_graph_model(initial_nodes: object) -> Model:
+    return Model(
+        regimes=_graph_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_GraphRegimeId,
+        initial_nodes=initial_nodes,  # ty: ignore[invalid-argument-type]
+        edges=Phased(
+            solve={"work": {"perceived": 0}},
+            simulate={"work": {"realized": 0}},
+        ),
+        enable_jit=False,
+    )
+
+
+def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
+    """`Model.initial_nodes` passed back to `Model` selects the same start pairs."""
+    model = _phased_graph_model({0: "work"})
+    rebuilt = _phased_graph_model(model.initial_nodes)
+    assert rebuilt.initial_nodes == frozenset({(0, "work")})

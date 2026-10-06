@@ -16,7 +16,7 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import EGM, GridSearch
+from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
@@ -52,7 +52,7 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
     return savings + match
 
 
-def _model(solver: EGM | GridSearch) -> Model:
+def _model(solver: OneMarginSolver | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
             1,
@@ -105,12 +105,24 @@ def test_grid_search_admits_transition_local_joint_lotteries() -> None:
     ) == ["match"]
 
 
-def test_egm_rejects_transition_local_joint_lotteries_during_construction() -> None:
-    """Unsupported EGM fails closed rather than reaching `KeyError` in solve."""
-    solver = EGM(savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=20))
+_SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=20)
 
+
+@pytest.mark.parametrize(
+    "solver",
+    [
+        EGM(savings_grid=_SAVINGS_GRID),
+        DCEGM(savings_grid=_SAVINGS_GRID),
+        NBEGM(savings_grid=_SAVINGS_GRID),
+    ],
+    ids=["EGM", "DCEGM", "NBEGM"],
+)
+def test_egm_family_rejects_transition_local_joint_lotteries_during_construction(
+    solver: OneMarginSolver,
+) -> None:
+    """An EGM-family solver refuses a joint lottery rather than failing in solve."""
     with pytest.raises(
         ModelInitializationError,
-        match=r"EGM.*transition-local.*JointTransition.*GridSearch",
+        match=rf"{type(solver).__name__}.*transition-local.*JointTransition.*GridSearch",
     ):
         _model(solver)
