@@ -15,9 +15,9 @@ source's current value, read by the edge's laws, and discarded. Processes and Ma
 states behave alike. A Markov state's draw toward a target that does not carry it needs
 a law declared once for every target, since a per-target law names no law for that edge.
 
-Reading a random state's draw is a read of the state, so the reading regime carries it.
-A law that reads `next_<state>` of any other state the target does not carry is refused
-when the model is built.
+Reading a random state's draw is a read of the state, so the reading regime carries it,
+together with every state the draw's law reads. A law that reads `next_<state>` of any
+other state the target does not carry is refused when the model is built.
 
 ## Consequences
 
