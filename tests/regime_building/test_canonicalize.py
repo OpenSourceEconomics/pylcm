@@ -324,7 +324,6 @@ def test_terminal_regime_has_empty_canonical_transitions() -> None:
     specs = _two_regime_model_specs({"state_transitions": {"wealth": _next_wealth}})
     assert specs["dead"].solution.state_transitions == {}
     assert specs["dead"].solution.regime_transition is None
-    assert specs["dead"].terminal
 
 
 def test_two_step_seam_matches_wrapper() -> None:

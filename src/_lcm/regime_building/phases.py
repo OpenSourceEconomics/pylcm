@@ -409,15 +409,6 @@ class PhasedRegimeSpec:
     """The simulate-phase slice (forward simulation)."""
 
     @property
-    def terminal(self) -> bool:
-        """Whether the regime is terminal (no regime transition in either phase).
-
-        Terminality is phase-invariant by the slot grammar (`Phased` variants
-        cannot be `None`), so the solution slice is representative.
-        """
-        return self.solution.regime_transition is None
-
-    @property
     def carried_only_state_names(self) -> frozenset[StateName]:
         """States carried in simulation but derived (no grid axis) in solution."""
         return frozenset(self.simulation.grid_states) - frozenset(

@@ -1214,7 +1214,7 @@ class _CanonicalRegimeBuilder:
 
             canonical_regimes[regime_name] = Regime(
                 name=regime_name,
-                terminal=spec.terminal,
+                terminal=self.laws[regime_name].terminal,
                 active_periods=tuple(self.regimes_to_active_periods[regime_name]),
                 regime_params_template=regime_params_template,
                 solution=solution,
@@ -3408,7 +3408,7 @@ def _build_solution_phase(  # noqa: PLR0915
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
     zero_node = _is_zero_node_regime(
-        spec=spec,
+        law=laws[regime_name],
         regime_name=regime_name,
         regimes_to_active_periods=regimes_to_active_periods,
     )
@@ -3419,7 +3419,7 @@ def _build_solution_phase(  # noqa: PLR0915
         validation_regime_transition_probs = None
         Q_and_F_functions = MappingProxyType({})
         compute_intermediates = MappingProxyType({})
-    elif spec.terminal:
+    elif laws[regime_name].terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
         if stakeholders is not None:
@@ -3816,12 +3816,12 @@ def _simulated_periods(
 
 def _is_zero_node_regime(
     *,
-    spec: PhasedRegimeSpec,
+    law: RegimeLaw,
     regime_name: RegimeName,
     regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
 ) -> bool:
     """Whether `regime_name` is nonterminal and no required problem solves it."""
-    return not spec.terminal and not regimes_to_active_periods[regime_name]
+    return not law.terminal and not regimes_to_active_periods[regime_name]
 
 
 def _build_period_signatures(
@@ -4561,7 +4561,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         MappingProxyType({})
     )
     if _is_zero_node_regime(
-        spec=spec,
+        law=law,
         regime_name=regime_name,
         regimes_to_active_periods=simulated_periods,
     ):
@@ -4570,7 +4570,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         per_subject_route = None
         realized_validation_probs = None
         Q_and_F_functions = MappingProxyType({})
-    elif spec.terminal:
+    elif law.terminal:
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None

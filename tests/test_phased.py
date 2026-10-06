@@ -228,7 +228,7 @@ def test_phased_regime_transition_splits_into_phase_variants() -> None:
     assert spec.simulation.regime_transition is _next_regime
     assert spec.solution.stochastic_regime_transition is False
     assert spec.simulation.stochastic_regime_transition is False
-    assert spec.terminal is False
+    assert law.terminal is False
 
 
 def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
