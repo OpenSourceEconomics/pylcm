@@ -151,7 +151,6 @@ def bind_regime_law(transition: object) -> RegimeLaw:
     fail_if_phased_wraps_a_schedule(transition)
     view = _engine_view(transition)
     gated_edges = _lower_value_dependent_transitions(view)
-    _fail_if_a_gated_edge_has_no_target(transition=view, gated_edges=gated_edges)
     return RegimeLaw(
         transition=transition,
         gated_edges=ensure_containers_are_immutable(gated_edges),
@@ -235,34 +234,6 @@ def _lower_phased_value_dependent_transitions(
                 "edge. Only `probability` may differ between them."
             )
     return solve_edges
-
-
-def _fail_if_a_gated_edge_has_no_target(
-    *, transition: object, gated_edges: Mapping[RegimeName, GatedEdge]
-) -> None:
-    """Refuse a gated edge on a transition that names no target.
-
-    A gate is a route: it says where a household goes when consent fails, and
-    the fallback belongs to the route. A terminal regime has no next period for
-    a route to reach, and a coarse transition — a bare callable or a
-    `StochasticTransition` — names no target for the gate to be keyed by.
-    """
-    if not gated_edges:
-        return
-    sides = (
-        (transition.solve, transition.simulate)
-        if isinstance(transition, Phased)
-        else (transition,)
-    )
-    if all(isinstance(side, Mapping) for side in sides):
-        return
-    where = "a terminal regime" if transition is None else "a coarse transition"
-    raise RegimeInitializationError(
-        f"This regime carries a gated edge into "
-        f"{min(gated_edges)!r} on {where}. A gate is a route, so "
-        "it needs a target to route to: declare it in a per-target "
-        "`Transition` law, keyed by the regime the gate opens onto."
-    )
 
 
 def _declared_gated_edges(

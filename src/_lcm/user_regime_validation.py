@@ -413,8 +413,7 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
 
     Checks the properties knowable without the other
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
-    gate — a `StochasticTransition` — is not implemented); every declared edge
-    targets one of the regime's reachable transition targets; the legs cover the
+    gate — a `StochasticTransition` — is not implemented); the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
     per stakeholder for a collective source). Cross-regime properties — the
     target and fallback regimes exist, the stakeholder names resolve, the
@@ -431,7 +430,6 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    transition_targets = _regime_transition_target_names(law.transition)
     source_stakeholders = regime.stakeholders
 
     for target_name, edge in law.gated_edges.items():
@@ -444,12 +442,6 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
             )
         elif not callable(edge.gate):
             error_messages.append(f"{prefix}the gate must be a callable.")
-        if transition_targets is not None and target_name not in transition_targets:
-            error_messages.append(
-                f"{prefix}a gated edge must target one of the regime's reachable "
-                f"transition targets {sorted(transition_targets)}; declare the "
-                f"transition into '{target_name}' as well."
-            )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
         elif source_stakeholders is None:
