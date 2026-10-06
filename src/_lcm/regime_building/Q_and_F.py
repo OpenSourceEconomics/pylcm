@@ -3442,6 +3442,10 @@ def _slice_draws(
     - a draw whose support is provided by another DAG node;
     - a draw of a co-mapped state, whose axis the caller has sliced off.
 
+    When no draw moves a coordinate, there are none: the joint node array is
+    then the slice nodes alone, so the loop would avoid no larger array and
+    only serialize what the joint contraction reads in one vectorized step.
+
     Args:
         lottery_variables: The target's lottery `next_<state>` names.
         dependencies_by_law: Per draw-dependent law, the draws it reads.
@@ -3459,7 +3463,7 @@ def _slice_draws(
         return ()
     moves_a_coordinate = frozenset().union(*dependencies_by_law.values())
     lotteries = transition_plans[target_regime_name].lotteries
-    return tuple(
+    slice_draws = tuple(
         name
         for name in lottery_variables
         if name not in moves_a_coordinate
@@ -3469,6 +3473,7 @@ def _slice_draws(
         and lotteries[name].lifetime is not LotteryLifetime.TRANSITION_LOCAL
         and lotteries[name].support_provider_name is None
     )
+    return slice_draws if len(slice_draws) < len(lottery_variables) else ()
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

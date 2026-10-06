@@ -546,8 +546,25 @@ def _array_shapes_of_the_pointwise_Q(
     *, certainty_equivalent: CertaintyEquivalent | None, power_mean: bool
 ) -> list[tuple[int, ...]]:
     """Return the shape of every array in the traced pointwise `Q` of `alive`."""
-    model = _model(
+    text = _traced_pointwise_Q_of_alive(
         reads=("income",),
+        certainty_equivalent=certainty_equivalent,
+        power_mean=power_mean,
+    )
+    return [
+        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
+    ]
+
+
+def _traced_pointwise_Q_of_alive(
+    *,
+    reads: _Reads,
+    certainty_equivalent: CertaintyEquivalent | None,
+    power_mean: bool,
+) -> str:
+    """Return the jaxpr text of `alive`'s pointwise `Q` with all four states drawn."""
+    model = _model(
+        reads=reads,
         slice_draws=True,
         certainty_equivalent=certainty_equivalent,
     )
@@ -562,12 +579,9 @@ def _array_shapes_of_the_pointwise_Q(
             for name, n in _N_NODES.items()
         },
     }
-    text = _traced_pointwise_Q(
+    return _traced_pointwise_Q(
         model=model, params=params, solution=solution, subjects=subjects
     )
-    return [
-        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
-    ]
 
 
 def _traced_pointwise_Q(
@@ -618,6 +632,28 @@ def test_plain_expectation_never_forms_the_joint_node_array(
         certainty_equivalent=None, power_mean=False
     )
     assert [shape for shape in shapes if _carries_the_joint_node_extent(shape)] == []
+
+
+@pytest.mark.parametrize(
+    ("reads", "n_slice_nodes", "loops"),
+    [
+        pytest.param((), 280, False, id="coordinate-none"),
+        pytest.param(("income",), 70, True, id="coordinate-one"),
+    ],
+)
+def test_slice_draws_are_looped_over_only_beside_a_coordinate_draw(
+    *, reads: _Reads, n_slice_nodes: int, loops: bool, x64_enabled: None
+) -> None:
+    """Slice draws are summed in a loop only when some draw moves a coordinate.
+
+    Without a coordinate-moving draw the joint node array is the slice nodes
+    alone, so there is no larger array to avoid and the draws stay mapped.
+    """
+    del x64_enabled
+    text = _traced_pointwise_Q_of_alive(
+        reads=reads, certainty_equivalent=None, power_mean=False
+    )
+    assert (re.search(rf"\blength={n_slice_nodes}\b", text) is not None) is loops
 
 
 @pytest.mark.parametrize(
