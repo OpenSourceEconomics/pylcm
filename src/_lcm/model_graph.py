@@ -188,7 +188,7 @@ def prepare_graph(
     """Bind laws, prove fixed zeros, and close physical and value demand."""
     bound, cells_without_edges = bind_graph_support(laws=laws, edges=edges, ages=ages)
     declarations = MappingProxyType(
-        {name: law.regime_transitions for name, law in bound.items()}
+        {name: law.transition for name, law in bound.items()}
     )
     source_ages = {"solution": edges.solve, "simulation": edges.simulate}
     fixed_support = prune_fixed_regime_support(
@@ -508,7 +508,7 @@ def bind_graph_support(
         if source_law.terminal:
             result[source] = source_law
             continue
-        transition = source_law.regime_transitions
+        transition = source_law.transition
         _fail_if_law_names_targets(transition=transition, source=source)
         kernels = (
             transition.resolve(ages).law_by_period
@@ -616,7 +616,7 @@ def fixed_zero_edge_reasons(
     for side, phase in (("solve", "solution"), ("simulate", "simulation")):
         removed: dict[Edge, str] = {}
         for source, source_law in bound.items():
-            transition = source_law.regime_transitions
+            transition = source_law.transition
             if not isinstance(transition, ByAge):
                 continue
             kept = after.support_by_phase[phase].get(source, {})

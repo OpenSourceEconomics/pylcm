@@ -690,9 +690,7 @@ def lower_laws(laws: RegimeLaws, *, ages: AgeGrid) -> RegimeLaws:
     """
     lowered = lower_demanded_transitions(
         schedules=resolve_regime_schedules(laws=laws, ages=ages),
-        declared_transitions={
-            name: law.regime_transitions for name, law in laws.items()
-        },
+        declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
     return bind_laws(lowered)

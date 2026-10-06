@@ -431,7 +431,7 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    transition_targets = _regime_transition_target_names(law.regime_transitions)
+    transition_targets = _regime_transition_target_names(law.transition)
     source_stakeholders = regime.stakeholders
 
     for target_name, edge in law.gated_edges.items():
@@ -1182,8 +1182,8 @@ def _collect_indexing_consumers(
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
-    if callable(law.regime_transitions):
-        consumers.append(("regime_transition", law.regime_transitions))
+    if callable(law.transition):
+        consumers.append(("regime_transition", law.transition))
     return consumers
 
 
@@ -1253,7 +1253,7 @@ def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
         return ["Terminal regimes must have empty joint_transitions."]
 
     error_messages: list[str] = []
-    reachable = _regime_transition_target_names(law.regime_transitions)
+    reachable = _regime_transition_target_names(law.transition)
     # A joint node's name may not clash with anything already spoken for,
     # and that is both what the author wrote and what the engine binds: a
     # value constraint's own key is a live name, and so is each
@@ -1809,7 +1809,7 @@ def _reachable_regime_targets(
     *, law: RegimeLaw, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
 ) -> frozenset[RegimeName]:
     """The regimes this one's transition can structurally reach."""
-    return _law_targets(law.regime_transitions, user_regimes=user_regimes)
+    return _law_targets(law.transition, user_regimes=user_regimes)
 
 
 # keyword-only-exempt: primary-argument=transition

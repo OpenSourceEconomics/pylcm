@@ -164,7 +164,7 @@ def _prune_regime_transition(
     while True:
         consumed: set[str] = set()
         transition = _prune_law(
-            law=law.regime_transitions,
+            law=law.transition,
             side=None,
             regime_name=regime_name,
             regime=regime,
@@ -173,7 +173,7 @@ def _prune_regime_transition(
             protected=protected,
         )
         removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=law.regime_transitions, side=side)
+            side: _targets(law=law.transition, side=side)
             - _targets(law=transition, side=side)
             for side in ("solve", "simulate")
         }

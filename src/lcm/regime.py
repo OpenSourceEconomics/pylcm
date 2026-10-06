@@ -12,7 +12,7 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, Self, cast
+from typing import Any, ClassVar, Literal, cast
 
 from beartype import beartype
 
@@ -61,7 +61,7 @@ class Regime:
     Movement between regimes is declared only in `Model(edges=...)`: a source
     with one outgoing edge per age moves along it, and a `Transition` carries
     the law wherever an age has several. A regime with no outgoing edges is
-    terminal. `Regime` takes no `regime_transitions`.
+    terminal.
 
     """
 
@@ -361,17 +361,6 @@ class Regime:
     Only collective regimes that also declare `value_constraints` may declare
     references.
     """
-
-    def __new__(cls, *args: object, **kwargs: object) -> Self:  # noqa: ARG004
-        if "regime_transitions" in kwargs:
-            raise RegimeInitializationError(
-                "`Regime` takes no `regime_transitions`. Declare every regime "
-                "transition in `Model(edges=...)`: map a source to "
-                "`{target: source_ages}` where it has one destination per age, or "
-                "to `Transition(targets=..., law=...)` where a law chooses among "
-                "several. A regime without outgoing edges is terminal."
-            )
-        return super().__new__(cls)
 
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""

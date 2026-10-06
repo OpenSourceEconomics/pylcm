@@ -183,7 +183,7 @@ def resolve_regime_schedules(
         RegimeName, MappingProxyType[int, NonterminalLaw]
     ] = {}
     for name, regime_law in laws.items():
-        transition = regime_law.regime_transitions
+        transition = regime_law.transition
         if transition is None:
             coverage[name] = all_periods
             continue

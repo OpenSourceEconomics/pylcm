@@ -236,7 +236,7 @@ def test_law_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
         regimes={"regime": Regime(functions={"utility": lambda: 0.0})},
         laws={"regime": law},
     )
-    assert law.regime_transitions is transition
+    assert law.transition is transition
 
 
 def test_until_rejects_a_stop_age_without_a_predecessor() -> None:

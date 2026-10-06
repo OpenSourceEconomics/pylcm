@@ -321,9 +321,9 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    transition = law.regime_transitions
+    transition = law.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
-        varied.append("regime_transitions")
+        varied.append("transition")
 
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:

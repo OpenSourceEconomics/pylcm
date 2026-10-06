@@ -43,7 +43,7 @@ type DecomposedTransition = (
 class RegimeLaw:
     """The law that moves a source regime's subjects to their next regime."""
 
-    regime_transitions: object
+    transition: object
     """The bound law, `None` for a terminal regime (no outgoing edges).
 
     Otherwise one of:
@@ -69,7 +69,7 @@ class RegimeLaw:
     @property
     def terminal(self) -> bool:
         """Whether the regime has no outgoing edges."""
-        return self.regime_transitions is None
+        return self.transition is None
 
     @property
     def decomposed_transition(self) -> DecomposedTransition:
@@ -83,15 +83,15 @@ class RegimeLaw:
         regime name, a `DeterministicTransition`) is read through its
         period-independent `declaration_view` first.
         """
-        return decompose_transition(_engine_view(self.regime_transitions))
+        return decompose_transition(_engine_view(self.transition))
 
     @property
     def validation_view(self) -> RegimeLaw:
         """The law in the period-independent vocabulary regime validation reads."""
-        view = _engine_view(self.regime_transitions)
-        if view is self.regime_transitions:
+        view = _engine_view(self.transition)
+        if view is self.transition:
             return self
-        return RegimeLaw(regime_transitions=view, gated_edges=self.gated_edges)
+        return RegimeLaw(transition=view, gated_edges=self.gated_edges)
 
 
 type RegimeLaws = Mapping[RegimeName, RegimeLaw]
@@ -123,14 +123,14 @@ def _unbound_law() -> int:
 
 
 # The law a regime is validated against before a model binds its own.
-UNBOUND_LAW = RegimeLaw(regime_transitions=_unbound_law)
+UNBOUND_LAW = RegimeLaw(transition=_unbound_law)
 
 
-def bind_regime_law(regime_transitions: object) -> RegimeLaw:
+def bind_regime_law(transition: object) -> RegimeLaw:
     """Validate a source's law and derive the gated edges it declares.
 
     Args:
-        regime_transitions: The law, `None` for a terminal regime.
+        transition: The law, `None` for a terminal regime.
 
     Returns:
         The law together with its gated edges.
@@ -141,19 +141,19 @@ def bind_regime_law(regime_transitions: object) -> RegimeLaw:
             declares a `ValueDependentTransition` outside a per-target mapping,
             or declares one gated edge differently in the two phases.
     """
-    if not is_bearable(regime_transitions, RegimeLawDeclaration):
+    if not is_bearable(transition, RegimeLawDeclaration):
         raise RegimeInitializationError(
             "A regime transition law is a regime name, a function or "
             "`DeterministicTransition` returning a regime code, a "
             "`StochasticTransition`, a per-target mapping of probabilities, or a "
-            f"`ByAge` or `Phased` of these; got {regime_transitions!r}."
+            f"`ByAge` or `Phased` of these; got {transition!r}."
         )
-    fail_if_phased_wraps_a_schedule(regime_transitions)
-    view = _engine_view(regime_transitions)
+    fail_if_phased_wraps_a_schedule(transition)
+    view = _engine_view(transition)
     gated_edges = _lower_value_dependent_transitions(view)
     _fail_if_a_gated_edge_has_no_target(transition=view, gated_edges=gated_edges)
     return RegimeLaw(
-        regime_transitions=regime_transitions,
+        transition=transition,
         gated_edges=ensure_containers_are_immutable(gated_edges),
     )
 

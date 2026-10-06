@@ -241,7 +241,7 @@ def _raw_transition_reads(source: str) -> list[ast.Attribute]:
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Attribute)
-        and node.attr in {"regime_transitions", "transition", "state_transitions"}
+        and node.attr in {"transition", "state_transitions"}
         and not (
             node.attr == "transition"
             and (
@@ -419,7 +419,7 @@ def test_fixed_probability_support_uses_exact_zero(
         laws={"source": bind_regime_law(law)},
         fixed_params={"probability": probability_value},
     )
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Mapping)
     assert set(transition) == ({"low"} if removes_edge else {"low", "high"})
     assert reduced.consumed_param_keys == (
@@ -488,7 +488,7 @@ def test_fixed_probability_retains_runtime_dependencies_without_evaluating(
         laws={"source": bind_regime_law(law)},
         fixed_params={"probability": 0.0},
     )
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -515,7 +515,7 @@ def test_fixed_probability_can_follow_constant_function_ancestors() -> None:
         laws={"source": bind_regime_law(law)},
         fixed_params={"source": {"helper": {"probability": 0.0}}},
     )
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low"}
     assert reduced.consumed_param_keys == frozenset({"source__helper__probability"})
@@ -540,7 +540,7 @@ def test_fixed_series_probability_retains_coordinate_dependent_support() -> None
             "probability": pd.Series([0.0, 1.0], index=pd.Index([0, 1], name="age"))
         },
     )
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -585,7 +585,7 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
         },
     )
     source = reduced.user_regimes["source"]
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     state_law = source.state_transitions["wealth"]
     assert isinstance(transition, Phased)
     assert isinstance(state_law, Phased)
@@ -616,7 +616,7 @@ def test_fixed_zero_mass_row_stays_available_to_probability_validation() -> None
         fixed_params={"probability": 0.0},
     )
     assert not reduced.laws["source"].terminal
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -644,7 +644,7 @@ def test_shared_probability_cell_follows_each_phases_helper_dag() -> None:
         laws={"source": bind_regime_law(law)},
         fixed_params={"probability": 0.0},
     )
-    transition = reduced.laws["source"].regime_transitions
+    transition = reduced.laws["source"].transition
     assert isinstance(transition, Phased)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}

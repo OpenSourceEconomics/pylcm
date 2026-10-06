@@ -104,7 +104,5 @@ class MockRegime(UserRegime):
             constraints=cast("dict[str, UserFunction]", self.constraints),
             functions=cast("dict[str, UserFunction]", self.functions),
         )
-        callable_law = (
-            law if law is not None and callable(law.regime_transitions) else None
-        )
+        callable_law = law if law is not None and callable(law.transition) else None
         return UserRegime.get_all_functions(normalized, phase, law=callable_law)

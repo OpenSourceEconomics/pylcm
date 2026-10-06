@@ -1,6 +1,6 @@
 """Every read of a regime's three declaring slots is accounted for, by name.
 
-`functions` and `constraints` on a regime, and `regime_transitions` on the law
+`functions` and `constraints` on a regime, and `transition` on the law
 the model graph binds for it, hold what a model author wrote,
 declarations included; `decomposed_functions`, `decomposed_constraints` and
 `decomposed_transition` hold what the engine runs. Which of the two a given
@@ -27,10 +27,10 @@ _LEDGER = pathlib.Path(__file__).parent / "regime_slot_read_ledger.csv"
 _SLOT_OF_ACCESSOR = {
     "functions": "functions",
     "constraints": "constraints",
-    "regime_transitions": "regime_transitions",
+    "transition": "transition",
     "decomposed_functions": "functions",
     "decomposed_constraints": "constraints",
-    "decomposed_transition": "regime_transitions",
+    "decomposed_transition": "transition",
 }
 
 # Receivers that name a regime or the law the model graph binds for one. `self`

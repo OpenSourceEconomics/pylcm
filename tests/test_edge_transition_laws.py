@@ -288,13 +288,3 @@ def test_phased_mapping_and_regime_vector_laws_are_rejected() -> None:
         (ModelInitializationError, RegimeInitializationError), match="matching forms"
     ):
         _model(edges=Phased(solve=LOTTERY_EDGES, simulate=vector_edges))
-
-
-def test_regime_rejects_regime_transitions() -> None:
-    """Regime laws are declared on the graph, never on the regime."""
-    declaration: dict[str, Any] = {
-        "regime_transitions": None,
-        "functions": {"utility": _bequest},
-    }
-    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
-        Regime(**declaration)

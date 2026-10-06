@@ -739,7 +739,7 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 
 
 # keyword-only-exempt: primary-argument=regime
@@ -748,9 +748,8 @@ def _project_user_regime_declaration(
 ) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
 
-    The regime's law joins its fields: its `regime_transitions` first and its
-    `gated_edges` before `same_period_refs`, where the record has always carried
-    them.
+    The regime's law joins its fields: its `transition` first and its
+    `gated_edges` before `same_period_refs`.
 
     A stored policy is priced against the solve-phase laws of motion and regime
     transition; the realized path after the action is chosen does not change
@@ -805,7 +804,7 @@ def _with_law_fields(
         for declaration in dataclasses.fields(law)
     }
     return (
-        ("regime_transitions", law_fields["regime_transitions"]),
+        ("transition", law_fields["transition"]),
         *own[:at],
         ("gated_edges", law_fields["gated_edges"]),
         *own[at:],

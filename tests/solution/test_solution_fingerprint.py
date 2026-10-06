@@ -939,7 +939,7 @@ def _phased_regime_declaration(
 ) -> MappingProxyType[str, object]:
     """Project a regime whose `slot` varies by phase only in its simulate member."""
     phased = Phased(solve=_solve_law, simulate=simulate)
-    law: object = phased if slot == "regime_transitions" else _solve_law
+    law: object = phased if slot == "transition" else _solve_law
     slots: dict[str, object] = {
         "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
         "state_transitions": {"wealth": _solve_law},
@@ -949,7 +949,7 @@ def _phased_regime_declaration(
         slots["state_transitions"] = {"wealth": phased}
     elif slot == "functions":
         slots["functions"] = {"utility": _terminal_utility, "helper": phased}
-    elif slot != "regime_transitions":
+    elif slot != "transition":
         raise AssertionError(slot)
     return fingerprints._project_user_regime_declaration(
         UserRegime(**slots),  # ty: ignore[invalid-argument-type]
@@ -957,7 +957,7 @@ def _phased_regime_declaration(
     )
 
 
-@pytest.mark.parametrize("slot", ["regime_transitions", "state_transitions"])
+@pytest.mark.parametrize("slot", ["transition", "state_transitions"])
 def test_simulate_truth_of_a_transition_slot_is_not_model_identity(slot: str) -> None:
     """Realized transitions govern the path after the action is chosen; a stored
     solution is priced against the solve-phase laws alone."""
