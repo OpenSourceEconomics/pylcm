@@ -50,7 +50,8 @@ from lcm.typing import (
 @categorical(ordered=False)
 class _Income:
     low: ScalarInt
-    mid: ScalarInt
+    lower_mid: ScalarInt
+    upper_mid: ScalarInt
     high: ScalarInt
 
 
@@ -86,7 +87,7 @@ class _RegimeId:
     final: ScalarInt
 
 
-_N_NODES = MappingProxyType({"income": 3, "bonus": 2, "health": 5, "pref": 7})
+_N_NODES = MappingProxyType({"income": 4, "bonus": 2, "health": 5, "pref": 7})
 _WEALTH = (0.0, 4.0, 5)
 _CONSUMPTION = (0.0, 1.5, 6)
 _DISCOUNT_FACTOR = 0.9
@@ -102,7 +103,14 @@ def _markov_rows(*, n: int, decay: float, tilt: float) -> np.ndarray:
 
 _TRANSITION_ROWS = MappingProxyType(
     {
-        "income": np.array([[0.6, 0.3, 0.1], [0.2, 0.5, 0.3], [0.1, 0.25, 0.65]]),
+        "income": np.array(
+            [
+                [0.5, 0.3, 0.15, 0.05],
+                [0.2, 0.45, 0.25, 0.1],
+                [0.1, 0.2, 0.5, 0.2],
+                [0.05, 0.1, 0.25, 0.6],
+            ]
+        ),
         "bonus": np.array([[0.7, 0.3], [0.45, 0.55]]),
         "health": _markov_rows(n=5, decay=0.8, tilt=0.15),
         "pref": _markov_rows(n=7, decay=0.5, tilt=-0.05),
@@ -575,8 +583,10 @@ def _array_shapes_of_the_pointwise_Q(
 def _carries_the_joint_node_extent(shape: tuple[int, ...]) -> bool:
     """Whether a per-subject array spans every draw's nodes at once.
 
-    With `income` read by the wealth law, the draws are `income` (3 nodes) and
-    `bonus`, `health`, `pref` (2, 5, 7 nodes), so their joint extent is 210.
+    With `income` read by the wealth law, the draws are `income` (4 nodes) and
+    `bonus`, `health`, `pref` (2, 5, 7 nodes), so their joint extent is 280. The
+    node counts are chosen so no other per-subject array — such as the three
+    marginal factors stacked per slice node — has an extent divisible by it.
     """
     joint = int(np.prod(list(_N_NODES.values())))
     rest = int(np.prod(shape)) // _N_SUBJECTS

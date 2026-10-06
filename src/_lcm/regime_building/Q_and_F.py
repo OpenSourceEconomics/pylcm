@@ -3522,15 +3522,11 @@ class _ExpectationOverSliceDraws:
             slice_draws=self.slice_draws,
         )
         nodes = (codes, weights, scale - on_the_weight)
-        # The first node's term seeds the sum, so the running total carries
-        # exactly the type every later term has — including how it varies
-        # across a mapped device axis — rather than a zero's.
+        # The sum starts at a zero shaped like one node's term, so it carries
+        # the type every term has — including how it varies across a mapped
+        # device axis. Only the term's type is read; its value is discarded.
         first, _ = add_node(None, jax.tree_util.tree_map(operator.itemgetter(0), nodes))
-        numerator, _ = jax.lax.scan(
-            add_node,
-            first,
-            jax.tree_util.tree_map(operator.itemgetter(slice(1, None)), nodes),
-        )
+        numerator, _ = jax.lax.scan(add_node, jnp.zeros_like(first), nodes)
         return numerator / mass
 
 
