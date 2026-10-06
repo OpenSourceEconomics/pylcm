@@ -27,8 +27,6 @@ from tests.test_models.processes import (
 
 _N_PERIODS = 6
 _CELL_AXIS = "cell"
-# The leaf whose low-income, bad-health entries are born by cancellation.
-_CANCELLATION_LEAF = (2, "work")
 
 
 def _base_model() -> Model:
@@ -131,44 +129,70 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
     assert set(pinned_values) == set(planned_values)
     for period, by_regime in planned_values.items():
         for regime_name, expected in by_regime.items():
-            got = pinned_values[period][regime_name]
-            err_msg = f"{regime_name} period {period}"
-            if (period, regime_name) == _CANCELLATION_LEAF:
-                flow, continuation = _bellman_operands(
-                    values=planned_values, period=period
-                )
-                _assert_within_operand_rounding_bound(
-                    got=got,
-                    expected=expected,
-                    flow=flow,
-                    continuation=continuation,
-                    n_ulp=8,
-                    err_msg=err_msg,
-                )
-            else:
-                assert_agrees_to_ulp(
-                    got=got, expected=expected, n_ulp=8, err_msg=err_msg
-                )
+            # A different cell width reorders the floating-point reductions
+            # that form each value, so an element moves by roundings of the
+            # operands it is summed from: the flow utility and the expected
+            # continuation. A value born by their cancellation can therefore
+            # move by many of its own steps while moving by a fraction of a
+            # step of either operand; the bound is taken from each element's
+            # own operands, never from a constant or another element.
+            flow, continuation = _bellman_operands(
+                values=planned_values, period=period, regime_name=regime_name
+            )
+            _assert_within_operand_rounding_bound(
+                got=pinned_values[period][regime_name],
+                expected=expected,
+                flow=flow,
+                continuation=continuation,
+                n_ulp=8,
+                err_msg=f"{regime_name} period {period}",
+            )
 
 
-def _bellman_operands(*, values: Any, period: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return the two terms whose sum is each work-regime value at `period`.
+def _continuation_regime(*, period: int) -> str:
+    """Return the regime a period-`period` value continues into.
 
-    The work regime's last period continues into retirement, so its value is
-    `V = u(c*) + E[V_retire(next period)]` with discount factor 1:
+    Mirrors the model's regime law, under which age equals the period.
+    """
+    final_ages: Any = _base_model().fixed_params
+    if period >= final_ages["retire_final_age"]:
+        return "dead"
+    if period >= final_ages["work_final_age"]:
+        return "retire"
+    return "work"
+
+
+def _bellman_operands(
+    *, values: Any, period: int, regime_name: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the two terms whose sum is each value of one leaf.
+
+    The terminal `dead` regime's value is its flow utility alone. Every other
+    leaf is `V = u(c*) + E[V_next(next period)]` with discount factor 1:
 
     - flow utility `u = log(c*) * (1 - 0.3 * (1 - health))`;
-    - continuation: the next-period retirement value at wealth `wealth - c*`,
-      linear in wealth (extrapolated below the grid), averaged over the
-      Gauss-Hermite income nodes and the two equally likely health states.
+    - continuation: the next-period value of the regime the law moves to, at
+      wealth `wealth - c*`, linear in wealth (extrapolated below the grid),
+      averaged over the Gauss-Hermite income nodes and the two equally likely
+      health states; zero when that regime is `dead`.
 
     The optimal consumption `c*` is found by enumerating the feasible
     consumption grid. Arrays are indexed `(income, health, wealth)` like the
-    value leaf. The reconstruction must reproduce the solved leaf and pick a
-    strict maximizer, or the operands are not the ones the solver summed.
+    value leaf. The reconstruction must reproduce the solved leaf, or the
+    operands are not the ones the solver summed. Where several consumption
+    choices attain the solved value within the reconstruction tolerance, each
+    operand takes its largest magnitude among them, since the solver summed
+    one of them.
     """
-    leaf = np.asarray(values[period]["work"])
-    following = np.asarray(values[period + 1]["retire"], dtype=np.float64)
+    leaf = np.asarray(values[period][regime_name])
+    if regime_name == "dead":
+        return leaf, np.zeros(leaf.shape)
+    target = _continuation_regime(period=period)
+    following = (
+        np.zeros((5, 2, 5))
+        if target == "dead"
+        else np.asarray(values[period + 1][target], dtype=np.float64)
+    )
     wealth = np.linspace(1.0, 5.0, 5)
     consumption = np.linspace(0.1, 2.0, 4)
     nodes, weights = np.polynomial.hermite_e.hermegauss(5)
@@ -194,11 +218,11 @@ def _bellman_operands(*, values: Any, period: int) -> tuple[np.ndarray, np.ndarr
                 for next_health in (0, 1)
             )
             candidates.append((utility + expected_next, utility, expected_next))
-        candidates.sort(reverse=True)
-        assert abs(candidates[0][0] - solved) <= tolerance
-        assert len(candidates) == 1 or candidates[0][0] - candidates[1][0] > tolerance
-        flow[income, health, wealth_index] = candidates[0][1]
-        continuation[income, health, wealth_index] = candidates[0][2]
+        best = max(total for total, _, _ in candidates)
+        assert abs(best - solved) <= tolerance
+        attaining = [c for c in candidates if best - c[0] <= tolerance]
+        flow[income, health, wealth_index] = max(abs(c[1]) for c in attaining)
+        continuation[income, health, wealth_index] = max(abs(c[2]) for c in attaining)
     return flow, continuation
 
 
