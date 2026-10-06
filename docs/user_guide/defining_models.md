@@ -22,19 +22,22 @@ model = Model(
     regimes=regimes,  # dict mapping names to Regime instances
     ages=ages,  # AgeGrid defining the lifecycle timeline
     regime_id_class=RegimeId,  # @categorical dataclass mapping names to ScalarInt indices
-    initial_regimes={25: "working"},  # admissible starting age-regime pairs
+    edges=edges,  # source → destination → source ages
+    initial_nodes=((25, "working"),),  # admissible starting pairs
     enable_jit=True,  # controls JAX compilation (default: True)
     fixed_params={},  # optional params baked in at init time
     description="",  # optional description string
 )
 ```
 
-All arguments are keyword-only. The four required arguments are `regimes`, `ages`,
-`regime_id_class` and `initial_regimes`. `initial_regimes` maps age selectors to regime
-names and declares the admissible starting problems; there is no default. The solved
-problems are derived from these roots, see [Age-indexed regimes](dated_regime_graph.md).
-The finalized regimes are stored as `model.user_regimes` (plain `Regime` instances in
-user vocabulary); the processed canonical form is the engine-internal `model._regimes`.
+All arguments are keyword-only. The five required arguments are `regimes`, `ages`,
+`regime_id_class`, `edges` and `initial_nodes`. `edges` maps source regimes to
+destinations and their source-age selectors. Prefer explicit initial pairs such as
+`((25, "working"),)`; selector-to-name mappings remain a convenience. There is no
+default. The solved problems are derived from these roots, see
+[Age-indexed regimes](dated_regime_graph.md). The finalized regimes are stored as
+`model.user_regimes` (plain `Regime` instances in user vocabulary); the processed
+canonical form is the engine-internal `model._regimes`.
 
 ## Model-Level Regime Slots
 
@@ -48,7 +51,8 @@ model = Model(
     regimes={"working": working, "retired": retired, "dead": dead},
     ages=ages,
     regime_id_class=RegimeId,
-    initial_regimes=initial_regimes,
+    edges=edges,
+    initial_nodes=initial_nodes,
     functions={"taxes": taxes, "net_income": net_income},
     constraints={"budget": budget_constraint},
     states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=50)},
@@ -131,7 +135,7 @@ The `ages` argument defines the lifecycle timeline. There are two construction m
 ```python
 from lcm import AgeGrid
 
-ages = AgeGrid(start=25, stop=75, step="Y")  # annual steps, ages 25 to 75
+ages = AgeGrid(start=25, inclusive_stop=75, step="Y")  # annual steps, ages 25 to 75
 ```
 
 Step formats:
@@ -142,7 +146,8 @@ Step formats:
 - `"M"` — month (1/12 year)
 - `"3M"` — 3 months
 
-The `stop` value is inclusive if `(stop - start)` is exactly divisible by the step size.
+The `inclusive_stop` value belongs to the grid; `(inclusive_stop - start)` must be
+exactly divisible by the step size.
 
 ### Exact values
 
@@ -164,18 +169,25 @@ Use this for irregular age spacing.
 
 The `Model` constructor validates:
 
-- At least one terminal regime and one non-terminal regime must be provided.
+- At least one terminal regime must be provided; terminal-only starts need no
+  non-terminal regime.
 - Regime names cannot contain `__` (reserved separator).
 - `regime_id_class` fields must exactly match the `regimes` dict keys.
 - All states and actions must be used by at least one function (utility, constraints, or
   transitions).
-- The age grid must have at least 2 periods.
+- The age grid must be nonempty; every outgoing edge must have a next grid coordinate.
+- Required `edges` and `initial_nodes` must name known regimes and exact admissible
+  ages.
 
 ## Inspecting a Model
 
 After construction, the model exposes several useful attributes:
 
 ```python
+model.graph.edges.solve  # declared perceived source-age support
+model.graph.solution  # effective perceived graph, indexed by period
+model.graph.nodes  # valued age–regime pairs
+model.graph.visited_nodes  # realized reachable age–regime pairs
 model.user_regimes  # immutable mapping of finalized `Regime` objects
 model.pruned_variables  # per regime, the broadcast names pruned by DAG reachability
 model.n_periods  # number of periods
@@ -190,7 +202,15 @@ Use `model.get_params_template()` to get a mutable copy of the parameter templat
 
 ```python
 import jax.numpy as jnp
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import ScalarInt
 
 
@@ -210,9 +230,11 @@ def next_wealth(*, wealth, consumption, interest_rate):
     return (wealth - consumption) * (1 + interest_rate)
 
 
-def next_regime(labor_supply):
+def next_regime(*, labor_supply, age):
     return jnp.where(
-        labor_supply == LaborSupply.work, RegimeId.working, RegimeId.retired
+        (age < 74) & (labor_supply == LaborSupply.work),
+        RegimeId.working,
+        RegimeId.retired,
     )
 
 
@@ -249,9 +271,15 @@ retired = Regime(
 
 model = Model(
     regimes={"working": working, "retired": retired},
-    ages=AgeGrid(start=25, stop=75, step="Y"),
+    ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
     regime_id_class=RegimeId,
-    initial_regimes={25: "working"},
+    edges={
+        "working": {
+            "working": AgeRange(start=25, exclusive_stop=74),
+            "retired": AgeRange(start=25, exclusive_stop=75),
+        }
+    },
+    initial_nodes=((25, "working"),),
 )
 ```
 

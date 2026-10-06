@@ -17,9 +17,11 @@ the parity oracle.
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -186,7 +188,9 @@ def build_negm_model() -> Model:
         },
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 5,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -216,11 +220,17 @@ def build_negm_model() -> Model:
         ),
     )
     return Model(
+        edges={
+            "alive": {
+                "alive": tuple(range(20, FINAL_AGE_ALIVE, 5)),
+                "dead": tuple(range(20, FINAL_AGE_ALIVE + 1, 5)),
+            },
+        },
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 
@@ -283,16 +293,24 @@ def build_brute_model() -> Model:
         },
         regime_transitions=until_exit(
             FINAL_AGE_ALIVE + 5,
-            law=Choose(func=next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": utility_brute},
         constraints={"feasible": feasible_brute},
     )
     return Model(
+        edges={
+            "alive": {
+                "alive": tuple(range(20, FINAL_AGE_ALIVE, 5)),
+                "dead": tuple(range(20, FINAL_AGE_ALIVE + 1, 5)),
+            },
+        },
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )

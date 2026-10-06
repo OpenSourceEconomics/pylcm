@@ -26,9 +26,11 @@ from typing import Literal
 import jax.numpy as jnp
 
 from _lcm.grids import ContinuousGrid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -48,6 +50,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 MIN_AGE = 20
@@ -216,7 +219,7 @@ def _working_life(
     brute = UserRegime(
         regime_transitions=until_exit(
             LAST_ALIVE_AGE + 1,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=next_regime_from_working,
                 targets=(
                     "working_life",
@@ -273,7 +276,7 @@ def _retirement(
     brute = UserRegime(
         regime_transitions=until_exit(
             LAST_ALIVE_AGE + 1,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=next_regime_from_retirement, targets=("retirement", "done_retired")
             ),
             exits=("done_retired",),
@@ -313,16 +316,16 @@ def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
     """Build the twin model for the requested solver variant."""
     if solver == "dcegm":
         return build_dcegm_model()
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": _working_life(solver),
             "retirement": _retirement(solver),
             "done_from_working": done_from_working,
             "done_retired": done_retired,
         },
-        ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
-        initial_regimes={20: ("working_life", "retirement")},
+        initial_nodes={20: ("working_life", "retirement")},
     )
 
 
@@ -342,16 +345,16 @@ def build_dcegm_model(
     solver = dataclasses.replace(DCEGM_SOLVER, savings_grid=savings_grid)
     if envelope is not None:
         solver = dataclasses.replace(solver, envelope=envelope)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": _working_life("dcegm").replace(solver=solver),
             "retirement": _retirement("dcegm").replace(solver=solver),
             "done_from_working": done_from_working,
             "done_retired": done_retired,
         },
-        ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
-        initial_regimes={20: ("working_life", "retirement")},
+        initial_nodes={20: ("working_life", "retirement")},
     )
 
 

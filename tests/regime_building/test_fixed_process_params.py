@@ -17,14 +17,15 @@ import pytest
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import ScalarFloat, ScalarInt, UserParams
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
@@ -65,12 +66,12 @@ def _entered_process_model(*, at_construction: bool) -> Model:
     """Build a source whose only target carries a process the source lacks."""
     process = _process(at_construction=at_construction)
     fixed_params = {} if at_construction else {"target": {"shock": _PROCESS_LAW}}
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_one_probability)},
+                    law={"target": StochasticTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -81,12 +82,12 @@ def _entered_process_model(*, at_construction: bool) -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -134,12 +135,12 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
                 "target": {"shock": _PROCESS_LAW},
             }
         )
-        return Model(
+        return with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(func=_one_probability)},
+                        law={"target": StochasticTransition(func=_one_probability)},
                         exits=("target",),
                     ),
                     states={"shock": process},
@@ -151,12 +152,12 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
                     functions={"utility": _shock_utility},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
             fixed_params=fixed_params,
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
     from_construction = (
@@ -179,12 +180,12 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
 
 def _model_with_law_value(value: Any) -> Model:
     """Build the entered-process model with one law field set to `value`."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_one_probability)},
+                    law={"target": StochasticTransition(func=_one_probability)},
                     exits=("target",),
                 ),
                 functions={"utility": _zero_utility},
@@ -195,14 +196,14 @@ def _model_with_law_value(value: Any) -> Model:
                 functions={"utility": _shock_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=cast(
             "UserParams", {"target": {"shock": _PROCESS_LAW | {"mu": value}}}
         ),
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

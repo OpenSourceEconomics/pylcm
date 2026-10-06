@@ -434,3 +434,70 @@ def test_the_export_manifest_names_every_registered_ffi_target():
     that export, and no test comparing either manifest to itself can see it.
     """
     assert set(hatch_build.EXACT_AFFINE_HANDLER_SYMBOLS) == set(ffi._TARGETS)
+
+
+@pytest.mark.parametrize("executable", [None, "/owned/example/compiler"])
+def test_tool_version_preserves_report_and_absent_tool(
+    *, monkeypatch: pytest.MonkeyPatch, executable: str | None
+) -> None:
+    """Preserve the exact version report and avoid probing an absent tool."""
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def record_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(((command,), kwargs))
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=7,
+            stdout=" compiler v1 \n",
+            stderr=" diagnostic \n",
+        )
+
+    monkeypatch.setattr(hatch_build.subprocess, "run", record_run)
+
+    report = hatch_build._tool_version(executable)
+
+    if executable is None:
+        assert (report, calls) == (None, [])
+    else:
+        assert (report, calls) == (
+            "exit=7\ncompiler v1\ndiagnostic",
+            [
+                (
+                    ([executable, "--version"],),
+                    {
+                        "capture_output": True,
+                        "text": True,
+                        "check": False,
+                        "timeout": 10,
+                    },
+                )
+            ],
+        )
+
+
+def test_tool_version_propagates_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Propagate a timed-out probe instead of reporting unavailable metadata."""
+    command = ["/owned/example/compiler", "--version"]
+    timeout = subprocess.TimeoutExpired(cmd=command, timeout=10)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def record_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(((command,), kwargs))
+        raise timeout
+
+    monkeypatch.setattr(hatch_build.subprocess, "run", record_run)
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        hatch_build._tool_version(command[0])
+
+    assert caught.value is timeout
+    assert calls == [
+        (
+            (command,),
+            {"capture_output": True, "text": True, "check": False, "timeout": 10},
+        )
+    ]

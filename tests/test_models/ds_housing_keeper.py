@@ -41,15 +41,17 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -65,6 +67,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Number of model periods; the last one is spent in the terminal `dead` regime.
@@ -244,14 +247,16 @@ DCEGM_SOLVER = DCEGM(
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 def _keeper_transitions() -> ByAge:
     """Keep the house until the final living age, then die."""
     return until_exit(
         40 + (N_PERIODS - 1) * 10,
-        law=Choose(func=next_regime, targets=("keeper", "dead")),
+        law=_SupportedDeterministicTransition(
+            func=next_regime, targets=("keeper", "dead")
+        ),
         exits=("dead",),
     )
 
@@ -279,7 +284,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             state_transitions={
                 "liquid_assets": next_liquid_assets_brute,
                 "housing": fixed_transition("housing"),
-                "income": MarkovTransition(func=income_transition),
+                "income": StochasticTransition(func=income_transition),
             },
             constraints={"borrowing_constraint": borrowing_constraint},
             functions={
@@ -298,7 +303,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
         state_transitions={
             "liquid_assets": next_liquid_assets,
             "housing": fixed_transition("housing"),
-            "income": MarkovTransition(func=income_transition),
+            "income": StochasticTransition(func=income_transition),
         },
         functions={
             "utility": utility,
@@ -323,11 +328,11 @@ def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
     A single non-terminal keeper regime — DC-EGM or its brute-force twin — plus
     the shared terminal `dead` regime.
     """
-    return Model(
+    return with_fixture_graph(
         regimes={"keeper": build_working_regime(variant), "dead": dead},
         ages=_ages(),
         regime_id_class=HousingKeeperRegimeId,
-        initial_regimes={40: "keeper"},
+        initial_nodes={40: "keeper"},
     )
 
 

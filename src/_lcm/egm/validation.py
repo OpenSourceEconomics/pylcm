@@ -84,7 +84,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
-from lcm.transition import ByAge, Choose, MarkovTransition
+from lcm.transition import ByAge, DeterministicTransition, StochasticTransition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, ScalarFloat, UserFunction
 
 # Shrink threshold of the node-resolution continuity spot check. Within one
@@ -131,7 +131,7 @@ def savings_stage_reads_euler_state(
     """Whether any savings-stage function reads the current Euler state.
 
     Runs the opaque-post-decision ancestor check (`Phased` resolved to the
-    solve side, per-target cells unpacked, `MarkovTransition` weights
+    solve side, per-target cells unpacked, `StochasticTransition` weights
     unwrapped) over every savings-stage function: the Euler state's law, the
     regime transition, and the non-Euler state transitions. The kernel
     builder uses the result to switch to the per-exogenous-asset-node solve
@@ -648,9 +648,9 @@ def _fail_if_passive_state_invalid(
             # Transition coverage is validated when the effective regimes are
             # built; a missing entry gets its own error there.
             continue
-        is_stochastic = isinstance(value, MarkovTransition) or (
+        is_stochastic = isinstance(value, StochasticTransition) or (
             isinstance(value, Mapping)
-            and any(isinstance(v, MarkovTransition) for v in value.values())
+            and any(isinstance(v, StochasticTransition) for v in value.values())
         )
         if is_stochastic:
             msg = (
@@ -690,9 +690,9 @@ def _fail_if_euler_transition_stochastic(
 ) -> None:
     """The Euler state's transition must be deterministic."""
     value = user_regime.state_transitions.get(solver.continuous_state)
-    is_stochastic = isinstance(value, MarkovTransition) or (
+    is_stochastic = isinstance(value, StochasticTransition) or (
         isinstance(value, Mapping)
-        and any(isinstance(v, MarkovTransition) for v in value.values())
+        and any(isinstance(v, StochasticTransition) for v in value.values())
     )
     if is_stochastic:
         msg = (
@@ -814,7 +814,7 @@ def _savings_stage_candidates(
 ) -> list[tuple[str, str, UserFunction]]:
     """Enumerate every savings-stage function variant of a regime.
 
-    Coarse, `MarkovTransition`-wrapped, `Phased`, and granular per-target
+    Coarse, `StochasticTransition`-wrapped, `Phased`, and granular per-target
     forms all unpack to plain callables via `_transition_variants`.
 
     Args:
@@ -1494,7 +1494,8 @@ def _transition_variants(
     """Unpack a `state_transitions` entry into labeled callables.
 
     Handles bare callables, `Phased` containers (solve variant),
-    `MarkovTransition` and `Choose` wrappers (unwrapped to their function),
+    `StochasticTransition` and `DeterministicTransition` wrappers (unwrapped to
+    their function),
     per-target dicts (one entry per target regime), and `ByAge` schedules
     (every law the schedule may select). A callable lowered from a schedule
     reads the model period to pick its case, so it is unpacked into the laws
@@ -1528,14 +1529,14 @@ def _declared_transition_variants(
         ]
     if isinstance(value, Phased):
         value = value.solve
-    if isinstance(value, MarkovTransition | Choose):
+    if isinstance(value, StochasticTransition | DeterministicTransition):
         return [("", cast("UserFunction", value.func))]
     if isinstance(value, Mapping):
         variants: list[tuple[str, UserFunction]] = []
         for target_name, target_value in value.items():
             func = (
                 target_value.func
-                if isinstance(target_value, MarkovTransition)
+                if isinstance(target_value, StochasticTransition)
                 else target_value
             )
             variants.append((f" (target '{target_name}')", cast("UserFunction", func)))

@@ -40,7 +40,7 @@ _EXPECTED_V_PER_SUBJECT = (10.0, 0.0)
 
 def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     """Simulate the stateless collective regime and return its period-0 data."""
-    ages = AgeGrid(start=0, stop=1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     regimes_dict = _make_stateless_collective_regime()
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)

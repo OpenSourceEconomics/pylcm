@@ -43,38 +43,47 @@ def _is_integer_valued(value: int | Fraction) -> bool:
 def _validate_age_grid(
     *,
     start: UserAge | None,
-    stop: UserAge | None,
+    inclusive_stop: UserAge | None,
     step: AgeStep | None,
     exact_values: Iterable[UserAge] | None,
 ) -> None:
     error_messages: list[str] = []
 
-    has_range = start is not None or stop is not None or step is not None
+    has_range = start is not None or inclusive_stop is not None or step is not None
     has_values = exact_values is not None
 
     if has_values and has_range:
-        error_messages.append("Cannot specify both 'values' and 'start/stop/step'.")
+        error_messages.append(
+            "Cannot specify both 'values' and 'start/inclusive_stop/step'."
+        )
     elif exact_values is not None:
         error_messages.extend(_validate_values(exact_values))
     elif has_range:
-        if start is None or stop is None or step is None:
+        if start is None or inclusive_stop is None or step is None:
             error_messages.append(
-                "When using range, all of 'start', 'stop', 'step' must be provided."
+                "When using range, all of 'start', 'inclusive_stop', 'step' "
+                "must be provided."
             )
         else:
-            error_messages.extend(_validate_range(start=start, stop=stop, step=step))
+            error_messages.extend(
+                _validate_range(start=start, inclusive_stop=inclusive_stop, step=step)
+            )
     else:
-        error_messages.append("Must specify 'values' or 'start/stop/step'.")
+        error_messages.append("Must specify 'values' or 'start/inclusive_stop/step'.")
 
     if error_messages:
         raise GridInitializationError(format_messages(error_messages))
 
 
-def _validate_range(*, start: UserAge, stop: UserAge, step: AgeStep) -> list[str]:
+def _validate_range(
+    *, start: UserAge, inclusive_stop: UserAge, step: AgeStep
+) -> list[str]:
     errors: list[str] = []
 
-    if start >= stop:
-        errors.append(f"'start' ({start}) must be less than 'stop' ({stop}).")
+    if start >= inclusive_stop:
+        errors.append(
+            f"'start' ({start}) must be less than 'inclusive_stop' ({inclusive_stop})."
+        )
 
     if start < 0:
         errors.append(f"'start' must be non-negative, got {start}.")
@@ -90,7 +99,7 @@ def _validate_range(*, start: UserAge, stop: UserAge, step: AgeStep) -> list[str
         if isinstance(exact_step_size, int)
         else exact_step_size
     )
-    range_fraction = Fraction(stop) - Fraction(start)
+    range_fraction = Fraction(inclusive_stop) - Fraction(start)
     n_steps = range_fraction / step_fraction + 1
     if n_steps.denominator != 1:
         errors.append(

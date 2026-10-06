@@ -13,22 +13,24 @@ small-integer expression rather than a tolerance-bounded approximation.
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     CollectiveUtility,
     LinSpacedGrid,
-    Model,
     Regime,
     categorical,
 )
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 DISCOUNT_FACTOR = 0.95
 
-AGES = AgeGrid(start=0, stop=2, step="Y")
+AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 CONSUMPTION_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
 
@@ -85,7 +87,9 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_couple_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={},
@@ -106,11 +110,11 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values
@@ -138,7 +142,9 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_couple_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_couple_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={},
@@ -159,11 +165,11 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values

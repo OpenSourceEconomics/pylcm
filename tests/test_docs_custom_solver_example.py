@@ -16,8 +16,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Regime,
+    categorical,
+)
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PAGE = Path(__file__).parents[1] / "docs" / "reference" / "custom_solvers.md"
@@ -96,12 +105,14 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     documented: dict[str, Any],
 ) -> None:
     """Every alive period's value equals the regime's own wealth grid."""
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law=Choose(func=_next_regime, targets=("alive", "dead")),
+                    law=_SupportedDeterministicTransition(
+                        func=_next_regime, targets=("alive", "dead")
+                    ),
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},
@@ -115,9 +126,9 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
                 functions={"utility": _terminal_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "alive"},
+        initial_nodes={0: "alive"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
 

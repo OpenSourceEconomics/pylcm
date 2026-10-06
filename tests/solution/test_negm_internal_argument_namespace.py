@@ -9,7 +9,10 @@ import numpy as np
 import pytest
 from dags import rename_arguments
 
-from lcm import AgeGrid, Choose, Model
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import AgeGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -18,6 +21,7 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from tests.test_models import negm_kinked_toy as toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -42,7 +46,9 @@ def _alive_regime_with_outer_node_named(
         },
         regime_transitions=until_exit(
             _FINAL_AGE_ALIVE + 5,
-            law=Choose(func=toy.next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=toy.next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         functions={
@@ -76,15 +82,15 @@ def _alive_regime_with_outer_node_named(
 
 
 def _model_with_outer_node_named(*, outer_node: str) -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": _alive_regime_with_outer_node_named(outer_node=outer_node),
             "dead": toy.build_dead_regime(),
         },
         regime_id_class=toy.RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": _FINAL_AGE_ALIVE},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

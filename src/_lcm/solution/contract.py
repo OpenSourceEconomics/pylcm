@@ -267,6 +267,14 @@ class SolverBuildContext:
     sharded_state_names: frozenset[StateName] = frozenset()
     """State axes assigned to devices by the model's execution configuration."""
 
+    action_partitions: int = 1
+    """Devices sharing this regime's action product; one when it is not shared.
+
+    Set from `ExecutionConfig.action_partitions`. Above one, the regime's mesh
+    carries a trailing action axis of this size, and a solver serving the
+    request reduces each device's run of the action product separately.
+    """
+
     axis_widths: MappingProxyType[str, int] = MappingProxyType({})
     """Immutable mapping of execution axis name to the width it is fixed at.
 
@@ -350,12 +358,24 @@ class SolverBuildContext:
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None
-    """Immutable mapping of period to each regime's age-specialized grid signature.
+    """Immutable mapping of period to each regime's age-specialization signature.
 
-    The user's own `AgeSpecializedGrid.signature(age)` values, so a solver that
-    groups periods into shared compiled programs can fold its targets' signatures
-    at `period + 1` into the group key. Periods whose continuation grids differ
-    then never share a trace. `None` when no regime has an age-specialized state.
+    The user's own `AgeSpecializedGrid.signature(age)` values, joined by the
+    `AgeSpecializedFunction.signature(age)` values of a regime declaring a function
+    marker, so a solver that groups periods into shared compiled programs can fold
+    its targets' signatures at `period + 1` into the group key. Periods whose
+    continuation grids or target functions differ then never share a trace. `None`
+    when no regime declares an age marker.
+    """
+
+    period_to_user_regimes: MappingProxyType[int, UserRegimesMapping] | None = None
+    """Immutable mapping of period to every regime's declaration at that period.
+
+    Each regime's `AgeSpecializedFunction`s and `AgeSpecializedGrid`s are resolved
+    at the period; a regime declaring none, or inactive there, keeps its
+    representative declaration. A period-`t` kernel reading a target's own DAG
+    (its resources map) reads the target at `t + 1`. `None` when no regime
+    declares an age marker.
     """
 
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
@@ -400,6 +420,16 @@ class SolverBuildContext:
 
     Each entry maps a regime name to `0` (its value-function leaf carries that state —
     slice it) or `None` (the state is pruned from that regime — pass the leaf through).
+    """
+
+    invariant_bindings: tuple[StateName, ...] = ()
+    """Invariant states this regime's solve evaluates one code at a time.
+
+    Set from `ExecutionConfig.invariant_block_widths` for a non-terminal regime
+    carrying a blocked state on a discrete grid. The solve-phase `Q_and_F`
+    reads the continuation of each such state at the evaluated code, so a
+    program bound to one code reads only that code's block of every
+    continuation carrying the state. Empty when nothing is blocked.
     """
 
     stakeholders: tuple[str, ...] | None = None
@@ -473,7 +503,18 @@ class SolverBuildContext:
             states=self.state_action_space.states,
             fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
+            action_partitions=self.action_partitions,
         )
+
+    def user_regimes_at(self, *, period: int) -> UserRegimesMapping:
+        """Return every regime's declaration with its age markers resolved at `period`.
+
+        The representative declarations when no regime declares an age marker
+        active at `period`.
+        """
+        if self.period_to_user_regimes is None:
+            return self.user_regimes
+        return self.period_to_user_regimes.get(period, self.user_regimes)
 
 
 @dataclass(frozen=True, kw_only=True)

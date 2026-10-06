@@ -109,17 +109,6 @@ class _FakeModernBenchmark:
         self.calls.append("execute_for_measurement")
 
 
-class _FakeAsvNativeBenchmark:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def setup_for_gpu_measurement(self) -> None:
-        self.calls.append("setup_for_gpu_measurement")
-
-    def time_execution(self) -> None:
-        self.calls.append("time_execution")
-
-
 def test_gpu_peak_measured_call_prefers_execute_for_measurement() -> None:
     """A benchmark on the modern one-cold-call protocol is not asked for
     `time_execution`, the ASV-native name it no longer has (regression:
@@ -129,16 +118,6 @@ def test_gpu_peak_measured_call_prefers_execute_for_measurement() -> None:
     _gpu_mem._run_gpu_peak_measured_call(benchmark)
 
     assert benchmark.calls == ["setup_for_gpu_measurement", "execute_for_measurement"]
-
-
-def test_gpu_peak_measured_call_falls_back_to_time_execution() -> None:
-    """A benchmark still on the ASV-native pattern (no
-    `execute_for_measurement`) is measured via `time_execution`."""
-    benchmark = _FakeAsvNativeBenchmark()
-
-    _gpu_mem._run_gpu_peak_measured_call(benchmark)
-
-    assert benchmark.calls == ["setup_for_gpu_measurement", "time_execution"]
 
 
 def test_subprocess_env_disables_autotuning():
@@ -158,6 +137,13 @@ def test_subprocess_env_drops_mem_fraction():
     """The subprocess gets full GPU memory: the MEM_FRACTION cap is removed."""
     env = _subprocess_env({"XLA_PYTHON_CLIENT_MEM_FRACTION": "0.3"})
     assert "XLA_PYTHON_CLIENT_MEM_FRACTION" not in env
+
+
+def test_subprocess_env_preallocates_even_when_the_parent_does_not():
+    """The subprocess preallocates its pool, as production does, so pylcm's default
+    device-memory budget is admitted there whatever the ASV parent sets."""
+    env = _subprocess_env({"XLA_PYTHON_CLIENT_PREALLOCATE": "false"})
+    assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
 
 
 def test_gpu_mem_imports_on_a_host_without_resource_module():
@@ -290,7 +276,7 @@ def test_gpu_memory_profile_rejects_reused_child_pid(
         assert text
         assert not check
         assert cwd == _PROJECT_ROOT
-        assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+        assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
         phase = command[command.index("--profile-phase") + 1]
         if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
             archive_path = Path(command[command.index("--archive") + 1])
@@ -748,3 +734,13 @@ def test_default_budget_kwargs_leave_a_revision_without_the_device_default(
     monkeypatch.delattr(lcm, "ExecutionConfig")
 
     assert _gpu_mem.default_budget_execution_kwargs() == {}
+
+
+def test_helpers_carry_no_asv_benchmark_prefix() -> None:
+    """ASV runs every module-level function named like a benchmark, helpers too."""
+    prefixes = ("time_", "timeraw_", "mem_", "peakmem_", "track_")
+    assert [
+        name
+        for name, obj in vars(_gpu_mem).items()
+        if callable(obj) and name.startswith(prefixes)
+    ] == []

@@ -24,6 +24,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     DissolutionRegimeId,
     _make_dissolution_regimes,
 )
+from tests.test_models.graph import with_fixture_graph
 
 #: Every parameter this model consumes, as `regime__function__parameter`. A
 #: gated edge contributes a branch per target — the gate, one fallback
@@ -53,11 +54,11 @@ _N_LIVE_PERIODS = 3
 
 def _make_model() -> Model:
     """Build the dissolution model for call-time simulation populations."""
-    return Model(
+    return with_fixture_graph(
         regimes=_make_dissolution_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
     )
 
 

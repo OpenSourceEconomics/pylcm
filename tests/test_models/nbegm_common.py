@@ -27,11 +27,12 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    AgeSpecializedGrid,
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
     liquid_law_from_resources,
     liquid_law_from_savings,
@@ -40,6 +41,7 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -152,7 +154,7 @@ def make_alive_dead_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     constraints: Mapping[str, Callable[..., object]],
     extra_actions: Mapping[str, Grid] | None = None,
-    extra_states: Mapping[str, Grid] | None = None,
+    extra_states: Mapping[str, Grid | AgeSpecializedGrid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
@@ -200,7 +202,7 @@ def make_alive_dead_model(
         The assembled `Model`.
 
     """
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = ages.exact_values[-1]
     if liquid_grid is None:
         liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
@@ -225,14 +227,14 @@ def make_alive_dead_model(
         if survival_transition is not None
         else ByAge.until(
             stop_age_exclusive=final_age,
-            law={"alive": MarkovTransition(func=prob_stay_alive)},
-            then={"dead": MarkovTransition(func=prob_die)},
+            law={"alive": StochasticTransition(func=prob_stay_alive)},
+            then={"dead": StochasticTransition(func=prob_die)},
         )
     )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
-    if isinstance(alive_solver, NBEGM):
+    if isinstance(alive_solver, OneMarginSolver):
         alive = ConsumptionSavingsRegime(
             actions=alive_actions,
             states=alive_states,
@@ -266,12 +268,12 @@ def make_alive_dead_model(
         else {"utility": bequest},
         solver=GridSearch(),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         states=dict(model_states) if model_states else {},
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
-        initial_regimes={ages.exact_values[0]: "alive"},
+        initial_nodes={ages.exact_values[0]: "alive"},
     )

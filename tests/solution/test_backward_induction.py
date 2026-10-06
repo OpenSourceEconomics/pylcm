@@ -61,6 +61,8 @@ class MockSolutionPhase:
     """
     sharded_state_names: frozenset[StateOrActionName] = frozenset()
     """These dense fixture state axes have no declared device sharding."""
+    action_partitions: int = 1
+    """No regime's actions are shared over devices."""
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     artifact_authorities: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
@@ -181,7 +183,7 @@ def test_memory_budget_requires_jit_before_backward_induction() -> None:
         solve(
             program_fingerprint="test_backward_induction",
             flat_params=MappingProxyType({}),
-            ages=AgeGrid(start=0, stop=1, step="Y"),
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regimes=MappingProxyType({}),
             logger=get_logger(log_level="off"),
             enable_jit=False,
@@ -310,7 +312,7 @@ def test_backward_induction():
     solution = solve(
         program_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": flat_params}),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="debug"),
         enable_jit=False,
@@ -376,7 +378,7 @@ def test_backward_induction_single_period_Qc_arr():
     got = solve(
         program_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
         logger=get_logger(log_level="debug"),
         enable_jit=False,

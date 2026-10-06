@@ -13,10 +13,12 @@ across commits. Benchmarks run locally on GPU hardware and results are published
 On first use, register your machine with ASV:
 
 ```bash
-asv machine --yes
+pixi run asv-machine
 ```
 
-This creates `.asv/results/<machine-name>/machine.json` with hardware metadata.
+This runs `asv machine --yes` and then records the RAM in whole gigabytes, so the
+kilobyte drift of the kernel's reported memory does not start a new dashboard series.
+ASV copies the entry to `.asv/results/<machine-name>/machine.json` on the next run.
 
 ## Running Benchmarks
 
@@ -62,10 +64,17 @@ pixi run asv-publish
 
 The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false`
 automatically so JAX allocates GPU memory on demand rather than grabbing it all up
-front. The default device-memory budget refuses an on-demand pool, so every benchmark
-that builds a model without an explicit budget passes
+front. The default device-memory budget refuses an on-demand pool, so a benchmark that
+builds its model inside the ASV process passes
 `_gpu_mem.default_budget_execution_kwargs()`: the default budget the devices would
-resolve to, as an explicit `device_memory_bytes`.
+resolve to, as an explicit `device_memory_bytes`. The isolated measurement subprocesses
+in `_gpu_mem` turn preallocation back on, as production runs: an on-demand pool grows in
+separate regions, so an explicit budget the size of the device pool can admit a buffer
+that no free region holds. There the ACA benchmark passes no execution policy and runs
+under aca-model's default, as production does. `peak_bytes_in_use` counts the allocator
+chunks handed to buffers, not the pool. A preallocated pool carves each chunk to the
+requested size; an on-demand pool can hand a buffer a whole newly grown region, so it
+reads higher for the same programs.
 
 ### Exact paired GridSearch measurements
 
@@ -144,6 +153,25 @@ This generates the ASV HTML dashboard and pushes results to the
 repo under `pylcm-benchmarks/`. A persistent clone is kept in `.benchmark-site/`
 (gitignored) to avoid re-cloning on every publish.
 
+Before `asv publish`, the merged history is normalised so each machine draws one
+continuous line per benchmark:
+
+- every stored result takes the machine's current `machine.json` params (with the RAM in
+  whole gigabytes), so a kernel update or a RAM drift does not split the series;
+- every stored version stamp is nulled, so a version bump shows as a step on the same
+  line instead of hiding all earlier results. This gives up ASV's guard against mixing
+  measurement semantics on one line; read a step at a version bump as a change of
+  workload, not a regression;
+- a benchmark that changed from an ASV-native `time_*` method to a `track_*` method
+  carries its history over under the new name.
+
+The normalised results are pushed back with the dashboard, so the pass is applied once
+and repeating it changes nothing.
+
+The dashboard takes its titles and order from the PR comparison table's labels in
+`benchmarks/pr_comment.py`: each benchmark is titled "<benchmark> — <statistic>", the
+front-page grid groups by benchmark, and each group starts with its execution time.
+
 ## CI Check
 
 The `benchmark-check` workflow runs on every pull request. It looks for a PR comment
@@ -167,7 +195,10 @@ class-based API:
 
 ```python
 import gc
+import statistics
 import time
+
+from . import _gpu_mem
 
 
 class TimeMyModel:
@@ -194,8 +225,17 @@ class TimeMyModel:
         )
         self._warmup_time = time.perf_counter() - start
 
-    def time_solve(self):
+    def execute_for_measurement(self):
         self.model.solve(params=self.model_params, log_level="off")
+
+    def track_execution_time(self):
+        return statistics.median(
+            _gpu_mem.warm_call_seconds(
+                execute=self.execute_for_measurement, warm_samples=3
+            )
+        )
+
+    track_execution_time.unit = "seconds"
 
     def teardown(self):
         import jax
@@ -216,5 +256,8 @@ Key points:
 - **`teardown()`**: Clear JAX caches and run garbage collection between benchmarks.
 - **`track_warmup`**: Measure JIT compilation time separately from steady-state
   execution time.
+- **`track_execution_time`**: Report execution time under this name, as the median of
+  warm calls, rather than as an ASV-native `time_*` method, so the dashboard and the PR
+  table show every benchmark's execution time the same way.
 - Use the `params` and `param_names` class attributes to vary grid sizes or other
   parameters.

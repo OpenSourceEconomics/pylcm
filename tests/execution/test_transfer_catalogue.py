@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from _lcm.execution.value_transfer import (
+    CoordinateSelection,
     ResolvedValueTransfer,
     TransferOperationClass,
     ValueArtifactAddress,
@@ -18,9 +19,12 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
     ValueTransferKind,
+    ValueViewDescriptor,
+    ValueViewLeaf,
     apply_value_transfer,
     classify_value_transfer,
 )
+from _lcm.execution.value_views import lower_value_view_selection
 from lcm.exceptions import ExecutionPlanningError
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -345,3 +349,201 @@ def test_a_gather_holds_the_whole_value_per_device(
     ).cost
 
     assert getattr(cost, attribute) == elements * stored.dtype.itemsize
+
+
+_TYPE_VALUES = np.arange(3 * 8 * 2, dtype=np.float32).reshape(3, 8, 2) * 0.5 - 3.0
+_COLLECTIVE_OPS = ("all-gather", "all-reduce", "all-to-all", "collective-permute")
+
+
+def _typed_view(*, required: jax.sharding.Sharding, code: int) -> ValueViewDescriptor:
+    """The type-`code` block of a `(pref_type, assets, health)` value."""
+    return ValueViewDescriptor(
+        artifact=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        leaf=ValueViewLeaf.SELECTED,
+        stored_axis_names=("pref_type", "assets", "health"),
+        stored_shape=_TYPE_VALUES.shape,
+        dtype=jnp.float32,
+        weak_type=False,
+        consumer_shape=_TYPE_VALUES.shape[1:],
+        required_sharding=required,
+        selections=(
+            CoordinateSelection(
+                state_name="pref_type", start=code, width=1, codes=(code,)
+            ),
+        ),
+    )
+
+
+def _typed_transfer(
+    *, stored: jax.Array, required: jax.sharding.Sharding, kind: ValueTransferKind
+) -> ResolvedValueTransfer:
+    """A type-2 view read of `stored` onto `required`."""
+    view = _typed_view(required=required, code=2)
+    return ResolvedValueTransfer(
+        target=view.artifact,
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("retired",),
+        ),
+        kind=kind,
+        stored_sharding=stored.sharding,
+        source_sharding=required,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
+        view=view,
+    )
+
+
+def _asset_sharded_types() -> jax.Array:
+    """Every type's values, partitioned along assets over four devices."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = jax.device_put(
+        _TYPE_VALUES, jax.NamedSharding(mesh, jax.P(None, "d", None))
+    )
+    assert np.array_equal(np.asarray(stored), _TYPE_VALUES)
+    return stored
+
+
+def _group_layout() -> jax.sharding.Sharding:
+    """A replicated layout on the type group holding devices 2 and 3."""
+    return jax.NamedSharding(_mesh(devices=jax.devices()[2:4], axis="d"), jax.P())
+
+
+@_skip_pytest_parallel
+def test_a_selected_block_reaches_another_device_group_bit_for_bit() -> None:
+    """Type 2 is selected on the asset partitions and copied to its group whole."""
+    stored = _asset_sharded_types()
+    transfer = _typed_transfer(
+        stored=stored,
+        required=_group_layout(),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    delivered = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert delivered.tobytes() == _TYPE_VALUES[2].tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_selected_block_lands_only_on_its_device_group() -> None:
+    """The consumer group's devices, and no others, hold the copied block."""
+    stored = _asset_sharded_types()
+    transfer = _typed_transfer(
+        stored=stored,
+        required=_group_layout(),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    delivered = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert {device.id for device in delivered.devices()} == {
+        device.id for device in jax.devices()[2:4]
+    }
+
+
+@_skip_pytest_parallel
+def test_a_cross_group_block_holds_one_type_per_group_device() -> None:
+    """Each group device holds one type's values, a third of every type's."""
+    stored = _asset_sharded_types()
+
+    cost = _typed_transfer(
+        stored=stored,
+        required=_group_layout(),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    ).cost
+
+    assert cost.per_device_bytes == _TYPE_VALUES[2].nbytes
+
+
+@_skip_pytest_parallel
+def test_the_compiled_selection_communicates_nothing() -> None:
+    """Selecting on the asset partitions lowers to no collective operation."""
+    stored = _asset_sharded_types()
+    transfer = _typed_transfer(
+        stored=stored,
+        required=_group_layout(),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    text = str(lower_value_view_selection(transfer=transfer).compile().as_text())
+
+    assert [op for op in _COLLECTIVE_OPS if op in text] == []
+
+
+@_skip_pytest_parallel
+def test_the_collective_probe_fires_on_a_full_type_gather() -> None:
+    """The probe above detects the replication of every type it rules out."""
+    stored = _asset_sharded_types()
+    replicated = jax.NamedSharding(_mesh(devices=jax.devices()[:4], axis="d"), jax.P())
+
+    text = str(
+        jax.jit(lambda value: value, out_shardings=replicated)
+        .lower(stored)
+        .compile()
+        .as_text()
+    )
+
+    assert "all-gather" in text
+
+
+@_skip_pytest_parallel
+def test_the_compiled_selection_outputs_only_the_local_block() -> None:
+    """Each device's selection output is its asset shard of one type."""
+    stored = _asset_sharded_types()
+    transfer = _typed_transfer(
+        stored=stored,
+        required=_group_layout(),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    stats = lower_value_view_selection(transfer=transfer).compile().memory_analysis()
+
+    assert stats is not None
+    assert stats.output_size_in_bytes == _TYPE_VALUES[2].nbytes // 4
+
+
+@_skip_pytest_parallel
+def test_a_selection_along_a_partitioned_axis_is_refused() -> None:
+    """Types partitioned across devices are not selected by this route."""
+    mesh = _mesh(devices=jax.devices()[:2], axis="d")
+    values = np.zeros((2, 8, 2), dtype=np.float32)
+    stored = jax.device_put(values, jax.NamedSharding(mesh, jax.P("d", None, None)))
+    required = jax.NamedSharding(mesh, jax.P())
+    view = ValueViewDescriptor(
+        artifact=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        leaf=ValueViewLeaf.SELECTED,
+        stored_axis_names=("pref_type", "assets", "health"),
+        stored_shape=values.shape,
+        dtype=jnp.float32,
+        weak_type=False,
+        consumer_shape=values.shape[1:],
+        required_sharding=required,
+        selections=(
+            CoordinateSelection(state_name="pref_type", start=1, width=1, codes=(1,)),
+        ),
+    )
+
+    with pytest.raises(ExecutionPlanningError, match="partitioned"):
+        ResolvedValueTransfer(
+            target=view.artifact,
+            source=ValueConsumerAddress(
+                source_period=3,
+                source_regime="working",
+                core_key="main",
+                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                path=("retired",),
+            ),
+            kind=ValueTransferKind.ALL_GATHER,
+            stored_sharding=stored.sharding,
+            source_sharding=required,
+            expected_shape=stored.shape,
+            expected_dtype=stored.dtype,
+            view=view,
+        )

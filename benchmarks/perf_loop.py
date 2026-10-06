@@ -65,7 +65,12 @@ from benchmarks.warm_solve_phases import (
     parse_phase_records,
 )
 
-MODEL_NAMES = ("precautionary_savings", "iskhakov", "aca_benchmark")
+MODEL_NAMES = (
+    "precautionary_savings",
+    "iskhakov",
+    "aca_benchmark",
+    "independent_types",
+)
 
 _PYLCM_ROOT = Path(lcm.__file__).resolve().parents[2]
 
@@ -196,6 +201,16 @@ def _builder(model_name: str) -> Callable[[float], tuple[Any, dict[str, Any]]]:
             }
 
         return make_aca
+
+    if model_name == "independent_types":
+        from tests.test_models import independent_types
+
+        def make_independent(discount: float) -> tuple[Any, dict[str, Any]]:
+            return independent_types.get_model(), independent_types.get_params(
+                discount_factor=discount
+            )
+
+        return make_independent
 
     if model_name == "precautionary_savings":
         from benchmarks.asv.bench_precautionary_savings import (

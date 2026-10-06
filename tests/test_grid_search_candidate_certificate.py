@@ -75,6 +75,9 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.simulation import programs as simulation_programs_module
 from _lcm.simulation import runtime as simulation_runtime_module
 from _lcm.simulation import taste_stream as taste_stream_module
@@ -84,14 +87,13 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -108,6 +110,7 @@ from lcm.typing import (
 )
 from tests.candidate_certificate.direct_flow import (
     direct_flow_mutation_specs,
+    supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
 )
 from tests.candidate_certificate.generate_sources import (
@@ -120,6 +123,7 @@ from tests.candidate_certificate.verify import (
     reference_masked_argmax,
 )
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _SRC_ROOT = Path(__file__).parent.parent / "src"
@@ -600,6 +604,45 @@ def test_native_value_dependencies_are_literal_certificate_obligations():
     assert isinstance(_parse("src/_lcm/persistence/solution.py"), ast.Module)
 
 
+_STRUCTURAL_BLUEPRINT_SOURCE = "src/_lcm/solution/structural_blueprints.py"
+
+
+def test_structural_blueprint_store_is_a_certified_corridor_source():
+    """Warm solves bind stored blueprints only through a sealed store and key."""
+    assert isinstance(_parse("src/_lcm/solution/structural_blueprints.py"), ast.Module)
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+
+    assert _STRUCTURAL_BLUEPRINT_SOURCE in result["certified_corridor_sources"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "structural_blueprint:cache_hit_ignores_key",
+        "structural_blueprint:schema_drops_dtype",
+    ],
+)
+def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: str):
+    """A mutated blueprint store or key derivation fails the direct-flow proof."""
+    root = _SRC_ROOT.parent
+    spec = supplemental_direct_flow_mutation_specs(repo_root=root)[mutation]
+    for relative in verify_direct_candidate_flow(repo_root=root)[
+        "certified_corridor_sources"
+    ]:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = (
+            spec["source"]
+            if relative == spec["path"]
+            else (root / relative).read_text(encoding="utf-8")
+        )
+        target.write_text(source, encoding="utf-8")
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
+
+
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
@@ -652,6 +695,7 @@ def test_direct_flow_certificate_names_every_supported_route():
     assert set(result["routes"]) == {
         "singleton_solve",
         "singleton_streamed_solve",
+        "singleton_action_partitioned_solve",
         "singleton_simulate",
         "collective_solve",
         "collective_streamed_solve",
@@ -1159,7 +1203,9 @@ def _build_model(
     acting = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("acting", "done")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("acting", "done")
+            ),
             exits=("done",),
         ),
         states={
@@ -1179,14 +1225,14 @@ def _build_model(
         regime_transitions=None,
         functions={"utility": terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"acting": acting, "done": done},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
-        initial_regimes={0: "acting"},
+        initial_nodes={0: "acting"},
     )
 
 
@@ -1234,7 +1280,9 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         return Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(stop=1): Choose(func=_next_dedup_done, targets=("done",))
+                    AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                        func=_next_dedup_done, targets=("done",)
+                    )
                 }
             ),
             states={"wealth": wealth_grid},
@@ -1243,7 +1291,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
             functions={"utility": utility},
         )
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "left": decision_regime(_dedup_utility_left),
             "right": decision_regime(_dedup_utility_right),
@@ -1253,12 +1301,12 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
                 functions={"utility": _dedup_terminal_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
         execution_config=ExecutionConfig(
             axis_widths={} if subject_width is None else {"subject": subject_width}
         ),
-        initial_regimes={0: ("left", "right")},
+        initial_nodes={0: ("left", "right")},
     )
 
 
@@ -1701,12 +1749,14 @@ def _build_runtime_action_model(
     fixed_params: dict[str, Any] = {}
     if fixed_points is not None:
         fixed_params = {"acting": {"choice": {"points": fixed_points}}}
-    return Model(
+    return with_fixture_graph(
         regimes={
             "acting": Regime(
                 regime_transitions=until_exit(
                     1,
-                    law=Choose(func=_next_regime, targets=("acting", "done")),
+                    law=_SupportedDeterministicTransition(
+                        func=_next_regime, targets=("acting", "done")
+                    ),
                     exits=("done",),
                 ),
                 states={
@@ -1732,10 +1782,10 @@ def _build_runtime_action_model(
                 functions={"utility": lambda wealth: wealth},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
-        initial_regimes={0: "acting"},
+        initial_nodes={0: "acting"},
     )
 
 
@@ -2043,8 +2093,8 @@ def _build_zero_weight_fold_model() -> Model:
         regime_transitions=until_exit(
             1,
             law={
-                "folded": MarkovTransition(func=_route_to_folded),
-                "dead": MarkovTransition(func=_route_to_dead),
+                "folded": StochasticTransition(func=_route_to_folded),
+                "dead": StochasticTransition(func=_route_to_dead),
             },
             exits=("folded", "dead"),
         ),
@@ -2072,11 +2122,11 @@ def _build_zero_weight_fold_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"src": src, "folded": folded, "dead": dead},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=FoldRegimeId,
-        initial_regimes={0: "src"},
+        initial_nodes={0: "src"},
     )
 
 
@@ -2329,6 +2379,7 @@ def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask
             aaae(observed, expected, decimal=DECIMAL_PRECISION)
 
 
+@pytest.mark.slow
 def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):

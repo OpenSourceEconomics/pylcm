@@ -108,6 +108,58 @@ class OraclePeriodResult:
     with that branch's published one, laid out like `branch_value`."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class ChildPeriodContext:
+    """The self-read child's own declarations at its period `t + 1`.
+
+    Built from the model's child-period kernel and period state axes, never
+    from the source's arguments: an age-specialized grid moves the child's
+    nodes, and an age-specialized function closes over the child's age.
+    """
+
+    statics: Any
+    """The child-period kernel's statics: its breakpoint sources, with every
+    derived variable resolved at the child's age."""
+
+    grids: Mapping[str, np.ndarray]
+    """Every state's nodes at the child's period."""
+
+    period: int
+    """The child's period."""
+
+    age: Any
+    """The child's age."""
+
+
+def child_period_context(
+    *, model: Model, context: Mapping[str, Any], regime_name: str = "alive"
+) -> ChildPeriodContext | None:
+    """Return the self-read child's context, or `None` past the last period.
+
+    The child is `regime_name` at the period after the captured one. A nested
+    solver's child kernel publishes its keeper's breakpoint schedule.
+    """
+    period = int(context["period"]) + 1
+    regime = model._regimes[regime_name]
+    if period not in regime.solution.period_kernels:
+        return None
+    child_kernel: Any = regime.solution.period_kernels[period]
+    statics = (
+        child_kernel.statics
+        if hasattr(child_kernel, "statics")
+        else child_kernel.keeper_kernel.statics
+    )
+    states = dict(context["state_action_space"].states)
+    period_axes = regime.solution.period_state_axes or {}
+    states.update(period_axes.get(period, {}))
+    return ChildPeriodContext(
+        statics=statics,
+        grids={name: np.asarray(nodes) for name, nodes in states.items()},
+        period=period,
+        age=context["ages"].values[period],
+    )
+
+
 def ride_along_kernel(
     *,
     model: Model,
@@ -215,13 +267,18 @@ def _materialize_replay(
 
 
 def direct_oracle_period(  # noqa: PLR0915
-    *, kernel: Any, context: Mapping[str, Any], tie_tolerance: float = 0.0
+    *,
+    kernel: Any,
+    context: Mapping[str, Any],
+    child: ChildPeriodContext | None,
+    tie_tolerance: float = 0.0,
 ) -> OraclePeriodResult:
     """Solve one ride-along regime-period with the direct scalar oracle.
 
-    `tie_tolerance` is the absolute value gap below which two candidates count
-    as tied; every tied candidate's consumption is published in
-    `policy_alternatives`.
+    `child` is the self-read child's own context (`child_period_context`); its
+    breakpoints are evaluated from its declarations on its grids. `tie_tolerance`
+    is the absolute value gap below which two candidates count as tied; every
+    tied candidate's consumption is published in `policy_alternatives`.
     """
     statics = kernel.statics
     spec = kernel.schedule_spec
@@ -243,6 +300,9 @@ def direct_oracle_period(  # noqa: PLR0915
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
+    if kernel.cliff_candidates and child is None:
+        msg = "save-to-cliff targets read the self child, which needs its context"
+        raise ValueError(msg)
     ride_grids = [jnp.asarray(kwargs[name]) for name in statics.ride_names]
     ride_shape = tuple(len(grid) for grid in ride_grids)
     savings_grid = np.asarray(kernel.savings_grid, dtype=np.float64)
@@ -322,7 +382,8 @@ def direct_oracle_period(  # noqa: PLR0915
                 plan=plan,
                 combo_pool=combo_pool,
                 carries=carries,
-                jumps=geometry.jumps,
+                kwargs=kwargs,
+                child=child,
                 breakpoints=branch_geometry.breakpoints,
                 liquid_grid=liquid_grid,
                 savings_grid=savings_grid,
@@ -616,7 +677,8 @@ def _cell_continuation(
     plan: Any,
     combo_pool: Mapping[str, Any],
     carries: Mapping[str, HostCarry],
-    jumps: np.ndarray,
+    kwargs: Mapping[str, Any],
+    child: ChildPeriodContext | None,
     breakpoints: np.ndarray,
     liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
@@ -646,7 +708,8 @@ def _cell_continuation(
                 plan=plan,
                 regime_name=kernel.regime_name,
                 combo_pool=pool,
-                jumps=jumps,
+                kwargs=kwargs,
+                child=cast("ChildPeriodContext", child),
                 savings_grid=savings_grid,
                 dtype=dtype,
             )
@@ -685,23 +748,130 @@ def _cliff_savings_targets(
     plan: Any,
     regime_name: str,
     combo_pool: Mapping[str, Any],
+    kwargs: Mapping[str, Any],
+    child: ChildPeriodContext,
+    savings_grid: np.ndarray,
+    dtype: Any,
+) -> np.ndarray:
+    """Savings targets a few float steps inside each side of every child jump.
+
+    Every child row the continuation reads with positive weight is enumerated
+    on the child's own grids, and its jumps are evaluated from the child's own
+    breakpoint declarations at that row's state values and the child's age and
+    period, on the child's liquid domain. The source's params bind the
+    declarations' thresholds and coefficients. The rows are:
+    - each node of every stochastic state the child carries;
+    - the next-state code of each deterministic discrete state;
+    - both grid nodes of the segment a passive continuous state's next value
+      falls in, since the child's value is blended from the two rows.
+
+    Each row's jumps are inverted through the liquid law at the node of every
+    draw the law reads, offered from both sides, displaced by four units of the
+    law's rounding (in savings units) but never more than a quarter of the
+    distance to the nearest other preimage. Targets off the savings grid, or
+    under a non-increasing law, are NaN; a target set repeated by another row or
+    node is offered once.
+    """
+    read = plan.child_reads[regime_name]
+    next_states = read.next_state_func(
+        **combo_pool, **{plan.post_decision_name: jnp.asarray(0.0, dtype=dtype)}
+    )
+    statics = child.statics
+    grids = {name: child.grids[name] for name in statics.ride_names}
+    child_kwargs = {
+        **kwargs,
+        **child.grids,
+        "period": jnp.int32(child.period),
+        "age": child.age,
+    }
+    liquid_grid = np.asarray(child.grids[statics.liquid_name], dtype=np.float64)
+    choices: dict[str, list[Any]] = {}
+    for name in statics.ride_names:
+        grid = grids[name]
+        if name in read.stochastic_state_names:
+            choices[name] = list(range(len(grid)))
+        elif name in read.passive_state_names:
+            key = f"next_{name}"
+            value = _scalar(next_states[key] if key in next_states else combo_pool[key])
+            upper = int(
+                np.clip(np.searchsorted(grid, value, side="right"), 1, len(grid) - 1)
+            )
+            choices[name] = [upper - 1, upper]
+        else:
+            choices[name] = [int(np.asarray(next_states[f"next_{name}"]))]
+    law_nodes = _euler_draw_nodes(read=read, combo_pool=combo_pool)
+    rows: list[np.ndarray] = []
+    seen: set[bytes] = set()
+    for positions in itertools.product(*choices.values()):
+        child_cell = {
+            name: jnp.asarray(grids[name][position])
+            for name, position in zip(choices, positions, strict=True)
+        }
+        jumps = _cell_geometry(
+            statics=statics,
+            kwargs=child_kwargs,
+            cell=child_cell,
+            liquid_grid=liquid_grid,
+            dtype=dtype,
+            action_binding={},
+        ).jumps
+        for draws in itertools.product(*law_nodes.values()):
+            draw_values = dict(zip(law_nodes, draws, strict=True))
+            for name, position in zip(choices, positions, strict=True):
+                if (
+                    f"next_{name}" in draw_values
+                    and name in read.stochastic_state_names
+                ):
+                    draw_values[f"next_{name}"] = law_nodes[f"next_{name}"][position]
+            targets = _cliff_targets_at_node(
+                read=read,
+                pool={**combo_pool, **draw_values},
+                post_decision_name=plan.post_decision_name,
+                jumps=jumps,
+                savings_grid=savings_grid,
+                dtype=dtype,
+            )
+            if targets.tobytes() not in seen:
+                seen.add(targets.tobytes())
+                rows.append(targets)
+    return np.concatenate(rows)
+
+
+def _euler_draw_nodes(
+    *, read: Any, combo_pool: Mapping[str, Any]
+) -> dict[str, list[Any]]:
+    """Node values of each draw the Euler-state law reads, sorted by name."""
+    nodes = {
+        f"next_{name}": list(values)
+        for name, values in zip(
+            read.stochastic_state_names, read.stochastic_node_values, strict=True
+        )
+    }
+    if read.local_support_func is not None:
+        supports = read.local_support_func(**combo_pool)
+        nodes |= {
+            name: list(np.asarray(supports[key]))
+            for name, key in zip(
+                read.local_draw_names, read.local_support_keys, strict=True
+            )
+        }
+    return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+
+
+def _cliff_targets_at_node(
+    *,
+    read: Any,
+    pool: Mapping[str, Any],
+    post_decision_name: str,
     jumps: np.ndarray,
     savings_grid: np.ndarray,
     dtype: Any,
 ) -> np.ndarray:
-    """Savings targets a few float steps inside each side of every own-regime jump.
-
-    The self-read child's liquid law is affine in savings; each jump's savings
-    preimage is offered from both sides, displaced by four units of the law's
-    rounding (in savings units) but never more than a quarter of the distance to
-    the nearest other preimage. Targets off the savings grid, or under a
-    non-increasing law, are NaN.
-    """
-    read = plan.child_reads[regime_name]
+    """The jump targets with every draw the liquid law reads fixed in `pool`."""
 
     def next_euler_state(savings: float) -> float:
-        next_states = read.next_state_func(
-            **combo_pool, **{plan.post_decision_name: jnp.asarray(savings, dtype=dtype)}
+        next_states = read.euler_state_func(
+            **pool, **{post_decision_name: jnp.asarray(savings, dtype=dtype)}
         )
         return _scalar(next_states[read.next_state_key])
 
@@ -824,6 +994,15 @@ class _ChildReader:
             if not is_stochastic
         )
         self.node_values = [jnp.asarray(v) for v in read.stochastic_node_values]
+        if read.local_support_func is not None:
+            supports = read.local_support_func(**combo_pool)
+            self.node_values += [
+                jnp.asarray(supports[key]) for key in read.local_support_keys
+            ]
+        draw_names = (
+            *(f"next_{name}" for name in read.stochastic_state_names),
+            *read.local_draw_names,
+        )
         self.row_values = [jnp.asarray(v).reshape(-1) for v in read.row_values]
         self.weight_vectors: list[np.ndarray] = []
         if read.weights_func is not None:
@@ -831,12 +1010,28 @@ class _ChildReader:
             self.weight_vectors = [
                 np.asarray(weights[key], dtype=np.float64) for key in read.weight_keys
             ]
+        # The child's resources are the child period's: one period on, at the
+        # age the grid gives that period.
+        child_period = int(np.asarray(combo_pool["period"])) + 1
+        child_time = {
+            "period": jnp.int32(child_period),
+            "age": jnp.asarray(read.age_values)[child_period],
+        }
         resources_params = {
-            name: combo_pool[name] for name in read.resources_param_names
+            name: child_time.get(name, combo_pool.get(name))
+            for name in read.resources_param_names
         }
 
         def next_states(savings: Any) -> Any:
             return read.next_state_func(**combo_pool, **{post_decision_name: savings})
+
+        def euler_state(*, savings: Any, stochastic_values: tuple[Any, ...]) -> Any:
+            draws = dict(zip(draw_names, stochastic_values, strict=True))
+            return read.euler_state_func(
+                **combo_pool,
+                **{name: draws[name] for name in read.euler_draw_names},
+                **{post_decision_name: savings},
+            )[read.next_state_key]
 
         # keyword-only-exempt: library-callback=jax.value_and_grad
         def resources(
@@ -845,12 +1040,13 @@ class _ChildReader:
             row_values: tuple[Any, ...],
             codes: tuple[Any, ...],
         ) -> Any:
+            carried_values = stochastic_values[: len(read.stochastic_state_names)]
             bound = {
-                read.euler_state_name: next_states(savings)[read.next_state_key],
-                **dict(zip(self.code_names, codes, strict=True)),
-                **dict(
-                    zip(read.stochastic_state_names, stochastic_values, strict=True)
+                read.euler_state_name: euler_state(
+                    savings=savings, stochastic_values=stochastic_values
                 ),
+                **dict(zip(self.code_names, codes, strict=True)),
+                **dict(zip(read.stochastic_state_names, carried_values, strict=True)),
                 **dict(zip(read.row_arg_names, row_values, strict=True)),
             }
             return read.resources_func(

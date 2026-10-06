@@ -925,8 +925,12 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             "period": period,
             "regime": regime,
         }
+        # A value its entry can assemble on the host is written from there,
+        # never placed on a device first.
+        raw = values._raw(period=period, regime=regime)  # noqa: SLF001
+        host_value = raw.host_value() if isinstance(raw, _LazyEntry) else None
         prepared = _prepare_payload(
-            payload=values[period][regime],
+            payload=values[period][regime] if host_value is None else host_value,
             identity=identity,
         )
         if (

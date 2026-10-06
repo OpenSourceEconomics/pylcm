@@ -51,7 +51,7 @@ from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.test_models.schedules import until_exit
@@ -118,7 +118,7 @@ def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
     }
 
 
-_AGES_2P = AgeGrid(start=0, stop=2, step="Y")
+_AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
@@ -126,9 +126,9 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_true_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -192,7 +192,9 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"reader_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "reader_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -255,9 +257,9 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -328,7 +330,11 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
     with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
         Regime(
             regime_transitions=ByAge(
-                cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "terminal": StochasticTransition(func=_prob_one)
+                    }
+                }
             ),
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -341,7 +347,11 @@ def test_fold_without_certainty_equivalent_still_constructs():
     """Pin: the SAME topology with no `certainty_equivalent` still constructs."""
     Regime(
         regime_transitions=ByAge(
-            cases={AgeRange(stop=1): {"terminal": MarkovTransition(func=_prob_one)}}
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "terminal": StochasticTransition(func=_prob_one)
+                }
+            }
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -367,7 +377,7 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
             1,
             law={
                 "target": ValueDependentTransition(
-                    probability=MarkovTransition(func=_prob_one),
+                    probability=StochasticTransition(func=_prob_one),
                     gate=lambda wage_shock: wage_shock > 0.0,
                     routes={
                         "only": StakeholderRoute(

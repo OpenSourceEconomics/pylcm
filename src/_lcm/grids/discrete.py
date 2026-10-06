@@ -1,7 +1,7 @@
 """`DiscreteGrid`: the outcome space of one categorical variable.
 
 It holds the category class whose codes index that variable's axis; stochastic
-movement over those codes is declared with `MarkovTransition`, not here.
+movement over those codes is declared with `StochasticTransition`, not here.
 """
 
 import jax.numpy as jnp

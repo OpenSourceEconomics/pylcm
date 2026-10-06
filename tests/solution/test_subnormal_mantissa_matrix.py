@@ -19,15 +19,16 @@ from _lcm.utils.logging import LogLevel
 from _lcm.zero_safe import joint_weight, zero_safe_weighted_term
 from lcm import (
     AgeGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -130,14 +131,14 @@ def _model(
         else {}
     )
     rare_utility = rare_payoff if rare_carries_a_process else _common_payoff
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     21,
                     law={
-                        "common": MarkovTransition(func=_certain),
-                        "rare": MarkovTransition(func=rare_probability),
+                        "common": StochasticTransition(func=_certain),
+                        "rare": StochasticTransition(func=rare_probability),
                     },
                     exits=("common", "rare"),
                 ),
@@ -153,9 +154,9 @@ def _model(
                 functions={"utility": rare_utility},
             ),
         },
-        ages=AgeGrid(start=20, stop=21, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

@@ -28,6 +28,7 @@ from tests.test_models.deterministic.regression import (
 from tests.test_models.deterministic.regression import (
     get_model as get_durable_model,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 def _inputs(
@@ -39,7 +40,7 @@ def _inputs(
         _ = token
         return 1 + 0.1 * age
 
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(last_age=19),
@@ -52,10 +53,10 @@ def _inputs(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=18, stop=19, step="Y"),
+        ages=AgeGrid(start=18, inclusive_stop=19, step="Y"),
         regime_id_class=RegimeId,
         durable_identity=durable_identity,
-        initial_regimes={18: "working_life"},
+        initial_nodes={18: "working_life"},
     )
     params = get_params(n_periods=2)
     initial_conditions = {

@@ -15,9 +15,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -34,9 +36,10 @@ from lcm.exceptions import (
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 @categorical(ordered=False)
@@ -108,7 +111,9 @@ def _build_model(
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states=states or {},
@@ -128,11 +133,11 @@ def _build_model(
             )
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 
@@ -430,7 +435,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     household = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(
+            law=_SupportedDeterministicTransition(
                 func=_next_three_regime, targets=("household", "household_terminal")
             ),
             exits=("household_terminal",),
@@ -451,14 +456,14 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
             "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "household": household,
             "household_terminal": household_terminal,
         },
         ages=_AGES,
         regime_id_class=ThreeRegimeId,
-        initial_regimes={0: "household"},
+        initial_nodes={0: "household"},
     )
     solution = model.solve(params=_three_params(), log_level="debug").values
     by_name = dict(zip(order, np.asarray(solution[0]["household"]), strict=True))
@@ -516,7 +521,9 @@ def _build_carried_power_model() -> Model:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={
@@ -543,11 +550,11 @@ def _build_carried_power_model() -> Model:
             )
         },
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
 
@@ -581,7 +588,9 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     couple = Regime(
         regime_transitions=until_exit(
             1,
-            law=Choose(func=_next_regime, targets=("couple", "couple_terminal")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("couple", "couple_terminal")
+            ),
             exits=("couple_terminal",),
         ),
         states={
@@ -610,11 +619,11 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
             )
         },
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "couple"},
+        initial_nodes={0: "couple"},
     )
 
     solution = model.solve(params=_params(), log_level="debug").values

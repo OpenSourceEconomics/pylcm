@@ -384,7 +384,7 @@ def _get_named_category_guard(
 def _fail_if_code_is_off_the_axis(
     *,
     axis: _CategoricalAxis,
-    coordinate: FloatND,
+    coordinate: FloatND | IntND,
     on_axis: BoolND,
 ) -> None:
     """Fail if a concrete categorical value lies outside its grid's codes.

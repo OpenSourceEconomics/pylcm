@@ -14,7 +14,7 @@ from _lcm.simulation.runtime import SimulationRuntime
 from lcm import ExecutionConfig, Model
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as toy
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 
 _replay = importlib.import_module("_lcm.simulation.simulate")
 
@@ -95,12 +95,13 @@ def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete)
     factory = discrete_toy if discrete else toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
     model = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=toy.RegimeId,
         fixed_params=base.fixed_params,
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
     params = {"discount_factor": 0.95}
     if discrete:

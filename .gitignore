@@ -70,6 +70,7 @@ src/_lcm/version.py
 tmp/
 
 # Agent working files
+/.handoff/
 docs/superpowers/
 .superpowers/
 # Inputs and evidence for the external numerical audit: the profile contract, the

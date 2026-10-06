@@ -25,15 +25,21 @@ from _lcm.persistence.snapshots import (
 )
 from _lcm.persistence.solution import load_solution_archive, save_solution_archive
 from _lcm.solution.period_replay import PeriodReplay, replay_period
+from _lcm.solution.public_period_capture import load_period_capture
 from _lcm.typing import InitialConditions, PeriodToRegimeToVArr
+from lcm.period_capture import CapturedPeriodReplay, PeriodCapture, PeriodCaptureRecord
 from lcm.solver_api import SolutionResult
 from lcm.typing import UserParams
 
 __all__ = [
+    "CapturedPeriodReplay",
+    "PeriodCapture",
+    "PeriodCaptureRecord",
     "PeriodReplay",
     "SimulateSnapshot",
     "SolveSnapshot",
     "load_legacy_solution",
+    "load_period_capture",
     "load_snapshot",
     "load_solution",
     "replay_period",

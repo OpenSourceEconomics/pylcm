@@ -124,7 +124,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
-from lcm.execution import ExecutionConfig  # noqa: E402
+from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -141,6 +141,7 @@ from lcm.grids import (  # noqa: E402
     categorical,
 )
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
+from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -172,10 +173,12 @@ from lcm.transition import (  # noqa: E402
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
-    Choose,
+    DeterministicTransition,
     JointTransition,
-    MarkovTransition,
+    StochasticTransition,
+    deterministic_transition,
     fixed_transition,
+    stochastic_transition,
 )
 from lcm.version import __version__  # noqa: E402
 
@@ -202,14 +205,15 @@ __all__ = [
     "ByAge",
     "CESAggregator",
     "CertaintyEquivalent",
-    "Choose",
     "CollectiveUtility",
     "Condition",
     "ConsumptionSavingsRegime",
+    "DeterministicTransition",
     "DiscreteGrid",
     "ExecutionConfig",
     "ExtremeValueTasteShocks",
     "GridBreakpoint",
+    "InvariantBlockSchedule",
     "IrregSpacedGrid",
     "JointTransition",
     "LinSpacedGrid",
@@ -218,7 +222,7 @@ __all__ = [
     "LiquidMargin",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
-    "MarkovTransition",
+    "LoweredPeriodCandidate",
     "Model",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
@@ -226,6 +230,7 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
+    "PeriodCandidate",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
@@ -240,6 +245,7 @@ __all__ = [
     "SolveSnapshot",
     "StakeholderRoute",
     "StateConditioned",
+    "StochasticTransition",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
@@ -250,6 +256,7 @@ __all__ = [
     "case_boundary",
     "cash_on_hand_with_subsidy",
     "categorical",
+    "deterministic_transition",
     "fixed_transition",
     "implies",
     "liquid_law_from_resources",
@@ -264,4 +271,5 @@ __all__ = [
     "ref",
     "save_solution",
     "smooth_helper",
+    "stochastic_transition",
 ]

@@ -44,16 +44,11 @@ def multi_regime(
     *, execution_config: ExecutionConfig | None = None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the two-non-terminal-regime shock model and its simulate inputs."""
-    model = get_multi_regime_model(n_periods=6, distribution_type="normal")
-    if execution_config is not None:
-        model = Model(
-            regimes=model.user_regimes,
-            ages=model.ages,
-            regime_id_class=MultiRegimeId,
-            fixed_params=model.fixed_params,
-            execution_config=execution_config or ExecutionConfig(),
-            initial_regimes=_initial_regimes_of(model=model),
-        )
+    model = get_multi_regime_model(
+        n_periods=6,
+        distribution_type="normal",
+        execution_config=execution_config or ExecutionConfig(),
+    )
     return (
         model,
         get_multi_regime_params("normal"),
@@ -66,21 +61,13 @@ def dissolution(
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build the collective dissolution model and its simulate inputs."""
     from lcm_examples.collective_regimes import (
-        DissolutionRegimeId,
         get_dissolution_model,
         get_params,
     )
 
-    model = get_dissolution_model()
-    if execution_config is not None:
-        model = Model(
-            regimes=model.user_regimes,
-            ages=model.ages,
-            regime_id_class=DissolutionRegimeId,
-            fixed_params=model.fixed_params,
-            execution_config=execution_config or ExecutionConfig(),
-            initial_regimes=_initial_regimes_of(model=model),
-        )
+    model = get_dissolution_model(
+        execution_config=execution_config or ExecutionConfig()
+    )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),
         "age": jnp.zeros(3),
@@ -98,11 +85,3 @@ WITNESSES: Mapping[
     "dissolution": dissolution,
     "multi_regime": multi_regime,
 }
-
-
-def _initial_regimes_of(*, model: Model) -> dict[object, tuple[str, ...]]:
-    """Return the `initial_regimes` mapping admitting exactly `model`'s starts."""
-    names_by_age: dict[object, list[str]] = {}
-    for age, name in sorted(model.initial_nodes, key=repr):
-        names_by_age.setdefault(age, []).append(name)
-    return {age: tuple(names) for age, names in names_by_age.items()}

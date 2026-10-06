@@ -27,8 +27,9 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0))
@@ -71,7 +72,7 @@ def _make_model() -> Model:
             1,
             law={
                 "household_next": ValueDependentTransition(
-                    probability=MarkovTransition(func=_certain),
+                    probability=StochasticTransition(func=_certain),
                     gate=_prosperous_enough,
                     routes={
                         "f": StakeholderRoute(
@@ -121,16 +122,16 @@ def _make_model() -> Model:
         states={"wage": _WAGE},
         functions={"utility": _zero},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "household": household,
             "household_next": household_next,
             "care_pair": care_pair,
             "lodging": lodging,
         },
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={0: "household"},
+        initial_nodes={0: "household"},
     )
 
 

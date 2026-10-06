@@ -21,6 +21,7 @@ from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.runtime import execute_simulation_program
+from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import validate_realized_regime_transition_probs
 from _lcm.typing import (
@@ -82,7 +83,7 @@ def calculate_next_states(
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
     n_subjects: int,
-    subject_slice: slice,
+    subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
     memory: SimulationMemory | None = None,
 ) -> StatesPerRegime:
@@ -103,7 +104,8 @@ def calculate_next_states(
             population, possibly padded for sharding). Keys are generated for
             the full population so each subject's draw is independent of how
             subjects are chunked.
-        subject_slice: Global-index slice of the subjects in this chunk.
+        subject_slice: Global-index slice, or original rows, of the subjects in
+            this chunk.
         original_n_subjects: Subject count before per-device padding; threaded to
             keep real subjects' draws device-count-invariant.
 
@@ -213,7 +215,7 @@ def calculate_next_regime_membership(
     key: PRNGKeyND,
     subjects_in_regime: Bool1D,
     n_subjects: int,
-    subject_slice: slice,
+    subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
     memory: SimulationMemory | None = None,
 ) -> Int1D:
@@ -241,7 +243,8 @@ def calculate_next_regime_membership(
             population, possibly padded for sharding). Keys are generated for
             the full population so each subject's draw is independent of how
             subjects are chunked.
-        subject_slice: Global-index slice of the subjects in this chunk.
+        subject_slice: Global-index slice, or original rows, of the subjects in
+            this chunk.
         original_n_subjects: Subject count before per-device padding; threaded to
             keep real subjects' draws device-count-invariant.
 

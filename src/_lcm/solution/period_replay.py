@@ -83,6 +83,7 @@ from _lcm.solution.period_capture import (
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import KernelOutput
 
 # How faithfully a replay reproduced the captured run:
@@ -371,6 +372,12 @@ def _compile_cores_for_one_period(
         retain_replay=kernel_kwargs["retain_replay"],
         selected_artifact_keys=kernel_kwargs["selected_artifact_keys"],
     )
+    if any(program.invariant_binding is not None for program in graph.values()):
+        msg = (
+            f"Regime {kernel_kwargs['regime_name']!r} is solved one invariant code "
+            f"at a time in period {period}, and such a period cannot be replayed."
+        )
+        raise ExecutionPlanningError(msg)
     declared_widths: Mapping[str, int] = (
         MappingProxyType({}) if axis_widths is None else axis_widths
     )
@@ -565,6 +572,28 @@ def replay_period_on_recorded_layout(
 
     """
     payload = _load_capture_payload(directory=directory)
+    kernel_kwargs, compiled_cores = prepare_recorded_period(
+        payload=payload, directory=directory, devices=devices
+    )
+    output = _run_period_kernel(
+        regime=payload["regime"],
+        capture_target=None,
+        compiled_cores=compiled_cores,
+        **kernel_kwargs,
+    )
+    return PeriodReplay(
+        regime_name=kernel_kwargs["regime_name"],
+        period=payload["period"],
+        age=float(kernel_kwargs["ages"].values[payload["period"]]),
+        output=output,
+        scope="layout",
+    )
+
+
+def prepare_recorded_period(
+    *, payload: Mapping[str, Any], directory: Path, devices: Sequence[jax.Device]
+) -> tuple[dict[str, Any], MappingProxyType[str, PlannedCore]]:
+    """Restore and check the recorded layout without executing the period."""
     layouts = _require_period_layouts(payload=payload, directory=directory)
     recorded_cores = _require_recorded_cores(layouts=layouts, directory=directory)
 
@@ -608,19 +637,7 @@ def replay_period_on_recorded_layout(
         compiled_cores=compiled_cores, recorded=recorded_cores
     )
 
-    output = _run_period_kernel(
-        regime=regime,
-        capture_target=None,
-        compiled_cores=compiled_cores,
-        **kernel_kwargs,
-    )
-    return PeriodReplay(
-        regime_name=kernel_kwargs["regime_name"],
-        period=period,
-        age=float(kernel_kwargs["ages"].values[period]),
-        output=output,
-        scope="layout",
-    )
+    return kernel_kwargs, compiled_cores
 
 
 def _require_period_layouts(

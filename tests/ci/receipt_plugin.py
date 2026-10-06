@@ -130,8 +130,11 @@ def junit_identity(*, nodeid: str) -> tuple[str, str]:
     name, so this is the only stable join between a recorded selection and an
     outcome in the XML.
     """
-    head, _, name = nodeid.rpartition("::")
-    path, _, class_path = head.partition("::")
+    path, _, qualified_name = nodeid.partition("::")
+    qualified_name, parameter_separator, parameters = qualified_name.partition("[")
+    class_path, _, name = qualified_name.rpartition("::")
+    if parameter_separator:
+        name = f"{name}{parameter_separator}{parameters}"
     classname = path.removesuffix(".py").replace("/", ".").replace("\\", ".")
     if class_path:
         classname = f"{classname}.{class_path.replace('::', '.')}"

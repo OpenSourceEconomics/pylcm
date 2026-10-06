@@ -33,7 +33,10 @@ from _lcm.regime_building.age_normalization import (
     normalize_age_specialization,
 )
 from _lcm.regime_building.age_specialization import resolve_node
-from _lcm.regime_building.broadcast import root_functions
+from _lcm.regime_building.broadcast import (
+    root_functions,
+    states_read_through_their_draw,
+)
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import (
@@ -217,6 +220,9 @@ def validate_model_inputs(
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    removed_edge_reads: Mapping[
+        RegimeName, Mapping[str, tuple[RegimeName, ...]]
+    ] = MappingProxyType({}),
 ) -> None:
     """Validate model constructor inputs.
 
@@ -229,6 +235,10 @@ def validate_model_inputs(
     function still counts as used. A marker only the simulate phase reads is
     resolved at the first of `visited_periods_by_regime`, where a subject can be;
     they default to the active periods.
+
+    `removed_edge_reads` name, per regime, the variables read by declarations
+    that fixed-zero pruning removed with their edges, and those edges' targets.
+    Such a variable is unused like any other; the names only explain why.
     """
 
     # DC-EGM contract checks run before the generic checks below: a contract
@@ -301,6 +311,7 @@ def validate_model_inputs(
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
             visited_periods_by_regime=visited_periods_by_regime,
+            removed_edge_reads=removed_edge_reads,
         )
     )
     error_messages.extend(
@@ -386,6 +397,9 @@ def _validate_all_variables_used(
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    removed_edge_reads: Mapping[
+        RegimeName, Mapping[str, tuple[RegimeName, ...]]
+    ] = MappingProxyType({}),
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -403,7 +417,13 @@ def _validate_all_variables_used(
     - the gate, gate references or fallback projections of a gated edge whose
       target is this regime — those are declared on the source regime but
       evaluated here, so this regime is where the state they read must live;
-    - a law of motion, unless it hands the state to itself.
+    - a law of motion, unless it hands the state to itself;
+    - for a process state, any of the above reading its next-period draw
+      `next_<state>`, which is taken from the state.
+
+    A declaration removed with a fixed-zero edge is not a use: pruning removes
+    as much as it can up front, so a variable read only across such an edge is
+    unused, exactly as in the model declared without that edge.
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
@@ -415,6 +435,9 @@ def _validate_all_variables_used(
             instances.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
+        removed_edge_reads: Per regime, each state or action read by a
+            declaration removed with its fixed-zero edge, and the targets of
+            those edges; named in the error to explain why a variable is unused.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -516,6 +539,10 @@ def _validate_all_variables_used(
         # own `on` state — so a conditioner is credited to every regime that carries it,
         # not only the process's own regime.
         reachable = set(reachable) | (conditioning_names & variable_names)
+        # A process state has no `next_<state>` function node, so a computation
+        # that reads its next-period draw ends the walk at a leaf. The draw is
+        # taken from the state, so reading it is a use of the state.
+        reachable |= states_read_through_their_draw(regime=user_regime, reads=reachable)
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
@@ -535,9 +562,31 @@ def _validate_all_variables_used(
                 f"'{regime_name}': {' and '.join(msg_parts)}. "
                 f"Each state and action must be used in at least one of: "
                 f"utility, constraints, or transition functions."
+                + _removed_edge_explanation(
+                    regime_name=regime_name,
+                    unused=unused_variables,
+                    removed_edge_reads=removed_edge_reads.get(regime_name, {}),
+                )
             )
 
     return error_messages
+
+
+def _removed_edge_explanation(
+    *,
+    regime_name: RegimeName,
+    unused: list[str],
+    removed_edge_reads: Mapping[str, tuple[RegimeName, ...]],
+) -> str:
+    """Name the removed fixed-zero edges an unused variable was read across."""
+    return "".join(
+        f" '{name}' is read only across the edge(s) "
+        + ", ".join(f"'{regime_name}' -> '{target}'" for target in targets)
+        + ", removed during construction because their probability is fixed "
+        "at zero."
+        for name in unused
+        if (targets := removed_edge_reads.get(name))
+    )
 
 
 def _law_phase_varies(*, solve_obj: object, sim_obj: object) -> bool:
@@ -883,7 +932,12 @@ def _partial_fixed_params_into_regimes(
                             ).items()
                         }
                     )
-                    for family in ("decision", "transition", "route")
+                    for family in (
+                        "decision",
+                        "type_local_decision",
+                        "transition",
+                        "route",
+                    )
                 },
             ),
             Q_and_F=MappingProxyType(

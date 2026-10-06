@@ -15,10 +15,13 @@ import functools
 import gc
 import inspect
 import logging
+import math
 import os
 import time
+import uuid
 from collections.abc import (
     Callable,
+    Collection,
     Container,
     Hashable,
     Iterable,
@@ -42,11 +45,13 @@ from _lcm.engine import (
 )
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_inputs import compiler_input_paths
+from _lcm.execution.compiler_memory import compiler_memory_bytes
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InvariantBinding,
     MaterializedCoreProgram,
     ProgramScope,
     ReducedAxis,
@@ -69,6 +74,7 @@ from _lcm.execution.donation import (
 from _lcm.execution.eager_core import make_eager_core
 from _lcm.execution.execution_plan import (
     ResolvedExecution,
+    build_core_plan_record,
     execution_over_visible_devices,
 )
 from _lcm.execution.footprint import (
@@ -93,6 +99,13 @@ from _lcm.execution.internal_outputs import (
     resolve_producer,
     topological_program_order,
 )
+from _lcm.execution.invariant_blocks import (
+    block_layout,
+    block_state_action_space,
+    block_value_template,
+    selected_block_view,
+    write_block,
+)
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
     ExpectedOutputLeaf,
@@ -102,6 +115,7 @@ from _lcm.execution.output_layout import (
     resolve_output_layout,
 )
 from _lcm.execution.pending_work import BeforeArrayDelete, PendingSolveWork
+from _lcm.execution.runtime_sharding import runtime_shardings_match
 from _lcm.execution.scheduler import (
     BufferIdentity,
     BufferRegistry,
@@ -119,8 +133,10 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
     ValueTransferKind,
+    ValueViewDescriptor,
     classify_value_transfer,
     resolve_value_transfer,
+    transfer_result_key,
 )
 from _lcm.execution.workspace_planning import (
     BoundedWidthSelector,
@@ -160,6 +176,7 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _states_for_period,
 )
+from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
@@ -173,6 +190,11 @@ from _lcm.solution.period_capture import (
     capture_kernel_inputs,
     resolve_capture_target,
 )
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    capture_public_entry,
+    complete_public_capture,
+)
 from _lcm.solution.solve_inputs import (
     SolveInputMappings,
     locate_artifact,
@@ -181,6 +203,12 @@ from _lcm.solution.solve_inputs import (
 )
 from _lcm.solution.solve_phase_records import CallId, nested_phase, solve_phase
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.solution.structural_blueprints import (
+    StructuralBlueprintCache,
+    UncacheableSchemaError,
+    abstract_schema,
+    frozen_policy,
+)
 from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -188,7 +216,7 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
     placed_V_sharding,
 )
-from _lcm.typing import FlatParams, RegimeName, SimulationPolicy
+from _lcm.typing import FlatParams, RegimeName, SimulationPolicy, StateName
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -238,6 +266,30 @@ class _GatherCheck:
 GatherChecks = dict[int, tuple[object, _GatherCheck]]
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ExecutableCache:
+    """Compiled programs that several solves of one model share, by lowering key.
+
+    A lowering key names everything an executable is specialized to — the
+    program's durable identity, its abstract arguments, output layout and
+    donations — and nothing it reads as an operand. Solves whose programs
+    lower to the same keys can therefore run each other's executables: the
+    components of a block-major solve differ only in the code their grids
+    hold, which every program reads as an operand.
+    """
+
+    compiled: dict[Hashable, jax.stages.Compiled] = dataclasses.field(
+        default_factory=dict
+    )
+    """Executable of every lowering key compiled so far."""
+    labels: dict[Hashable, str] = dataclasses.field(default_factory=dict)
+    """Readable name of every compiled lowering key."""
+    memory: dict[Hashable, CompilerMemoryReservation] = dataclasses.field(
+        default_factory=dict
+    )
+    """Compiler memory reservation of every lowering key admitted under a budget."""
+
+
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
@@ -260,6 +312,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     process_grid_resolver: ProcessGridResolver | None = None,
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
+    executable_cache: ExecutableCache | None = None,
+    period_capture: CaptureContext | None = None,
+    structural_blueprints: StructuralBlueprintCache | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -315,6 +370,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         gather_checks: Fusion verdicts that outlive this solve, keyed by the
             identity of the runtime executable they were read from. `None`
             keeps them for this solve only.
+        executable_cache: Executables compiled by earlier solves whose programs
+            lower to the same keys, extended by this solve's. `None` compiles
+            for this solve only.
+        structural_blueprints: The model's store of immutable structural
+            blueprints, which a warm solve of the same abstract schema binds
+            instead of resolving every program again. `None` resolves afresh.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -379,6 +440,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         execution=resolved_execution,
+        capture_periods=()
+        if period_capture is None
+        else period_capture.request.periods,
         retain_replay=retain_replay,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -394,6 +458,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         process_grid_resolver=process_grid_resolver,
         call_id=call_id,
         gather_checks={} if gather_checks is None else gather_checks,
+        executable_cache=ExecutableCache()
+        if executable_cache is None
+        else executable_cache,
+        structural_blueprints=structural_blueprints,
+        base_state_action_spaces=base_state_action_spaces,
     )
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
@@ -543,6 +612,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         if resolved_execution.device_memory_bytes is not None
         else None
     )
+    # Every copy a period's transfer cache holds belongs to this solve alone.
+    transfer_generation = uuid.uuid4().hex
     with solve_phase(name="backward_induction", logger=logger, call_id=call_id):
         # Planning and compilation leave a large, long-lived object graph behind
         # (programs, frontiers, executables). Freezing it after one collection
@@ -607,7 +678,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 regime_name: compiled_functions[(regime_name, period)]
                                 for regime_name in active_regimes
                             }
-                        )
+                        ),
+                        generation=transfer_generation,
                     )
                 )
                 period_transfer_cache = PeriodTransferCache(
@@ -619,6 +691,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     before_delete=None
                     if pending_work is None
                     else pending_work.before_delete,
+                    generation=transfer_generation,
                 )
 
                 # Regimes declaring `same_period_refs` read other regimes' V of
@@ -686,7 +759,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             templates=input_templates,
                             registry=buffer_registry,
                         )
-                        output = _run_period_kernel(
+                        output, blocked = _run_dispatch_unit(
+                            value_template=input_templates.next_regime_to_V_arr[
+                                regime_name
+                            ],
                             regime=regime,
                             regime_name=regime_name,
                             period=period,
@@ -696,19 +772,31 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 pending_work=pending_work,
                             ),
                             capture_target=capture_target,
-                            state_action_space=base_state_action_spaces[regime_name],
-                            flat_params=flat_params,
-                            ages=ages,
-                            next_regime_to_V_arr=next_regime_to_V_arr,
-                            next_regime_to_continuation=next_regime_to_continuation,
-                            logger=logger,
-                            next_edge_to_V_arr=next_edge_to_V_arr,
-                            period_solution=period_solution,
-                            retain_replay=_regime_retains_replay(
+                            run_kernel=functools.partial(
+                                _run_period_kernel,
+                                period_capture=period_capture,
+                                captured_admission=compiled_programs.capture_admission.get(
+                                    (regime_name, period), MappingProxyType({})
+                                ),
                                 regime=regime,
-                                retain_replay=retain_replay,
+                                regime_name=regime_name,
+                                period=period,
+                                state_action_space=base_state_action_spaces[
+                                    regime_name
+                                ],
+                                flat_params=flat_params,
+                                ages=ages,
+                                next_regime_to_V_arr=next_regime_to_V_arr,
+                                next_regime_to_continuation=next_regime_to_continuation,
+                                logger=logger,
+                                next_edge_to_V_arr=next_edge_to_V_arr,
+                                period_solution=period_solution,
+                                retain_replay=_regime_retains_replay(
+                                    regime=regime,
+                                    retain_replay=retain_replay,
+                                ),
+                                selected_artifact_keys=selected_artifact_keys,
                             ),
-                            selected_artifact_keys=selected_artifact_keys,
                         )
                         continuation_spec = regime.solution.continuation_spec
                         result = consume_kernel_output(
@@ -732,6 +820,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         V_arr = _publish_kernel_value(
                             value=V_arr,
                             compiled_cores=compiled_functions[(regime_name, period)],
+                            assembled_template=(
+                                input_templates.next_regime_to_V_arr[regime_name]
+                                if blocked
+                                else None
+                            ),
                         )
                         _fail_if_continuation_publisher_returned_none(
                             result=result,
@@ -1240,6 +1333,8 @@ def _run_period_kernel(
     period_solution: Mapping[RegimeName, FloatND],
     retain_replay: bool,
     selected_artifact_keys: frozenset[ArtifactKey],
+    period_capture: CaptureContext | None = None,
+    captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1275,26 +1370,35 @@ def _run_period_kernel(
 
     # Captured before the period-specific state axes are substituted below. Replay
     # re-enters this funnel with capture explicitly disabled.
+    kernel_kwargs = {
+        "regime_name": regime_name,
+        "period": period,
+        "state_action_space": state_action_space,
+        "flat_params": flat_params,
+        "ages": ages,
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        "next_regime_to_continuation": next_regime_to_continuation,
+        "logger": logger,
+        "next_edge_to_V_arr": next_edge_to_V_arr,
+        "period_solution": period_solution,
+        "retain_replay": retain_replay,
+        "selected_artifact_keys": selected_artifact_keys,
+    }
+    entry = capture_public_entry(
+        context=period_capture,
+        regime=regime,
+        period=period,
+        kernel_kwargs=kernel_kwargs,
+        compiled_cores=compiled_cores,
+        admission=captured_admission,
+    )
     capture_kernel_inputs(
         capture_target=capture_target,
         regime=regime,
         regime_name=regime_name,
         period=period,
         compiled_cores=compiled_cores,
-        kernel_kwargs={
-            "regime_name": regime_name,
-            "period": period,
-            "state_action_space": state_action_space,
-            "flat_params": flat_params,
-            "ages": ages,
-            "next_regime_to_V_arr": next_regime_to_V_arr,
-            "next_regime_to_continuation": next_regime_to_continuation,
-            "logger": logger,
-            "next_edge_to_V_arr": next_edge_to_V_arr,
-            "period_solution": period_solution,
-            "retain_replay": retain_replay,
-            "selected_artifact_keys": selected_artifact_keys,
-        },
+        kernel_kwargs=kernel_kwargs,
     )
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
@@ -1352,7 +1456,8 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    return period_kernel(
+    started = time.perf_counter() if entry is not None else None
+    output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1363,6 +1468,88 @@ def _run_period_kernel(
         logger=logger,
         **same_period_kwargs,
     )
+    if entry is not None and started is not None:
+        jax.block_until_ready(output.value)
+        seconds = time.perf_counter() - started
+        complete_public_capture(entry=entry, value=output.value, seconds=seconds)
+    return output
+
+
+def _run_dispatch_unit(
+    *,
+    value_template: FloatND,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    compiled_cores: MappingProxyType[str, PlannedCore],
+    capture_target: PeriodCaptureTarget | None,
+    run_kernel: Callable[..., KernelOutput],
+) -> tuple[KernelOutput, bool]:
+    """Run one regime's dispatch unit, one invariant block after another.
+
+    `run_kernel` is `_run_period_kernel` bound to everything but the compiled
+    cores and the capture target. A regime whose programs are bound to the
+    codes of an invariant state runs each bound program on its own, in code
+    order, and writes each block into the regime's complete value, born on
+    `value_template`'s layout. Every other regime runs its adapter once.
+
+    Returns:
+        Tuple of the unit's kernel output and whether it was assembled from blocks.
+
+    Raises:
+        ExecutionPlanningError: A blocked regime-period is the capture target,
+            or its bound programs do not cover every code of its value.
+
+    """
+    graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+    bound = tuple(
+        name for name in compiled_cores if graph[name].invariant_binding is not None
+    )
+    if not bound:
+        return (
+            run_kernel(compiled_cores=compiled_cores, capture_target=capture_target),
+            False,
+        )
+    if capture_target == (regime_name, period):
+        msg = (
+            f"Regime {regime_name!r} is solved one invariant code at a time in "
+            f"period {period}; its period inputs cannot be captured for replay. "
+            "Remove the state from ExecutionConfig.invariant_block_widths to "
+            "capture it."
+        )
+        raise ExecutionPlanningError(msg)
+    axis_names = _value_axis_names(regimes={regime_name: regime})[regime_name]
+    first = cast("InvariantBinding", graph[bound[0]].invariant_binding)
+    n_codes = value_template.shape[axis_names.index(first.state_name)]
+    if len(bound) != n_codes:
+        msg = (
+            f"Regime {regime_name!r} dispatches {len(bound)} programs bound to "
+            f"{first.state_name!r} in period {period}, but its value holds "
+            f"{n_codes} codes; every code must be written."
+        )
+        raise ExecutionPlanningError(msg)
+    if n_codes == 1:
+        # One block covering a one-code value is that value: a whole-array
+        # write would only copy it.
+        return (
+            run_kernel(compiled_cores=compiled_cores, capture_target=None),
+            True,
+        )
+    value: FloatND | None = None
+    for name in bound:
+        binding = cast("InvariantBinding", graph[name].invariant_binding)
+        output = run_kernel(
+            compiled_cores=MappingProxyType({name: compiled_cores[name]}),
+            capture_target=None,
+        )
+        value = write_block(
+            value=value,
+            block=cast("FloatND", output.value),
+            binding=binding,
+            axis=axis_names.index(binding.state_name),
+            template=value_template,
+        )
+    return KernelOutput(value=cast("FloatND", value)), True
 
 
 def _cores_with_transfer_cache(
@@ -1404,7 +1591,9 @@ def _regime_device_ids(
 
 
 def _period_shared_transfer_plan(
-    *, compiled_cores_by_regime: Mapping[RegimeName, MappingProxyType[str, PlannedCore]]
+    *,
+    compiled_cores_by_regime: Mapping[RegimeName, MappingProxyType[str, PlannedCore]],
+    generation: Hashable = None,
 ) -> tuple[
     MappingProxyType[tuple[Hashable, Hashable], int],
     MappingProxyType[RegimeName, frozenset[tuple[Hashable, Hashable]]],
@@ -1414,8 +1603,11 @@ def _period_shared_transfer_plan(
     A regime dispatch commits once for every core it runs, so the count that
     matters for release is per regime, not per core: two cores of one regime
     reading a shared transfer still leave it needing only that regime's own
-    commit. An `ALIGNED_LOCAL` transfer names no copy for the cache to hold and
-    is excluded, whatever its `reused_by_several_consumers` mark.
+    commit. A transfer that delivers the stored artifact's own buffer names no
+    copy for the cache to hold and is excluded, whatever its
+    `reused_by_several_consumers` mark; a selected view is a fresh block even
+    when its layout is aligned, so it is counted. Keys are
+    `transfer_result_key`s under `generation`, the key the period's cache uses.
 
     Returns:
         Tuple of the declared consumer count per shared-transfer key, and the
@@ -1429,9 +1621,11 @@ def _period_shared_transfer_plan(
             for transfer in core.input_transfer_plan:
                 if (
                     transfer.reused_by_several_consumers
-                    and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+                    and not transfer.delivers_stored_buffer
                 ):
-                    regime_keys.add((transfer.target, transfer.source_sharding))
+                    regime_keys.add(
+                        transfer_result_key(transfer=transfer, generation=generation)
+                    )
         if regime_keys:
             keys_by_regime[regime_name] = regime_keys
     consumer_counts: dict[tuple[Hashable, Hashable], int] = {}
@@ -1807,8 +2001,13 @@ def _publish_kernel_value(
     *,
     value: FloatND,
     compiled_cores: Mapping[str, Callable],
+    assembled_template: FloatND | None = None,
 ) -> FloatND:
     """Publish a period value after asserting its planned placement.
+
+    A value assembled from invariant blocks is checked against the regime's
+    value template, `assembled_template`, since each compiled core produced
+    only one block of it.
 
     Every compiled core has already asserted its complete runtime output tree
     against the layout used to lower it at the compiled-core seam; here only the
@@ -1837,8 +2036,27 @@ def _publish_kernel_value(
     if not planned:
         msg = "A period dispatched no compiled core, so it publishes no value."
         raise ValueError(msg)
+    if assembled_template is not None:
+        _assert_assembled_value_layout(value=value, template=assembled_template)
+        return value
     assert_value_leaf_layout(value=value, layout=planned[0].layout)
     return value
+
+
+def _assert_assembled_value_layout(*, value: FloatND, template: FloatND) -> None:
+    """Assert that a value assembled from blocks has its template's layout."""
+    if (value.shape, value.dtype) != (
+        template.shape,
+        template.dtype,
+    ) or not runtime_shardings_match(
+        actual=value.sharding, expected=template.sharding, ndim=value.ndim
+    ):
+        msg = (
+            f"An assembled period value of shape {value.shape}, dtype {value.dtype} "
+            f"on {value.sharding} is not its template's: shape {template.shape}, "
+            f"dtype {template.dtype} on {template.sharding}."
+        )
+        raise AssertionError(msg)
 
 
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
@@ -2010,6 +2228,7 @@ def _iter_edge_topologies(
                         grids=target.solution.grids,
                         sharded_state_names=target.solution.sharded_state_names,
                         devices=devices,
+                        action_partitions=target.solution.action_partitions,
                     ),
                     state_order=tuple(target_states),
                     devices=devices,
@@ -2083,7 +2302,7 @@ type _InputDispatch = tuple[int, RegimeName] | tuple[int, RegimeName, RegimeName
 type _CoreTriple = tuple[RegimeName, int, str]
 type _WidthKey = tuple[tuple[str, int], ...]
 type _CoreCandidate = tuple[_CoreTriple, _WidthKey]
-type _ConsumerKey = tuple[int, ValueArtifactAddress, Hashable]
+type _ConsumerKey = tuple[int, Hashable, Hashable]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2113,6 +2332,11 @@ class _CompiledPrograms:
         default_factory=lambda: MappingProxyType({})
     )
     """Admitted ordinary alternatives at exactly the selected donating widths."""
+
+    capture_admission: Mapping[
+        tuple[str, int], Mapping[str, Mapping[str, int | None]]
+    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    """Selected non-donating reservation and residency for requested captures."""
 
 
 def _select_runtime_donation_cores(
@@ -2885,13 +3109,15 @@ def _period_copy_reservations(
 ) -> Mapping[Hashable, ArtifactFootprint]:
     """Reserve each shared destination throughout its period, including aliases.
 
-    Runtime caches a destination by artifact and required layout. Its release can
+    Runtime caches a destination by artifact and required layout, or by the
+    selected block of it a value view reads, whose aligned selection is a fresh
+    buffer as well. Its release can
     be delayed when a copy shares a source shard, so whole-period retention is a
     conservative bound instead of a prediction of the allocator's release instant.
     """
     return MappingProxyType(
         {
-            (transfer.target, transfer.source_sharding): ArtifactFootprint(
+            transfer_result_key(transfer=transfer): ArtifactFootprint(
                 bytes_per_device=transfer.cost.per_device_bytes,
                 device_ids=tuple(
                     sorted(device.id for device in transfer.source_sharding.device_set)
@@ -2901,7 +3127,7 @@ def _period_copy_reservations(
             if triple[1] == period
             for transfer in program.input_transfer_plan
             if transfer.reused_by_several_consumers
-            and transfer.kind is not ValueTransferKind.ALIGNED_LOCAL
+            and not transfer.delivers_stored_buffer
         }
     )
 
@@ -2933,7 +3159,7 @@ def _period_transfer_scratch_reservations(
         if triple[1] != period:
             continue
         for transfer in program.input_transfer_plan:
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+            if transfer.delivers_stored_buffer:
                 continue
             cost = transfer.cost
             unplanned = sorted(frozenset(cost.devices) - frozenset(device_ids))
@@ -2944,7 +3170,7 @@ def _period_transfer_scratch_reservations(
                 )
                 raise ExecutionPlanningError(msg)
             if transfer.reused_by_several_consumers:
-                key = (transfer.target, transfer.source_sharding)
+                key = transfer_result_key(transfer=transfer)
                 if key in shared:
                     continue
                 shared.add(key)
@@ -3124,16 +3350,16 @@ def _aligned_input_artifacts(
 ) -> tuple[ValueArtifactAddress, ...]:
     """Name the values one program's executable is handed without a copy.
 
-    A planned program's resolved transfer plan says which reads reach the
-    executable in their stored layout; every other transfer kind allocates a
-    copy that the stored buffer outlives, so both are live. A program with no
-    plan reads its declared values directly.
+    A planned program's transfer says whether the executable receives the stored
+    buffer itself. An aligned transport of a selected view still receives a
+    fresh block, so its stored owner remains live. A program with no plan
+    reads its declared values directly.
     """
     if metadata.input_transfer_plan:
         return tuple(
             transfer.target
             for transfer in metadata.input_transfer_plan
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+            if transfer.delivers_stored_buffer
         )
     return tuple(read.target for read in metadata.requirements.value_reads)
 
@@ -3159,7 +3385,7 @@ def _candidate_resident_bytes(
         frozenset(
             transfer.source
             for transfer in program.input_transfer_plan
-            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+            if transfer.delivers_stored_buffer
         )
         if program.input_transfer_plan
         else frozenset(read.source for read in program.requirements.value_reads)
@@ -3173,12 +3399,12 @@ def _candidate_resident_bytes(
     copied_inputs: set[Hashable] = set()
     temporary_bytes: dict[int, int] = {}
     for transfer in program.input_transfer_plan:
-        if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
+        if transfer.delivers_stored_buffer:
             continue
         kept = _compiler_reads_source(shardings=input_shardings, source=transfer.source)
         if transfer.reused_by_several_consumers:
             if kept:
-                copied_inputs.add((transfer.target, transfer.source_sharding))
+                copied_inputs.add(transfer_result_key(transfer=transfer))
         elif not kept:
             # Unshared occurrences are allocated separately, even if they name
             # the same artifact. A pruned occurrence still reaches device_put.
@@ -3320,7 +3546,7 @@ def _retained_base_space_arrays(*, regime: Regime) -> object:
     return space.states, space.discrete_actions, space.continuous_actions
 
 
-def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
+def _prepare_solve_programs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
@@ -3334,65 +3560,27 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
-    max_compilation_workers: int | None,
     logger: logging.Logger,
-    call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
-    gather_checks: GatherChecks | None = None,
-) -> _CompiledPrograms:
-    """Resolve every solve program and optionally compile unique lowerings.
+    call_id: CallId | None = None,
+    structural_blueprints: StructuralBlueprintCache | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
+    dict[_CoreTriple, CoreProgram],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+]:
+    """Resolve the full production graph and bind its primary and fallback keys.
 
-    Each regime exposes named cores through its period adapter. For every core, the
-    engine first materializes the adapter's exact `CoreProgram`. The program supplies
-    the planner-resolved callable, static choices, and output roles. The program's
-    durable identity, abstract arguments, specialization, and
-    output layout form the lowering key. Each unique program is lowered once
-    (sequentially, because tracing is single-threaded), then the XLA programs compile
-    in parallel via a thread pool. The loop stays free of solver-type forks.
-
-    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
-    without the lowering and compilation steps.
-
-    Args:
-        regimes: The internal regimes containing the period adapters.
-        program_fingerprint: Digest of the model facts every lowered program
-            depends on; opens every program's identity, so two models never
-            share an executable.
-        flat_params: Regime parameters for constructing lowering args.
-        ages: Age grid for the model.
-        next_regime_to_V_arr: Template with consistent keys and V array shapes
-            for constructing lowering arguments.
-        next_regime_to_continuation: Template with consistent keys and carry
-            shapes for constructing lowering arguments.
-        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
-            for constructing a source kernel's gated-edge lowering arguments;
-            empty for models without gated edges.
-        enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        execution: The hardware-local facts the model resolved — its devices,
-            the optional per-device workspace budget, and fixed planner axis
-            widths.
-        retain_replay: Whether the solve retains replay artifacts; with the
-            regime's declared replay route it selects which scoped programs of
-            each kernel's graph are dispatched.
-        retain_all_artifacts: Whether the result keeps every persistable
-            continuation payload, which the ledger retains and never donates.
-        persistable_artifact_refs: Exact model-authoritative addresses whose
-            replay programs are selected for persistence-oriented retention.
-        max_compilation_workers: Maximum threads for parallel compilation.
-            Defaults to `os.cpu_count()`.
-        logger: Logger for compilation progress.
-        fixed_input_arrays: Already-built runtime space arrays retained by solve.
-        gather_checks: Fusion verdicts shared with other solves of the same
-            model; `None` keeps them for this solve only.
-
-    Returns:
-        Executable mappings by regime-period, the resolved metadata used by
-        input liveness, the ledger the executables were lowered against, and the
-        donation decisions each selected executable carries. Eager entries call
-        the resolved functions directly; AOT entries call compiled executables
-        carrying the same plans.
-
+    Return the same mutable frontier-owned maps to each caller. No candidate is
+    lowered or compiled here, and no extra owner survives ordinary solve's unpack.
     """
     # Collect every kernel's native graph, narrowed to the retention's scope.
     with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
@@ -3439,6 +3627,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             retain_all_artifacts=retain_all_artifacts,
             persistable_artifact_refs=persistable_artifact_refs,
             process_grid_resolver=process_grid_resolver,
+            structural_blueprints=structural_blueprints,
+            base_state_action_spaces=base_state_action_spaces,
+            logger=logger,
         )
 
         _fail_if_one_key_covers_two_callables(
@@ -3467,6 +3658,139 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             fallback_donations=fallback_donations,
             argument_keys=fallback_argument_keys,
         )
+
+    return (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        all_programs,
+        fallback_programs,
+    )
+
+
+def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_fingerprint: str,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    enable_jit: bool,
+    execution: ResolvedExecution,
+    retain_replay: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    max_compilation_workers: int | None,
+    logger: logging.Logger,
+    call_id: CallId | None = None,
+    fixed_input_arrays: object = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
+    gather_checks: GatherChecks | None = None,
+    executable_cache: ExecutableCache | None = None,
+    capture_periods: tuple[tuple[str, int], ...] = (),
+    structural_blueprints: StructuralBlueprintCache | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+) -> _CompiledPrograms:
+    """Resolve every solve program and optionally compile unique lowerings.
+
+    Each regime exposes named cores through its period adapter. For every core, the
+    engine first materializes the adapter's exact `CoreProgram`. The program supplies
+    the planner-resolved callable, static choices, and output roles. The program's
+    durable identity, abstract arguments, specialization, and
+    output layout form the lowering key. Each unique program is lowered once
+    (sequentially, because tracing is single-threaded), then the XLA programs compile
+    in parallel via a thread pool. The loop stays free of solver-type forks.
+
+    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
+    without the lowering and compilation steps.
+
+    Args:
+        regimes: The internal regimes containing the period adapters.
+        program_fingerprint: Digest of the model facts every lowered program
+            depends on; opens every program's identity, so two models never
+            share an executable.
+        flat_params: Regime parameters for constructing lowering args.
+        ages: Age grid for the model.
+        next_regime_to_V_arr: Template with consistent keys and V array shapes
+            for constructing lowering arguments.
+        next_regime_to_continuation: Template with consistent keys and carry
+            shapes for constructing lowering arguments.
+        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
+            for constructing a source kernel's gated-edge lowering arguments;
+            empty for models without gated edges.
+        enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution: The hardware-local facts the model resolved — its devices,
+            the optional per-device workspace budget, and fixed planner axis
+            widths.
+        retain_replay: Whether the solve retains replay artifacts; with the
+            regime's declared replay route it selects which scoped programs of
+            each kernel's graph are dispatched.
+        retain_all_artifacts: Whether the result keeps every persistable
+            continuation payload, which the ledger retains and never donates.
+        persistable_artifact_refs: Exact model-authoritative addresses whose
+            replay programs are selected for persistence-oriented retention.
+        max_compilation_workers: Maximum threads for parallel compilation.
+            Defaults to `os.cpu_count()`.
+        logger: Logger for compilation progress.
+        fixed_input_arrays: Already-built runtime space arrays retained by solve.
+        gather_checks: Fusion verdicts shared with other solves of the same
+            model; `None` keeps them for this solve only.
+        executable_cache: Executables, labels and compiler reservations shared
+            with other solves whose programs lower to the same keys; a key it
+            already holds is not lowered or compiled again. `None` keeps them
+            for this solve only.
+        structural_blueprints: The model's store of structural blueprints;
+            `None` resolves every program afresh.
+        base_state_action_spaces: This solve's params-completed state-action
+            spaces, whose abstract schema enters the structural key.
+
+    Returns:
+        Executable mappings by regime-period, the resolved metadata used by
+        input liveness, the ledger the executables were lowered against, and the
+        donation decisions each selected executable carries. Eager entries call
+        the resolved functions directly; AOT entries call compiled executables
+        carrying the same plans.
+
+    """
+    (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        _all_programs,
+        _fallback_programs,
+    ) = _prepare_solve_programs(
+        regimes=regimes,
+        program_fingerprint=program_fingerprint,
+        flat_params=flat_params,
+        ages=ages,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+        enable_jit=enable_jit,
+        execution=execution,
+        retain_replay=retain_replay,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+        logger=logger,
+        process_grid_resolver=process_grid_resolver,
+        call_id=call_id,
+        structural_blueprints=structural_blueprints,
+        base_state_action_spaces=base_state_action_spaces,
+    )
+    fallback_keys = frontier.fallback_keys
+    fallback_donations = frontier.fallback_donations
 
     # Bound candidates, in rank order, of each core. The frontier appends to these
     # lists as refusals ask for narrower candidates; `frontier_lengths` is the
@@ -3604,9 +3928,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
-    compiled: dict[Hashable, jax.stages.Compiled] = {}
-    labels: dict[Hashable, str] = {}
-    memory_by_lowering_key: dict[Hashable, CompilerMemoryReservation] = {}
+    cache = ExecutableCache() if executable_cache is None else executable_cache
+    compiled = cache.compiled
+    labels = cache.labels
+    memory_by_lowering_key = cache.memory
     resident_bytes_by_candidate: dict[_CoreCandidate, int] = {}
     admission_keys: dict[_CoreCandidate, Hashable] = {}
     eligible = _triples_within_budget(
@@ -3894,7 +4219,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     else plan_workspace(
                         axes=representative.requirements.axes,
                         fixed_widths=execution.widths_for(regime_name=triple[0]),
-                        width_ceilings=execution.axis_width_ceilings,
+                        width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                         covered_axes=execution.covered_axes,
                         compile_candidate=_CompiledCandidateLookup(
                             compiled_by_width=compiled_by_width
@@ -3944,7 +4269,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     plan=plan,
                     axes=representative.requirements.axes,
                     fixed_widths=execution.widths_for(regime_name=triple[0]),
-                    width_ceilings=execution.axis_width_ceilings,
+                    width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                     frontier=frontier,
                     gather_checks=gather_checks,
                     compile_candidate=functools.partial(
@@ -3993,9 +4318,54 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     compiled=compiled[fallback_keys[selected_candidate]],
                     donated_arguments=(),
                 )
+            if logger.isEnabledFor(logging.DEBUG):
+                _log_core_plan_record(
+                    triple=triple,
+                    regime=regimes[triple[0]],
+                    program=selected,
+                    layout=all_layouts[triple],
+                    widths=plan.widths,
+                    executable=compiled[lowering_keys[selected_candidate]],
+                    memory=memory_by_lowering_key.get(
+                        lowering_keys[selected_candidate]
+                    ),
+                    inventory=resident_inventory.get(triple),
+                    resident_bytes=resident_bytes_by_candidate.get(selected_candidate),
+                    logger=logger,
+                )
+
+    capture_admission: dict[tuple[str, int], dict[str, Mapping[str, int | None]]] = {}
+    for triple, core in selected_cores.items():
+        if triple[:2] not in capture_periods:
+            continue
+        if core.donated_arguments:
+            raise ValueError("Public period capture does not support donated inputs.")
+        candidate = (triple, _width_key(widths=core.tile_widths))
+        reservation = compiler_memory_reservation(
+            compiled=core.compiled, widths=core.tile_widths
+        )
+        resident = (
+            None
+            if budget_bytes is None
+            else _candidate_resident_bytes(
+                compiled=compiled[lowering_keys[candidate]],
+                program=selected_programs[triple],
+                internal_arguments=internal_templates[candidate],
+                inventory=resident_inventory[triple],
+            )
+        )
+        capture_admission.setdefault(triple[:2], {})[triple[2]] = MappingProxyType(
+            {
+                "budget_bytes": budget_bytes,
+                "resident_bytes": resident,
+                "reservation_bytes": reservation.reservation_bytes,
+                "peak_bytes": reservation.peak_bytes,
+            }
+        )
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
+        capture_admission=MappingProxyType(capture_admission),
         metadata=_execution_metadata(programs=selected_programs),
         input_liveness=input_liveness,
         donations=MappingProxyType(
@@ -4385,7 +4755,7 @@ def _bounded_candidate_source(
         selector = BoundedWidthSelector(
             axes=representative.requirements.axes,
             fixed_widths=execution.widths_for(regime_name=triple[0]),
-            width_ceilings=execution.axis_width_ceilings,
+            width_ceilings=execution.ceilings_for(regime_name=triple[0]),
             covered_axes=execution.covered_axes,
             policy=policy,
             hint=policy.hints.get(triple[0]),
@@ -5216,7 +5586,7 @@ class _LazyCandidateFrontier:
     donations: dict[_CoreCandidate, tuple[ResolvedDonation, ...]]
     lowering_keys: dict[_CoreCandidate, Hashable]
     argument_keys: dict[_CoreTriple, Hashable]
-    transfer_consumers: Mapping[_ConsumerKey, set[_CoreTriple]]
+    transfer_consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]]
     readers_by_dispatch: Mapping[
         tuple[int, RegimeName],
         Mapping[ValueArtifactAddress, frozenset[ValueConsumerAddress]],
@@ -5397,6 +5767,9 @@ def _resolve_output_layouts_and_lowering_keys(
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     process_grid_resolver: ProcessGridResolver | None = None,
+    structural_blueprints: StructuralBlueprintCache[_StructuralBlueprint] | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+    logger: logging.Logger | None = None,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
@@ -5447,6 +5820,115 @@ def _resolve_output_layouts_and_lowering_keys(
     candidate, whose declared reads and transfer plan no width changes — the
     donation set of every candidate is decided against it, and only then are the
     keys computed, so a key names everything the executable is lowered with.
+
+    The structural part — materialized abstract programs, read plans, layouts,
+    ranked frontiers and the top-ranked candidates — is an immutable
+    `_StructuralBlueprint`. With `structural_blueprints`, a blueprint resolved
+    for the same structural key (see `_structural_key`) is bound instead of
+    resolving every program again. The liveness ledger, the donation decisions,
+    the lowering keys and the candidate frontier are built from the blueprint
+    for every call, and admission runs afterwards on the current inventory.
+    """
+    key = (
+        None
+        if structural_blueprints is None or base_state_action_spaces is None
+        else _structural_key(
+            all_programs=all_programs,
+            program_fingerprint=program_fingerprint,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            base_state_action_spaces=base_state_action_spaces,
+            execution=execution_widths,
+            budgeted=budget_bytes is not None,
+            enable_jit=enable_jit,
+        )
+    )
+    blueprint = (
+        None
+        if key is None or structural_blueprints is None
+        else structural_blueprints.get(key=key)
+    )
+    if blueprint is None:
+        blueprint = _build_structural_blueprint(
+            all_programs=all_programs,
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+            budget_bytes=budget_bytes,
+            execution_widths=execution_widths,
+            continuous_sharded_state=continuous_sharded_state,
+            process_grid_resolver=process_grid_resolver,
+        )
+        if key is not None and structural_blueprints is not None:
+            structural_blueprints.put(key=key, blueprint=blueprint)
+    if logger is not None and structural_blueprints is not None:
+        logger.debug(
+            "structural blueprint: %s (hits=%d, misses=%d, entries=%d)",
+            "uncached" if key is None else "stored",
+            structural_blueprints.hits,
+            structural_blueprints.misses,
+            len(structural_blueprints),
+        )
+    return _bind_structural_blueprint(
+        blueprint=blueprint,
+        regimes=regimes,
+        program_fingerprint=program_fingerprint,
+        enable_jit=enable_jit,
+        donate_buffers=donate_buffers,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _StructuralBlueprint:
+    """The immutable, abstract recipe every program of one solve schema resolves to.
+
+    Every tree it holds is abstract: argument and template leaves are shape
+    descriptors carrying their required layout. It holds no concrete array, no
+    liveness ledger, no donation decision and no frontier cursor, so binding it
+    to a later solve of the same structural key reads nothing that solve has to
+    supply afresh.
+    """
+
+    programs: tuple[CoreProgram, ...]
+    """The declarations the recipe was resolved from, kept alive with it."""
+    layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]
+    resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]
+    """The marked top-ranked candidate of every core, in producer order."""
+    internal_templates: MappingProxyType[_CoreCandidate, Mapping[str, object]]
+    frontiers: MappingProxyType[_CoreTriple, _CoreFrontier]
+    frontier_lengths: MappingProxyType[_CoreTriple, int]
+    transfer_consumers: MappingProxyType[_ConsumerKey, frozenset[_CoreTriple]]
+    representative_metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
+
+
+def _build_structural_blueprint(  # noqa: PLR0915
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    budget_bytes: int | None,
+    execution_widths: ResolvedExecution,
+    continuous_sharded_state: str | None,
+    process_grid_resolver: ProcessGridResolver | None,
+) -> _StructuralBlueprint:
+    """Materialize every program once and bind its top-ranked width candidate.
+
+    Programs are visited so every producer of an internal output is materialized
+    before the consumers that read it. Each program is materialized against the
+    current inputs and immediately replaced by its abstract form, so the
+    blueprint retains shapes, dtypes, weak typing and layouts, never values.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
@@ -5463,27 +5945,39 @@ def _resolve_output_layouts_and_lowering_keys(
     producers: dict[str, MappingProxyType[Hashable, ResolvedProducer]] = {}
     consumed_names: frozenset[str] = frozenset()
     current_cell: tuple[RegimeName, int] | None = None
+    value_axis_names = _value_axis_names(regimes=regimes)
     ordered_programs = _programs_in_producer_order(all_programs=all_programs)
+    # The programs of one invariant family differ only by their code, so a
+    # regime-period builds its state space once and a family ranks its widths
+    # once, for this solve's parameters.
+    family_width_candidates: dict[
+        tuple[RegimeName, int, str], tuple[Mapping[str, int], ...]
+    ] = {}
     for (regime_name, period, core_key), declaration in ordered_programs.items():
         triple = (regime_name, period, core_key)
+        regime = regimes[regime_name]
         if (regime_name, period) != current_cell:
             current_cell = (regime_name, period)
             producers = {}
             consumed_names = _consumed_producer_names(
                 all_programs=all_programs, regime_name=regime_name, period=period
             )
-        regime = regimes[regime_name]
-        state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name],
-            process_grid_resolver=process_grid_resolver,
-        )
+            state_action_space = regime.solution.state_action_space(
+                regime_params=flat_params[regime_name],
+                process_grid_resolver=process_grid_resolver,
+            )
+        binding = declaration.invariant_binding
         edge_kwargs = _edge_kwargs(
             regime=regime,
             regime_name=regime_name,
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
         context = CoreBuildContext(
-            state_action_space=state_action_space,
+            state_action_space=(
+                state_action_space
+                if binding is None
+                else block_state_action_space(space=state_action_space, binding=binding)
+            ),
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
@@ -5503,14 +5997,22 @@ def _resolve_output_layouts_and_lowering_keys(
             require_full_next_value=_continuous_value_replica_required(
                 regime=regime, state_name=continuous_sharded_state
             ),
+            value_axis_names=value_axis_names,
         )
-        width_candidates = workspace_width_candidates(
-            axes=materialized.requirements.axes,
-            fixed_widths=execution_widths.widths_for(regime_name=regime_name),
-            width_ceilings=execution_widths.axis_width_ceilings,
-            covered_axes=execution_widths.covered_axes,
-            budget_bytes=budget_bytes,
+        family = None if binding is None else (regime_name, period, binding.family)
+        width_candidates = (
+            None if family is None else family_width_candidates.get(family)
         )
+        if width_candidates is None:
+            width_candidates = workspace_width_candidates(
+                axes=materialized.requirements.axes,
+                fixed_widths=execution_widths.widths_for(regime_name=regime_name),
+                width_ceilings=execution_widths.ceilings_for(regime_name=regime_name),
+                covered_axes=execution_widths.covered_axes,
+                budget_bytes=budget_bytes,
+            )
+            if family is not None:
+                family_width_candidates[family] = width_candidates
         state_order = tuple(
             name
             for name in state_action_space.states
@@ -5552,7 +6054,14 @@ def _resolve_output_layouts_and_lowering_keys(
             )
         layouts[triple] = resolve_output_layout(
             core_key=core_key,
-            value_template=next_regime_to_V_arr[regime_name],
+            value_template=(
+                next_regime_to_V_arr[regime_name]
+                if binding is None
+                else block_value_template(
+                    template=next_regime_to_V_arr[regime_name],
+                    axis=state_order.index(binding.state_name),
+                )
+            ),
             state_order=state_order,
             output_roles=resolved.output_roles,
         )
@@ -5576,6 +6085,56 @@ def _resolve_output_layouts_and_lowering_keys(
     # One derivation per program group, handed to both the liveness ledger and
     # the resident-bytes walk, so the two read the same declaration facts.
     representative_metadata = _execution_metadata(programs=representatives)
+    return _StructuralBlueprint(
+        programs=tuple(all_programs.values()),
+        layouts=MappingProxyType(layouts),
+        resolved_programs=MappingProxyType(resolved_programs),
+        internal_templates=MappingProxyType(internal_templates),
+        frontiers=MappingProxyType(frontiers),
+        frontier_lengths=MappingProxyType(frontier_lengths),
+        transfer_consumers=MappingProxyType(
+            {key: frozenset(triples) for key, triples in transfer_consumers.items()}
+        ),
+        representative_metadata=representative_metadata,
+    )
+
+
+def _bind_structural_blueprint(
+    *,
+    blueprint: _StructuralBlueprint,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_fingerprint: str,
+    enable_jit: bool,
+    donate_buffers: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
+]:
+    """Build one call's ledger, donations, lowering keys and frontier.
+
+    Every mutable object returned is new: the frontier extends its own copies
+    of the candidate, program and template maps as refusals bind narrower
+    widths, and the blueprint is left untouched for the next call.
+    """
+    layouts = dict(blueprint.layouts)
+    resolved_programs = dict(blueprint.resolved_programs)
+    internal_templates = dict(blueprint.internal_templates)
+    candidates_by_triple = {
+        candidate[0]: [candidate] for candidate in blueprint.resolved_programs
+    }
+    representatives = {
+        candidate[0]: resolved
+        for candidate, resolved in blueprint.resolved_programs.items()
+    }
+    representative_metadata = blueprint.representative_metadata
     input_liveness = _build_planned_input_liveness(
         regimes=regimes,
         program_metadata=representative_metadata,
@@ -5602,9 +6161,9 @@ def _resolve_output_layouts_and_lowering_keys(
         argument_keys=argument_keys,
     )
     frontier = _LazyCandidateFrontier(
-        frontiers=frontiers,
+        frontiers=blueprint.frontiers,
         candidates_by_triple=candidates_by_triple,
-        frontier_lengths=MappingProxyType(frontier_lengths),
+        frontier_lengths=blueprint.frontier_lengths,
         layouts=layouts,
         resolved_programs=resolved_programs,
         internal_templates=internal_templates,
@@ -5612,7 +6171,7 @@ def _resolve_output_layouts_and_lowering_keys(
         donations=donations,
         lowering_keys=lowering_keys,
         argument_keys=argument_keys,
-        transfer_consumers=transfer_consumers,
+        transfer_consumers=blueprint.transfer_consumers,
         readers_by_dispatch=readers_by_dispatch,
         input_liveness=input_liveness,
         regimes=regimes,
@@ -5630,6 +6189,98 @@ def _resolve_output_layouts_and_lowering_keys(
         donations,
         representative_metadata,
         frontier,
+    )
+
+
+# Budget facts admission reads; the recipe reads only whether a budget applies.
+_ADMISSION_ONLY_EXECUTION_FIELDS = frozenset(
+    {"device_memory_bytes", "requested_device_memory_bytes", "device_pool_limit_bytes"}
+)
+
+
+def _structural_key(
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    program_fingerprint: str,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: Mapping[_EdgeKey, FloatND],
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    execution: ResolvedExecution,
+    budgeted: bool,
+    enable_jit: bool,
+) -> Hashable | None:
+    """Return the key a solve's structural blueprint is stored under, if certified.
+
+    Only built-in GridSearch programs are certified: their argument builder
+    reads the state-action space, the value templates, the parameters, the
+    period and the age grid, and nothing else, so its abstract output follows
+    from the abstract schema of those inputs. A graph holding any other builder
+    returns `None` and is resolved afresh on every call.
+
+    The key opens with the sealed model identity and the exact declarations of
+    the selected programs, then the abstract schema of every input the builder
+    reads — tree structure, shape, canonical dtype, weak typing, commitment and
+    sharding — the execution policy except the budget value, whether a budget
+    applies, JIT and the precision mode. Parameter values never enter: a value
+    that fixes a support, a shape or a compile-closed grid is already part of
+    the sealed identity or of the state-action space schema.
+    """
+    if not all(
+        type(program.argument_builder) is _GridSearchArgumentBuilder
+        for program in all_programs.values()
+    ):
+        return None
+    try:
+        return (
+            ("pylcm-structural-blueprint", 1),
+            program_fingerprint,
+            tuple((triple, id(program)) for triple, program in all_programs.items()),
+            abstract_schema(flat_params),
+            abstract_schema(ages.values),
+            abstract_schema(next_regime_to_V_arr),
+            abstract_schema(next_regime_to_continuation),
+            abstract_schema(next_edge_to_V_arr),
+            abstract_schema(
+                {
+                    name: (
+                        space.states,
+                        space.discrete_actions,
+                        space.continuous_actions,
+                    )
+                    for name, space in base_state_action_spaces.items()
+                }
+            ),
+            frozen_policy(
+                {
+                    field.name: getattr(execution, field.name)
+                    for field in dataclasses.fields(execution)
+                    if field.name not in _ADMISSION_ONLY_EXECUTION_FIELDS
+                }
+            ),
+            budgeted,
+            enable_jit,
+            bool(jax.config.jax_enable_x64),
+        )
+    except UncacheableSchemaError:
+        return None
+
+
+def _value_axis_names(
+    *, regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, tuple[StateName, ...]]:
+    """Name the axes of every regime's stored value, in stored order."""
+    return MappingProxyType(
+        {
+            name: tuple(
+                state
+                for state in regime.solution.state_names
+                if state not in regime.fold_state_names
+            )
+            for name, regime in regimes.items()
+        }
     )
 
 
@@ -5670,7 +6321,13 @@ def _lowering_keys(
             _program_identity(
                 program_fingerprint=program_fingerprint,
                 regime_name=regime_name,
-                core_name=core_key,
+                # Programs of one family differ only by the code they are bound
+                # to, which is an operand, so they share one executable.
+                core_name=(
+                    core_key
+                    if resolved.invariant_binding is None
+                    else resolved.invariant_binding.family
+                ),
                 period_signature=regime.solution.period_signatures[period],
                 solver_group_key=regime.solution.solver_period_group_keys.get(period),
             ),
@@ -5771,7 +6428,7 @@ def _transfer_consumer_counts(
 def _apply_transfer_marks(
     *,
     programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
-    consumers: Mapping[_ConsumerKey, set[_CoreTriple]],
+    consumers: Mapping[_ConsumerKey, Collection[_CoreTriple]],
 ) -> dict[_CoreCandidate, ResolvedCoreProgram]:
     """Write a census of shared transfer results onto each candidate's plan."""
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
@@ -5806,7 +6463,7 @@ def _consumer_key(
     of the period asks for it. The source regime and core are deliberately absent:
     they are what the count ranges over.
     """
-    return (triple[1], transfer.target, transfer.source_sharding)
+    return (triple[1], *transfer_result_key(transfer=transfer))
 
 
 def _consumed_producer_names(
@@ -5898,6 +6555,7 @@ def _prepare_abstract_program(
     source_value_template: FloatND,
     source: _CoreTriple,
     require_full_next_value: bool = False,
+    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
 ) -> tuple[MaterializedCoreProgram, tuple[ResolvedValueTransfer, ...]]:
     """Resolve one core's exact read destinations before enumerating widths."""
     transfers = (
@@ -5906,10 +6564,28 @@ def _prepare_abstract_program(
             source_value_template=source_value_template,
             source=source,
             require_full_next_value=require_full_next_value,
+            value_axis_names=value_axis_names,
         )
         if program.disposition is CoreExecutionDisposition.PLANNED
         else ()
     )
+    views = {
+        transfer.source: transfer.view
+        for transfer in transfers
+        if transfer.view is not None
+    }
+    if views:
+        # A read through a selected view declares the view it is planned with.
+        program = dataclasses.replace(
+            program,
+            requirements=dataclasses.replace(
+                program.requirements,
+                value_reads=tuple(
+                    dataclasses.replace(read, view=views.get(read.source))
+                    for read in program.requirements.value_reads
+                ),
+            ),
+        )
     return (
         abstract_program_inputs(
             program=program,
@@ -5926,6 +6602,7 @@ def _resolve_value_input_transfer_plan(
     source_value_template: object,
     source: _CoreTriple,
     require_full_next_value: bool = False,
+    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]] = MappingProxyType({}),
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve every declared value read against its source core's placement.
 
@@ -5933,6 +6610,10 @@ def _resolve_value_input_transfer_plan(
     liveness. The specialization key omits absolute periods and source-node
     coordinates, while retaining the argument-tree path, so equivalent period nodes
     can still share a compiled executable without conflating different tree roles.
+
+    A program bound to one code of an invariant state reads every stored regime
+    value carrying that state through the selected block of its code, named by
+    `value_axis_names`; a value without the state is read whole.
     """
     source_execution_sharding = getattr(source_value_template, "sharding", None)
     if not isinstance(source_execution_sharding, jax.sharding.Sharding):
@@ -5964,6 +6645,20 @@ def _resolve_value_input_transfer_plan(
             target_regime=read.target.regime,
             source_regime=read.source.source_regime,
         )
+        block = _bound_block_view(
+            program=program,
+            read=read,
+            stored_template=stored_template,
+            source_sharding=source_sharding,
+            value_axis_names=value_axis_names,
+        )
+        view = None if block is None else block[0]
+        if block is not None:
+            view, selected_sharding = block
+            source_sharding = view.required_sharding
+            kind = classify_value_transfer(
+                stored_sharding=selected_sharding, required_sharding=source_sharding
+            )
         result.append(
             resolve_value_transfer(
                 target=read.target,
@@ -5971,9 +6666,49 @@ def _resolve_value_input_transfer_plan(
                 kind=kind,
                 stored_template=stored_template,
                 source_sharding=source_sharding,
+                view=view,
             )
         )
     return tuple(result)
+
+
+def _bound_block_view(
+    *,
+    program: MaterializedCoreProgram,
+    read: ValueRead,
+    stored_template: object,
+    source_sharding: jax.sharding.Sharding,
+    value_axis_names: Mapping[RegimeName, tuple[StateName, ...]],
+) -> tuple[ValueViewDescriptor, jax.sharding.Sharding] | None:
+    """Return the selected view a bound program reads one stored value through.
+
+    The view comes with the layout its selected block is born on. `None` when
+    the program is unbound or the value does not carry the bound state. A value
+    stored on the reading mesh keeps its stored partitioning of the remaining
+    axes; one moved onto that mesh arrives on `source_sharding`.
+    """
+    binding = program.invariant_binding
+    if binding is None or read.target.kind is not ValueArtifactKind.REGIME_VALUE:
+        return None
+    axis_names = value_axis_names.get(read.target.regime, ())
+    if binding.state_name not in axis_names:
+        return None
+    stored_sharding = stored_template.sharding  # ty: ignore[unresolved-attribute]
+    selected_sharding = block_layout(
+        layout=stored_sharding,
+        axis=axis_names.index(binding.state_name),
+        ndim=len(axis_names),
+    )
+    view = selected_block_view(
+        artifact=read.target,
+        binding=binding,
+        stored_axis_names=axis_names,
+        stored_template=stored_template,
+        required_sharding=(
+            selected_sharding if source_sharding == stored_sharding else source_sharding
+        ),
+    )
+    return view, selected_sharding
 
 
 def _resolve_value_transfer_layout(
@@ -6427,6 +7162,71 @@ def _log_kernel_memory(
         stats.argument_size_in_bytes / gib,
         stats.output_size_in_bytes / gib,
         stats.peak_memory_in_bytes / gib,
+    )
+
+
+def _log_core_plan_record(
+    *,
+    triple: _CoreTriple,
+    regime: Regime,
+    program: ResolvedCoreProgram,
+    layout: ResolvedOutputLayout,
+    widths: Mapping[str, int],
+    executable: jax.stages.Compiled,
+    memory: CompilerMemoryReservation | None,
+    inventory: ResidentInventory | None,
+    resident_bytes: int | None,
+    logger: logging.Logger,
+) -> None:
+    """Log one selected core's plan record at debug level.
+
+    Reads only planning metadata and the executable's compile-time reports, so
+    it synchronizes no device and leaves the selected plan untouched.
+    """
+    if memory is None:
+        report = compiler_memory_bytes(compiled=executable)
+        peak_bytes = None if report is None else report.peak_memory_in_bytes
+    else:
+        peak_bytes = memory.peak_bytes
+    try:
+        hlo_text = executable.as_text()
+    except Exception:  # noqa: BLE001 - optimized text is an optional report
+        hlo_text = None
+    record = build_core_plan_record(
+        triple=triple,
+        state_names=tuple(
+            name
+            for name in regime.solution.state_names
+            if name not in regime.fold_state_names
+        ),
+        value_shape=layout.expected_value_shape,
+        value_sharding=layout.expected_leaves[0].sharding,
+        axis_extents={
+            axis.name: (
+                math.prod(axis.coordinate_extents)
+                if isinstance(axis, ReducedAxis)
+                else axis.extent
+            )
+            for axis in program.requirements.axes
+        },
+        widths=widths,
+        transfer_costs=tuple(transfer.cost for transfer in program.input_transfer_plan),
+        stored_owner_bytes={} if inventory is None else inventory.fixed_bytes,
+        resident_bytes=resident_bytes,
+        period_transfer_scratch_bytes=(
+            {} if inventory is None else inventory.transfer_scratch_bytes
+        ),
+        compiler_peak_bytes=peak_bytes,
+        compiler_reservation_bytes=None if memory is None else memory.reservation_bytes,
+        hlo_text=hlo_text,
+        selected_block=(
+            None
+            if (binding := program.invariant_binding) is None
+            else {binding.state_name: (binding.start, binding.start + 1)}
+        ),
+    )
+    logger.debug(
+        "core plan record %s", record.to_json(), extra={"core_plan_record": record}
     )
 
 

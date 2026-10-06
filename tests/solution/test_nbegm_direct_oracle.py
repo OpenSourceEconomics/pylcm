@@ -26,6 +26,8 @@ from tests.conftest import DECIMAL_PRECISION
 from tests.solution import _nbegm_oracle_routes as routes
 from tests.solution import test_nbegm_epstein_zin as epstein_zin_model
 from tests.solution._nbegm_direct_oracle import (
+    ChildPeriodContext,
+    child_period_context,
     direct_oracle_period,
     nnbegm_inner_contexts,
     ride_along_kernel,
@@ -239,6 +241,30 @@ _ROUTES = (
         period=0,
     ),
     _Route(
+        name="stochastic_node_draw",
+        build_model=lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm", n_periods=3, income_timing="draw", **_SMALL
+        ),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0, income_timing="draw"
+        ),
+        period=0,
+    ),
+    _Route(
+        name="stochastic_node_draw_jump",
+        build_model=lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            income_timing="draw",
+            tax_kind="jump",
+            **_SMALL,
+        ),
+        build_params=lambda: nbegm_stochastic_node_toy.build_params(
+            final_age_alive=2.0, tax_lump=1.0, income_timing="draw"
+        ),
+        period=0,
+    ),
+    _Route(
         name="ride_discrete",
         build_model=lambda: nbegm_ride_discrete_toy.build_model(
             variant="nbegm", n_periods=3, **_SMALL
@@ -434,14 +460,21 @@ def _assert_agrees(*, got: Any, expected: Any, label: str) -> None:
 @pytest.mark.parametrize("route", _ROUTES, ids=lambda route: route.name)
 def test_direct_oracle_matches_the_tiled_core(route: _Route) -> None:
     """Value, carry rows, and consumption agree with the scalar oracle."""
+    model = route.build_model()
     kernel, context = ride_along_kernel(
-        model=route.build_model(),
+        model=model,
         params=route.build_params(),
         regime_name=route.regime_name,
         period=route.period,
     )
     assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
-    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    _assert_kernel_agrees_with_oracle(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(
+            model=model, context=context, regime_name=route.regime_name
+        ),
+    )
 
 
 @pytest.mark.parametrize("route", _NNBEGM_ROUTES, ids=lambda route: route.name)
@@ -452,8 +485,9 @@ def test_direct_oracle_covers_the_nnbegm_inner_contexts(route: _Route) -> None:
     with the outer post-decision value bound at the first and the middle outer
     node, exactly as the nested solver binds it.
     """
+    model = route.build_model()
     contexts = nnbegm_inner_contexts(
-        model=route.build_model(),
+        model=model,
         params=route.build_params(),
         regime_name=route.regime_name,
         period=route.period,
@@ -461,7 +495,13 @@ def test_direct_oracle_covers_the_nnbegm_inner_contexts(route: _Route) -> None:
     assert {label.split("@")[0] for label, _, _ in contexts} == {"keeper", "adjuster"}
     for label, kernel, context in contexts:
         assert isinstance(kernel, _RideAlongNBEGMPeriodKernel), label
-        _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+        _assert_kernel_agrees_with_oracle(
+            kernel=kernel,
+            context=context,
+            child=child_period_context(
+                model=model, context=context, regime_name=route.regime_name
+            ),
+        )
 
 
 def _assert_agrees_up_to_ties(
@@ -487,12 +527,15 @@ def _assert_agrees_up_to_ties(
         )
 
 
-def _assert_kernel_agrees_with_oracle(*, kernel: Any, context: dict[str, Any]) -> None:
+def _assert_kernel_agrees_with_oracle(
+    *, kernel: Any, context: dict[str, Any], child: ChildPeriodContext | None
+) -> None:
     outputs = run_production_kernel(kernel=kernel, context=context)
     value, carry, policy, *banks = outputs
     oracle = direct_oracle_period(
         kernel=kernel,
         context=context,
+        child=child,
         tie_tolerance=_tolerance() * max(1.0, float(np.max(np.abs(np.asarray(value))))),
     )
     _assert_agrees(got=value, expected=oracle.value, label="value")
@@ -549,13 +592,17 @@ def test_direct_oracle_is_independent_of_the_production_expectation(
         msg = "the oracle must not reach production solver code"
         raise AssertionError(msg)
 
+    model = nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=3, **_SMALL)
     kernel, context = ride_along_kernel(
-        model=nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=3, **_SMALL),
-        params=nbegm_ride_along_toy.build_params(final_age_alive=2.0),
+        model=model, params=nbegm_ride_along_toy.build_params(final_age_alive=2.0)
     )
     monkeypatch.setattr(continuation_module, "bind_continuation", refuse)
     monkeypatch.setattr(query_module, "envelope_at_query", refuse)
-    oracle = direct_oracle_period(kernel=kernel, context=context)
+    oracle = direct_oracle_period(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(model=model, context=context),
+    )
     assert np.all(np.isfinite(oracle.value))
 
 
@@ -579,7 +626,11 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         assert kernel.cliff_candidates
         mutated_kernel = replace(kernel, cliff_candidates=False)
         value, *_rest = run_production_kernel(kernel=kernel, context=context)
-        oracle = direct_oracle_period(kernel=mutated_kernel, context=context)
+        oracle = direct_oracle_period(
+            kernel=mutated_kernel,
+            context=context,
+            child=child_period_context(model=model, context=context),
+        )
         with pytest.raises(AssertionError):
             _assert_agrees(got=value, expected=oracle.value, label="value")
         return
@@ -591,6 +642,9 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         kernel, context = ride_along_kernel(
             model=model, params=params, regime_name="alive_a", period=1
         )
+        child = child_period_context(
+            model=model, context=context, regime_name="alive_a"
+        )
         plan = kernel.continuation_plan
         assert len(plan.stateful_targets) > 1
         mutated_plan = replace(plan, stateful_targets=plan.stateful_targets[:1])
@@ -600,6 +654,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         )
         params = nbegm_stochastic_node_toy.build_params(final_age_alive=2.0)
         kernel, context = ride_along_kernel(model=model, params=params, period=0)
+        child = child_period_context(model=model, context=context)
         plan = kernel.continuation_plan
         (target,) = plan.stateful_targets
         read = plan.child_reads[target]
@@ -613,7 +668,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         mutated_plan = replace(plan, child_reads={target: mutated_read})
     mutated_kernel = replace(kernel, continuation_plan=mutated_plan)
     value, *_rest = run_production_kernel(kernel=kernel, context=context)
-    oracle = direct_oracle_period(kernel=mutated_kernel, context=context)
+    oracle = direct_oracle_period(kernel=mutated_kernel, context=context, child=child)
     with pytest.raises(AssertionError):
         _assert_agrees(got=value, expected=oracle.value, label="value")
 

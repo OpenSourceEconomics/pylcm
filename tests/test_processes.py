@@ -103,7 +103,10 @@ def test_model_with_cross_regime_processes(distribution_type: str) -> None:
     source regime into cross-regime transition dicts, causing a `vmap` error in
     `joint_weights_from_marginals` (receives `None` instead of arrays).
     """
-    model = get_multi_regime_model(n_periods=6, distribution_type=distribution_type)
+    model = get_multi_regime_model(
+        n_periods=6,
+        distribution_type=distribution_type,  # ty: ignore[invalid-argument-type]
+    )
     params = get_multi_regime_params(distribution_type)  # ty: ignore[invalid-argument-type]
 
     result = model.simulate(
@@ -642,7 +645,11 @@ def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
 def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
     hash_seed: int,
 ) -> None:
-    """Continuation lottery axes retain process declaration order in fresh processes."""
+    """Continuation draws retain process declaration order in fresh processes.
+
+    The order covers the joint node axes followed by the draws averaged inside
+    the continuation reader.
+    """
     root = Path(__file__).resolve().parents[1]
     script = textwrap.dedent("""
         import json
@@ -650,8 +657,8 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         from typing import Any
         import jax.numpy as jnp
         import numpy as np
-        from lcm import (AgeGrid, AgeRange, ByAge, Choose, Model, Regime,
-                         UniformIIDProcess, categorical)
+        from lcm import (AgeGrid, DeterministicTransition,
+                         Model, Regime, UniformIIDProcess, categorical)
         from lcm.typing import ContinuousState, FloatND, ScalarInt
         from _lcm.regime_building import Q_and_F
 
@@ -672,11 +679,14 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         def observe(**kwargs: Any) -> Any:
             result = original(**kwargs)
             if kwargs['target_regime_name'] == 'alive':
-                observed.append(list(result.lottery_axis_names))
+                observed.append([*result.lottery_axis_names, *(
+                    name.rpartition('__')[2]
+                    for name in result.slice_weight_names)])
             return result
         Q_and_F._build_target_continuation = observe
         try:
             model = Model(
+                edges={'alive': {'alive': 0, 'dead': 1}},
                 regimes={
                     'alive': Regime(
                         states={
@@ -685,19 +695,14 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                             'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
                         },
                         functions={'utility': utility},
-                        regime_transitions=ByAge(cases={
-                            AgeRange(stop=1): Choose(
-                                func=next_regime, targets=('alive',)),
-                            AgeRange(start=1, stop=2): Choose(
-                                func=next_regime, targets=('dead',)),
-                        }),
+                        regime_transitions=DeterministicTransition(func=next_regime),
                     ),
                     'dead': Regime(functions={'utility': lambda: 0.0},
                                    regime_transitions=None),
                 },
-                ages=AgeGrid(start=0, stop=2, step='Y'),
+                ages=AgeGrid(start=0, inclusive_stop=2, step='Y'),
                 regime_id_class=RegimeId,
-                initial_regimes={0: 'alive'},
+                initial_nodes={0: 'alive'},
             )
             solution = model.solve(params={'discount_factor': 1.0}, log_level='off')
             values = solution.values

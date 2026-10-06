@@ -39,11 +39,13 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -55,6 +57,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # Points of the wealth grid, so one regime value is this many elements.
@@ -104,7 +107,9 @@ def _build_model(
     acting = Regime(
         regime_transitions=until_exit(
             3,
-            law=Choose(func=_next_regime, targets=("acting",)),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("acting",)
+            ),
             exits=("done",),
         ),
         states={
@@ -124,12 +129,12 @@ def _build_model(
         },
         functions={"utility": _terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"acting": acting, "done": done},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
-        initial_regimes={0: "acting"},
+        initial_nodes={0: "acting"},
     )
 
 

@@ -14,8 +14,17 @@ must therefore flip the chosen action from staying to leaving.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, Choose, LinSpacedGrid, Model, Regime, categorical
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Regime,
+    categorical,
+)
 from lcm.typing import ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
@@ -55,7 +64,9 @@ def _simulate_with_bequest(bequest: float):
     alive = Regime(
         regime_transitions=until_exit(
             _LAST_AGE,
-            law=Choose(func=_next_regime, targets=("alive", "gone")),
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("alive", "gone")
+            ),
             exits=("gone",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
@@ -66,11 +77,11 @@ def _simulate_with_bequest(bequest: float):
     gone = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes={"alive": alive, "gone": gone},
-        ages=AgeGrid(start=20, stop=_LAST_AGE, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
     params = {
         "alive": {
