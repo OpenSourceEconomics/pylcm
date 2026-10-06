@@ -547,7 +547,15 @@ def resolve_demand(
         ):
             raise ModelInitializationError(
                 _unavailable_message(
-                    requester=requester, name=name, period=period, ages=ages
+                    requester=requester,
+                    name=name,
+                    period=period,
+                    side=(
+                        ""
+                        if period not in available[name]
+                        else ("simulate " if physical else "solve ")
+                    ),
+                    ages=ages,
                 )
             )
         done.add((period, name))
@@ -664,13 +672,19 @@ def _restricted(
 
 
 def _unavailable_message(
-    *, requester: str, name: RegimeName, period: int, ages: AgeGrid
+    *, requester: str, name: RegimeName, period: int, side: str, ages: AgeGrid
 ) -> str:
+    """Name why a required pair has no problem.
+
+    A law is bound only at the source ages its edges select, so a nonterminal
+    pair before the last age lacks a problem exactly where `edges` declares no
+    edge out of it: in either phase when `side` is empty, else in that phase.
+    """
     age = ages.exact_values[period]
     reason = (
         "which is nonterminal at the last age: no next age exists"
         if period == ages.n_periods - 1
-        else f"where '{name}' supplies no law"
+        else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
 
