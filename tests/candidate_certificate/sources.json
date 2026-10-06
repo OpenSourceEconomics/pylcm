@@ -102,7 +102,7 @@
           },
           {
             "path": "src/_lcm/pandas_utils.py",
-            "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
+            "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
           },
           {
             "path": "src/_lcm/params/processing.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "1cd2466d022d5921d0fb1ac521576ff4f003ba1ccdb3dd269c127fd6507d4019"
+        "source_inventory_sha256": "79ccf9978e549cd6dfb11d85c3db5295ed171bd6b98a5c65a3e353f815eb663f"
       },
       "fast": {
         "candidate_sources": [
@@ -572,7 +572,7 @@
           },
           {
             "path": "src/_lcm/pandas_utils.py",
-            "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
+            "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
           },
           {
             "path": "src/_lcm/params/processing.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "1cd2466d022d5921d0fb1ac521576ff4f003ba1ccdb3dd269c127fd6507d4019"
+        "source_inventory_sha256": "79ccf9978e549cd6dfb11d85c3db5295ed171bd6b98a5c65a3e353f815eb663f"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "1cd2466d022d5921d0fb1ac521576ff4f003ba1ccdb3dd269c127fd6507d4019",
+  "source_inventory_sha256": "79ccf9978e549cd6dfb11d85c3db5295ed171bd6b98a5c65a3e353f815eb663f",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1046,7 +1046,7 @@
     },
     {
       "path": "src/_lcm/pandas_utils.py",
-      "sha256": "b5331d0edaaed4344923496a4b4578d9b5c3f1ab1e0ff9140940d100ba0d179c"
+      "sha256": "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58"
     },
     {
       "path": "src/_lcm/params/processing.py",
