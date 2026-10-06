@@ -256,6 +256,7 @@ def bind_graph_support(
             result[source] = regime
             continue
         transition = regime.regime_transitions
+        _fail_if_law_names_targets(transition=transition, source=source)
         kernels = (
             transition.resolve(ages).law_by_period
             if isinstance(transition, ByAge)
@@ -493,6 +494,25 @@ def _bind_law(
     raise ModelInitializationError(
         f"Invalid transition kernel {law!r} out of ({age}, '{source}')."
     )
+
+
+def _fail_if_law_names_targets(*, transition: object, source: RegimeName) -> None:
+    """Reject a regime law tagged with destinations; only the graph declares them."""
+    laws = transition.laws if isinstance(transition, ByAge) else (transition,)
+    for law in laws:
+        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
+        if any(
+            isinstance(
+                side,
+                _SupportedDeterministicTransition | _SupportedStochasticTransition,
+            )
+            for side in sides
+        ):
+            raise ModelInitializationError(
+                f"The regime law of '{source}' names its destinations. Declare "
+                "every regime transition in `Model(edges=...)`; the law supplies "
+                "only the numbers."
+            )
 
 
 def _fail_if_kernel_extends_graph(
