@@ -18,6 +18,7 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.processing import broadcast_to_template
+from _lcm.regime_law import UNBOUND_LAW
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -143,6 +144,7 @@ def test_convert_series_heterogeneous_grids() -> None:
     convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -187,6 +189,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=m.user_regimes,
+        laws=m.graph.laws,
         ages=m.ages,
         regime_names_to_ids=m.regime_names_to_ids,
     )
@@ -532,6 +535,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model._engine_user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -866,6 +870,7 @@ def test_convert_series_function_level_series() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -884,6 +889,7 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -907,6 +913,7 @@ def test_convert_series_regime_level_series() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -933,6 +940,7 @@ def test_convert_series_mixed_dict() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -963,6 +971,7 @@ def test_convert_series_mapping_leaf() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -991,6 +1000,7 @@ def test_convert_series_nested_mapping_leaf() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1062,6 +1072,7 @@ def test_convert_series_with_derived_categoricals() -> None:
         convert_series_in_params(
             flat_params=internal,
             user_regimes=model.user_regimes,
+            laws=model.graph.laws,
             ages=model.ages,
             regime_names_to_ids=model.regime_names_to_ids,
         )
@@ -1078,6 +1089,7 @@ def test_convert_series_with_derived_categoricals() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=updated_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1164,6 +1176,7 @@ def test_convert_series_per_target_transition() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1261,6 +1274,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
     result_both = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1302,6 +1316,7 @@ def test_convert_series_runtime_grid_param() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1322,6 +1337,7 @@ def test_convert_series_sequence_leaf_traversal() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1443,6 +1459,7 @@ def test_convert_series_cross_grid_transition() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
@@ -1600,6 +1617,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         flat_params=flat_params,
         ages=ages,
         user_regimes={"source": source, "target": target},
+        laws={"source": UNBOUND_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
@@ -1663,6 +1681,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         flat_params={"source": {"target__next_health__transition_matrix": series}},
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         user_regimes={"source": source, "target": target},
+        laws={"source": UNBOUND_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),

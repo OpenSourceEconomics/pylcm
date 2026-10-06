@@ -7822,36 +7822,69 @@ def _wrap_regime_transition_probs(
     )
     regime_names = [name for _, name in regime_names_by_id]
 
-    # `wrapped` converts `func`'s probability array into a regime-name → prob
-    # mapping. The return annotation describes that mapping; `func`'s own
-    # return annotation (a bare probability array) does not survive the
-    # conversion and must not be carried through.
+    # The return annotation describes the regime-name → probability mapping;
+    # `func`'s own return annotation (a bare probability array) does not
+    # survive the conversion and must not be carried through.
     annotations = get_annotations(func)
     annotations.pop("return", None)
-    return_annotation = MappingProxyType[RegimeName, FloatND]
-
-    @with_signature(
-        args=annotations,
-        return_annotation=return_annotation,
+    return _RegimeTransitionProbsByName(
+        func=func, regime_names=tuple(regime_names), annotations=annotations
     )
-    @functools.wraps(func)
-    def wrapped(
-        *args: FloatND | IntND | int,
-        **kwargs: FloatND | IntND | int,
-    ) -> MappingProxyType[RegimeName, FloatND]:
-        result = func(*args, **kwargs)
-        _fail_if_not_one_entry_per_regime(result=result, n_regimes=len(regime_names))
-        # Convert array to dict using ordering by regime id
-        return MappingProxyType(
-            {name: result[idx] for idx, name in enumerate(regime_names)}
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _RegimeTransitionProbsByName:
+    """A regime-probability vector as a regime-name → probability mapping.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's transition after the model is dropped.
+    """
+
+    func: TransitionFunction
+    """The transition, returning one probability per regime id."""
+    regime_names: tuple[RegimeName, ...]
+    """The regime names in regime-id order."""
+    annotations: dict[str, Any]
+    """The transition's argument annotations, without its return."""
+
+    def __post_init__(self) -> None:
+        return_annotation = MappingProxyType[RegimeName, FloatND]
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.func, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__wrapped__", self.func)
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        name,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        annotation=annotation,
+                    )
+                    for name, annotation in self.annotations.items()
+                ],
+                return_annotation=return_annotation,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "__annotations__",
+            {**self.annotations, "return": return_annotation},
         )
 
-    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
-    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
-    # the decorator stack can drop them when `func` carries deferred (PEP 649)
-    # annotations through `functools.wraps`.
-    wrapped.__annotations__ = {**annotations, "return": return_annotation}
-    return wrapped
+    @no_type_check
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        result = self.func(*args, **kwargs)
+        _fail_if_not_one_entry_per_regime(
+            result=result, n_regimes=len(self.regime_names)
+        )
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(self.regime_names)}
+        )
 
 
 def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> None:

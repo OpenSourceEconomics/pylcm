@@ -67,7 +67,9 @@ def _alive() -> Regime:
 
 
 DEAD = Regime(states={"wealth": WEALTH_GRID}, functions={"utility": _bequest})
-RETIRED_EDGES = {"dead": (63, 64)}
+# Retired stays retired through 63 and dies at 64. Its edges at 60-62 let a law
+# that may retire early land on a regime with an outgoing edge at every age.
+RETIRED_EDGES = {"retired": (60, 61, 62, 63), "dead": 64}
 LAW_FREE_EDGES = {
     "working": {"working": (60, 61), "retired": 62},
     "retired": RETIRED_EDGES,
@@ -141,16 +143,16 @@ def test_law_free_edges_solve_like_an_explicit_age_selector() -> None:
     """The graph as law gives the values of a selector choosing the same edges."""
     selector_edges = {
         "working": Transition(
-            targets={"working": (60, 61, 62), "retired": (60, 61, 62)},
+            targets={"working": (60, 61), "retired": (60, 61, 62)},
             law=DeterministicTransition(func=_retire_at_62),
         ),
         "retired": RETIRED_EDGES,
     }
     law_free = _values(_model(edges=LAW_FREE_EDGES))
     selected = _values(_model(edges=selector_edges))
+    keys = sorted(law_free)
     np.testing.assert_array_equal(
-        {key: law_free[key] for key in law_free},
-        {key: selected[key] for key in law_free},
+        [law_free[key] for key in keys], [selected[key] for key in keys]
     )
 
 
@@ -238,8 +240,9 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
     )
     phased_values = _values(phased)
     perceived_values = _values(perceived)
+    keys = sorted(phased_values)
     np.testing.assert_array_equal(
-        phased_values, {key: perceived_values[key] for key in phased_values}
+        [phased_values[key] for key in keys], [perceived_values[key] for key in keys]
     )
 
 

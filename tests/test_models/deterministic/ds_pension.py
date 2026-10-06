@@ -440,6 +440,8 @@ def get_params(
     retirement_income: float = 0.50,
     final_age_alive: float = 4.0,
     pension_payout_return: float | None = None,
+    n_periods: int = 5,
+    retirement_period: int = 3,
 ) -> dict:
     """Get parameters for the DS pension model (faithful calibration from `SetupPar.m`).
 
@@ -450,7 +452,16 @@ def get_params(
     `crra` is written once at the model level: one risk aversion is shared by every
     regime's felicity and by the closed-form `(u')^-1` an endogenous-grid regime
     declares, so the same tree fits the brute and the EGM variants of the model.
+
+    `final_age_alive` is read only by the retired law, which a model of the given
+    `n_periods` and `retirement_period` declares only when a retiree can still
+    both stay retired and die at some age (see `_edges`).
     """
+    retired_law_params = (
+        {"final_age_alive": final_age_alive}
+        if retirement_period < n_periods - 2
+        else {}
+    )
     if pension_payout_return is None:
         pension_payout_return = 1.0 + return_pension
     return {
@@ -488,6 +499,6 @@ def get_params(
                     "return_liquid": return_liquid,
                 }
             },
-            "final_age_alive": final_age_alive,
+            **retired_law_params,
         },
     }

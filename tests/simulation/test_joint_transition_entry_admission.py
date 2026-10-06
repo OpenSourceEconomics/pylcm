@@ -248,11 +248,12 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
     # The shared compiler also sees the valid regime producer in regime selection,
-    # summary and serial.
+    # summary and serial. The source's single edge is a certain transition, so
+    # that producer publishes one probability per regime: two leaves per stage.
     assert (weight_devices, support_devices, output_devices) == (
         expected_weights,
         expected_supports,
-        [(selected_id,)] * 12,
+        [(selected_id,)] * 15,
     ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """

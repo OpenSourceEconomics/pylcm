@@ -613,11 +613,11 @@ def test_a_vector_law_shorter_than_the_regime_ids_is_refused() -> None:
             "done": Regime(functions={"utility": _zero_utility}),
         },
         regime_id_class=_VectorRegimeId,
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
         edges={
             "alive": Transition(
-                targets={"alive": 0, "done": 0},
+                targets={"alive": 0, "done": (0, 1)},
                 law=StochasticTransition(func=_support_only_vector),
             )
         },

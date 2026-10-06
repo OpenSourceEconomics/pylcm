@@ -203,7 +203,7 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
     return Model(
         regimes={"alive": alive, "gone": gone},
         ages=ages,
-        edges={"alive": {"alive": 0, "gone": 1}},
+        edges={"alive": {"alive": (0, 1), "gone": 2}},
         regime_id_class=RenamedRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
     )

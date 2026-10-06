@@ -35,6 +35,7 @@ from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    ByAge,
     JointTransition,
     StochasticTransition,
 )
@@ -1720,7 +1721,7 @@ def _fail_if_collective_regime_folds(
         raise ModelInitializationError(format_messages(error_messages))
 
 
-def _fail_if_a_folded_conditioner_can_move(
+def fail_if_a_folded_conditioner_can_move(
     *, user_regimes: Mapping[RegimeName, lcm.regime.Regime], laws: RegimeLaws
 ) -> None:
     """Reject a folded conditioned shock whose conditioner moves on the way in.
@@ -1807,23 +1808,39 @@ def _state_law_can_move(
 def _reachable_regime_targets(
     *, law: RegimeLaw, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
 ) -> frozenset[RegimeName]:
-    """The regimes this one's transition can structurally reach.
+    """The regimes this one's transition can structurally reach."""
+    return _law_targets(law.regime_transitions, user_regimes=user_regimes)
 
-    A per-target dict declares its own key set. A `Phased` transition contributes
-    the union of its two variants for checks that apply to the entire regime.
-    Every remaining form is coarse and reaches every regime in the model.
+
+# keyword-only-exempt: primary-argument=transition
+def _law_targets(
+    transition: object, *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> frozenset[RegimeName]:
+    """The regimes one law can structurally reach.
+
+    - `None` reaches nothing;
+    - a regime name reaches that regime;
+    - a per-target dict reaches its own key set;
+    - a `Phased` law reaches the union of its two sides, and a `ByAge` law the
+      union of every law it may select, for checks that apply to the entire
+      regime;
+    - every remaining form is coarse and reaches every regime in the model.
     """
-    transition = law.regime_transitions
     if transition is None:
         return frozenset()
-    if isinstance(transition, Phased):
-        sides = (transition.solve, transition.simulate)
-        if all(isinstance(side, Mapping) for side in sides):
-            return frozenset(target for side in sides for target in side)
-        return frozenset(user_regimes)
+    if isinstance(transition, str):
+        return frozenset({transition})
     if isinstance(transition, Mapping):
         return frozenset(transition)
-    return frozenset(user_regimes)
+    if isinstance(transition, Phased):
+        sides: tuple[object, ...] = (transition.solve, transition.simulate)
+    elif isinstance(transition, ByAge):
+        sides = transition.laws
+    else:
+        return frozenset(user_regimes)
+    return frozenset().union(
+        *(_law_targets(side, user_regimes=user_regimes) for side in sides)
+    )
 
 
 def _fold_scope_errors(

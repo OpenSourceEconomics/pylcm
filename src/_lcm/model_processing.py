@@ -186,6 +186,7 @@ def _build_regimes_and_template_with_fixed_params(
             flat_params=fixed_flat_params,
             ages=ages,
             user_regimes=user_regimes,
+            laws=prepared_structure.laws,
             regime_names_to_ids=regime_names_to_ids,
         )
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)

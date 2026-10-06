@@ -26,12 +26,12 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import core_program_graph
-from lcm import AgeGrid, AgeRange, AgeSpecializedFunction, Model
+from lcm import AgeGrid, AgeSpecializedFunction, Model
 from lcm.typing import BoolND, ContinuousAction, FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models.dcegm_paper_twin import (
     DCEGM_SOLVER,
-    LAST_ALIVE_AGE,
+    EDGES,
     MIN_AGE,
     N_PERIODS,
     TwinRegimeId,
@@ -93,18 +93,7 @@ def _twin(
         ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
         initial_nodes={20: "working_life"},
-        edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "done_from_working": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-                "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-            },
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-            },
-        },
+        edges=EDGES,
     )
 
 

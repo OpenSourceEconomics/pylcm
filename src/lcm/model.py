@@ -222,7 +222,10 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StateName,
 )
-from _lcm.user_regime_validation import validate_regimes
+from _lcm.user_regime_validation import (
+    fail_if_a_folded_conditioner_can_move,
+    validate_regimes,
+)
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -804,6 +807,12 @@ class Model:
             derived_categoricals=derived_categoricals,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+        )
+        # Runs on the finalized regimes, since a conditioner's law may arrive as
+        # a model-level broadcast, and against the graph-bound laws, whose
+        # targets are regime names rather than lowered regime codes.
+        fail_if_a_folded_conditioner_can_move(
+            user_regimes=finalized_regimes, laws=prepared_graph.laws
         )
         # A process law named in `fixed_params` means exactly what the same
         # value passed to the process constructor means, so it is bound into
@@ -3953,6 +3962,7 @@ class Model:
                 flat_params=flat_params,
                 ages=self.ages,
                 user_regimes=self._engine_user_regimes,
+                laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
             )

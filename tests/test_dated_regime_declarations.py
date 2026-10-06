@@ -256,7 +256,7 @@ def test_until_rejects_an_off_grid_stop_age() -> None:
 @pytest.mark.parametrize("targets", [("a", "b"), (), ("a", "a")])
 def test_transition_kernels_reject_topology_metadata(*, wrapper, targets) -> None:
     """The model graph is the sole public owner of regime support."""
-    with pytest.raises(TypeError):
+    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets=targets,
@@ -286,7 +286,7 @@ def test_by_age_constructor_takes_only_cases_and_default() -> None:
 @pytest.mark.parametrize("restriction", [AgeRange(exclusive_stop=64), True])
 def test_transition_rejects_embedded_age_restrictions(*, wrapper, restriction) -> None:
     """Source-age support belongs to Model.edges, including invalid metadata."""
-    with pytest.raises(TypeError):
+    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets={"working": restriction},

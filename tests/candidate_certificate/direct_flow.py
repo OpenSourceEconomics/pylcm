@@ -405,7 +405,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
-    PROCESSING_SOURCE: "0d51fc0a599d5b29a08c20bea9244f8c8065daeafdf122426dfd15c6922b029c",
+    PROCESSING_SOURCE: "145227862ab3cfa5f429af0708a00f15d409ecc9e4dc1f659abee043691e63a9",
     GRID_SEARCH_SOURCE: "beabda5b684d674d7e8ac20c286e884ccd91ae510782eee343e8cdd88e68e2ba",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "4e21f03980ef1d791c7dade171d67055cb2c4015050c1f148dbac6bb118a50cd",
+    MODEL_SOURCE: "8c8bdd2fd9b4b3c147ac9e4abbf582aa98adbe6ed81ae4591c7c8c8848372953",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "3ec2e84a89446d7e7f1bb0606884626dd2b6d13348eda34538f0a220f554829d",
     PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
@@ -453,8 +453,8 @@ _SOURCE_SEALS = {
     PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58",
-    MODEL_PROCESSING_SOURCE: "b8685f77b366414e1e13f512be339b298a38eeeab58b4f4fa43eedc1800476ee",
+    PANDAS_UTILS_SOURCE: "3c242f46d3921fdf3f0431f7401170171ad22840c9d53d2354a2849d4ec3213f",
+    MODEL_PROCESSING_SOURCE: "e9f3db4ea4fe91825c6ec701c8f8c23fb318c2f0fe01e009829f2263c43b85ec",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -3351,12 +3351,12 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "0cd293b85b6183990330bd9bfa59f28bb1c7ec89e1895c0625ad526788d51ea5",
+            "dc9fe51045a13623abcffe4eb73c0955c2acc198d455636a2c8196e9e169be8a",
             {
                 "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "515c6c29e26a093f93b1bfa53b6eb9223510e4933593026279f4c54863a8e76b",
+                "Model.__init__": "954bbc1d4e95eaac9a20d4ab0c9d9eed83645135ce61a39b0549c38103bceea1",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
                 "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
                 # Fixed caller owners flow through both private automatic-solve
@@ -3365,7 +3365,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
                 "Model._solve_compiled": "d8884c7367c4c310e1f6d81954f37f3f7258a9cc7ead2e401061698c8e3cab44",
                 "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
                 "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
-                "Model._process_params": "955131a77406adb4e76ff4ebf53cddcd14f7c4063051c80b3eb874001db6147a",
+                "Model._process_params": "19a3f1fc6ce0075426d7ebe358aee01e965f465874d91c1d86cee496735553f3",
                 "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
             },
         ),
@@ -3402,12 +3402,12 @@ _SIMULATION_ADAPTER_CONTRACTS = {
     # admitted writer used by ordinary inputs. Recursion keeps that writer and
     # completed leaves stay owned until the complete mapping is published.
     PANDAS_UTILS_SOURCE: (
-        "598502e34b44650f31bd20b497e6bf99657d01d15c9d47d50f8f04ebbd66a098",
+        "2d3cab4534b8f78449480bc18fcb8cd78eef5435fdaf32ba8c10d6ceb9ecd398",
         {
             "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
             "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
-            "convert_series_in_params": "30530b016415924c609dd56f200289643f3ea9dd506d104742a2e30e1889f78c",
+            "convert_series_in_params": "f04de092dde98caedd4958d2219700b92c902f4882c377b4961648b195a10c9c",
             "_convert_param_value": "d3dbe841331053864f44d94edbd8dbe85eb3224ab8e6a2de6854dfa37434fb59",
             "array_from_series": "0d2d919f86566ac63eb3a66884b2100332a951cbf8f25500653a9c6d6de42dfa",
             "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
@@ -4004,12 +4004,12 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "0cd293b85b6183990330bd9bfa59f28bb1c7ec89e1895c0625ad526788d51ea5",
+        "dc9fe51045a13623abcffe4eb73c0955c2acc198d455636a2c8196e9e169be8a",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "515c6c29e26a093f93b1bfa53b6eb9223510e4933593026279f4c54863a8e76b",
+            "Model.__init__": "954bbc1d4e95eaac9a20d4ab0c9d9eed83645135ce61a39b0549c38103bceea1",
             "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
         },
     ),
@@ -4378,12 +4378,12 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "0cd293b85b6183990330bd9bfa59f28bb1c7ec89e1895c0625ad526788d51ea5",
+        "dc9fe51045a13623abcffe4eb73c0955c2acc198d455636a2c8196e9e169be8a",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "515c6c29e26a093f93b1bfa53b6eb9223510e4933593026279f4c54863a8e76b",
+            "Model.__init__": "954bbc1d4e95eaac9a20d4ab0c9d9eed83645135ce61a39b0549c38103bceea1",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -6693,12 +6693,12 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "0cd293b85b6183990330bd9bfa59f28bb1c7ec89e1895c0625ad526788d51ea5",
+        "dc9fe51045a13623abcffe4eb73c0955c2acc198d455636a2c8196e9e169be8a",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "515c6c29e26a093f93b1bfa53b6eb9223510e4933593026279f4c54863a8e76b",
+            "Model.__init__": "954bbc1d4e95eaac9a20d4ab0c9d9eed83645135ce61a39b0549c38103bceea1",
             "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
             "Model._model_fingerprint": "8aba7cdfc51780066245d2fd5642ae475f8b25d865d176bdbb7d1d985a82ca4a",
             "Model.solve": "998f87cbdc5227767edcb22c70fb696287e8b7596b82ed812bfb3520ec27de82",
