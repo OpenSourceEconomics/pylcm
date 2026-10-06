@@ -3983,7 +3983,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4010,7 +4010,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4037,7 +4037,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4064,7 +4064,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4091,7 +4091,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4118,7 +4118,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4145,7 +4145,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4172,7 +4172,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4193,6 +4193,33 @@
    "unchained": true
   },
   {
+   "id": "eight-device-materialization-admission-fp64-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/solution/test_materialization_admission.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 64,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp64-materialization-admission.xml",
+   "files": [
+    "tests/solution/test_materialization_admission.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
+   "unchained": true
+  },
+  {
    "id": "eight-device-simulation-eight-devices-fp32-linux",
    "job": "tests-topology-eight-device",
    "step": "Run tests/test_distributed_simulation_eight_devices.py",
@@ -4200,7 +4227,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4227,7 +4254,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4254,7 +4281,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4281,7 +4308,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4308,7 +4335,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4335,7 +4362,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4362,7 +4389,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4389,7 +4416,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4407,6 +4434,33 @@
    ],
    "no_skips_required": true,
    "predicted_payload_minutes": 0.14,
+   "unchained": true
+  },
+  {
+   "id": "eight-device-materialization-admission-fp32-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/solution/test_materialization_admission.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 32,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp32-materialization-admission.xml",
+   "files": [
+    "tests/solution/test_materialization_admission.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
    "unchained": true
   },
   {
