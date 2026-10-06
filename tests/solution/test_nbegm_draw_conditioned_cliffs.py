@@ -36,9 +36,13 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model
 from lcm.typing import ContinuousState, DiscreteState, FloatND
 from tests.solution._cliff_pullback_reference import (
     child_cliff_preimages,
+    sibling_draw_preimages,
     two_period_log_value,
 )
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import (
+    child_period_context,
+    ride_along_kernel,
+)
 from tests.solution.test_nbegm_direct_oracle import (
     _assert_kernel_agrees_with_oracle as assert_kernel_agrees_with_oracle,
 )
@@ -444,13 +448,18 @@ def test_period_kernel_agrees_with_the_child_carry_oracle(
     The scalar oracle takes each node's cliffs from the solved child carry's
     published breakpoint row rather than from the threshold declarations.
     """
+    model = _build_model(liquid_law=liquid_law, subsidy=kind_indexed_subsidy)
     kernel, context = ride_along_kernel(
-        model=_build_model(liquid_law=liquid_law, subsidy=kind_indexed_subsidy),
+        model=model,
         params=_indexed_params(cutoffs=(9.0, 6.0)),
         regime_name="alive",
         period=0,
     )
-    assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    assert_kernel_agrees_with_oracle(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(model=model, context=context),
+    )
 
 
 def next_kind_flipped(*, kind: DiscreteState) -> DiscreteState:
@@ -620,21 +629,138 @@ def test_child_row_kernels_agree_with_the_oracle(
     kernel, context = ride_along_kernel(
         model=model, params=params, regime_name="alive", period=0
     )
-    assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    assert_kernel_agrees_with_oracle(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(model=model, context=context),
+    )
 
 
 def test_age_reading_kernel_agrees_with_the_oracle() -> None:
     """Value, carry and consumption match the oracle at the child's age."""
     params = _deterministic_params(fpl_cliff=jnp.asarray([9.0, 9.0]) + BASE_INCOME)
     params["alive"]["gross_income"]["age_income"] = 3.0
-    kernel, context = ride_along_kernel(
-        model=_build_deterministic_model(
-            kind_law=lcm.fixed_transition("kind"),
-            subsidy=kind_indexed_subsidy,
-            gross_income_func=gross_income_rising_with_age,
-        ),
-        params=params,
-        regime_name="alive",
-        period=0,
+    model = _build_deterministic_model(
+        kind_law=lcm.fixed_transition("kind"),
+        subsidy=kind_indexed_subsidy,
+        gross_income_func=gross_income_rising_with_age,
     )
-    assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    kernel, context = ride_along_kernel(
+        model=model, params=params, regime_name="alive", period=0
+    )
+    assert_kernel_agrees_with_oracle(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(model=model, context=context),
+    )
+
+
+def next_liquid_reading_shock(
+    *, savings: FloatND, next_shock: DiscreteState
+) -> ContinuousState:
+    """Liquid wealth next period: savings plus a tenth of the drawn shock."""
+    return savings + 0.1 * next_shock
+
+
+def shock_probabilities(*, shock: DiscreteState) -> FloatND:
+    """Next-period shock is a fair coin, independent of the kind."""
+    return jnp.asarray(((0.5, 0.5), (0.5, 0.5)))[shock]
+
+
+def _build_sibling_draw_model() -> Model:
+    """Kind sets the child's cliff; an independent shock shifts the liquid law."""
+    return make_alive_dead_model(
+        n_periods=3,
+        n_liquid=31,
+        liquid_max=30.0,
+        n_consumption=31,
+        liquid_grid=LinSpacedGrid(start=0.0, stop=30.0, n_points=31),
+        alive_functions={
+            "utility": utility,
+            "gross_income": gross_income,
+            "subsidy": kind_indexed_subsidy,
+            "resources": resources,
+            "savings": savings,
+        },
+        liquid_law=next_liquid_reading_shock,
+        alive_solver=resolve_solver(
+            variant="nbegm",
+            savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=16),
+        ),
+        constraints={},
+        extra_states={
+            "kind": DiscreteGrid(category_class=ConsumerKind),
+            "shock": DiscreteGrid(category_class=ConsumerKind),
+        },
+        extra_state_transitions={
+            "kind": lcm.StochasticTransition(func=kind_probabilities),
+            "shock": lcm.StochasticTransition(func=shock_probabilities),
+        },
+        dead_functions={"utility": zero_bequest},
+    )
+
+
+def _sibling_params() -> dict[str, Any]:
+    params = _params(
+        fpl_cliff=jnp.asarray([9.0, 6.0]) + BASE_INCOME,
+        law_slope=1.0,
+        law_offset=(0.0, 0.0),
+    )
+    del params["alive"]["next_liquid"]
+    return params
+
+
+@pytest.fixture(scope="module")
+def sibling_draw_seam() -> dict[str, Any]:
+    return _solved_seam(model=_build_sibling_draw_model(), params=_sibling_params())
+
+
+@pytest.mark.parametrize("source_kind", [0, 1])
+@pytest.mark.parametrize("jit", [False, True])
+def test_sibling_draw_targets_every_joint_childs_cliff(
+    *, sibling_draw_seam: dict[str, Any], source_kind: int, jit: bool
+) -> None:
+    """Cliffs (9, 6) by kind and law `s + shock / 10` give centres 9, 8.9, 6, 5.9.
+
+    Kind and shock are independent fair coins, so each joint child has mass 1/4
+    and contributes the preimage of its own kind's cliff under its own shock.
+    """
+    rows = _targets(
+        seam=sibling_draw_seam,
+        cell={**_kind(source_kind), "shock": jnp.asarray(0, dtype=jnp.int32)},
+        jit=jit,
+    )
+    rows = rows[np.isfinite(rows).all(axis=1)]
+    dtype = rows.dtype
+    centres = sibling_draw_preimages(
+        cutoffs=(Fraction(9), Fraction(6)),
+        slope=Fraction(1),
+        shifts=(Fraction(0), _exact(dtype.type(0.1))),
+    )
+    assert {round(float(c), 6) for c in centres} == {9.0, 8.9, 6.0, 5.9}
+    eps = Fraction(float(np.finfo(dtype).eps))
+    covered = {
+        centre
+        for centre in centres
+        for below, above in rows
+        if _exact(below) < centre < _exact(above)
+        and _exact(above) - _exact(below) <= 64 * eps * max(Fraction(1), centre)
+    }
+    assert covered == centres, rows
+    assert all(
+        any(_exact(below) < centre < _exact(above) for centre in centres)
+        for below, above in rows
+    ), rows
+
+
+def test_sibling_draw_kernel_agrees_with_the_oracle() -> None:
+    """Value, carry and consumption match the oracle on every joint child row."""
+    model = _build_sibling_draw_model()
+    kernel, context = ride_along_kernel(
+        model=model, params=_sibling_params(), regime_name="alive", period=0
+    )
+    assert_kernel_agrees_with_oracle(
+        kernel=kernel,
+        context=context,
+        child=child_period_context(model=model, context=context),
+    )

@@ -108,6 +108,58 @@ class OraclePeriodResult:
     with that branch's published one, laid out like `branch_value`."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class ChildPeriodContext:
+    """The self-read child's own declarations at its period `t + 1`.
+
+    Built from the model's child-period kernel and period state axes, never
+    from the source's arguments: an age-specialized grid moves the child's
+    nodes, and an age-specialized function closes over the child's age.
+    """
+
+    statics: Any
+    """The child-period kernel's statics: its breakpoint sources, with every
+    derived variable resolved at the child's age."""
+
+    grids: Mapping[str, np.ndarray]
+    """Every state's nodes at the child's period."""
+
+    period: int
+    """The child's period."""
+
+    age: Any
+    """The child's age."""
+
+
+def child_period_context(
+    *, model: Model, context: Mapping[str, Any], regime_name: str = "alive"
+) -> ChildPeriodContext | None:
+    """Return the self-read child's context, or `None` past the last period.
+
+    The child is `regime_name` at the period after the captured one. A nested
+    solver's child kernel publishes its keeper's breakpoint schedule.
+    """
+    period = int(context["period"]) + 1
+    regime = model._regimes[regime_name]
+    if period not in regime.solution.period_kernels:
+        return None
+    child_kernel: Any = regime.solution.period_kernels[period]
+    statics = (
+        child_kernel.statics
+        if hasattr(child_kernel, "statics")
+        else child_kernel.keeper_kernel.statics
+    )
+    states = dict(context["state_action_space"].states)
+    period_axes = regime.solution.period_state_axes or {}
+    states.update(period_axes.get(period, {}))
+    return ChildPeriodContext(
+        statics=statics,
+        grids={name: np.asarray(nodes) for name, nodes in states.items()},
+        period=period,
+        age=context["ages"].values[period],
+    )
+
+
 def ride_along_kernel(
     *,
     model: Model,
@@ -215,13 +267,18 @@ def _materialize_replay(
 
 
 def direct_oracle_period(  # noqa: PLR0915
-    *, kernel: Any, context: Mapping[str, Any], tie_tolerance: float = 0.0
+    *,
+    kernel: Any,
+    context: Mapping[str, Any],
+    child: ChildPeriodContext | None,
+    tie_tolerance: float = 0.0,
 ) -> OraclePeriodResult:
     """Solve one ride-along regime-period with the direct scalar oracle.
 
-    `tie_tolerance` is the absolute value gap below which two candidates count
-    as tied; every tied candidate's consumption is published in
-    `policy_alternatives`.
+    `child` is the self-read child's own context (`child_period_context`); its
+    breakpoints are evaluated from its declarations on its grids. `tie_tolerance`
+    is the absolute value gap below which two candidates count as tied; every
+    tied candidate's consumption is published in `policy_alternatives`.
     """
     statics = kernel.statics
     spec = kernel.schedule_spec
@@ -243,17 +300,9 @@ def direct_oracle_period(  # noqa: PLR0915
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
-    # The self-read child is next period: its breakpoints read its own age.
-    child_period = int(context["period"]) + 1
-    child_kwargs = (
-        {
-            **kwargs,
-            "period": jnp.int32(child_period),
-            "age": context["ages"].values[child_period],
-        }
-        if child_period < len(context["ages"].values)
-        else kwargs
-    )
+    if kernel.cliff_candidates and child is None:
+        msg = "save-to-cliff targets read the self child, which needs its context"
+        raise ValueError(msg)
     ride_grids = [jnp.asarray(kwargs[name]) for name in statics.ride_names]
     ride_shape = tuple(len(grid) for grid in ride_grids)
     savings_grid = np.asarray(kernel.savings_grid, dtype=np.float64)
@@ -333,7 +382,8 @@ def direct_oracle_period(  # noqa: PLR0915
                 plan=plan,
                 combo_pool=combo_pool,
                 carries=carries,
-                child_kwargs=child_kwargs,
+                kwargs=kwargs,
+                child=child,
                 breakpoints=branch_geometry.breakpoints,
                 liquid_grid=liquid_grid,
                 savings_grid=savings_grid,
@@ -627,7 +677,8 @@ def _cell_continuation(
     plan: Any,
     combo_pool: Mapping[str, Any],
     carries: Mapping[str, HostCarry],
-    child_kwargs: Mapping[str, Any],
+    kwargs: Mapping[str, Any],
+    child: ChildPeriodContext | None,
     breakpoints: np.ndarray,
     liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
@@ -657,9 +708,8 @@ def _cell_continuation(
                 plan=plan,
                 regime_name=kernel.regime_name,
                 combo_pool=pool,
-                statics=statics,
-                child_kwargs=child_kwargs,
-                liquid_grid=liquid_grid,
+                kwargs=kwargs,
+                child=cast("ChildPeriodContext", child),
                 savings_grid=savings_grid,
                 dtype=dtype,
             )
@@ -698,17 +748,18 @@ def _cliff_savings_targets(
     plan: Any,
     regime_name: str,
     combo_pool: Mapping[str, Any],
-    statics: Any,
-    child_kwargs: Mapping[str, Any],
-    liquid_grid: np.ndarray,
+    kwargs: Mapping[str, Any],
+    child: ChildPeriodContext,
     savings_grid: np.ndarray,
     dtype: Any,
 ) -> np.ndarray:
     """Savings targets a few float steps inside each side of every child jump.
 
     Every child row the continuation reads with positive weight is enumerated
-    and its jumps are evaluated from the breakpoint declarations at that row's
-    state values and the child's age and period:
+    on the child's own grids, and its jumps are evaluated from the child's own
+    breakpoint declarations at that row's state values and the child's age and
+    period, on the child's liquid domain. The source's params bind the
+    declarations' thresholds and coefficients. The rows are:
     - each node of every stochastic state the child carries;
     - the next-state code of each deterministic discrete state;
     - both grid nodes of the segment a passive continuous state's next value
@@ -725,7 +776,15 @@ def _cliff_savings_targets(
     next_states = read.next_state_func(
         **combo_pool, **{plan.post_decision_name: jnp.asarray(0.0, dtype=dtype)}
     )
-    grids = {name: np.asarray(child_kwargs[name]) for name in statics.ride_names}
+    statics = child.statics
+    grids = {name: child.grids[name] for name in statics.ride_names}
+    child_kwargs = {
+        **kwargs,
+        **child.grids,
+        "period": jnp.int32(child.period),
+        "age": child.age,
+    }
+    liquid_grid = np.asarray(child.grids[statics.liquid_name], dtype=np.float64)
     choices: dict[str, list[Any]] = {}
     for name in statics.ride_names:
         grid = grids[name]

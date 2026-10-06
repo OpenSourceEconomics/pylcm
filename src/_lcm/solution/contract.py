@@ -358,12 +358,24 @@ class SolverBuildContext:
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None
-    """Immutable mapping of period to each regime's age-specialized grid signature.
+    """Immutable mapping of period to each regime's age-specialization signature.
 
-    The user's own `AgeSpecializedGrid.signature(age)` values, so a solver that
-    groups periods into shared compiled programs can fold its targets' signatures
-    at `period + 1` into the group key. Periods whose continuation grids differ
-    then never share a trace. `None` when no regime has an age-specialized state.
+    The user's own `AgeSpecializedGrid.signature(age)` values, joined by the
+    `AgeSpecializedFunction.signature(age)` values of a regime declaring a function
+    marker, so a solver that groups periods into shared compiled programs can fold
+    its targets' signatures at `period + 1` into the group key. Periods whose
+    continuation grids or target functions differ then never share a trace. `None`
+    when no regime declares an age marker.
+    """
+
+    period_to_user_regimes: MappingProxyType[int, UserRegimesMapping] | None = None
+    """Immutable mapping of period to every regime's declaration at that period.
+
+    Each regime's `AgeSpecializedFunction`s and `AgeSpecializedGrid`s are resolved
+    at the period; a regime declaring none, or inactive there, keeps its
+    representative declaration. A period-`t` kernel reading a target's own DAG
+    (its resources map) reads the target at `t + 1`. `None` when no regime
+    declares an age marker.
     """
 
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
@@ -493,6 +505,16 @@ class SolverBuildContext:
             submesh_device_ids=self.submesh_device_ids,
             action_partitions=self.action_partitions,
         )
+
+    def user_regimes_at(self, *, period: int) -> UserRegimesMapping:
+        """Return every regime's declaration with its age markers resolved at `period`.
+
+        The representative declarations when no regime declares an age marker
+        active at `period`.
+        """
+        if self.period_to_user_regimes is None:
+            return self.user_regimes
+        return self.period_to_user_regimes.get(period, self.user_regimes)
 
 
 @dataclass(frozen=True, kw_only=True)

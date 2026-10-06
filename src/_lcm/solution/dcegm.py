@@ -491,6 +491,7 @@ class DCEGM(OneMarginSolver):
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
             period_to_regime_v_interp=context.period_to_regime_v_interp,
             period_to_regime_grid_signature=context.period_to_regime_grid_signature,
+            period_to_user_regimes=context.period_to_user_regimes,
             solution_reachability=context.solution_reachability,
             flat_param_names=context.flat_param_names,
             regime_to_flat_param_names=context.regime_to_flat_param_names,
