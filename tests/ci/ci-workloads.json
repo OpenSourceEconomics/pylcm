@@ -185,6 +185,7 @@
   "tests/regime_building/test_fixed_process_params.py",
   "tests/regime_building/test_fixed_process_params_grammar.py",
   "tests/regime_building/test_fixed_zero_joint_edges.py",
+  "tests/regime_building/test_fixed_zero_joint_source_states.py",
   "tests/regime_building/test_flow_transitions_are_phase_closed.py",
   "tests/regime_building/test_fold_gate_guard.py",
   "tests/regime_building/test_fold_guard_complete.py",
@@ -422,6 +423,7 @@
   "tests/solution/test_covered_axis_parity.py",
   "tests/solution/test_diagnostics_host_age.py",
   "tests/solution/test_fixed_component_markov.py",
+  "tests/solution/test_guard_sibling_geometry.py",
   "tests/solution/test_independent_types_oracle.py",
   "tests/solution/test_invariant_blocking.py",
   "tests/solution/test_invariant_blocking_scalar.py",
@@ -1110,6 +1112,7 @@
     "tests/regime_building/test_draw_law_inputs_are_kept.py",
     "tests/regime_building/test_draw_read_states_are_kept.py",
     "tests/regime_building/test_fixed_zero_joint_edges.py",
+    "tests/regime_building/test_fixed_zero_joint_source_states.py",
     "tests/regime_building/test_flow_transitions_are_phase_closed.py",
     "tests/regime_building/test_fold_gate_guard.py",
     "tests/regime_building/test_gated_edge_params_are_per_edge.py",
@@ -1217,6 +1220,7 @@
     "tests/solution/test_covered_axis_parity.py",
     "tests/solution/test_diagnostics_host_age.py",
     "tests/solution/test_fixed_component_markov.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_independent_types_oracle.py",
     "tests/solution/test_invariant_blocking.py",
     "tests/solution/test_invariant_blocking_scalar.py",
@@ -2158,6 +2162,7 @@
     "tests/regime_building/test_fixed_process_params.py",
     "tests/regime_building/test_fixed_process_params_grammar.py",
     "tests/regime_building/test_fixed_zero_joint_edges.py",
+    "tests/regime_building/test_fixed_zero_joint_source_states.py",
     "tests/regime_building/test_fold_guard_complete.py",
     "tests/regime_building/test_fold_iid_shocks.py",
     "tests/regime_building/test_fold_state_conditioned_weights.py",
@@ -2246,6 +2251,7 @@
     "tests/solution/test_covered_axis_parity.py",
     "tests/solution/test_diagnostics_host_age.py",
     "tests/solution/test_fixed_component_markov.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_independent_types_oracle.py",
     "tests/solution/test_invariant_blocking.py",
     "tests/solution/test_invariant_blocking_scalar.py",
@@ -2599,6 +2605,7 @@
     "tests/regime_building/test_draw_read_states_are_kept.py",
     "tests/regime_building/test_fixed_process_params_grammar.py",
     "tests/regime_building/test_fixed_zero_joint_edges.py",
+    "tests/regime_building/test_fixed_zero_joint_source_states.py",
     "tests/regime_building/test_fold_guard_complete.py",
     "tests/regime_building/test_gate_output_dtype.py",
     "tests/regime_building/test_gated_edge_arg_provenance.py",
@@ -2705,6 +2712,7 @@
     "tests/solution/test_covered_axis_parity.py",
     "tests/solution/test_diagnostics_host_age.py",
     "tests/solution/test_fixed_component_markov.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_independent_types_oracle.py",
     "tests/solution/test_invariant_blocking.py",
     "tests/solution/test_invariant_blocking_scalar.py",
@@ -3994,7 +4002,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4021,7 +4029,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4048,7 +4056,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4075,7 +4083,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4102,7 +4110,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4129,7 +4137,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4156,7 +4164,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4183,7 +4191,7 @@
     "runner_os": "Linux",
     "precision": 64,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4204,6 +4212,33 @@
    "unchained": true
   },
   {
+   "id": "eight-device-materialization-admission-fp64-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/solution/test_materialization_admission.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 64,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp64-materialization-admission.xml",
+   "files": [
+    "tests/solution/test_materialization_admission.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
+   "unchained": true
+  },
+  {
    "id": "eight-device-simulation-eight-devices-fp32-linux",
    "job": "tests-topology-eight-device",
    "step": "Run tests/test_distributed_simulation_eight_devices.py",
@@ -4211,7 +4246,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4238,7 +4273,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4265,7 +4300,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4292,7 +4327,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4319,7 +4354,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4346,7 +4381,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4373,7 +4408,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4400,7 +4435,7 @@
     "runner_os": "Linux",
     "precision": 32,
     "backend": "cpu",
-    "devices": 1,
+    "devices": 8,
     "workers": 0,
     "isolation": "fresh-process-8-device-env",
     "policy": {
@@ -4418,6 +4453,33 @@
    ],
    "no_skips_required": true,
    "predicted_payload_minutes": 0.14,
+   "unchained": true
+  },
+  {
+   "id": "eight-device-materialization-admission-fp32-linux",
+   "job": "tests-topology-eight-device",
+   "step": "Run tests/solution/test_materialization_admission.py",
+   "environment": {
+    "runner_os": "Linux",
+    "precision": 32,
+    "backend": "cpu",
+    "devices": 8,
+    "workers": 0,
+    "isolation": "fresh-process-8-device-env",
+    "policy": {
+     "policy_child": true,
+     "ci_policy": "full",
+     "hardware_profile": "cpu"
+    }
+   },
+   "selection": "whole-file",
+   "deselect": [],
+   "junit": "junit-cpu-fp32-materialization-admission.xml",
+   "files": [
+    "tests/solution/test_materialization_admission.py"
+   ],
+   "no_skips_required": true,
+   "predicted_payload_minutes": 0.0,
    "unchained": true
   },
   {
@@ -4646,6 +4708,7 @@
     "tests/solution/test_gated_edge_age_specialized_fallback.py",
     "tests/solution/test_grid_search_cell_axis.py",
     "tests/solution/test_grid_search_streaming_width_collision.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_halving_published_contract.py",
     "tests/solution/test_independent_types_oracle.py",
     "tests/solution/test_invariant_blocking.py",
@@ -5175,6 +5238,7 @@
     "tests/solution/test_envelope_cell_axis.py",
     "tests/solution/test_fixed_component_markov.py",
     "tests/solution/test_gated_edge_age_specialized_axes.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_halving_published_contract.py",
     "tests/solution/test_housing_oracle.py",
     "tests/solution/test_independent_types_oracle.py",
@@ -5706,6 +5770,7 @@
     "tests/regime_building/test_draw_read_states_are_kept.py",
     "tests/regime_building/test_fixed_process_params.py",
     "tests/regime_building/test_fixed_zero_joint_edges.py",
+    "tests/regime_building/test_fixed_zero_joint_source_states.py",
     "tests/regime_building/test_flow_transitions_are_phase_closed.py",
     "tests/regime_building/test_fold_gate_guard.py",
     "tests/regime_building/test_gate_route_delta_same_target_fallback.py",
@@ -5778,6 +5843,7 @@
     "tests/solution/test_covered_axis_parity.py",
     "tests/solution/test_diagnostics_host_age.py",
     "tests/solution/test_fixed_component_markov.py",
+    "tests/solution/test_guard_sibling_geometry.py",
     "tests/solution/test_independent_types_oracle.py",
     "tests/solution/test_invariant_blocking.py",
     "tests/solution/test_invariant_blocking_scalar.py",
@@ -14617,6 +14683,7 @@
   "tests/regime_building/test_draw_law_inputs_are_kept.py",
   "tests/regime_building/test_draw_read_states_are_kept.py",
   "tests/regime_building/test_fixed_zero_joint_edges.py",
+  "tests/regime_building/test_fixed_zero_joint_source_states.py",
   "tests/regime_building/test_invariant_components.py",
   "tests/regime_building/test_required_phase_annotations.py",
   "tests/simulation/initial_conditions/test_build_initial_states.py",
@@ -14670,6 +14737,7 @@
   "tests/solution/test_donation_two_active_regimes.py",
   "tests/solution/test_egm_wealth_dependent_regime_law.py",
   "tests/solution/test_fixed_component_markov.py",
+  "tests/solution/test_guard_sibling_geometry.py",
   "tests/solution/test_halving_published_contract.py",
   "tests/solution/test_independent_types_oracle.py",
   "tests/solution/test_invariant_blocking.py",
