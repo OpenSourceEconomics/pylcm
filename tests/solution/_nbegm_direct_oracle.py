@@ -243,17 +243,7 @@ def direct_oracle_period(  # noqa: PLR0915
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
-    # The self-read child is next period: its breakpoints read its own age.
-    child_period = int(context["period"]) + 1
-    child_kwargs = (
-        {
-            **kwargs,
-            "period": jnp.int32(child_period),
-            "age": context["ages"].values[child_period],
-        }
-        if child_period < len(context["ages"].values)
-        else kwargs
-    )
+    child_kwargs = child_period_kwargs(kwargs=kwargs, context=context)
     ride_grids = [jnp.asarray(kwargs[name]) for name in statics.ride_names]
     ride_shape = tuple(len(grid) for grid in ride_grids)
     savings_grid = np.asarray(kernel.savings_grid, dtype=np.float64)
@@ -426,6 +416,24 @@ def direct_oracle_period(  # noqa: PLR0915
             bank(branch_alternatives) if n_branches else None
         ),
     )
+
+
+def child_period_kwargs(
+    *, kwargs: Mapping[str, Any], context: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Return the arguments the self-read child's breakpoints are evaluated with.
+
+    The self-read child is next period, so its breakpoints read its own age and
+    period.
+    """
+    child_period = int(context["period"]) + 1
+    if child_period >= len(context["ages"].values):
+        return kwargs
+    return {
+        **kwargs,
+        "period": jnp.int32(child_period),
+        "age": context["ages"].values[child_period],
+    }
 
 
 def _branch_bindings(discrete_actions: Any) -> tuple[dict[str, Any], ...]:
