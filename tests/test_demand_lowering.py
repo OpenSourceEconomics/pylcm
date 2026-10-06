@@ -459,7 +459,7 @@ def test_a_regime_whose_laws_cover_no_available_age_builds_while_unrequired() ->
 
 
 def test_requiring_a_regime_whose_laws_cover_no_available_age_fails() -> None:
-    """A required problem where the regime supplies no law raises and names it."""
+    """A required problem where the regime has no edge out raises and names it."""
     with pytest.raises(
         ModelInitializationError, match="requires 'retirement' at age 55"
     ):

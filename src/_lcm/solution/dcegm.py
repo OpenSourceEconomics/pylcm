@@ -69,6 +69,7 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EGMStepFunction,
     FlatParams,
@@ -266,9 +267,9 @@ class DCEGM(OneMarginSolver):
         )
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
         """The child read enumerates an edge's local draws as node axes."""
-        return True
+        return frozenset({SupportOrigin.SOURCE_PROCESS})
 
     @property
     def publishes_simulation_policy(self) -> bool:
