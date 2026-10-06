@@ -5134,6 +5134,7 @@ def _build_nbegm_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=v_interpolation_info,
+        age_values=context.ages.values,
         risk_aversion_param_name=risk_aversion_param_name,
     )
 

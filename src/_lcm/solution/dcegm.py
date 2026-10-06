@@ -496,6 +496,7 @@ class DCEGM(OneMarginSolver):
             regime_to_flat_param_names=context.regime_to_flat_param_names,
             state_action_space=context.state_action_space,
             has_taste_shocks=context.has_taste_shocks,
+            age_values=context.ages.values,
         )
         steps: Mapping[int, Callable] = build.steps
         argument_builder = _DCEGMArgumentBuilder(

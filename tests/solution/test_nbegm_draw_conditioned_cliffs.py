@@ -16,6 +16,7 @@ carry rather than re-evaluating the threshold declarations.
 """
 
 import dataclasses
+import math
 from collections.abc import Callable
 from fractions import Fraction
 from typing import Any
@@ -638,3 +639,29 @@ def test_age_reading_kernel_agrees_with_the_oracle() -> None:
         period=0,
     )
     assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+
+
+@pytest.mark.parametrize("kind", [0, 1])
+def test_child_resources_are_read_at_the_childs_age(kind: int) -> None:
+    """Income `2 + 3 * age` enters the child's cash-on-hand at the child's age 1.
+
+    Without a cliff, period 1 consumes everything, so `V1(a) = log(a + 5)`, and
+    period 0 at liquid 20 (cash-on-hand 22) solves
+    `max_s log(22 - s) + 0.95 log(s + 5)` in closed form.
+    """
+    params = _deterministic_params(fpl_cliff=jnp.asarray([9.0, 9.0]) + BASE_INCOME)
+    params["alive"]["gross_income"]["age_income"] = 3.0
+    params["alive"]["subsidy"]["subsidy_high"] = 0.0
+    model = _build_deterministic_model(
+        kind_law=lcm.fixed_transition("kind"),
+        subsidy=kind_indexed_subsidy,
+        gross_income_func=gross_income_rising_with_age,
+    )
+    values = model.solve(params=params, log_level="off").values
+    child_income = BASE_INCOME + 3.0 * 1.0
+    savings_star = (DISCOUNT_FACTOR * 22.0 - child_income) / (1.0 + DISCOUNT_FACTOR)
+    expected = math.log(22.0 - savings_star) + DISCOUNT_FACTOR * math.log(
+        savings_star + child_income
+    )
+    value = np.asarray(values[0]["alive"])[kind, 20]
+    np.testing.assert_allclose(value, expected, atol=1e-3)

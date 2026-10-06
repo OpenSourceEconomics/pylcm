@@ -951,8 +951,16 @@ class _ChildReader:
             self.weight_vectors = [
                 np.asarray(weights[key], dtype=np.float64) for key in read.weight_keys
             ]
+        # The child's resources are the child period's: one period on, at the
+        # age the grid gives that period.
+        child_period = int(np.asarray(combo_pool["period"])) + 1
+        child_time = {
+            "period": jnp.int32(child_period),
+            "age": jnp.asarray(read.age_values)[child_period],
+        }
         resources_params = {
-            name: combo_pool[name] for name in read.resources_param_names
+            name: child_time.get(name, combo_pool.get(name))
+            for name in read.resources_param_names
         }
 
         def next_states(savings: Any) -> Any:
