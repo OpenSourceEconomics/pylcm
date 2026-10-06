@@ -208,16 +208,15 @@ def resolve_regime_schedules(
         for phase, side_by_period in side_by_phase.items():
             support[phase][name] = MappingProxyType(
                 {
-                    period: tuple(
-                        target
-                        for target in _declared_support(
-                            law=law, regime_names=tuple(user_regimes)
-                        )
+                    period: _edge_support(
+                        law=law,
+                        source=name,
+                        period=period,
+                        ages=ages,
+                        regime_names=tuple(user_regimes),
+                        source_ages=None
                         if source_ages_by_phase is None
-                        or ages.exact_values[period]
-                        in source_ages_by_phase[phase]
-                        .get(name, {})
-                        .get(target, frozenset())
+                        else source_ages_by_phase[phase],
                     )
                     for period, law in side_by_period.items()
                 }
@@ -1041,6 +1040,29 @@ def _phase_side(*, law: object, side: Side) -> object:
     if not isinstance(law, Phased):
         return law
     return law.solve if side == "solve" else law.simulate
+
+
+def _edge_support(
+    *,
+    law: object,
+    source: RegimeName,
+    period: int,
+    ages: AgeGrid,
+    regime_names: tuple[RegimeName, ...],
+    source_ages: Mapping[str, Mapping[str, frozenset[object]]] | None,
+) -> tuple[str, ...]:
+    """The targets one phase side of a law declares that an edge admits.
+
+    `source_ages` maps source to target to the source ages its edges select;
+    `None` admits every declared target.
+    """
+    return tuple(
+        target
+        for target in _declared_support(law=law, regime_names=regime_names)
+        if source_ages is None
+        or ages.exact_values[period]
+        in source_ages.get(source, {}).get(target, frozenset())
+    )
 
 
 def _declared_support(
