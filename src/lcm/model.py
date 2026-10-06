@@ -627,10 +627,10 @@ class Model:
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
             initial_nodes: The admissible starting age-regime pairs, as a
-                nonempty sequence of `(age, regime)` pairs. A mapping from
-                age selectors to regime names also selects admissible pairs.
-                Published as the
-                exact pairs in `self.initial_nodes`. Required: there is no
+                nonempty sequence or set of `(age, regime)` pairs. A mapping
+                from age selectors to regime names also selects admissible
+                pairs. Published as the exact pairs in `self.initial_nodes`,
+                which this argument accepts back. Required: there is no
                 default starting universe.
             edges: Mapping from source regime to destination regime to source-age
                 selector. A bare mapping broadcasts to both phases; `Phased`

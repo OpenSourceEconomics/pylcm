@@ -35,8 +35,6 @@ from lcm_examples.mortality import (
     RegimeId,
     dead,
     is_working,
-    retirement_transitions,
-    working_life_transitions,
 )
 from lcm_examples.mortality import retirement as _base_retirement
 from lcm_examples.mortality import working_life as _base_working_life
@@ -164,7 +162,6 @@ retirement = _base_retirement.replace(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     return Model(
         edges={
             "working_life": {
@@ -188,12 +185,8 @@ def get_model(n_periods: int) -> Model:
             },
         },
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age)
-            ),
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "working_life": working_life,
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,
