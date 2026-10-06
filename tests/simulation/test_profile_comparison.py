@@ -5,14 +5,21 @@ parity test actually calls and requires it to be rejected, so a comparator that
 admits the defect is caught here rather than by a silently green parity test.
 """
 
+from collections.abc import Iterator
+from functools import partial
+from itertools import product
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from lcm import ExecutionConfig
+from tests.execution import test_axis_widths_per_regime as axis_parity
 from tests.execution.test_axis_widths_per_regime import (
     assert_agrees_to_ulp as value_checker,
 )
-from tests.simulation._profile_comparison import assert_same_bytes
+from tests.simulation._profile_comparison import assert_public_frames, assert_same_bytes
 from tests.simulation.test_subject_batching import (
     _assert_columns_invariant as frame_checker,
 )
@@ -109,45 +116,102 @@ def _cancellation_pair() -> tuple[np.ndarray, np.ndarray]:
     return got, expected
 
 
-def test_value_gate_bounds_a_cancellation_value_at_its_operand_magnitude() -> None:
-    """A near-zero value passes within spacings at its declared operand magnitude."""
-    got, expected = _cancellation_pair()
-    value_checker(got=got, expected=expected, n_ulp=8, operand_magnitude=1.67250914)
-
-
-def test_value_gate_counts_own_steps_without_an_operand_magnitude() -> None:
-    """Without a declared operand magnitude, 16 own steps fail an eight-step gate."""
+def test_value_gate_rejects_the_recorded_cancellation_pair() -> None:
+    """Sixteen own value steps remain outside the declared eight-step budget."""
     got, expected = _cancellation_pair()
     with pytest.raises(AssertionError):
         value_checker(got=got, expected=expected, n_ulp=8)
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_value_gate_rejects_nine_operand_spacings_on_a_near_zero_value(
-    *, dtype: type[np.floating]
+def test_axis_width_gate_never_borrows_another_elements_magnitude(
+    *, dtype: type[np.floating], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A near-zero value moved by nine spacings of its operand magnitude fails."""
-    expected = np.asarray([1.5, -0.025], dtype=dtype)
-    got = expected.copy()
-    got[1] += 9 * np.spacing(np.asarray(1.5, dtype=dtype))
-    with pytest.raises(AssertionError):
-        value_checker(got=got, expected=expected, n_ulp=8, operand_magnitude=1.5)
+    """The real axis-width parity test holds an ordinary leaf to its own steps.
 
+    No solve runs: two well-formed solution views supply the exact result leaves
+    at a leaf other than the cancellation leaf. At scale / 64, eight scale
+    spacings are 512 of the small value's own steps. The real test must accept
+    eight, and reject nine, sixteen and 512 regardless of sign, scale, element
+    order or leaf shape.
+    """
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.parametrize("steps", [9, 16])
-def test_value_gate_rejects_more_than_eight_steps_below_one_at_operand_one(
-    *, dtype: type[np.floating], steps: int
-) -> None:
-    """Below a power-of-two operand magnitude, nine steps are nine spacings."""
-    reference = _steps_below_one(dtype=dtype, steps=steps)
-    with pytest.raises(AssertionError):
-        value_checker(
-            got=np.asarray(1.0, dtype=dtype),
-            expected=reference,
-            n_ulp=8,
-            operand_magnitude=1.0,
+    def supply_solution(
+        *, config: object, solutions: Iterator[SimpleNamespace]
+    ) -> tuple[dict[object, object], SimpleNamespace]:
+        del config
+        return {}, next(solutions)
+
+    for sign, exponent, steps, reverse, shape in product(
+        (-1, 1),
+        (-16, 0, 16),
+        (8, 9, 16, 512),
+        (False, True),
+        ((2,), (1, 2), (2, 1)),
+    ):
+        scale = 1.5 * 2.0**exponent
+        expected = np.asarray([scale, sign * scale / 64], dtype=dtype)
+        got = expected.copy()
+        for _ in range(steps):
+            got[1] = np.nextafter(got[1], dtype(sign * np.inf))
+        if reverse:
+            expected, got = expected[::-1], got[::-1]
+        expected, got = expected.reshape(shape), got.reshape(shape)
+        solutions = iter(
+            SimpleNamespace(_engine_view=SimpleNamespace(values={1: {"work": leaf}}))
+            for leaf in (expected, got)
         )
+
+        monkeypatch.setattr(
+            axis_parity,
+            "_solve_and_collect_widths",
+            partial(supply_solution, solutions=solutions),
+        )
+        if steps <= 8:
+            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+        else:
+            with pytest.raises(AssertionError):
+                axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+
+
+@pytest.mark.parametrize(("steps", "accepted"), [(16, True), (512, False)])
+def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
+    *, steps: int, accepted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cancellation entry may move by roundings of its two operands, no more.
+
+    The low-income, bad-health work value at period 2 is about -0.0246, the sum
+    of a flow utility near -0.217 and a continuation near 0.192. Eight spacings
+    of each operand are 128 of the entry's own steps: a 16-step move passes the
+    real parity test and a 512-step move fails it.
+    """
+    _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
+    expected_values = solution._engine_view.values
+    period, regime = axis_parity._CANCELLATION_LEAF
+    leaf = np.array(expected_values[period][regime])
+    for _ in range(steps):
+        leaf[0, 0, 0] = np.nextafter(leaf[0, 0, 0], leaf.dtype.type(np.inf))
+    got_values = {
+        p: {
+            r: (leaf if (p, r) == (period, regime) else value)
+            for r, value in by.items()
+        }
+        for p, by in expected_values.items()
+    }
+    solutions = iter(
+        SimpleNamespace(_engine_view=SimpleNamespace(values=values))
+        for values in (expected_values, got_values)
+    )
+    monkeypatch.setattr(
+        axis_parity,
+        "_solve_and_collect_widths",
+        lambda **_: ({}, next(solutions)),
+    )
+    if accepted:
+        axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+    else:
+        with pytest.raises(AssertionError):
+            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
 
 
 def test_panel_accepts_two_steps_in_a_derived_target_column() -> None:
@@ -203,3 +267,31 @@ def test_same_bytes_rejects_signed_zero_and_nan_payload(
     """Same-program comparison distinguishes signed zeros and NaN payloads."""
     with pytest.raises(AssertionError):
         assert_same_bytes(got=got, expected=expected)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_derived_utility_keeps_the_eight_step_boundary_and_same_program_bytes(
+    *, dtype: type[np.floating]
+) -> None:
+    """A named derived value never grants tolerance to same-program replay."""
+    reference = pd.DataFrame(
+        {"subject_id": [0], "utility": np.asarray([1.0], dtype=dtype)}
+    )
+    for steps in (8, 9):
+        actual = reference.copy()
+        value = dtype(1.0)
+        for _ in range(steps):
+            value = np.nextafter(value, dtype(2.0))
+        actual.loc[0, "utility"] = value
+        if steps == 8:
+            frame_checker(baseline=reference, batched=actual)
+        else:
+            with pytest.raises(AssertionError):
+                frame_checker(baseline=reference, batched=actual)
+        with pytest.raises(AssertionError):
+            assert_public_frames(
+                got=actual,
+                expected=reference,
+                mode="same_program",
+                value_columns=("value", "utility"),
+            )
