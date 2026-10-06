@@ -5047,8 +5047,9 @@ def _fail_if_solver_cannot_consume_transition_local_lotteries(
         for target, plan in transition_plans.items()
         for lottery in plan.lotteries.values()
         if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+        and lottery.support_origin not in solver.transition_local_lottery_origins
     )
-    if not lotteries or solver.supports_transition_local_lotteries:
+    if not lotteries:
         return
     rendered = ", ".join(
         f"{regime_name} -> {target}: {name!r}" for target, name in lotteries
