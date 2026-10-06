@@ -35,6 +35,7 @@ import dataclasses
 import inspect
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast, no_type_check
@@ -207,16 +208,15 @@ def resolve_regime_schedules(
         for phase, side_by_period in side_by_phase.items():
             support[phase][name] = MappingProxyType(
                 {
-                    period: tuple(
-                        target
-                        for target in _declared_support(
-                            law=law, regime_names=tuple(user_regimes)
-                        )
+                    period: _edge_support(
+                        law=law,
+                        source=name,
+                        period=period,
+                        ages=ages,
+                        regime_names=tuple(user_regimes),
+                        source_ages=None
                         if source_ages_by_phase is None
-                        or ages.exact_values[period]
-                        in source_ages_by_phase[phase]
-                        .get(name, {})
-                        .get(target, frozenset())
+                        else source_ages_by_phase[phase],
                     )
                     for period, law in side_by_period.items()
                 }
@@ -547,7 +547,15 @@ def resolve_demand(
         ):
             raise ModelInitializationError(
                 _unavailable_message(
-                    requester=requester, name=name, period=period, ages=ages
+                    requester=requester,
+                    name=name,
+                    period=period,
+                    side=(
+                        ""
+                        if period not in available[name]
+                        else ("simulate " if physical else "solve ")
+                    ),
+                    ages=ages,
                 )
             )
         done.add((period, name))
@@ -664,13 +672,19 @@ def _restricted(
 
 
 def _unavailable_message(
-    *, requester: str, name: RegimeName, period: int, ages: AgeGrid
+    *, requester: str, name: RegimeName, period: int, side: str, ages: AgeGrid
 ) -> str:
+    """Name why a required pair has no problem.
+
+    A law is bound only at the source ages its edges select, so a nonterminal
+    pair before the last age lacks a problem exactly where `edges` declares no
+    edge out of it: in either phase when `side` is empty, else in that phase.
+    """
     age = ages.exact_values[period]
     reason = (
         "which is nonterminal at the last age: no next age exists"
         if period == ages.n_periods - 1
-        else f"where '{name}' supplies no law"
+        else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
 
@@ -707,7 +721,8 @@ def resolve_initial_nodes(
 ) -> frozenset[tuple[object, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
-    `initial_nodes` accepts exact `(age, regime)` pairs or maps age selectors
+    `initial_nodes` accepts a sequence or set of exact `(age, regime)` pairs, so
+    a published `Model.initial_nodes` is accepted back, or maps age selectors
     (as in `ByAge`) to a regime name or a nonempty sequence of names. Selector
     rules contribute the Cartesian product of grid ages and names; all pairs
     are unioned. The result depends on the declaration and clock, never on
@@ -746,7 +761,9 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
-    if isinstance(initial_nodes, Sequence) and not isinstance(initial_nodes, str):
+    if isinstance(initial_nodes, Sequence | AbstractSet) and not isinstance(
+        initial_nodes, str
+    ):
         if not initial_nodes:
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
@@ -1023,6 +1040,29 @@ def _phase_side(*, law: object, side: Side) -> object:
     if not isinstance(law, Phased):
         return law
     return law.solve if side == "solve" else law.simulate
+
+
+def _edge_support(
+    *,
+    law: object,
+    source: RegimeName,
+    period: int,
+    ages: AgeGrid,
+    regime_names: tuple[RegimeName, ...],
+    source_ages: Mapping[str, Mapping[str, frozenset[object]]] | None,
+) -> tuple[str, ...]:
+    """The targets one phase side of a law declares that an edge admits.
+
+    `source_ages` maps source to target to the source ages its edges select;
+    `None` admits every declared target.
+    """
+    return tuple(
+        target
+        for target in _declared_support(law=law, regime_names=regime_names)
+        if source_ages is None
+        or ages.exact_values[period]
+        in source_ages.get(source, {}).get(target, frozenset())
+    )
 
 
 def _declared_support(
