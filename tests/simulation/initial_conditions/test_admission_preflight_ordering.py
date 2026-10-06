@@ -24,9 +24,6 @@ from _lcm.typing import (
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     categorical,
@@ -312,9 +309,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     def utility(consumption: ContinuousAction) -> FloatND:
         return consumption
 
-    def next_regime() -> ScalarInt:
-        return RegimeId.dead
-
     def terminal_utility(wealth: ContinuousState) -> FloatND:
         return wealth
 
@@ -322,13 +316,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     actions = {"consumption": LinSpacedGrid(start=2, stop=3, n_points=2)}
     regimes = {
         name: UserRegime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(start=0, exclusive_stop=1): DeterministicTransition(
-                        func=next_regime
-                    )
-                }
-            ),
             states=states,
             actions=actions,
             state_transitions={"wealth": lambda wealth: wealth},
@@ -341,7 +328,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         )
     }
     regimes["dead"] = UserRegime(
-        regime_transitions=None,
         states=states,
         functions={"utility": terminal_utility},
     )

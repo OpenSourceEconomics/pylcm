@@ -20,7 +20,6 @@ from _lcm.solution.contract import (
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     categorical,
@@ -66,10 +65,6 @@ def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
 
 def next_wealth(savings: FloatND) -> FloatND:
     return savings
-
-
-def next_regime(_age: float) -> ScalarInt:
-    return RegimeId.done
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,7 +125,6 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
         actions={"consumption": _ACTION_GRID},
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -145,7 +139,6 @@ def _model(*, solver: OneMarginSolver | GridSearch) -> Model:
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),

@@ -24,8 +24,6 @@ import gc
 import statistics
 import time
 
-from lcm import AgeRange, ByAge
-
 from . import _gpu_mem
 
 # Timed warm calls behind every `track_execution_time` here, which reports their
@@ -377,9 +375,7 @@ def _make_reference_chain(*, depth):
         zip(link_names, terminal_names, strict=True)
     ):
         reference_regime = link_names[index - 1] if index else None
-        regimes[name] = _chain_link(
-            terminal_name=terminal_name, reference_regime=reference_regime
-        )
+        regimes[name] = _chain_link(reference_regime=reference_regime)
         regimes[terminal_name] = _chain_link_terminal()
         params[name] = {"koopmans_aggregator": {"discount_factor": 0.95}}
         if reference_regime is not None:
@@ -403,20 +399,12 @@ def _make_reference_chain(*, depth):
     )
 
 
-def _chain_link(*, terminal_name, reference_regime):
+def _chain_link(*, reference_regime):
     """Build one collective link of the reference chain."""
     from lcm import CollectiveUtility, Regime
-    from lcm.transition import StochasticTransition
 
     kernels = _chain_kernels()
     return Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    terminal_name: StochasticTransition(func=kernels["to_terminal"])
-                }
-            }
-        ),
         states={"wealth": _chain_wealth_grid()},
         state_transitions={"wealth": kernels["next_wealth"]},
         actions={"consumption": _chain_consumption_grid()},
@@ -435,7 +423,6 @@ def _chain_link_terminal():
 
     kernels = _chain_kernels()
     return Regime(
-        regime_transitions=None,
         states={"wealth": _chain_wealth_grid()},
         actions={"consumption": _chain_consumption_grid()},
         functions={
@@ -512,10 +499,6 @@ def _build_chain_kernels():
     def identity(wealth):
         return wealth
 
-    def to_terminal(age):
-        """A link is active for one period only, so it always hands over."""
-        return jnp.ones_like(age, dtype=float)
-
     def participation_f(*, Q_f, reference_f, slack):
         return Q_f >= reference_f - slack
 
@@ -527,7 +510,6 @@ def _build_chain_kernels():
         "affordable": affordable,
         "next_wealth": next_wealth,
         "identity": identity,
-        "to_terminal": to_terminal,
         "participation_f": participation_f,
         "participation_m": participation_m,
     }

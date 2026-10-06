@@ -35,6 +35,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.certainty_equivalent import CertaintyEquivalent, QuasiArithmeticMean
@@ -110,22 +111,21 @@ def _model(
         else {}
     )
     rare_utility = rare_payoff if rare_carries_a_process else _common_payoff
+    source_law = {
+        "common": StochasticTransition(func=_certain),
+        "rare": StochasticTransition(func=rare_probability),
+    }
     return Model(
-        edges={"source": {"common": 20, "rare": 20}},
+        edges={
+            "source": Transition(targets={"common": 20, "rare": 20}, law=source_law)
+        },
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "common": StochasticTransition(func=_certain),
-                    "rare": StochasticTransition(func=rare_probability),
-                },
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
-            "common": Regime(
-                regime_transitions=None, functions={"utility": _common_payoff}
-            ),
+            "common": Regime(functions={"utility": _common_payoff}),
             "rare": Regime(
-                regime_transitions=None,
                 states=rare_states,
                 functions={"utility": rare_utility},
             ),

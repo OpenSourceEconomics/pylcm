@@ -30,6 +30,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -193,7 +194,6 @@ def _build_model(*, variant: str) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transition,
             functions=functions,
             constraints=constraints,
             koopmans_aggregator=CESAggregator(),
@@ -205,7 +205,6 @@ def _build_model(*, variant: str) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transition,
             functions=functions,
             constraints=constraints,
             koopmans_aggregator=CESAggregator(),
@@ -225,17 +224,19 @@ def _build_model(*, variant: str) -> Model:
             ),
         )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=transition,
+            )
         },
         regime_id_class=_RegimeId,
         ages=AgeGrid(

@@ -15,6 +15,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -22,10 +23,6 @@ from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
-EDGES = {
-    "working": {"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55},
-    "retirement": {"dead": 65},
-}
 
 
 @categorical(ordered=False)
@@ -39,9 +36,8 @@ def _utility(*, wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _regime(*, regime_transitions: Any) -> Regime:
+def _regime() -> Regime:
     return Regime(
-        regime_transitions=regime_transitions,
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=3)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": _utility},
@@ -56,24 +52,27 @@ def _die() -> FloatND:
     return jnp.asarray(0.1)
 
 
+EDGES = {
+    "working": Transition(
+        targets={"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55},
+        law=ByAge.until(
+            stop_age_exclusive=65,
+            law={
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            },
+            then="retirement",
+        ),
+    ),
+    "retirement": {"dead": 65},
+}
+
+
 def _regimes() -> dict[str, Regime]:
     return {
-        "working": _regime(
-            regime_transitions=ByAge.until(
-                stop_age_exclusive=65,
-                law={
-                    "working": StochasticTransition(func=_stay),
-                    "dead": StochasticTransition(func=_die),
-                },
-                then="retirement",
-            )
-        ),
-        "retirement": _regime(
-            regime_transitions=ByAge(
-                cases={AgeRange(start=65, exclusive_stop=75): "dead"}
-            )
-        ),
-        "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
+        "working": _regime(),
+        "retirement": _regime(),
+        "dead": Regime(functions={"utility": lambda: 0.0}),
     }
 
 
@@ -248,13 +247,13 @@ def test_by_age_default_is_available_at_the_final_age() -> None:
 
 
 def test_unused_final_age_law_does_not_fail_model_construction() -> None:
-    """A law declared at the last age is legal while no start requires it there."""
-    regimes = _regimes()
-    regimes["retirement"] = _regime(
-        regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
-    )
+    """A law declared at the last age is legal while no start requires it there.
+
+    The `then` branch of the working law covers every age from 65 on,
+    including the last age 75.
+    """
     model = Model(
-        regimes=regimes,
+        regimes=_regimes(),
         edges=EDGES,
         ages=AGES,
         regime_id_class=RegimeId,
@@ -264,14 +263,10 @@ def test_unused_final_age_law_does_not_fail_model_construction() -> None:
 
 
 def test_root_at_final_age_of_a_nonterminal_regime_fails() -> None:
-    """The same final-age law fails once a start requires that nonterminal problem."""
-    regimes = _regimes()
-    regimes["retirement"] = _regime(
-        regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
-    )
+    """A start that requires a nonterminal problem at the last age fails."""
     with pytest.raises(ModelInitializationError, match="75"):
         Model(
-            regimes=regimes,
+            regimes=_regimes(),
             edges=EDGES,
             ages=AGES,
             regime_id_class=RegimeId,

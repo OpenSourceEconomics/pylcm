@@ -71,17 +71,18 @@ def _resources(wealth: ContinuousState) -> FloatND:
 def _couple(*, functions: Mapping[str, object]) -> Regime:
     """The collective regime of the miniature."""
     return Regime(
+        states={"wealth": _WEALTH},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions=functions,  # ty: ignore[invalid-argument-type]
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
                 )
             }
-        ),
-        states={"wealth": _WEALTH},
-        state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions=functions,  # ty: ignore[invalid-argument-type]
+        )
     )
 
 

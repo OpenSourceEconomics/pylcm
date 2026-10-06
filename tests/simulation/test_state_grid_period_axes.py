@@ -70,7 +70,6 @@ def _model(
         edges={},
         regimes={
             "end": Regime(
-                regime_transitions=None,
                 states=states,
                 functions={"utility": _two_state_value if two_states else _identity},
             )
@@ -176,18 +175,15 @@ def test_a_value_only_node_is_a_valid_coordinate_request():
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "source": Regime(
-                regime_transitions=Phased(solve="end", simulate="other"),
                 states={"wealth": common},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _identity},
             ),
             "end": Regime(
-                regime_transitions=None,
                 states={"wealth": moving},
                 functions={"utility": _identity},
             ),
             "other": Regime(
-                regime_transitions=None,
                 states={"wealth": common},
                 functions={"utility": _identity},
             ),
@@ -215,7 +211,6 @@ def test_period_is_an_index_not_the_calendar_age():
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "end": Regime(
-                regime_transitions=None,
                 functions={"utility": _identity},
                 states={
                     "wealth": AgeSpecializedGrid(

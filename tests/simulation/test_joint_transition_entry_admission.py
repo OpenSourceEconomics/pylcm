@@ -29,7 +29,6 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -64,10 +63,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
 
 def _active_target(age: float) -> bool:
     return age == 1
-
-
-def _certain_target() -> FloatND:
-    return jnp.asarray(1, dtype=_FLOAT_DTYPE)
 
 
 def _joint_probabilities() -> FloatND:
@@ -125,9 +120,6 @@ def _inputs(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_certain_target)
-                },
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -144,7 +136,6 @@ def _inputs(
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),
                     "income": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -161,7 +152,6 @@ def _inputs(
     params: UserParams = {
         "source": {
             "target": {
-                "next_regime": {},
                 "match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_income": {},

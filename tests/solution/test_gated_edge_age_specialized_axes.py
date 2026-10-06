@@ -27,6 +27,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentTransition,
     categorical,
 )
@@ -167,29 +168,26 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    saver = Regime(
-        regime_transitions={
-            "saver": StochasticTransition(func=_probability_of_staying_put),
-            "account": ValueDependentTransition(
-                probability=StochasticTransition(
-                    func=_probability_of_opening_the_account
-                ),
-                gate=_balance_clears_the_floor,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="annuity",
-                            projection={"principal": _principal_from_balance},
-                        )
+    saver_law = {
+        "saver": StochasticTransition(func=_probability_of_staying_put),
+        "account": ValueDependentTransition(
+            probability=StochasticTransition(func=_probability_of_opening_the_account),
+            gate=_balance_clears_the_floor,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="annuity",
+                        projection={"principal": _principal_from_balance},
                     )
-                },
-            ),
-        },
+                )
+            },
+        ),
+    }
+    saver = Regime(
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
     account = Regime(
-        regime_transitions=None,
         states={
             "balance": AgeSpecializedGrid(
                 build=_balance_grid, signature=_contribution_cap
@@ -198,7 +196,6 @@ def _build_model() -> Model:
         functions={"utility": _account_utility},
     )
     annuity = Regime(
-        regime_transitions=None,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
@@ -207,7 +204,12 @@ def _build_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "saver"},
-        edges={"saver": {"saver": 0, "account": (0, 1), "annuity": (0, 1)}},
+        edges={
+            "saver": Transition(
+                targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
+                law=saver_law,
+            )
+        },
     )
 
 

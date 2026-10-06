@@ -24,6 +24,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -84,44 +85,41 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 
 def _make_model() -> Model:
-    worker = Regime(
-        regime_transitions={
-            "retired": ValueDependentTransition(
-                probability=StochasticTransition(func=_certain),
-                gate=_well_off,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=Phased(
-                            solve=ProjectedRegimeValue(
-                                regime="hardship",
-                                projection={"wealth": _whole_wealth},
-                            ),
-                            simulate=ProjectedRegimeValue(
-                                regime="shelter",
-                                stakeholder="guest",
-                                projection={"wealth": _settled_wealth},
-                            ),
-                        )
+    worker_law = {
+        "retired": ValueDependentTransition(
+            probability=StochasticTransition(func=_certain),
+            gate=_well_off,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=Phased(
+                        solve=ProjectedRegimeValue(
+                            regime="hardship",
+                            projection={"wealth": _whole_wealth},
+                        ),
+                        simulate=ProjectedRegimeValue(
+                            regime="shelter",
+                            stakeholder="guest",
+                            projection={"wealth": _settled_wealth},
+                        ),
                     )
-                },
-            )
-        },
+                )
+            },
+        )
+    }
+    worker = Regime(
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _zero},
     )
     retired = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _generous},
     )
     hardship = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _meagre},
     )
     shelter = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(utilities={"guest": _lavish, "host": _zero})
@@ -138,8 +136,16 @@ def _make_model() -> Model:
         regime_id_class=RegimeId,
         initial_nodes={0: "worker"},
         edges=Phased(
-            solve={"worker": {"retired": 0, "hardship": 0}},
-            simulate={"worker": {"retired": 0, "shelter": 0}},
+            solve={
+                "worker": Transition(
+                    targets={"retired": 0, "hardship": 0}, law=worker_law
+                )
+            },
+            simulate={
+                "worker": Transition(
+                    targets={"retired": 0, "shelter": 0}, law=worker_law
+                )
+            },
         ),
     )
 

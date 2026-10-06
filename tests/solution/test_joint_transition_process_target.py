@@ -21,6 +21,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -71,7 +72,6 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _model(*, support: tuple[float, float]) -> Model:
     working = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(
                 start=_WEALTH[0], stop=_WEALTH[-1], n_points=len(_WEALTH)
@@ -97,13 +97,18 @@ def _model(*, support: tuple[float, float]) -> Model:
             }
         },
     )
-    dead = Regime(regime_transitions=None, functions={"utility": _zero_utility})
+    dead = Regime(functions={"utility": _zero_utility})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, inclusive_stop=63, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={60: "working"},
-        edges={"working": {"working": 60, "dead": (60, 61)}},
+        edges={
+            "working": Transition(
+                targets={"working": 60, "dead": (60, 61)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 

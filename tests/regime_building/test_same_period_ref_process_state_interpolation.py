@@ -123,20 +123,20 @@ def _project_shock(wage: FloatND) -> FloatND:
 
 def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
+        states={"shock": _SHOCK},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility_shock_ref},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "shock_ref_terminal": StochasticTransition(func=_prob_one)
                 }
             }
-        ),
-        states={"shock": _SHOCK},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility_shock_ref},
+        )
     )
-    shock_ref_terminal = Regime(
-        regime_transitions=None,
-        functions={"utility": lambda: 0.0},
+    shock_ref_terminal = Regime(functions={"utility": lambda: 0.0}).replace(
+        regime_transitions=None
     )
     return {"shock_ref": shock_ref, "shock_ref_terminal": shock_ref_terminal}
 
@@ -250,13 +250,6 @@ def _vc_f(*, Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     regimes = _make_shock_ref_regimes()
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -275,9 +268,16 @@ def _make_regimes() -> dict[str, Regime]:
                 },
             )
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -288,7 +288,7 @@ def _make_regimes() -> dict[str, Regime]:
                 }
             )
         },
-    )
+    ).replace(regime_transitions=None)
     regimes["married"] = married
     regimes["married_terminal"] = married_terminal
     return regimes

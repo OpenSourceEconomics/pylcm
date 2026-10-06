@@ -32,7 +32,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
+    Transition,
     categorical,
     liquid_law_from_resources,
     liquid_law_from_savings,
@@ -167,8 +167,9 @@ def make_alive_dead_model(
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
     The alive regime consumes on a dense grid, carries the liquid state (plus any
-    `extra_states`), evolves liquid by `liquid_law` toward both targets, and dies
-    deterministically via the shared survival transition. The dead regime is
+    `extra_states`), evolves liquid by `liquid_law` toward both targets, and by
+    default stays alive until the second-to-last age and dies there, one
+    outgoing edge per age, so no survival law is declared. The dead regime is
     terminal and values remaining wealth as a CRRA bequest.
 
     Args:
@@ -186,7 +187,10 @@ def make_alive_dead_model(
         extra_states: Additional state grids beyond `liquid` (ride-along
             co-states, stochastic processes).
         extra_state_transitions: Transition entries for the extra states.
-        survival_transition: Regime transition for the alive regime.
+        survival_transition: Per-target survival law for the alive regime. When
+            given, the alive regime can die at every non-final age and this law
+            chooses between staying alive and dying wherever both edges leave
+            an age; the final alive age takes its `"dead"` entry.
         model_states: States broadcast at model level.
         liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
             `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
@@ -221,18 +225,23 @@ def make_alive_dead_model(
     }
     # Default survival is deterministic: stay alive until the age before
     # `final_age`, then die, one declared target per age.
-    alive_transitions = (
-        ByAge.until(
-            stop_age_exclusive=final_age,
-            law=dict(survival_transition),
-            then={"dead": survival_transition["dead"]},
-        )
+    alive_targets = {
+        **({"alive": stays} if stays else {}),
+        "dead": ages.exact_values[:-1]
         if survival_transition is not None
-        else ByAge.until(
-            stop_age_exclusive=final_age,
-            law={"alive": StochasticTransition(func=prob_stay_alive)},
-            then={"dead": StochasticTransition(func=prob_die)},
+        else ages.exact_values[-2],
+    }
+    alive_edges = (
+        Transition(
+            targets=alive_targets,
+            law=ByAge.until(
+                stop_age_exclusive=final_age,
+                law=dict(survival_transition),
+                then={"dead": survival_transition["dead"]},
+            ),
         )
+        if survival_transition is not None and stays
+        else alive_targets
     )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
@@ -243,7 +252,6 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
             solver=alive_solver,
             liquid=LiquidMargin(
@@ -259,12 +267,10 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
             solver=alive_solver,
         )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions=dict(dead_functions)
         if dead_functions is not None
@@ -279,12 +285,5 @@ def make_alive_dead_model(
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "alive"},
-        edges={
-            "alive": {
-                **({"alive": stays} if stays else {}),
-                "dead": ages.exact_values[:-1]
-                if survival_transition is not None
-                else ages.exact_values[-2],
-            }
-        },
+        edges={"alive": alive_edges},
     )

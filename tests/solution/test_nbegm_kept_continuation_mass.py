@@ -30,6 +30,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -115,6 +116,14 @@ def _build_model(
     lost_mass: bool,
 ) -> Model:
     """Build the stochastic-survival Epstein-Zin model over ages 20, 25 and 30."""
+    alive_law = ByAge.until(
+        stop_age_exclusive=_LAST_LIVING_AGE + 5,
+        law={
+            "alive": StochasticTransition(func=_prob_alive),
+            "dead": StochasticTransition(func=_prob_dead),
+        },
+        then={"dead": StochasticTransition(func=_prob_dead)},
+    )
     alive = ConsumptionSavingsRegime(
         states={
             "liquid": _LIQUID_GRID,
@@ -122,14 +131,6 @@ def _build_model(
         },
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=_LAST_LIVING_AGE + 5,
-            law={
-                "alive": StochasticTransition(func=_prob_alive),
-                "dead": StochasticTransition(func=_prob_dead),
-            },
-            then={"dead": StochasticTransition(func=_prob_dead)},
-        ),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -153,13 +154,17 @@ def _build_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
-        edges={"alive": {"alive": _FIRST_AGE, "dead": (_FIRST_AGE, _LAST_LIVING_AGE)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": _FIRST_AGE, "dead": (_FIRST_AGE, _LAST_LIVING_AGE)},
+                law=alive_law,
+            )
+        },
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=_FIRST_AGE, inclusive_stop=_LAST_LIVING_AGE + 5, step="5Y"),
         fixed_params={
@@ -223,7 +228,6 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
         states={"liquid": _LIQUID_GRID},
         state_transitions={"liquid": {"dead": _next_liquid_certain}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions={"dead": StochasticTransition(func=_certain_death)},
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -240,7 +244,6 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
@@ -256,7 +259,3 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
 
 def _next_liquid_certain(savings: FloatND) -> ContinuousState:
     return 1.03 * savings
-
-
-def _certain_death() -> FloatND:
-    return jnp.asarray(1.0)

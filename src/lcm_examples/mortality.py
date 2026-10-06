@@ -16,6 +16,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -117,6 +118,11 @@ def borrowing_constraint(
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
+# Laws of the `working_life` and `retirement` edges at ages with several outgoing
+# edges.
+WORKING_LIFE_LAW = StochasticTransition(func=next_regime_from_working)
+RETIREMENT_LAW = StochasticTransition(func=next_regime_from_retirement)
+
 working_life = Regime(
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -125,7 +131,6 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
-    regime_transitions=StochasticTransition(func=next_regime_from_working),
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -134,7 +139,6 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    regime_transitions=StochasticTransition(func=next_regime_from_retirement),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -143,7 +147,6 @@ retirement = Regime(
 )
 
 dead = Regime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -159,27 +162,37 @@ def get_model(n_periods: int) -> Model:
 
     """
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
+    working_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            }
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
+    retirement_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {"retirement": tuple(ages.exact_values[:-2])}
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        "working_life": tuple(ages.exact_values[:-2]),
-                        "retirement": tuple(ages.exact_values[:-2]),
-                    }
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {"retirement": tuple(ages.exact_values[:-2])}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
+            "working_life": (
+                Transition(targets=working_targets, law=WORKING_LIFE_LAW)
+                if len(working_targets) > 1
+                else working_targets
+            ),
+            "retirement": (
+                Transition(targets=retirement_targets, law=RETIREMENT_LAW)
+                if len(retirement_targets) > 1
+                else retirement_targets
+            ),
         },
         regimes={
             "working_life": working_life,

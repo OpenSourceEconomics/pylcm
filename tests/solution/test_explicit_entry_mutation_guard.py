@@ -31,7 +31,6 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -58,10 +57,6 @@ def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
     return shock**2
 
 
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _enter_between_nodes() -> ScalarFloat:
     return jnp.asarray(1.5)
 
@@ -70,15 +65,11 @@ def _build_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_between_nodes}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

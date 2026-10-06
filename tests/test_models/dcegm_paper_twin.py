@@ -35,6 +35,7 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -193,13 +194,11 @@ def next_regime_from_retirement(age: float) -> ScalarInt:
 
 
 done_from_working = UserRegime(
-    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_from_working},
 )
 
 done_retired = UserRegime(
-    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_done_retired},
 )
@@ -214,7 +213,6 @@ def _working_life(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_working),
         states={"wealth": WEALTH_GRID},
         actions={
             "work_choice": DiscreteGrid(category_class=WorkChoice),
@@ -232,7 +230,6 @@ def _working_life(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
@@ -259,7 +256,6 @@ def _retirement(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -269,7 +265,6 @@ def _retirement(
     if solver == "brute_force":
         return brute
     return ConsumptionSavingsRegime(
-        regime_transitions=brute.regime_transitions,
         states=brute.states,
         actions=brute.actions,
         taste_shocks=brute.taste_shocks,
@@ -291,18 +286,25 @@ def _retirement(
 
 
 # Staying put is possible up to the age before the last alive age; the last
-# alive age only exits into a terminal regime.
+# alive age only exits into a terminal regime. The work choice and the age pick
+# the edge taken.
 EDGES = {
-    "working_life": {
-        "working_life": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-        "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-        "done_from_working": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-        "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-    },
-    "retirement": {
-        "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-        "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-    },
+    "working_life": Transition(
+        targets={
+            "working_life": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+            "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+            "done_from_working": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+            "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+        },
+        law=DeterministicTransition(func=next_regime_from_working),
+    ),
+    "retirement": Transition(
+        targets={
+            "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+            "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+        },
+        law=DeterministicTransition(func=next_regime_from_retirement),
+    ),
 }
 
 

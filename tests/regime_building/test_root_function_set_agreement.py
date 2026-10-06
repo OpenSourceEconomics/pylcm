@@ -28,6 +28,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -190,7 +191,10 @@ def _record_root_calls(
     Model(
         regimes=_make_regimes(),
         edges={
-            "couple": {"couple_ir": 0, "single_f": 0, "single_m": 0},
+            "couple": Transition(
+                targets={"couple_ir": 0, "single_f": 0, "single_m": 0},
+                law=_couple_law(),
+            ),
             "couple_ir": {"couple_terminal": 1},
             "single_f": {"single_terminal": 1},
             "single_m": {"single_terminal": 1},
@@ -213,37 +217,6 @@ def _make_regimes() -> dict[str, Regime]:
     carries the value constraints and same-period references that flag drives.
     """
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "couple_ir": ValueDependentTransition(
-                        probability=StochasticTransition(func=_probability_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                        gate_references={
-                            "V_single_ref": ProjectedRegimeValue(
-                                regime="single_f", projection={"wage": _identity_wage}
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -260,13 +233,6 @@ def _make_regimes() -> dict[str, Regime]:
         constraints={"work_pays": _work_pays},
     )
     couple_ir = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "couple_terminal": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -295,7 +261,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -305,13 +270,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "single_terminal": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -319,7 +277,6 @@ def _make_regimes() -> dict[str, Regime]:
     )
     single_m = single_f.replace(functions={"utility": _utility_single_m})
     single_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_terminal_single},
     )
@@ -331,6 +288,45 @@ def _make_regimes() -> dict[str, Regime]:
         "single_m": single_m,
         "single_terminal": single_terminal,
     }
+
+
+def _couple_law() -> ByAge:
+    """The couple's age-0 law: a gated edge into `couple_ir`.
+
+    The gate reads the target's dissolution flag and a same-period reference
+    to `single_f`; each stakeholder's route falls back to her own single regime.
+    """
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "couple_ir": ValueDependentTransition(
+                    probability=StochasticTransition(func=_probability_one),
+                    gate=_no_dissolution_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
+                    gate_references={
+                        "V_single_ref": ProjectedRegimeValue(
+                            regime="single_f", projection={"wage": _identity_wage}
+                        )
+                    },
+                )
+            }
+        }
+    )
 
 
 def _probability_one(age: FloatND) -> FloatND:

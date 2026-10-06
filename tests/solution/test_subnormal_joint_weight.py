@@ -49,10 +49,6 @@ class _Binary:
     high: ScalarInt
 
 
-def _certain() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _no_utility(*, health: DiscreteState, mood: DiscreteState) -> FloatND:
     return jnp.asarray(0.0) + 0.0 * health + 0.0 * mood
 
@@ -229,7 +225,6 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
         edges={"alive": {"dead": 20}},
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": StochasticTransition(func=_certain)},
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),
@@ -243,7 +238,6 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 functions={"utility": _no_utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),

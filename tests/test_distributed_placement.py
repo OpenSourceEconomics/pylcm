@@ -74,7 +74,7 @@ from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from _lcm.utils.logging import LogLevel
-from lcm import DeterministicTransition, fixed_transition
+from lcm import DeterministicTransition, Transition, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -527,14 +527,8 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=DeterministicTransition(
-            func=lambda age: jnp.where(
-                age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
-            )
-        ),
     )
     retired = UserRegime(
-        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value
@@ -559,7 +553,16 @@ def _make_three_type_model(
             devices=devices,
         ),
         initial_nodes={0: "working"},
-        edges={"working": {"working": (0, 1, 2), "retired": (0, 1, 2, 3)}},
+        edges={
+            "working": Transition(
+                targets={"working": (0, 1, 2), "retired": (0, 1, 2, 3)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                    )
+                ),
+            )
+        },
     )
 
 
@@ -1049,11 +1052,6 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            regime_transitions=DeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
-                )
-            ),
         )
 
     return Model(
@@ -1061,7 +1059,6 @@ def _make_two_mesh_model() -> Model:
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                regime_transitions=None,
                 functions={"utility": lambda wealth: wealth * 0.5},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
@@ -1212,30 +1209,17 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
         return wealth - consumption
 
-    def _next_from_first(age: Any) -> Any:
-        return jnp.where(age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first)
-
-    def _worker(*, regime_transitions: DeterministicTransition) -> UserRegime:
+    def _worker() -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={"wealth": _next_wealth},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-            regime_transitions=regime_transitions,
         )
 
-    first = _worker(
-        regime_transitions=DeterministicTransition(func=_next_from_first),
-    )
-    second = _worker(
-        regime_transitions=DeterministicTransition(
-            func=lambda age: jnp.where(
-                age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
-            )
-        ),
-    )
+    first = _worker()
+    second = _worker()
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
@@ -1251,7 +1235,14 @@ def _make_two_block_model(*, distributed: bool) -> Model:
         initial_nodes={0: "first"},
         edges={
             "first": {"first": 0, "second": (1, 2)},
-            "second": {"second": (0, 1, 2), "dead": (0, 1, 2, 3)},
+            "second": Transition(
+                targets={"second": (0, 1, 2), "dead": (0, 1, 2, 3)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+                    )
+                ),
+            ),
         },
     )
 
@@ -1845,10 +1836,6 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
     assert terminal.V_arr.devices() == {jax.devices()[device] for device in selected}
 
 
-def _uniform_placement_transition() -> ScalarInt:
-    return _UniformPlacementRegimeId.done
-
-
 def _uniform_placement_model(
     *, selected: tuple[int, ...], sharded: bool, stateless_terminal: bool = False
 ) -> Model:
@@ -1857,15 +1844,11 @@ def _uniform_placement_model(
     return Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=DeterministicTransition(
-                    func=_uniform_placement_transition
-                ),
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _uniform_placement_utility},
             ),
             "done": UserRegime(
-                regime_transitions=None,
                 functions={
                     "utility": _stateless_placement_terminal
                     if stateless_terminal

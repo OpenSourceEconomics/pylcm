@@ -148,36 +148,18 @@ def _make_ir_regimes(
     with_value_constraints: bool = True,
 ) -> dict[str, Regime]:
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "single_f_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_f},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_zero},
     )
-    single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
-        functions={"utility": _utility_single_m},
-    )
+    single_m = single_f.replace(functions={"utility": _utility_single_m})
     single_m_terminal = single_f_terminal.replace()
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -210,7 +192,6 @@ def _make_ir_regimes(
         ),
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -236,6 +217,34 @@ def _make_ir_regimes(
         "married": married,
         "married_terminal": married_terminal,
     }
+
+
+def _bound(regimes: dict[str, Regime]) -> dict[str, Regime]:
+    """Bind each regime's law the way a model built from these regimes would.
+
+    Each nonterminal regime moves to its own terminal with probability one at
+    age 0; every other regime is terminal.
+    """
+    laws = {
+        "single_f": _to_at_age_zero("single_f_terminal"),
+        "single_m": {"single_m_terminal": StochasticTransition(func=_prob_one)},
+        "married": _to_at_age_zero("married_terminal"),
+        "couple_a": _to_at_age_zero("terminal_a"),
+        "couple_b": _to_at_age_zero("terminal_b"),
+    }
+    return {
+        name: regime.replace(regime_transitions=laws.get(name))
+        for name, regime in regimes.items()
+    }
+
+
+def _to_at_age_zero(target: str) -> ByAge:
+    """Move to `target` with probability one at age 0."""
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {target: StochasticTransition(func=_prob_one)}
+        }
+    )
 
 
 _IR_REGIME_IDS = MappingProxyType(
@@ -285,9 +294,11 @@ def _solve_ir_model(
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_ir_regimes(
-                    married_first=married_first,
-                    with_value_constraints=with_value_constraints,
+                user_regimes=_bound(
+                    _make_ir_regimes(
+                        married_first=married_first,
+                        with_value_constraints=with_value_constraints,
+                    )
                 ),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
@@ -297,9 +308,11 @@ def _solve_ir_model(
         ),
         user_regimes=lower_declarations(
             finalize_regimes(
-                user_regimes=_make_ir_regimes(
-                    married_first=married_first,
-                    with_value_constraints=with_value_constraints,
+                user_regimes=_bound(
+                    _make_ir_regimes(
+                        married_first=married_first,
+                        with_value_constraints=with_value_constraints,
+                    )
                 ),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
@@ -459,31 +472,24 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     married_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
     single_f = Regime(
+        states={"wage": single_grid},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility_single},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
-        ),
-        states={"wage": single_grid},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility_single},
+        )
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": single_grid},
         functions={"utility": _utility_zero},
-    )
+    ).replace(regime_transitions=None)
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": married_grid},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -500,9 +506,16 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
                 },
             )
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": married_grid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -510,7 +523,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -623,13 +636,6 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         return wage < 2.5
 
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "couple_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -637,9 +643,16 @@ def test_on_path_minus_inf_value_is_not_dissolution():
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
         constraints={"wage_ok": _wage_ok},
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "couple_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -647,7 +660,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -709,13 +722,6 @@ def test_on_path_minus_inf_value_is_not_dissolution():
 
 def _minimal_collective_kwargs() -> dict:
     return {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         "states": {"wage": _WAGE_GRID},
         "state_transitions": {"wage": fixed_transition("wage")},
         "actions": {"work": DiscreteGrid(category_class=Work)},
@@ -741,7 +747,6 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
     `test_terminal_value_constraints.py` for what the flag and the value are.
     """
     regime = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -750,7 +755,7 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
             )
         },
         constraints={"ir_f": ValueDependentConstraint(predicate=_ir_f)},
-    )
+    ).replace(regime_transitions=None)
 
     assert set(regime.value_constraints) == {"ir_f"}
 
@@ -779,7 +784,7 @@ def _married_with_refs(refs: dict[str, ProjectedRegimeValue]) -> Regime:
                 references={"V_single_m_ref": refs["V_single_m_ref"]},
             ),
         },
-    )
+    ).replace(regime_transitions=_to_at_age_zero("married_terminal"))
 
 
 def _process_ir_variant(regimes: dict[str, Regime]) -> None:
@@ -812,7 +817,7 @@ def _process_ir_variant(regimes: dict[str, Regime]) -> None:
 
 
 def test_same_period_ref_to_unknown_regime_is_rejected():
-    regimes = _make_ir_regimes()
+    regimes = _bound(_make_ir_regimes())
     regimes["married"] = _married_with_refs(
         {
             "V_single_f_ref": ProjectedRegimeValue(
@@ -840,17 +845,9 @@ def _cycle_regimes() -> dict[str, Regime]:
 
     def _make_couple(
         *,
-        terminal_name: str,
         constraints: dict[str, ValueDependentConstraint],
     ) -> Regime:
         return Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        terminal_name: StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -863,7 +860,6 @@ def _cycle_regimes() -> dict[str, Regime]:
         )
 
     couple_a = _make_couple(
-        terminal_name="terminal_a",
         constraints={
             "vc_a": ValueDependentConstraint(
                 predicate=_vc_a,
@@ -878,7 +874,6 @@ def _cycle_regimes() -> dict[str, Regime]:
         },
     )
     couple_b = _make_couple(
-        terminal_name="terminal_b",
         constraints={
             "vc_b": ValueDependentConstraint(
                 predicate=_vc_b,
@@ -893,7 +888,6 @@ def _cycle_regimes() -> dict[str, Regime]:
         },
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -913,7 +907,7 @@ def _cycle_regimes() -> dict[str, Regime]:
 def test_same_period_ref_cycle_is_rejected_at_build():
     """Two collective regimes reading each other's same-period V form a cycle."""
     with pytest.raises(ModelInitializationError, match="form a cycle"):
-        _process_ir_variant(_cycle_regimes())
+        _process_ir_variant(_bound(_cycle_regimes()))
 
 
 @categorical(ordered=False)
@@ -949,20 +943,13 @@ def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
 
 def test_same_period_ref_to_collective_regime_requires_stakeholder():
     """Reading a collective reference V without naming a stakeholder is rejected."""
-    regimes = _make_ir_regimes()
+    regimes = _bound(_make_ir_regimes())
     # Point the f-reference at the married regime itself is a cycle; use a second
     # collective island instead: reference the married_terminal... terminal refs
     # are not the issue here — the ref must name a stakeholder for ANY collective
     # target. Reuse single_m as the m-ref and misdeclare the f-ref onto a
     # collective regime without a stakeholder.
     couple_b = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal_b": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -971,6 +958,14 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
             )
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal_b": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     regimes["couple_b"] = couple_b
     regimes["married_terminal_b"] = regimes["married_terminal"].replace()
@@ -989,7 +984,7 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
 
 
 def test_same_period_ref_to_singleton_regime_rejects_stakeholder():
-    regimes = _make_ir_regimes()
+    regimes = _bound(_make_ir_regimes())
     regimes["married"] = _married_with_refs(
         {
             "V_single_f_ref": ProjectedRegimeValue(
@@ -1007,7 +1002,7 @@ def test_same_period_ref_to_singleton_regime_rejects_stakeholder():
 
 
 def test_same_period_ref_projection_must_cover_reference_states():
-    regimes = _make_ir_regimes()
+    regimes = _bound(_make_ir_regimes())
     regimes["married"] = _married_with_refs(
         {
             "V_single_f_ref": ProjectedRegimeValue(regime="single_f", projection={}),
@@ -1022,7 +1017,7 @@ def test_same_period_ref_projection_must_cover_reference_states():
 
 def test_same_period_ref_requires_reference_covered_in_same_periods():
     """The reference regime must be solved in every period the reader is solved."""
-    regimes = _make_ir_regimes()
+    regimes = _bound(_make_ir_regimes())
     # Married is solved in periods 0 AND 1, while single_f stays period-0 only.
     regimes["married"] = regimes["married"].replace(
         regime_transitions=ByAge(

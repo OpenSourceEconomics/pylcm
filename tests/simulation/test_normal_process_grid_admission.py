@@ -18,7 +18,6 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -32,7 +31,6 @@ from tests.execution.test_compiler_allocation_reservation import synthetic_memor
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_process_grid_entry_admission import (
     _forbid_profiled_dispatch,
-    _next_regime,
     _terminal_utility,
     _utility,
 )
@@ -64,7 +62,6 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={
                     "income": NormalIIDProcess(
                         n_points=n_points,
@@ -77,9 +74,7 @@ def _inputs(
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},
             ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _terminal_utility}
-            ),
+            "done": Regime(functions={"utility": _terminal_utility}),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

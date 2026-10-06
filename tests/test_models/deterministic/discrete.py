@@ -18,6 +18,7 @@ from lcm import (
     DeterministicTransition,
     DiscreteGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -108,10 +109,6 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-_DEFAULT_N_PERIODS = 4
-_DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
-
-
 def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work until the age before `last_age`, then die."""
     return ByAge.until(
@@ -121,14 +118,22 @@ def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     )
 
 
-def working_life_edges(ages: AgeGrid) -> dict[str, dict[str, tuple[UserAge, ...]]]:
-    """Keep working before the second-to-last age; die from every non-final age."""
+def working_life_edges(
+    ages: AgeGrid,
+) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
+    """Keep working before the second-to-last age; die from every non-final age.
+
+    Where both edges leave an age, `working_life_transitions` chooses between them.
+    """
     stays = tuple(ages.exact_values[:-2])
+    dies = tuple(ages.exact_values[:-1])
+    if not stays:
+        return {"working_life": {"dead": dies}}
     return {
-        "working_life": {
-            **({"working_life": stays} if stays else {}),
-            "dead": tuple(ages.exact_values[:-1]),
-        }
+        "working_life": Transition(
+            targets={"working_life": stays, "dead": dies},
+            law=working_life_transitions(last_age=ages.exact_values[-1]),
+        )
     }
 
 
@@ -146,7 +151,6 @@ working_life = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    regime_transitions=working_life_transitions(last_age=_DEFAULT_LAST_ACTIVE_AGE + 10),
     functions={
         "utility": utility_discrete,
         "labor_income": labor_income,
@@ -156,7 +160,6 @@ working_life = UserRegime(
 
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -164,14 +167,9 @@ dead = UserRegime(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=50, inclusive_stop=50 + (n_periods - 1) * 10, step="10Y")
-    final_age_alive = 50 + (n_periods - 2) * 10
     return Model(
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 10
-                )
-            ),
+            "working_life": working_life,
             "dead": dead,
         },
         ages=ages,
@@ -197,5 +195,7 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "labor_income": {"wage": wage},
         },
-        "final_age_alive": final_age_alive,
+        # The law reading `final_age_alive` exists only where some age has two
+        # outgoing edges, which takes at least three periods.
+        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
     }

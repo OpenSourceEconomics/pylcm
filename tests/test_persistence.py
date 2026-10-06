@@ -24,6 +24,7 @@ from lcm import (
     Model,
     SimulateSnapshot,
     SolveSnapshot,
+    Transition,
     categorical,
     load_snapshot,
 )
@@ -71,14 +72,12 @@ def _build_tiny_model(*, enable_jit: bool):
         return jnp.where(period >= 1, 1, 0)
 
     working = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1, n_points=3)},
         functions={"utility": utility},
     )
     retired = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
     )
@@ -86,7 +85,12 @@ def _build_tiny_model(*, enable_jit: bool):
     model = Model(
         regimes={"working": working, "retired": retired},
         ages=ages,
-        edges={"working": {"working": 0, "retired": (0, 1)}},
+        edges={
+            "working": Transition(
+                targets={"working": 0, "retired": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),

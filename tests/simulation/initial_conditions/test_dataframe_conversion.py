@@ -10,12 +10,11 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import ScalarInt
 from tests.simulation.initial_conditions._models import (
     HetRegimeId,
     make_heterogeneous_health_model,
@@ -388,9 +387,6 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         low: ScalarInt
         high: ScalarInt
 
-    def _one_probability() -> ScalarFloat:
-        return jnp.float32(1)
-
     def _utility_with_status(*, wealth: float, status: int) -> float:
         return wealth + status
 
@@ -398,7 +394,6 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         return wealth
 
     with_status = UserRegime(
-        regime_transitions={"dead": StochasticTransition(func=_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "status": DiscreteGrid(category_class=_Status),
@@ -410,12 +405,11 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         functions={"utility": _utility_with_status},
     )
     without_status = UserRegime(
-        regime_transitions={"dead": StochasticTransition(func=_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility_without_status},
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     model = Model(
         regimes={
@@ -454,13 +448,11 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
     """A process state (income) only present in one regime is NaN-filled elsewhere.
 
-    `earner` and `retiree` each transition to `dead` only, via a per-target
-    dict — not a bare coarse transition. A bare transition declares
-    conservative support over every regime active next period, and `retiree`
-    neither carries `income` nor defines an entry law for it, so a coarse
-    transition from `earner` would fail strict state-handoff validation. The
-    per-target dict is required here, not an arbitrary workaround: it narrows
-    `earner`'s declared targets to `dead`, which needs no `income` handoff.
+    `earner` and `retiree` each have a single outgoing edge, to `dead`. The
+    edge set fixes `earner`'s targets to `dead`, which needs no `income`
+    handoff; `retiree` neither carries `income` nor defines an entry law for it,
+    so an edge from `earner` to `retiree` would fail strict state-handoff
+    validation.
     """
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
@@ -470,9 +462,6 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         retiree: ScalarInt
         dead: ScalarInt
 
-    def _one_probability() -> ScalarFloat:
-        return jnp.float32(1)
-
     def _earner_utility(*, wealth: float, income: float) -> float:
         return wealth + income
 
@@ -480,7 +469,6 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         return wealth
 
     earner = UserRegime(
-        regime_transitions={"dead": StochasticTransition(func=_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "income": UniformIIDProcess(n_points=5),
@@ -489,12 +477,11 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         functions={"utility": _earner_utility},
     )
     retiree = UserRegime(
-        regime_transitions={"dead": StochasticTransition(func=_one_probability)},
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _retiree_utility},
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     model = Model(
         regimes={"earner": earner, "retiree": retiree, "dead": dead},

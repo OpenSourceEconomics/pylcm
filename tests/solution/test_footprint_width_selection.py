@@ -43,7 +43,6 @@ from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -80,11 +79,6 @@ class Work:
     working: ScalarInt
 
 
-def _next_regime(*, age: int) -> ScalarInt:
-    """Leave the acting regime after the last acting age."""
-    return jnp.where(age < 2, RegimeId.acting, RegimeId.done)
-
-
 def _utility(*, consumption: float, work: ScalarInt, wealth: float) -> FloatND:
     """Value one action cell at one wealth node."""
     return jnp.log(consumption) - 0.1 * work + 0.01 * wealth
@@ -101,7 +95,6 @@ def _build_model(
 ) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },
@@ -113,7 +106,6 @@ def _build_model(
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },

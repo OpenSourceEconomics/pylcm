@@ -21,7 +21,15 @@ import numpy as np
 import pytest
 
 from _lcm.regime_building import processing
-from lcm import AgeGrid, AgeRange, AgeSpecializedGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    AgeSpecializedGrid,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.solvers import FiniteOuterGrid
 from lcm.transition import AgeSpecializedFunction
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -33,7 +41,7 @@ from tests.test_models import (
 )
 from tests.test_models.dcegm_paper_twin import (
     DCEGM_SOLVER,
-    LAST_ALIVE_AGE,
+    EDGES,
     MIN_AGE,
     N_PERIODS,
     WEALTH_GRID,
@@ -69,18 +77,7 @@ def _dcegm_twin_with_wealth_grid(wealth_grid) -> Model:
         ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
         initial_nodes={20: ("working_life", "retirement")},
-        edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "done_from_working": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-                "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-            },
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
-                "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
-            },
-        },
+        edges=EDGES,
     )
 
 
@@ -186,10 +183,13 @@ def _negm_toy_with_illiquid_grid(illiquid_grid) -> Model:
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=DeterministicTransition(func=negm_kinked_toy.next_regime),
+            )
         },
     )
 

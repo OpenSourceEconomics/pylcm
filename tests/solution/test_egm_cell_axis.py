@@ -28,6 +28,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -143,13 +144,19 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _edges(ages: AgeGrid) -> dict[str, dict[str, AgeRange]]:
+def _edges(ages: AgeGrid) -> dict[str, Transition]:
     """Stay in working until the penultimate age; die from any non-final age."""
     return {
-        "working": {
-            "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
-            "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
-        }
+        "working": Transition(
+            targets={
+                "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+            },
+            law={
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
+            },
+        )
     }
 
 
@@ -163,10 +170,6 @@ def _model(width: int | None = None) -> Model:
     config = _cell_width_config(width)
     ages = _ages()
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -193,7 +196,6 @@ def _model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -220,10 +222,6 @@ def _model_with_batched_health() -> Model:
     """Build the same model with a `batch_size` on its discrete health grid."""
     ages = _ages()
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -247,7 +245,6 @@ def _model_with_batched_health() -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -282,10 +279,6 @@ def _action_model(width: int | None = None) -> Model:
     config = _cell_width_config(width)
     ages = _ages()
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={
             "consumption": CONSUMPTION_GRID,
             "works": DiscreteGrid(category_class=Work),
@@ -312,7 +305,6 @@ def _action_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -461,10 +453,6 @@ def _two_combo_model(width: int | None = None) -> Model:
     config = _cell_width_config(width)
     ages = _ages()
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -493,7 +481,6 @@ def _two_combo_model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )

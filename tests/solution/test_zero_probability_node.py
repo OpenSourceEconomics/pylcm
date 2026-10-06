@@ -50,10 +50,6 @@ class Health:
     poor: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
@@ -74,7 +70,6 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},
@@ -86,7 +81,6 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
                 certainty_equivalent=certainty_equivalent,
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     "health": DiscreteGrid(category_class=Health),

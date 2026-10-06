@@ -152,12 +152,13 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
 def _continuation_regime(*, period: int) -> str:
     """Return the regime a period-`period` value continues into.
 
-    Mirrors the model's regime law, under which age equals the period.
+    Mirrors the model's edges, under which age equals the period: `work` moves
+    to `retire` at age `n_periods // 2 - 1` and `retire` to `dead` at age
+    `n_periods - 2`.
     """
-    final_ages: Any = _base_model().fixed_params
-    if period >= final_ages["retire_final_age"]:
+    if period >= _N_PERIODS - 2:
         return "dead"
-    if period >= final_ages["work_final_age"]:
+    if period >= _N_PERIODS // 2 - 1:
         return "retire"
     return "work"
 

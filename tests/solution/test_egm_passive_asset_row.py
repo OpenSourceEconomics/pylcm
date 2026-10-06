@@ -32,6 +32,7 @@ from lcm import (
     Model,
     RouwenhorstAR1Process,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -208,10 +209,6 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -248,7 +245,15 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob),
+                    "dead": StochasticTransition(func=death_prob),
+                },
+            )
+        },
         regime_id_class=PassiveAssetRowRegimeId,
         execution_config=config,
         initial_nodes={40: "working_life"},
@@ -410,10 +415,6 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
     }
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob_share),
-            "dead": StochasticTransition(func=death_prob_share),
-        },
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -459,7 +460,15 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob_share),
+                    "dead": StochasticTransition(func=death_prob_share),
+                },
+            )
+        },
         regime_id_class=PassiveAssetRowRegimeId,
         fixed_params=fixed_params,
         initial_nodes={40: "working_life"},

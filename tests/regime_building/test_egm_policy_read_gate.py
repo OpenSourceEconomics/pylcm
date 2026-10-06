@@ -15,6 +15,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    Transition,
     fixed_transition,
 )
 from lcm.solvers import (
@@ -97,7 +98,6 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
     )
     model = _model_from_alive(
         alive=dcegm_retirement.replace(
-            regime_transitions=retirement_only.retirement_transitions(last_age=50),
             solver=solver,
         )
     )
@@ -109,7 +109,6 @@ def test_mss_backend_remains_disqualified_without_fues_controls():
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
     model = _model_from_alive(
         alive=dcegm_retirement.replace(
-            regime_transitions=retirement_only.retirement_transitions(last_age=50),
             solver=solver,
         )
     )
@@ -127,7 +126,6 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
     """
     model = _model_from_alive(
         alive=_PORTABLE_DCEGM_RETIREMENT.replace(
-            regime_transitions=retirement_only.retirement_transitions(last_age=50),
             liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
             states={
                 "wealth": WEALTH_GRID,
@@ -152,12 +150,20 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     per exogenous asset node and publishes one optimal point per node rather
     than a crossing-complete resources-space row. Interpolating across nodes
     would mix two endogenous branches wherever the winning branch changes
-    between adjacent nodes.
+    between adjacent nodes. Here the regime transition law is the savings-stage
+    function reading wealth, so the source gets two outgoing edges at age 40.
     """
-    model = _model_from_alive(
-        alive=_PORTABLE_DCEGM_RETIREMENT.replace(
-            regime_transitions=DeterministicTransition(func=_next_regime_reads_wealth),
-        )
+    model = Model(
+        regimes={"retirement": _PORTABLE_DCEGM_RETIREMENT, "dead": dead},
+        edges={
+            "retirement": Transition(
+                targets={"retirement": 40, "dead": (40, 50)},
+                law=DeterministicTransition(func=_next_regime_reads_wealth),
+            )
+        },
+        ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
+        regime_id_class=retirement_only.RetirementOnlyRegimeId,
+        initial_nodes={40: "retirement"},
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -173,7 +179,6 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
     """
     skill_grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=5)
     alive = _PORTABLE_DCEGM_RETIREMENT.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         states={"wealth": WEALTH_GRID, "skill": skill_grid},
         state_transitions={
             "wealth": next_wealth_from_savings,
@@ -199,7 +204,6 @@ def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(backend))
     return _model_from_alive(
         alive=dcegm_retirement.replace(
-            regime_transitions=retirement_only.retirement_transitions(last_age=50),
             solver=solver,
         )
     )

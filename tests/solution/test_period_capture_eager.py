@@ -27,7 +27,7 @@ def eager_capture(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         variant="brute", n_periods=4, n_liquid=8, n_consumption=6, n_savings=8
     )
     eager = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=RegimeId,

@@ -13,7 +13,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -41,27 +40,20 @@ def _perceived_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth + 1.0
 
 
-def _regime(*, law, perceived=False):
+def _regime(*, terminal=False, perceived=False):
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": _perceived_utility if perceived else _utility},
     )
 
 
 def _model(*, budgeted, promote, reverse, width):
     regimes = {
-        "source": _regime(
-            law=ByAge(
-                cases={
-                    0: Phased(solve="perceived", simulate="realized"),
-                }
-            )
-        ),
-        "perceived": _regime(law=ByAge(cases={1: "end"}), perceived=True),
-        "realized": _regime(law=ByAge(cases={1: "end"})),
-        "end": _regime(law=None),
+        "source": _regime(),
+        "perceived": _regime(perceived=True),
+        "realized": _regime(),
+        "end": _regime(terminal=True),
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))

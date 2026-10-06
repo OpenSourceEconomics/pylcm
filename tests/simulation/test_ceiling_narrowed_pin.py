@@ -14,6 +14,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
 )
 from lcm.solvers import GridSearch
 from tests.test_models.deterministic.regression import (
@@ -32,7 +33,6 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=8)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -47,10 +47,13 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
         execution_config=execution,
         initial_nodes={18: "working_life"},
         edges={
-            "working_life": {
-                "working_life": START_AGE,
-                "dead": (START_AGE, final_age_alive),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": START_AGE,
+                    "dead": (START_AGE, final_age_alive),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )
 

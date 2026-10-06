@@ -1,7 +1,8 @@
 """The gated edge a `ValueDependentTransition` decomposes into.
 
-A model author declares a value-dependent transition in the regime's own
-`regime_transitions` slot and reads the result back as `regime.gated_edges`. This is
+A model author declares a value-dependent transition in the law of the source's
+`Transition` in `Model(edges=...)` and reads the result back as
+`regime.gated_edges`. This is
 that result: the engine's form of one edge, carrying the gate, the routes, the
 references the gate reads and the off-grid contract. It lives here rather than
 in the public package because nothing constructs it — it is derived.

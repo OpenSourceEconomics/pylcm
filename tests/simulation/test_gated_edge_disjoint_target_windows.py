@@ -13,7 +13,6 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -21,6 +20,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentTransition,
     categorical,
 )
@@ -75,10 +75,6 @@ def p_far(age: int) -> FloatND:
     return jnp.where(age >= 1, 1.0, 0.0)
 
 
-def near_next(age: int) -> ScalarInt:
-    return jnp.full(jnp.shape(age), RegimeId.far, dtype=jnp.int32)
-
-
 def _edge(*, probability, fallback_regime: str) -> ValueDependentTransition:
     return ValueDependentTransition(
         probability=StochasticTransition(func=probability),
@@ -98,9 +94,8 @@ WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=9.0, n_points=5)
 
 
-def _decision_regime(*, regime_transitions: ByAge) -> Regime:
+def _decision_regime() -> Regime:
     return Regime(
-        regime_transitions=regime_transitions,
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -112,43 +107,30 @@ def _decision_regime(*, regime_transitions: ByAge) -> Regime:
 def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
     far_edge = _edge(probability=p_far, fallback_regime="far_fallback")
-    source = _decision_regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "near": _edge(probability=p_near, fallback_regime="source"),
-                    "far": far_edge,
-                },
-                AgeRange(start=1, exclusive_stop=2): {
-                    "far": far_edge,
-                },
-            }
-        ),
-    )
-    near = _decision_regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=near_next
-                )
-            }
-        )
+    source_law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "near": _edge(probability=p_near, fallback_regime="source"),
+                "far": far_edge,
+            },
+            AgeRange(start=1, exclusive_stop=2): {
+                "far": far_edge,
+            },
+        }
     )
     far = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
     far_fallback = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
     return Model(
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regimes={
-            "source": source,
-            "near": near,
+            "source": _decision_regime(),
+            "near": _decision_regime(),
             "far": far,
             "far_fallback": far_fallback,
         },
@@ -157,7 +139,10 @@ def _build_model(*, enable_jit: bool) -> Model:
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
         edges={
-            "source": {"near": 0, "far": (0, 1), "source": 0, "far_fallback": (0, 1)},
+            "source": Transition(
+                targets={"near": 0, "far": (0, 1), "source": 0, "far_fallback": (0, 1)},
+                law=source_law,
+            ),
             "near": {"far": 1},
         },
     )

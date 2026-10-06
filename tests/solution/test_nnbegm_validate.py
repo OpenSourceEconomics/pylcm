@@ -10,7 +10,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     categorical,
@@ -93,10 +92,6 @@ def terminal_utility(*, wealth: ContinuousState, illiquid: ContinuousState) -> F
     return jnp.log(wealth + illiquid + 1.0)
 
 
-def next_regime(age: int) -> ScalarInt:
-    return jnp.where(age < 25, RegimeId.alive, RegimeId.dead)
-
-
 def _inner_nbegm() -> NBEGM:
     return NBEGM(
         savings_grid=SAVINGS_GRID,
@@ -110,7 +105,6 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         resources="resources",
         post_decision_state="liquid_savings",
     )
-    transitions = DeterministicTransition(func=next_regime)
     states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
     state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}
     actions = {
@@ -135,7 +129,6 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
@@ -151,13 +144,11 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
         )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": terminal_utility},
     )

@@ -123,28 +123,33 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
-def _make_regimes() -> dict[str, Regime]:
+def _src_law() -> ByAge:
+    """Return the law of `src`: a gated self-loop until age 2, then `src_exit`."""
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
+    return ByAge.until(
+        stop_age_exclusive=2,
+        law={
+            "src": ValueDependentTransition(
+                probability=StochasticTransition(func=_prob_stay),
+                gate=_repeat_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="src_fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            ),
+            "src_exit": exit_cell,
+        },
+        then={"src_exit": exit_cell},
+    )
+
+
+def _make_regimes() -> dict[str, Regime]:
+    """Return the regimes without their laws; `_src_law` is the source's law."""
     src = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=2,
-            law={
-                "src": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_stay),
-                    gate=_repeat_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="src_fallback",
-                                projection={"wage": _identity_wage},
-                            ),
-                        )
-                    },
-                ),
-                "src_exit": exit_cell,
-            },
-            then={"src_exit": exit_cell},
-        ),
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -163,22 +168,20 @@ def _make_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_repeat},
     )
-    src_exit = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        functions={"utility": _u_src_exit},
-    )
+    src_exit = Regime(states={"wage": _WAGE}, functions={"utility": _u_src_exit})
     src_fallback = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        functions={"utility": _u_src_fallback},
+        states={"wage": _WAGE}, functions={"utility": _u_src_fallback}
     )
     return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}
 
 
 def _solve_and_simulate():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_regimes()
+    laws = {"src": _src_law(), "src_exit": None, "src_fallback": None}
+    regimes_dict = {
+        name: regime.replace(regime_transitions=laws[name])
+        for name, regime in _make_regimes().items()
+    }
     regime_names = list(regimes_dict)
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}

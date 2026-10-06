@@ -17,7 +17,6 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.grids import ContinuousGrid
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -82,10 +81,6 @@ def next_wealth(savings: FloatND) -> FloatND:
     return savings
 
 
-def next_regime(_age: float) -> ScalarInt:
-    return RegimeId.done
-
-
 def _model(
     *,
     savings_grid_start: float = -2.0,
@@ -109,7 +104,6 @@ def _model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -123,7 +117,6 @@ def _model(
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
@@ -297,7 +290,6 @@ def _grid_search_model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -306,7 +298,6 @@ def _grid_search_model(
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
@@ -358,7 +349,6 @@ def _replace_constraints(*, constraints: dict) -> Model:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -367,7 +357,6 @@ def _replace_constraints(*, constraints: dict) -> Model:
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),

@@ -30,11 +30,9 @@ from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.solve_inputs import SolveInputMappings, locate_artifact
 from lcm import (
     AgeGrid,
-    ByAge,
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.solver_api import (
@@ -112,11 +110,6 @@ def _utility(wealth: ScalarFloat) -> ScalarFloat:
 def _next_wealth(wealth: ScalarFloat) -> ScalarFloat:
     """Keep wealth where it is, so every period sees the same grid."""
     return wealth
-
-
-def _stay(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
-    """Send the whole mass back into the regime it came from."""
-    return jnp.asarray(1.0)
 
 
 def _counting_value(
@@ -258,11 +251,6 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
     return Model(
         regimes={
             name: Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_N_PERIODS,
-                    law={name: StochasticTransition(func=_stay)},
-                    then={"dead": StochasticTransition(func=_stay)},
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
@@ -272,7 +260,6 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         }
         | {
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 solver=TerminalPublisher(parent=solver_class()),

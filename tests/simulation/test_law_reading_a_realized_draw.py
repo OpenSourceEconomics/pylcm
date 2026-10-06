@@ -67,9 +67,6 @@ def model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=lambda: jnp.float32(1))
-                },
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),
@@ -83,7 +80,6 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),

@@ -34,6 +34,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
     load_solution,
@@ -175,11 +176,13 @@ def _model(
     wealth = LinSpacedGrid(start=1, stop=10, n_points=6)
     pref_type = DiscreteGrid(_PrefType)
     consumption = {"consumption": LinSpacedGrid(start=1, stop=3, n_points=5)}
+    laws = {
+        "work": StochasticTransition(
+            func=_survival_beside_outside if outside else _survival
+        )
+    }
     regimes = {
         "work": Regime(
-            regime_transitions=StochasticTransition(
-                func=_survival_beside_outside if outside else _survival
-            ),
             states={
                 "wealth": wealth,
                 "pref_type": pref_type,
@@ -197,7 +200,6 @@ def _model(
             constraints={"feasible": _feasible},
         ),
         "dead": Regime(
-            regime_transitions=None,
             states={"wealth": wealth, "pref_type": pref_type}
             if typed_dead
             else {"wealth": wealth},
@@ -205,8 +207,8 @@ def _model(
         ),
     }
     if outside:
+        laws["outside"] = StochasticTransition(func=_outside_survival)
         regimes["outside"] = Regime(
-            regime_transitions=StochasticTransition(func=_outside_survival),
             states={"wealth": wealth},
             state_transitions={"wealth": _next_wealth},
             actions=consumption,
@@ -219,12 +221,14 @@ def _model(
         regime_id_class=_OutsideRegimeId if outside else _RegimeId,
         initial_nodes={0: ("work", "outside") if outside else "work"},
         edges={
-            source: {
-                source: AgeRange(exclusive_stop=_LAST_AGE - 1),
-                "dead": AgeRange(exclusive_stop=_LAST_AGE),
-            }
-            for source in regimes
-            if source != "dead"
+            source: Transition(
+                targets={
+                    source: AgeRange(exclusive_stop=_LAST_AGE - 1),
+                    "dead": AgeRange(exclusive_stop=_LAST_AGE),
+                },
+                law=law,
+            )
+            for source, law in laws.items()
         },
         execution_config=ExecutionConfig(
             invariant_block_widths={"pref_type": 1} if blocked else {},

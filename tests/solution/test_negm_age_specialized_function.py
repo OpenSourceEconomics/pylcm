@@ -32,13 +32,13 @@ from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedFunction,
-    ByAge,
     DeterministicTransition,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
+    Transition,
     categorical,
     outer_unchanged,
 )
@@ -118,6 +118,7 @@ def _build_model(*, helper_name: str, override) -> Model:
         functions[helper_name] = override
         if helper_name == "keep_illiquid":
             no_adjustment = "keep_illiquid"
+    alive_law = DeterministicTransition(func=next_regime)
     alive = NestedConsumptionSavingsRegime(
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
@@ -131,7 +132,6 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -154,10 +154,13 @@ def _build_model(*, helper_name: str, override) -> Model:
     return Model(
         regimes={"alive": alive, "dead": build_dead_regime()},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
-                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + _AGE_STEP),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                    "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + _AGE_STEP),
+                },
+                law=alive_law,
+            )
         },
         regime_id_class=RegimeId,
         ages=AgeGrid(
@@ -294,9 +297,7 @@ _EARLY_LAST_PERIOD = 1
 _EARLY_LATE_PARAMS = {"discount_factor": 0.95, "early": {}, "late": {}}
 
 
-def _negm_regime(
-    *, keep_illiquid: Any, regime_transitions: ByAge
-) -> NestedConsumptionSavingsRegime:
+def _negm_regime(*, keep_illiquid: Any) -> NestedConsumptionSavingsRegime:
     """The kinked NEGM regime with `keep_illiquid` as its no-adjustment map.
 
     `keep_illiquid=None` keeps the durable unchanged without adjusting.
@@ -326,7 +327,6 @@ def _negm_regime(
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=regime_transitions,
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -362,18 +362,9 @@ def _early_late_model(*, late_keep: Any) -> Model:
         regimes={
             "early": _negm_regime(
                 keep_illiquid=None,
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_LATE_AGE, law="early", then="late"
-                ),
             ),
             "late": _negm_regime(
                 keep_illiquid=late_keep,
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_LATE_AGE + _AGE_STEP,
-                    law="late",
-                    then="dead",
-                    start_age_inclusive=_LATE_AGE,
-                ),
             ),
             "dead": build_dead_regime(),
         },

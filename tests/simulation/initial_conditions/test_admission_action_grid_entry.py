@@ -24,7 +24,6 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -58,10 +57,6 @@ def _terminal_utility(wealth: FloatND) -> FloatND:
     return 0.0 * wealth
 
 
-def _next_regime() -> ScalarInt:
-    return _LifecycleRegimeId.done
-
-
 @categorical(ordered=False)
 class _ThreeRegimeId:
     alive: ScalarInt
@@ -77,7 +72,6 @@ def _inputs(
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     regimes = {
         "alive": Regime(
-            regime_transitions=DeterministicTransition(func=_next_regime),
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             state_transitions={"wealth": fixed_transition("wealth")},
             actions={
@@ -88,7 +82,6 @@ def _inputs(
             constraints={"budget": _feasible},
         ),
         "done": Regime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             functions={"utility": _terminal_utility},
         ),

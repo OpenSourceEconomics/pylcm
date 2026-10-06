@@ -19,8 +19,8 @@ from lcm.typing import ContinuousState, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.test_models.deterministic.regression import (
     dead,
+    graph_bound_working_life_transitions,
     working_life,
-    working_life_transitions,
 )
 
 
@@ -28,9 +28,9 @@ def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
-            regime_transitions=working_life_transitions(last_age=4)
+            regime_transitions=graph_bound_working_life_transitions(last_age=4)
         ),
-        "dead": dead,
+        "dead": dead.replace(regime_transitions=None),
     }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}

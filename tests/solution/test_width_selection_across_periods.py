@@ -22,6 +22,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     fixed_transition,
 )
 from lcm.typing import ScalarInt
@@ -57,7 +58,6 @@ def _fake_peak(
 
 def _model(*, budget_bytes: int) -> Model:
     acting = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -67,17 +67,19 @@ def _model(*, budget_bytes: int) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
     return Model(
         regimes={"acting": acting, "done": done},
         edges={
-            "acting": {
-                "acting": AgeRange(exclusive_stop=_N_PERIODS - 1),
-                "done": AgeRange(exclusive_stop=_N_PERIODS),
-            }
+            "acting": Transition(
+                targets={
+                    "acting": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    "done": AgeRange(exclusive_stop=_N_PERIODS),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,

@@ -44,6 +44,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -215,16 +216,6 @@ def feasible_retired(
     return consumption <= liquid
 
 
-def prob_stay_working(*, age: int, retirement_age: float) -> FloatND:
-    """Deterministic (0/1) probability of staying in the working regime next period."""
-    return jnp.where(age + 1 < retirement_age, 1.0, 0.0)
-
-
-def prob_retire(*, age: int, retirement_age: float) -> FloatND:
-    """Deterministic (0/1) probability of transitioning working->retired next period."""
-    return jnp.where(age + 1 >= retirement_age, 1.0, 0.0)
-
-
 def prob_stay_retired(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of remaining retired next period."""
     return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
@@ -315,6 +306,15 @@ def get_model(
     pension_grid = LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_pension)
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     die = StochasticTransition(func=prob_die)
+    retired_law = ByAge.until(
+        stop_age_exclusive=final_age,
+        law={
+            "retired": StochasticTransition(func=prob_stay_retired),
+            "dead": die,
+        },
+        then={"dead": die},
+        start_age_inclusive=retirement_age,
+    )
 
     working = Regime(
         actions={
@@ -333,11 +333,6 @@ def get_model(
             "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=retirement_age,
-            law={"working": StochasticTransition(func=prob_stay_working)},
-            then={"retired": StochasticTransition(func=prob_retire)},
-        ),
         functions={
             "utility": utility_working,
             **_euler_inversion_functions(
@@ -358,15 +353,6 @@ def get_model(
         constraints={}
         if isinstance(retired_solver, EGM)
         else {"feasible": feasible_retired},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=final_age,
-            law={
-                "retired": StochasticTransition(func=prob_stay_retired),
-                "dead": die,
-            },
-            then={"dead": die},
-            start_age_inclusive=retirement_age,
-        ),
         functions={
             "utility": utility_retired,
             "resources": resources_retired,
@@ -390,7 +376,6 @@ def get_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
@@ -403,24 +388,34 @@ def get_model(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={ages.exact_values[0]: "working"},
-        edges=_edges(ages=ages, retirement_period=retirement_period),
+        edges=_edges(
+            ages=ages, retirement_period=retirement_period, retired_law=retired_law
+        ),
     )
 
 
-def _edges(*, ages: AgeGrid, retirement_period: int) -> dict[str, dict[str, object]]:
-    """Work until retiring, stay retired until the last alive age, then die."""
+def _edges(
+    *, ages: AgeGrid, retirement_period: int, retired_law: ByAge
+) -> dict[str, object]:
+    """Work until retiring, stay retired until the last alive age, then die.
+
+    Working has one outgoing edge at every age. Where a retiree can both stay
+    retired and die, `retired_law` chooses between them.
+    """
     values = ages.exact_values
     stay_working = values[: retirement_period - 1]
     stay_retired = values[retirement_period:-2]
+    dies = values[retirement_period:-1]
     return {
         "working": {
             **({"working": stay_working} if stay_working else {}),
             "retired": values[retirement_period - 1],
         },
-        "retired": {
-            **({"retired": stay_retired} if stay_retired else {}),
-            "dead": values[retirement_period:-1],
-        },
+        "retired": (
+            Transition(targets={"retired": stay_retired, "dead": dies}, law=retired_law)
+            if stay_retired
+            else {"dead": dies}
+        ),
     }
 
 
@@ -443,7 +438,6 @@ def get_params(
     match_rate: float = 0.10,
     wage: float = 1.0,
     retirement_income: float = 0.50,
-    retirement_age: float = 3.0,
     final_age_alive: float = 4.0,
     pension_payout_return: float | None = None,
 ) -> dict:
@@ -470,7 +464,6 @@ def get_params(
                     "match_rate": match_rate,
                     "return_pension": return_pension,
                 },
-                "next_regime": {"retirement_age": retirement_age},
             },
             "retired": {
                 "next_liquid": {
@@ -479,7 +472,6 @@ def get_params(
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
                 },
-                "next_regime": {"retirement_age": retirement_age},
             },
         },
         "retired": {

@@ -20,6 +20,7 @@ from lcm import (
     DeterministicTransition,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.params import MappingLeaf, as_leaf
@@ -93,10 +94,8 @@ def test_validation_vmaps_over_action_combos():
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -106,10 +105,13 @@ def test_validation_vmaps_over_action_combos():
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=n_periods - 2),
-                "dead": AgeRange(exclusive_stop=n_periods - 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=n_periods - 2),
+                    "dead": AgeRange(exclusive_stop=n_periods - 1),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 

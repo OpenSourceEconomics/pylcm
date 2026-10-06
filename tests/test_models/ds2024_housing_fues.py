@@ -31,6 +31,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -138,12 +139,6 @@ def build_model(  # noqa: C901
 
     ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y")
     stays = ages.exact_values[:-2]
-    edges = {
-        "alive": {
-            **({"alive": stays} if stays else {}),
-            "dead": ages.exact_values[:-1],
-        }
-    }
     final_age = int(ages.exact_values[-1])
 
     stock_levels = jnp.asarray(
@@ -260,8 +255,19 @@ def build_model(  # noqa: C901
             DS2024HousingFuesRegimeId.alive,
         )
 
+    dies = ages.exact_values[:-1]
+    edges = {
+        "alive": (
+            Transition(
+                targets={"alive": stays, "dead": dies},
+                law=DeterministicTransition(func=next_regime),
+            )
+            if stays
+            else {"dead": dies}
+        )
+    }
+
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -276,7 +282,6 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         alive = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -306,7 +311,6 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,

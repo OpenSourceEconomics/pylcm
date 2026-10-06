@@ -16,7 +16,7 @@ two solvers are handed the identical `Regime` and must agree.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, AgeRange, LinSpacedGrid, Model, StochasticTransition
+from lcm import AgeGrid, AgeRange, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -31,8 +31,6 @@ from tests.solution.test_egm_solver import (
     _WEALTH_GRID,
     RegimeId,
     feasible,
-    prob_continue,
-    prob_stop,
     savings,
     terminal_utility,
     utility,
@@ -63,10 +61,6 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions={
-            "saving": StochasticTransition(func=prob_continue),
-            "done": StochasticTransition(func=prob_stop),
-        },
         functions={"utility": utility, "savings": savings},
         solver=solver,
         **(
@@ -83,7 +77,6 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         ),
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
@@ -112,8 +105,8 @@ def _params():
         "saving": {
             "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
-            "saving": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
-            "done": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
+            "saving": {"next_wealth": law},
+            "done": {"next_wealth": law},
         },
         "done": {"utility": {"crra": _CRRA}},
     }

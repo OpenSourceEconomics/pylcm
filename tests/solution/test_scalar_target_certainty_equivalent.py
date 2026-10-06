@@ -22,6 +22,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -48,11 +49,11 @@ def _no_flow_payoff(wealth):
 
 def _solve_with_geometric_certainty_equivalent():
     """Solve a model whose only continuation is an even stateless lottery."""
+    alive_law = {
+        "low": StochasticTransition(func=lambda: jnp.array(0.5)),
+        "high": StochasticTransition(func=lambda: jnp.array(0.5)),
+    }
     alive = Regime(
-        regime_transitions={
-            "low": StochasticTransition(func=lambda: jnp.array(0.5)),
-            "high": StochasticTransition(func=lambda: jnp.array(0.5)),
-        },
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         # No flow payoff and no discounting, so the regime's value *is* the
         # certainty equivalent of the continuation lottery. Utility reads
@@ -61,15 +62,11 @@ def _solve_with_geometric_certainty_equivalent():
         state_transitions={"wealth": fixed_transition("wealth")},
         certainty_equivalent=PowerMean(),
     )
-    low = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(_LOW_PAYOFF)}
-    )
-    high = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)}
-    )
+    low = Regime(functions={"utility": lambda: jnp.array(_LOW_PAYOFF)})
+    high = Regime(functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)})
     model = Model(
         regimes={"alive": alive, "low": low, "high": high},
-        edges={"alive": {"low": 20, "high": 20}},
+        edges={"alive": Transition(targets={"low": 20, "high": 20}, law=alive_law)},
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},

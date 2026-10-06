@@ -335,18 +335,18 @@ def _assert_public_membership_inventory(
                     **regime.functions,
                     "utility": (
                         _membership_terminal_utility
-                        if regime.terminal
+                        if base._engine_user_regimes[name].terminal
                         else regime.functions["utility"]
                     ),
                 },
                 states=(
                     {**regime.states, "kind": DiscreteGrid(_MembershipKind)}
-                    if regime.terminal
+                    if base._engine_user_regimes[name].terminal
                     else regime.states
                 ),
                 state_transitions=(
                     {}
-                    if regime.terminal
+                    if base._engine_user_regimes[name].terminal
                     else {**regime.state_transitions, "kind": _membership_next_kind}
                 ),
             )

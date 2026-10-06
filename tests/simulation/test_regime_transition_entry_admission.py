@@ -17,6 +17,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -38,6 +39,11 @@ _FLOAT_DTYPE = canonical_float_dtype()
 class _RegimeId:
     alive: ScalarInt
     done: ScalarInt
+
+
+# Both edges leave age 0, so the regime law chooses between them. Every law here
+# gives `alive` zero mass, so `alive` at age 1 is reachable but empty.
+_ALIVE_TARGETS = {"alive": 0, "done": 0}
 
 
 def _utility() -> ScalarFloat:
@@ -63,12 +69,8 @@ def _inputs(
     )
     model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=StochasticTransition(func=probabilities),
-                functions={"utility": _utility},
-            ),
+            "alive": Regime(functions={"utility": _utility}),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _utility},
             ),
         },
@@ -76,7 +78,11 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
-        edges={"alive": {"done": 0}},
+        edges={
+            "alive": Transition(
+                targets=_ALIVE_TARGETS, law=StochasticTransition(func=probabilities)
+            )
+        },
     )
     return (
         model,
@@ -152,14 +158,8 @@ def _numerical_inputs(
     """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6."""
     model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=StochasticTransition(
-                    func=_parameterized_regime_probabilities
-                ),
-                functions={"utility": _alive_payoff},
-            ),
+            "alive": Regime(functions={"utility": _alive_payoff}),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _done_payoff},
             ),
         },
@@ -167,7 +167,12 @@ def _numerical_inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
-        edges={"alive": {"done": 0}},
+        edges={
+            "alive": Transition(
+                targets=_ALIVE_TARGETS,
+                law=StochasticTransition(func=_parameterized_regime_probabilities),
+            )
+        },
     )
     return (
         model,
@@ -217,12 +222,15 @@ def test_admitted_regime_probability_pytree_completes() -> None:
     )
     assert result.n_subjects == expected.n_subjects == 3
     assert set(result.raw_results) == {"alive", "done"}
-    assert set(result.raw_results["alive"]) == {0}
+    assert set(result.raw_results["alive"]) == {0, 1}
     assert set(result.raw_results["done"]) == {1}
     for regime, period, value in (("alive", 0, 5), ("done", 1, 6)):
         data = result.raw_results[regime][period]
         np.testing.assert_array_equal(data.V_arr, np.full(3, value))
         np.testing.assert_array_equal(data.in_regime, np.ones(3, dtype=bool))
+    np.testing.assert_array_equal(
+        result.raw_results["alive"][1].in_regime, np.zeros(3, dtype=bool)
+    )
     _assert_same_raw_results(actual=result, expected=expected)
     for name, value in initial.items():
         assert isinstance(value, jax.Array)

@@ -26,6 +26,7 @@ from lcm import (
     Model,
     Phased,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -70,7 +71,6 @@ def _next_regime(period: Period) -> ScalarInt:
 
 def _last_regime() -> Regime:
     return Regime(
-        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -80,7 +80,6 @@ def _last_regime() -> Regime:
 
 def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -89,7 +88,12 @@ def _model(*, live_functions, state_transitions, constraints) -> Model:
     ).replace()
     return Model(
         regimes={"live": live, "last": _last_regime()},
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="constraint phase-invariance",

@@ -783,7 +783,7 @@ def _split_regime_transition(
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
-                "phase-invariant; use `regime_transitions=None` for a terminal regime."
+                "phase-invariant; a regime without outgoing edges is terminal."
             )
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(

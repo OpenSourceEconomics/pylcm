@@ -33,7 +33,7 @@ def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": cell_width}),
         initial_nodes=initial_nodes_of(model=model),
-        edges=model.graph.edges,
+        edges=model.edges,
     )
     return reordered.solve(params=get_params(), log_level="off").values
 

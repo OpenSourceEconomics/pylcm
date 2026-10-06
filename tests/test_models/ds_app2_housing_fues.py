@@ -61,7 +61,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -256,22 +255,6 @@ def build_model(  # noqa: C901
 
     edges = _edges(retirement_age=retirement_age, final_age=final_age)
 
-    def next_regime(age: int) -> ScalarInt:
-        """Transition working to retired when next period reaches retirement."""
-        return jnp.where(
-            age + 1 >= retirement_age,
-            HousingFuesRegimeId.retired,
-            HousingFuesRegimeId.working,
-        )
-
-    def next_regime_from_retired(age: int) -> ScalarInt:
-        """Transition retired to dead when next period reaches the final age."""
-        return jnp.where(
-            age + 1 >= final_age,
-            HousingFuesRegimeId.dead,
-            HousingFuesRegimeId.retired,
-        )
-
     housing_min = housing_max / (2.0 * n_housing)
     stock_levels = jnp.asarray(
         [
@@ -384,7 +367,6 @@ def build_model(  # noqa: C901
 
     housing_grid = DiscreteGrid(category_class=housing_class)
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -397,7 +379,6 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -417,7 +398,6 @@ def build_model(  # noqa: C901
             solver=GridSearch(),
         )
         retired = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime_from_retired),
             states={"liquid": liquid_grid, "housing": housing_grid},
             state_transitions={"liquid": next_liquid_brute, "housing": next_housing},
             actions={
@@ -443,7 +423,6 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -471,7 +450,6 @@ def build_model(  # noqa: C901
         ),
     )
     retired = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retired),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         actions={

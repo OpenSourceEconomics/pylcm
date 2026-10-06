@@ -8,7 +8,7 @@ import pytest
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
 from _lcm.solution.validate_V import validate_V
-from lcm import DeterministicTransition, Model, categorical
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -113,9 +113,6 @@ def _build_nan_model() -> tuple[Model, dict]:
     ) -> ContinuousState:
         return wealth - consumption
 
-    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
-        return jnp.where(period == (n_periods - 2), 1, 0)
-
     def borrowing_constraint(
         *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
@@ -127,10 +124,8 @@ def _build_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     terminal = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -142,7 +137,6 @@ def _build_nan_model() -> tuple[Model, dict]:
     )
     params = {
         "discount_factor": 0.95,
-        "non_terminal": {"next_regime": {"n_periods": 2}},
         "terminal": {},
     }
     return model, params
@@ -169,9 +163,6 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     ) -> ContinuousState:
         return wealth - consumption
 
-    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
-        return jnp.where(period == (n_periods - 2), 1, 0)
-
     def borrowing_constraint(
         *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
@@ -183,10 +174,8 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     terminal = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -198,7 +187,6 @@ def _build_always_nan_model() -> tuple[Model, dict]:
     )
     params = {
         "discount_factor": 0.95,
-        "non_terminal": {"next_regime": {"n_periods": 2}},
         "terminal": {},
     }
     return model, params

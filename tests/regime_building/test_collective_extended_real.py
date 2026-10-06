@@ -855,7 +855,6 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
     utilities = kwargs.pop("utilities", {"f": _utility_f, "m": _utility_m})
     objective = kwargs.pop("objective", None)
     base = {
-        "regime_transitions": None,
         "states": {"wealth": _WEALTH},
         "actions": {"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         "functions": {
@@ -866,7 +865,9 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
         },
     }
     base.update(kwargs)
-    return Regime(**base)  # ty: ignore[invalid-argument-type]
+    return Regime(**base).replace(  # ty: ignore[invalid-argument-type]
+        regime_transitions=None
+    )
 
 
 def test_a_household_with_no_stakeholders_is_rejected():

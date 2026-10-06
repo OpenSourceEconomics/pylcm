@@ -51,6 +51,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -193,11 +194,11 @@ def build_model(
 
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
+    solo_law = {
+        "solo": StochasticTransition(func=_solo_stays_before_age_two),
+        "dead": StochasticTransition(func=_solo_leaves_from_age_two),
+    }
     solo = Regime(
-        regime_transitions={
-            "solo": StochasticTransition(func=_solo_stays_before_age_two),
-            "dead": StochasticTransition(func=_solo_leaves_from_age_two),
-        },
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -206,25 +207,25 @@ def build_model(
             "x": {"solo": fixed_transition("x")},
         },
     )
-    pair = Regime(
-        regime_transitions={
-            "pair": StochasticTransition(func=_stay_before_age_one),
-            "dead": ValueDependentTransition(
-                probability=StochasticTransition(func=_leave_from_age_one),
-                gate=_gate_open_above_the_middle,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="solo",
-                            projection={
-                                "wealth": _projected_wealth,
-                                "x": _projected_x,
-                            },
-                        )
+    pair_law = {
+        "pair": StochasticTransition(func=_stay_before_age_one),
+        "dead": ValueDependentTransition(
+            probability=StochasticTransition(func=_leave_from_age_one),
+            gate=_gate_open_above_the_middle,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="solo",
+                        projection={
+                            "wealth": _projected_wealth,
+                            "x": _projected_x,
+                        },
                     )
-                },
-            ),
-        },
+                )
+            },
+        ),
+    }
+    pair = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": pair_utility},
@@ -235,15 +236,18 @@ def build_model(
         },
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
     return Model(
         regimes={"solo": solo, "pair": pair, "dead": dead},
         edges={
-            "solo": {"solo": (0, 1), "dead": (0, 1, 2)},
-            "pair": {"pair": 0, "dead": (0, 1), "solo": (0, 1)},
+            "solo": Transition(
+                targets={"solo": (0, 1), "dead": (0, 1, 2)}, law=solo_law
+            ),
+            "pair": Transition(
+                targets={"pair": 0, "dead": (0, 1), "solo": (0, 1)}, law=pair_law
+            ),
         },
         states={
             "x": DiscreteGrid(category_class=_Category),

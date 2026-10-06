@@ -30,13 +30,14 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.typing import ConstraintFunction
-from lcm import Model, categorical
+from lcm import Model, Transition, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import (
     _make_repeating_self_loop_regimes,
+    _repeating_self_loop_laws,
 )
 
 _BETA = 0.95
@@ -216,7 +217,12 @@ def test_repeating_self_loop_solves_with_its_fallback_uncovered_in_the_unread_pe
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_SelfLoopRegimeId,
         initial_nodes={0: "src"},
-        edges={"src": {"src": 0, "src_exit": (0, 1), "src_fallback": 0}},
+        edges={
+            "src": Transition(
+                targets={"src": 0, "src_exit": (0, 1), "src_fallback": 0},
+                law=_repeating_self_loop_laws()["src"],
+            )
+        },
     )
     regimes = model._regimes
     # The coverage that makes period 0 the unread one.

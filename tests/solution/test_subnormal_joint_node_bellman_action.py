@@ -69,10 +69,6 @@ def _low_low_payoff() -> ScalarFloat:
     return jnp.ldexp(jnp.asarray(1.0, dtype=dtype), exponent)
 
 
-def _certain() -> ScalarFloat:
-    return jnp.asarray(1.0, dtype=_active_dtype())
-
-
 def _bet_payoff(bet: DiscreteAction) -> FloatND:
     """The safe action's certain payoff; the risky one pays only through the node."""
     return jnp.where(
@@ -129,7 +125,6 @@ def _model(*, node_is_reachable: bool = True) -> Model:
         edges={"alive": {"dead": 20}},
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": StochasticTransition(func=_certain)},
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={
@@ -139,7 +134,6 @@ def _model(*, node_is_reachable: bool = True) -> Model:
                 functions={"utility": _bet_payoff},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"health": levels, "mood": levels},
                 functions={"utility": _terminal_payoff},
             ),

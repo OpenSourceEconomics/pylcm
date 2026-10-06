@@ -12,6 +12,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     TauchenAR1Process,
+    Transition,
     UniformIIDProcess,
     categorical,
 )
@@ -62,19 +63,24 @@ def _make_model(*, fixed_params=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        regime_transitions=DeterministicTransition(
-            func=lambda period: jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda period: jnp.where(
+                        period >= 1, RegimeId.dead, RegimeId.alive
+                    )
+                ),
+            )
+        },
         regime_id_class=RegimeId,
         fixed_params=fixed_params or {},
         initial_nodes={0: "alive"},

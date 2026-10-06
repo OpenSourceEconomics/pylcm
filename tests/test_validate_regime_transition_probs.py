@@ -12,13 +12,12 @@ from _lcm.transition_checks import (
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -249,7 +248,6 @@ def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
 def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = UserRegime(
-        regime_transitions=StochasticTransition(func=_next_regime_only_fails_for_leave),
         actions={
             "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -260,7 +258,6 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -269,7 +266,12 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={25: "active"},
-        edges={"active": {"active": 25, "terminal": (25, 26)}},
+        edges={
+            "active": Transition(
+                targets={"active": 25, "terminal": (25, 26)},
+                law=StochasticTransition(func=_next_regime_only_fails_for_leave),
+            )
+        },
     )
     params: dict = {"discount_factor": 0.95}
     return model, params
@@ -305,7 +307,6 @@ def test_regime_transition_validation_passes_period_as_int32():
         )
 
     active = UserRegime(
-        regime_transitions=StochasticTransition(func=_transition_recording_period),
         actions={
             "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -316,7 +317,6 @@ def test_regime_transition_validation_passes_period_as_int32():
         functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
     )
     terminal = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
     )
@@ -325,7 +325,12 @@ def test_regime_transition_validation_passes_period_as_int32():
         ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={25: "active"},
-        edges={"active": {"active": 25, "terminal": (25, 26)}},
+        edges={
+            "active": Transition(
+                targets={"active": 25, "terminal": (25, 26)},
+                law=StochasticTransition(func=_transition_recording_period),
+            )
+        },
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -434,10 +439,6 @@ def _zero_utility() -> ScalarFloat:
     return jnp.float32(0)
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _malformed_aux_probs() -> FloatND:
     """Deliberately invalid: [0.5, 0.6] does not sum to 1."""
     return jnp.array([0.5, 0.6])
@@ -453,13 +454,6 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
     model = Model(
         regimes={
             "solo": UserRegime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(start=21, exclusive_stop=22): {
-                            "term": StochasticTransition(func=_one_probability)
-                        }
-                    }
-                ),
                 states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
                 state_transitions={
                     "aux": StochasticTransition(func=_malformed_aux_probs)
@@ -468,7 +462,6 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
                 functions={"utility": _zero_utility},
             ),
             "term": UserRegime(
-                regime_transitions=None,
                 functions={"utility": _zero_utility},
             ),
         },

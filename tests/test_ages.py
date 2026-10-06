@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from _lcm.ages import _parse_step
-from lcm import Model
+from lcm import Model, Transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
@@ -137,27 +137,29 @@ def test_model_with_quarterly_steps():
 
     model = Model(
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age)
-            ),
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "working_life": working_life,
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes=((ages.exact_values[0], "working_life"),),
         edges={
-            "working_life": {
-                "working_life": ages.exact_values[:-2],
-                "retirement": ages.exact_values[:-2],
-                "dead": ages.exact_values[:-1],
-            },
-            "retirement": {
-                "retirement": ages.exact_values[:-2],
-                "dead": ages.exact_values[:-1],
-            },
+            "working_life": Transition(
+                targets={
+                    "working_life": ages.exact_values[:-2],
+                    "retirement": ages.exact_values[:-2],
+                    "dead": ages.exact_values[:-1],
+                },
+                law=working_life_transitions(last_age=last_age),
+            ),
+            "retirement": Transition(
+                targets={
+                    "retirement": ages.exact_values[:-2],
+                    "dead": ages.exact_values[:-1],
+                },
+                law=retirement_transitions(last_age=last_age),
+            ),
         },
     )
 
@@ -295,27 +297,29 @@ def test_model_with_integer_ages():
 
     model = Model(
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age)
-            ),
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "working_life": working_life,
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes=((ages.exact_values[0], "working_life"),),
         edges={
-            "working_life": {
-                "working_life": ages.exact_values[:-2],
-                "retirement": ages.exact_values[:-2],
-                "dead": ages.exact_values[:-1],
-            },
-            "retirement": {
-                "retirement": ages.exact_values[:-2],
-                "dead": ages.exact_values[:-1],
-            },
+            "working_life": Transition(
+                targets={
+                    "working_life": ages.exact_values[:-2],
+                    "retirement": ages.exact_values[:-2],
+                    "dead": ages.exact_values[:-1],
+                },
+                law=working_life_transitions(last_age=last_age),
+            ),
+            "retirement": Transition(
+                targets={
+                    "retirement": ages.exact_values[:-2],
+                    "dead": ages.exact_values[:-1],
+                },
+                law=retirement_transitions(last_age=last_age),
+            ),
         },
     )
 

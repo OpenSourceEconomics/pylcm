@@ -674,7 +674,7 @@ def _age_specialized_scope_errors(
         for node in _iter_transition_nodes(transition)
     ):
         error_messages.append(
-            "`regime_transitions` cannot be an `AgeSpecializedFunction`, bare or "
+            "A regime transition law cannot be an `AgeSpecializedFunction`, bare or "
             "wrapped in `StochasticTransition`: age-specialized regime transitions are "
             "not supported. Specialize `functions` or `constraints` instead.",
         )
@@ -684,7 +684,7 @@ def _age_specialized_scope_errors(
     )
     if specialized_ancestor is not None:
         error_messages.append(
-            f"`regime_transitions` depends on the `AgeSpecializedFunction` "
+            f"The regime transition law depends on the `AgeSpecializedFunction` "
             f"'{specialized_ancestor}'. Regime-transition probabilities are built "
             f"once, not per period, so a policy-specialized value flowing into "
             f"them would silently reuse one age's policy closure across all "
@@ -732,8 +732,8 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
         if not side:
             error_messages.append(
                 f"transition{label}: an empty per-target dict declares no "
-                f"candidate targets — use `regime_transitions=None` for a terminal "
-                f"regime.",
+                f"candidate targets — a regime without outgoing edges in "
+                f"`Model(edges=...)` is terminal.",
             )
         for target_regime_name, cell in side.items():
             if not isinstance(target_regime_name, str):

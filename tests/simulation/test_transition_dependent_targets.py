@@ -33,6 +33,7 @@ from lcm import (
     Model,
     Phased,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
@@ -92,14 +93,12 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulated(new_stock=_new_stock):
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"stock": _carry_new_stock},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _service_flow, "new_stock": new_stock},
     ).replace()
     last = Regime(
-        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -111,7 +110,12 @@ def _simulated(new_stock=_new_stock):
         regime_id_class=RegimeId,
         description="transition-dependent target",
         initial_nodes={0: "live"},
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(

@@ -19,6 +19,7 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -137,17 +138,12 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
     # linear interpolation on this grid, so it must resolve the curvature of
     # `log` for the closed form to be the test oracle.
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
     model = Model(
         regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions=DeterministicTransition(
-                    func=retirement_only.next_regime_from_retirement
-                )
-            ),
+            "retirement": dcegm_retirement,
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
@@ -240,7 +236,6 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
 
     ages = AgeGrid(start=40, inclusive_stop=40 + n_periods - 1, step="Y")
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=100)},
         states={"wealth": LinSpacedGrid(start=1, stop=400, n_points=1000)},
         state_transitions={"wealth": next_wealth},
@@ -266,17 +261,19 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
         regimes={"retirement": retirement, "dead": dead},
         ages=ages,
         edges={
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
-                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
-            }
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                    "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
         regime_id_class=_InterestRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
@@ -351,17 +348,12 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
     discount_factor = 0.98
     bequest_points = (0.0, *(float(x) for x in np.geomspace(0.005, 400.0, 400)))
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": IrregSpacedGrid(points=bequest_points)},
         functions={"utility": _bequest_utility},
     )
     model = Model(
         regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions=DeterministicTransition(
-                    func=retirement_only.next_regime_from_retirement
-                )
-            ),
+            "retirement": dcegm_retirement,
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),

@@ -44,7 +44,6 @@ from lcm import (
 )
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.solver_api import ActionOutput, ValueStore
-from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
@@ -203,9 +202,6 @@ def _make_participation_model() -> Model:
 
     """
     couple = Regime(
-        regime_transitions={
-            "couple_terminal": StochasticTransition(func=_certain_transition)
-        },
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -226,7 +222,6 @@ def _make_participation_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -236,16 +231,12 @@ def _make_participation_model() -> Model:
         },
     )
     single_f = Regime(
-        regime_transitions={
-            "single_f_terminal": StochasticTransition(func=_certain_transition)
-        },
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_f_utility},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},
     )
@@ -268,11 +259,6 @@ def _make_participation_model() -> Model:
 def _wage(education: DiscreteState) -> FloatND:
     """Wage by education: 1 for the low level, 2 for the high one."""
     return jnp.where(education == Education.low, 1.0, 2.0)
-
-
-def _certain_transition(age: FloatND) -> FloatND:
-    """Regime transition probability: the successor regime is reached for sure."""
-    return jnp.ones_like(age, dtype=float)
 
 
 def _couple_utility_f(*, education: DiscreteState, work: DiscreteAction) -> FloatND:

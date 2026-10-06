@@ -22,6 +22,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -59,7 +60,6 @@ def _next_regime(period: int) -> ScalarInt:
 
 def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=6),
@@ -76,7 +76,6 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         },
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -85,10 +84,13 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         regime_id_class=RegimeId,
         initial_nodes={25: "working_life"},
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=65),
-                "dead": AgeRange(exclusive_stop=75),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=65),
+                    "dead": AgeRange(exclusive_stop=75),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 
@@ -105,7 +107,6 @@ def _bonus_of_age(age: float) -> Callable[[], float]:
 def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     """A model whose law of motion `next_wealth = wealth + policy_bonus` reads a fn."""
     working_life = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=0, stop=2000, n_points=11)},
         state_transitions={
             "wealth": lambda wealth, policy_bonus: wealth + policy_bonus,
@@ -113,7 +114,6 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
         functions={"utility": lambda wealth: wealth, "policy_bonus": policy_bonus},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -122,10 +122,13 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
         regime_id_class=RegimeId,
         initial_nodes={25: "working_life"},
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=65),
-                "dead": AgeRange(exclusive_stop=75),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=65),
+                    "dead": AgeRange(exclusive_stop=75),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 
@@ -255,14 +258,12 @@ def _f1_boost_of_age(age: float):
 
 def _f1_make_model(boost: UserFunction) -> Model:
     working = UserRegime(
-        regime_transitions=DeterministicTransition(func=_f1_next_regime),
         states={"capital": DiscreteGrid(category_class=_Capital)},
         actions={"invest": DiscreteGrid(category_class=_Invest)},
         state_transitions={"capital": _f1_next_capital},
         functions={"utility": _f1_utility, "boost": boost},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -270,7 +271,12 @@ def _f1_make_model(boost: UserFunction) -> Model:
         ages=AgeGrid(start=25, inclusive_stop=55, step="10Y"),
         regime_id_class=RegimeId,
         initial_nodes={35: "working_life"},
-        edges={"working_life": {"working_life": (25, 35), "dead": (25, 35, 45)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (25, 35), "dead": (25, 35, 45)},
+                law=DeterministicTransition(func=_f1_next_regime),
+            )
+        },
     )
 
 
@@ -334,7 +340,6 @@ def _cap_of_age(age: float) -> Callable[..., bool]:
 
 def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     working_life = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         state_transitions={"wealth": _next_wealth_spend},
@@ -345,7 +350,6 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
         functions={"utility": _utility_of_consumption},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -354,10 +358,13 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
         regime_id_class=RegimeId,
         initial_nodes={25: "working_life", 35: "working_life", 45: "working_life"},
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=65),
-                "dead": AgeRange(exclusive_stop=75),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=65),
+                    "dead": AgeRange(exclusive_stop=75),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 

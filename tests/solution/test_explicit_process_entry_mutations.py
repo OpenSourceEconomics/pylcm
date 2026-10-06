@@ -17,7 +17,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -27,10 +26,6 @@ from lcm.typing import FloatND, ScalarFloat, ScalarInt
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def one_probability() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def zero() -> ScalarFloat:
@@ -72,14 +67,10 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=one_probability)
-                },
                 state_transitions={"shock": {"target": enter_at_mean}},
                 functions={"utility": zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=n_points,

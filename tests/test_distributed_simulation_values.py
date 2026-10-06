@@ -21,6 +21,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -246,14 +247,12 @@ def _build_model(
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=DeterministicTransition(func=_transition),
                 states={"wealth": wealth},
                 state_transitions={"wealth": _next_wealth},
                 actions={"consumption": LinSpacedGrid(start=1, stop=5, n_points=5)},
                 functions={"utility": _utility},
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _terminal_utility},
             ),
@@ -271,7 +270,12 @@ def _build_model(
             device_memory_bytes=budget,
         ),
         initial_nodes={0: "working"},
-        edges={"working": {"working": (0, 1), "retired": (0, 1, 2)}},
+        edges={
+            "working": Transition(
+                targets={"working": (0, 1), "retired": (0, 1, 2)},
+                law=DeterministicTransition(func=_transition),
+            )
+        },
     )
 
 

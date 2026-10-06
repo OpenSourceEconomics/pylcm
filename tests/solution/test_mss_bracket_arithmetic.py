@@ -28,6 +28,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -277,11 +278,11 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
     """The asset-row model under an MSS arithmetic, or its brute-force twin."""
     is_dcegm = arithmetic is not None
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
+    working_life_law = {
+        "working_life": StochasticTransition(func=stay_prob),
+        "dead": StochasticTransition(func=death_prob),
+    }
     working_life = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -326,10 +327,13 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
         regime_id_class=AssetRowRegimeId,
         initial_nodes={40: "working_life"},
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=40 + (N_PERIODS - 2) * 10),
-                "dead": AgeRange(exclusive_stop=40 + (N_PERIODS - 1) * 10),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=40 + (N_PERIODS - 2) * 10),
+                    "dead": AgeRange(exclusive_stop=40 + (N_PERIODS - 1) * 10),
+                },
+                law=working_life_law,
+            )
         },
     )
 

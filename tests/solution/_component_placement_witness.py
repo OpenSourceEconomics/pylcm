@@ -18,7 +18,6 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -85,10 +84,6 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.dead
-
-
 def _flow(
     *, wealth: ContinuousState, pref_type: DiscreteState, choice: DiscreteAction
 ) -> FloatND:
@@ -118,11 +113,8 @@ def _model(
         },
         actions={"choice": DiscreteGrid(category_class=_Choice)},
         functions={"utility": _flow},
-        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    dead = Regime(
-        states=states, functions={"utility": _terminal}, regime_transitions=None
-    )
+    dead = Regime(states=states, functions={"utility": _terminal})
     return Model(
         regimes={"live": live, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

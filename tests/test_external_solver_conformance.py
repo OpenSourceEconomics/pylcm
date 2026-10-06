@@ -30,6 +30,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
@@ -388,10 +389,6 @@ def _model(
     return Model(
         regimes={
             "active": Regime(
-                regime_transitions={
-                    "active": StochasticTransition(func=_stay_active),
-                    "retired": StochasticTransition(func=_enter_retirement),
-                },
                 states={
                     "wealth": wealth_grid,
                     "productivity": _PRODUCTIVITY_GRID,
@@ -420,7 +417,6 @@ def _model(
                 solver=solver,
             ),
             "retired": Regime(
-                regime_transitions=None,
                 functions={"utility": _retired_utility},
                 solver=TerminalCounterSolver(),
             ),
@@ -429,10 +425,16 @@ def _model(
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},
         edges={
-            "active": {
-                "active": AgeRange(exclusive_stop=_N_PERIODS - 1),
-                "retired": AgeRange(exclusive_stop=_N_PERIODS),
-            }
+            "active": Transition(
+                targets={
+                    "active": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    "retired": AgeRange(exclusive_stop=_N_PERIODS),
+                },
+                law={
+                    "active": StochasticTransition(func=_stay_active),
+                    "retired": StochasticTransition(func=_enter_retirement),
+                },
+            )
         },
     )
 

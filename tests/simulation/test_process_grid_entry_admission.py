@@ -24,7 +24,6 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -39,7 +38,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import load_solution
-from lcm.typing import FloatND, ScalarInt, UserInitialConditions, UserParams
+from lcm.typing import FloatND, UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 
@@ -66,10 +65,6 @@ def _terminal_utility() -> float:
     return 0.0
 
 
-def _next_regime() -> ScalarInt:
-    return _LifecycleRegimeId.done
-
-
 def _inputs(
     *,
     budget: int | None,
@@ -80,7 +75,6 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"income": UniformIIDProcess(n_points=5, start=fixed_start)}
                 | ({} if companion is None else {"companion": companion}),
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
@@ -90,9 +84,7 @@ def _inputs(
                     else _utility_with_companion
                 },
             ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _terminal_utility}
-            ),
+            "done": Regime(functions={"utility": _terminal_utility}),
         },
         regime_id_class=_LifecycleRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

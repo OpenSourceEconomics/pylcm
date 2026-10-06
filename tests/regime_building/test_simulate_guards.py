@@ -69,6 +69,8 @@ from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
+    _bind_laws,
+    _dissolution_laws,
     _make_dissolution_regimes,
     _solve_and_process,
     _solve_dissolution,
@@ -221,6 +223,15 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     different projections -- the topology model construction must reject.
     """
     married = Regime(
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -246,18 +257,9 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
+        )
     )
     married_ir = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -265,12 +267,11 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     single_shared = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_shared},
-    )
+    ).replace(regime_transitions=None)
     return {
         "married": married,
         "married_ir": married_ir,
@@ -301,7 +302,9 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     keep constructing without the new guard firing.
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_dissolution_regimes()
+    regimes_dict = _bind_laws(
+        regimes=_make_dissolution_regimes(), laws=_dissolution_laws()
+    )
     married_edge = regimes_dict["married"].gated_edges["married_ir"]
     fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
     assert len(fallback_regimes) == len(set(fallback_regimes))
@@ -427,28 +430,28 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
-                )
-            }
-        ),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
+                )
+            }
+        )
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
         },
-    )
+    ).replace(regime_transitions=None)
     return {"couple": couple, "couple_terminal": couple_terminal}
 
 
@@ -534,14 +537,13 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
-        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_stateless_f, "m": _u_stateless_m}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     return {"stateless_couple": regime}
 
 
@@ -616,7 +618,6 @@ def test_stateless_collective_without_any_action_finalizes():
     finalized = finalize_regimes(
         user_regimes={
             "couple": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": CollectiveUtility(
                         utilities={
@@ -625,7 +626,7 @@ def test_stateless_collective_without_any_action_finalizes():
                         }
                     )
                 },
-            )
+            ).replace(regime_transitions=None)
         },
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),

@@ -30,6 +30,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -113,7 +114,6 @@ def _shock(*, sigma: float | StateConditioned, fold: bool = True) -> NormalIIDPr
 
 def _conditioned_model() -> Model:
     period0 = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -125,7 +125,6 @@ def _conditioned_model() -> Model:
         functions={"utility": _utility},
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(
@@ -144,13 +143,11 @@ def _unconditioned_model(*, sigma: float) -> Model:
     the widest category — see `test_high_risk_cell_matches_the_unconditioned_fold`.
     """
     period0 = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wage_shock": _shock(sigma=sigma)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(
@@ -263,13 +260,6 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
     """
     with pytest.raises(RegimeInitializationError, match="conditioning state"):
         Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): DeterministicTransition(
-                        func=_next_regime
-                    )
-                }
-            ),
             states={
                 "risk_type": DiscreteGrid(category_class=RiskType),
                 "wage_shock": _shock(
@@ -279,6 +269,14 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
             state_transitions={"risk_type": _next_risk_type},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
+        ).replace(
+            regime_transitions=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): DeterministicTransition(
+                        func=_next_regime
+                    )
+                }
+            )
         )
 
 
@@ -292,14 +290,6 @@ class ThreeRegimeId:
 _THREE_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
-def _to_folding() -> ScalarInt:
-    return ThreeRegimeId.folding
-
-
-def _to_done() -> ScalarInt:
-    return ThreeRegimeId.done
-
-
 def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     """A conditioner moved on the way in is refused, not only one moved in place.
 
@@ -310,11 +300,6 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     this one can change it.
     """
     entry = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): DeterministicTransition(func=_to_folding)
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -327,13 +312,6 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=_to_done
-                )
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -345,7 +323,6 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
 
@@ -375,10 +352,6 @@ def _split_probability_of_sideways() -> FloatND:
     return jnp.asarray(0.5)
 
 
-def _to_done_from_split() -> ScalarInt:
-    return SplitRegimeId.done
-
-
 def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     """A per-target law is read on the edge in question, not across all of them.
 
@@ -388,16 +361,6 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     against exactly the category the shock was realized under.
     """
     entry = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "folding": StochasticTransition(func=_split_probability_of_folding),
-                    "sideways": StochasticTransition(
-                        func=_split_probability_of_sideways
-                    ),
-                }
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -415,13 +378,6 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=_to_done_from_split
-                )
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -433,20 +389,12 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": _utility},
     )
     sideways = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=_to_done_from_split
-                )
-            }
-        ),
         states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": lambda work: jnp.asarray(work, dtype=jnp.float64) * 0.0},
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
 
@@ -461,7 +409,21 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         regime_id_class=SplitRegimeId,
         initial_nodes={0: "entry"},
         edges={
-            "entry": {"folding": 0, "sideways": 0},
+            "entry": Transition(
+                targets={"folding": 0, "sideways": 0},
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "folding": StochasticTransition(
+                                func=_split_probability_of_folding
+                            ),
+                            "sideways": StochasticTransition(
+                                func=_split_probability_of_sideways
+                            ),
+                        }
+                    }
+                ),
+            ),
             "folding": {"done": 1},
             "sideways": {"done": 1},
         },
@@ -479,28 +441,17 @@ class PhasedSplitRegimeId:
     done: ScalarInt
 
 
-def _probability_one() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
-    """A phase marker around a target mapping keeps that mapping's target set.
+    """A phase marker around the edges keeps each source's target set.
 
     `safe_entry -> folding` holds `risk_type` fixed. A disconnected
-    `moving_entry -> sideways` path changes it, and the moving entry declares
-    its target mapping through `Phased`. The fold guard must resolve either
-    phase before computing reachability; treating the outer marker as a coarse
-    transition would falsely claim that `moving_entry` reaches `folding` and
-    reject this valid model.
+    `moving_entry -> sideways` path changes it, and the model declares its
+    edges through `Phased`. The fold guard must resolve either phase before
+    computing reachability; treating the outer marker as a coarse transition
+    would falsely claim that `moving_entry` reaches `folding` and reject this
+    valid model.
     """
     safe_entry = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "folding": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -513,14 +464,6 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     moving_entry = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): Phased(
-                    solve={"sideways": StochasticTransition(func=_probability_one)},
-                    simulate={"sideways": StochasticTransition(func=_probability_one)},
-                )
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -533,13 +476,6 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     folding = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=lambda: PhasedSplitRegimeId.done
-                )
-            }
-        ),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -551,23 +487,21 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": _utility},
     )
     sideways = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=lambda: PhasedSplitRegimeId.done
-                )
-            }
-        ),
         states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": lambda work: jnp.asarray(work) * 0.0},
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
 
+    edges = {
+        "safe_entry": {"folding": 0},
+        "moving_entry": {"sideways": 0},
+        "folding": {"done": 1},
+        "sideways": {"done": 1},
+    }
     model = Model(
         regimes={
             "safe_entry": safe_entry,
@@ -579,12 +513,10 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         ages=_THREE_AGES,
         regime_id_class=PhasedSplitRegimeId,
         initial_nodes={0: "safe_entry"},
-        edges={
-            "safe_entry": {"folding": 0},
-            "moving_entry": {"sideways": 0},
-            "folding": {"done": 1},
-            "sideways": {"done": 1},
-        },
+        edges=Phased(
+            solve=edges,
+            simulate=edges,
+        ),
     )
 
     assert set(model.user_regimes) == {

@@ -19,7 +19,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -42,10 +41,6 @@ class RegimeId:
     target: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
@@ -60,13 +55,11 @@ def _build(*, source_states, source_state_transitions) -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states=source_states,
                 state_transitions=source_state_transitions,
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _RUNTIME_PROCESS},
                 functions={"utility": _shock_utility},
             ),

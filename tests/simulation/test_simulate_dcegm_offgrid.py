@@ -43,7 +43,6 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 
 def _closed_form_model() -> Model:
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
@@ -54,7 +53,6 @@ def _closed_form_model() -> Model:
     return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                regime_transitions=retirement_only.retirement_transitions(last_age=50),
                 solver=solver,
             ),
             "dead": bequest_dead,
@@ -188,7 +186,6 @@ def _skill_model() -> Model:
     """
     skill_grid = LinSpacedGrid(start=0.5, stop=1.5, n_points=5)
     alive = dcegm_retirement.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         states={"wealth": WEALTH_GRID, "skill": skill_grid},
         state_transitions={
             "wealth": next_wealth_from_savings,
@@ -200,7 +197,6 @@ def _skill_model() -> Model:
         },
     )
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={
             "wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400),
             "skill": skill_grid,
@@ -275,7 +271,6 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
     the grid-argmax consumption.
     """
     alive = dcegm_retirement.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         functions={
             **dict(dcegm_retirement.functions),
             "utility": Phased(
@@ -285,7 +280,6 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         },
     )
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )

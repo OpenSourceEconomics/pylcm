@@ -28,7 +28,14 @@ import numpy as np
 import pytest
 
 from _lcm.solution import backward_induction
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.solvers import GridSearch
 from lcm.typing import FloatND, UserParams
 from tests.solution.test_compilation_identity import _capture_lowering_keys, _model
@@ -57,9 +64,6 @@ def _reordered_actions_model() -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "consumption": LinSpacedGrid(start=1, stop=3, n_points=3),
@@ -72,7 +76,12 @@ def _reordered_actions_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 18, "dead": (18, 19)},
+                law=working_life_transitions(last_age=final_age_alive + 1),
+            )
+        },
     )
 
 
@@ -88,9 +97,6 @@ def _rewaged_model() -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -104,7 +110,12 @@ def _rewaged_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 18, "dead": (18, 19)},
+                law=working_life_transitions(last_age=final_age_alive + 1),
+            )
+        },
     )
 
 
@@ -113,9 +124,6 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=START_AGE + _N_PERIODS - 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -131,7 +139,12 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
         regime_id_class=RegimeId,
         fixed_params={"discount_factor": discount_factor},
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 18, "dead": (18, 19)},
+                law=working_life_transitions(last_age=START_AGE + _N_PERIODS - 1),
+            )
+        },
     )
 
 

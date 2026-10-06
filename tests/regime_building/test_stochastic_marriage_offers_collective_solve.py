@@ -58,12 +58,12 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -163,35 +163,6 @@ def _offer_probs(education: DiscreteState) -> FloatND:
 
 def _make_offer_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={"education": _identity_education},
-                                ),
-                            )
-                        },
-                        gate_references={
-                            "V_single_f_ref": ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"education": _identity_education},
-                            ),
-                            "V_single_m_ref": ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"education": _spouse_type_as_education},
-                            ),
-                        },
-                    )
-                }
-            }
-        ),
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={
             "education": fixed_transition("education"),
@@ -207,17 +178,14 @@ def _make_offer_regimes() -> dict[str, Regime]:
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={
             "education": DiscreteGrid(category_class=Education),
             "spouse_type": DiscreteGrid(category_class=Education),
@@ -232,6 +200,54 @@ def _make_offer_regimes() -> dict[str, Regime]:
         "single_f_terminal": single_f_terminal,
         "single_m_terminal": single_m_terminal,
         "married_terminal": married_terminal,
+    }
+
+
+def _single_f_law() -> ByAge:
+    """The single's age-0 law: a consent-gated marriage offer.
+
+    The edge into `married_terminal` opens only where both partners consent;
+    otherwise the single falls back to `single_f_terminal`.
+    """
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "married_terminal": ValueDependentTransition(
+                    probability=StochasticTransition(func=_prob_one),
+                    gate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"education": _identity_education},
+                            ),
+                        )
+                    },
+                    gate_references={
+                        "V_single_f_ref": ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={"education": _identity_education},
+                        ),
+                        "V_single_m_ref": ProjectedRegimeValue(
+                            regime="single_m_terminal",
+                            projection={"education": _spouse_type_as_education},
+                        ),
+                    },
+                )
+            }
+        }
+    )
+
+
+def _bound_offer_regimes() -> dict[str, Regime]:
+    """The offer regimes with their laws bound, for the kernel-level path."""
+    regimes = _make_offer_regimes()
+    return {
+        name: regime.replace(
+            regime_transitions=_single_f_law() if name == "single_f" else None
+        )
+        for name, regime in regimes.items()
     }
 
 
@@ -271,11 +287,11 @@ _EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([2.7575, 5.42])
 
 def _solve_offer_regimes(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regime_names = list(_make_offer_regimes())
+    regime_names = list(_bound_offer_regimes())
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_offer_regimes(),
+                user_regimes=_bound_offer_regimes(),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
@@ -284,7 +300,7 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
         ),
         user_regimes=lower_declarations(
             finalize_regimes(
-                user_regimes=_make_offer_regimes(),
+                user_regimes=_bound_offer_regimes(),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
@@ -347,7 +363,12 @@ def test_stochastic_marriage_offer_matches_public_model_api():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
         regimes=_make_offer_regimes(),
-        edges={"single_f": {"married_terminal": 0, "single_f_terminal": 0}},
+        edges={
+            "single_f": Transition(
+                targets={"married_terminal": 0, "single_f_terminal": 0},
+                law=_single_f_law(),
+            )
+        },
         ages=ages,
         regime_id_class=OfferRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},
@@ -406,13 +427,6 @@ def _u_job(*, offer: DiscreteState, work: DiscreteAction) -> FloatND:  # noqa: A
 
 def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): DeterministicTransition(
-                    func=lambda: JobRegimeId.job_terminal
-                )
-            }
-        ),
         states={"offer": DiscreteGrid(category_class=Offer)},
         state_transitions={"offer": StochasticTransition(func=_offer_arrival_probs)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -420,7 +434,6 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
         constraints={"work_requires_offer": _work_requires_offer},
     )
     job_terminal = Regime(
-        regime_transitions=None,
         states={"offer": DiscreteGrid(category_class=Offer)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_job},
@@ -487,7 +500,7 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     "endogenous offer distribution" is unrepresentable through this
     primitive — confirmed, not merely asserted, by this failure mode.
     """
-    regimes = _make_offer_regimes()
+    regimes = _bound_offer_regimes()
     regimes["single_f"] = regimes["single_f"].replace(
         state_transitions={
             "education": fixed_transition("education"),

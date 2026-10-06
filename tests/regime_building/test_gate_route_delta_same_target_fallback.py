@@ -20,6 +20,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
 )
@@ -76,10 +77,10 @@ def _same_target_fallback_model() -> Model:
     must publish the projected x=0.5 instead.
     """
     return Model(
-        edges={"source": {"target": 0}},
-        regimes={
-            "source": Regime(
-                regime_transitions={
+        edges={
+            "source": Transition(
+                targets={"target": 0},
+                law={
                     "target": ValueDependentTransition(
                         probability=StochasticTransition(func=_always_true),
                         gate=_always_closed,
@@ -93,13 +94,16 @@ def _same_target_fallback_model() -> Model:
                         off_grid="pointwise",
                     )
                 },
+            )
+        },
+        regimes={
+            "source": Regime(
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
                 functions={"utility": _costly_saving},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _constant_utility},
             ),

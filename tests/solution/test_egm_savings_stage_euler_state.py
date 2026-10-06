@@ -31,6 +31,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -252,10 +253,6 @@ def _survival_prob_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -280,7 +277,15 @@ def _survival_prob_model(solver: str) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob),
+                    "dead": StochasticTransition(func=death_prob),
+                },
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -317,7 +322,6 @@ def _markov_health_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -346,7 +350,12 @@ def _markov_health_model(solver: str) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -392,7 +401,6 @@ def _passive_skill_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
         state_transitions={
@@ -421,7 +429,12 @@ def _passive_skill_model(solver: str) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -480,10 +493,6 @@ def smooth_death_prob(wealth: ContinuousState) -> FloatND:
 
 def _build_model_with_survival_cells(*, stay, die) -> Model:
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay),
-            "dead": StochasticTransition(func=die),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_dcegm},
@@ -499,7 +508,15 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
     return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay),
+                    "dead": StochasticTransition(func=die),
+                },
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )

@@ -32,6 +32,7 @@ from lcm import (
     Model,
     Phased,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -292,6 +293,8 @@ def build_model(
     to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
+    `regime_transition` is the law on the alive regime's outgoing edges; with
+    `n_periods == 2` the alive regime has one outgoing edge and takes no law.
     `second_passive_state=True` gives the alive regime a second passive
     continuous stock, held fixed and carried by that regime alone, so its carry
     rows span two passive axes instead of one.
@@ -375,7 +378,6 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -395,7 +397,6 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -415,25 +416,27 @@ def build_model(
             ),
         )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},
     )
+    dies = AgeRange(exclusive_stop=final_age_alive + 5)
+    has_law = n_periods > 2
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
-        fixed_params={"final_age_alive": final_age_alive},
+        fixed_params={"final_age_alive": final_age_alive} if has_law else {},
         execution_config=execution_config,
         initial_nodes={20: ("alive", "dead")},
         edges={
-            "alive": {
-                **(
-                    {"alive": AgeRange(exclusive_stop=final_age_alive)}
-                    if n_periods > 2
-                    else {}
-                ),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": dies,
+                },
+                law=regime_transition,
+            )
+            if has_law
+            else {"dead": dies}
         },
     )

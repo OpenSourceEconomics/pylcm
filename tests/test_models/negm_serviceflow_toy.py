@@ -35,6 +35,7 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    Transition,
     categorical,
     outer_unchanged,
 )
@@ -241,17 +242,19 @@ NEGM_SOLVER = NEGM(
 
 FINAL_AGE_ALIVE = 20 + (N_PERIODS - 2) * 5
 EDGES = {
-    "alive": {
-        "alive": AgeRange(exclusive_stop=FINAL_AGE_ALIVE),
-        "dead": AgeRange(exclusive_stop=FINAL_AGE_ALIVE + 5),
-    }
+    "alive": Transition(
+        targets={
+            "alive": AgeRange(exclusive_stop=FINAL_AGE_ALIVE),
+            "dead": AgeRange(exclusive_stop=FINAL_AGE_ALIVE + 5),
+        },
+        law=DeterministicTransition(func=next_regime),
+    )
 }
 
 
 def _build_dead_regime() -> Regime:
     """The terminal regime (shared by both twins)."""
     return Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -265,7 +268,6 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -315,7 +317,6 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "serviced_durable": serviced_durable_brute,

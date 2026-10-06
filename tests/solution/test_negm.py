@@ -29,12 +29,14 @@ from _lcm.typing import EconFunction, EconFunctionsMapping
 from lcm import (
     AgeGrid,
     AgeRange,
+    DeterministicTransition,
     LinSpacedGrid,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NormalIIDProcess,
     OuterContinuousMargin,
+    Transition,
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
@@ -79,7 +81,6 @@ def _nested_regime(
     if outer_no_adjustment_candidate != outer_unchanged:
         functions[outer_no_adjustment_candidate] = lambda illiquid: illiquid
     return NestedConsumptionSavingsRegime(
-        regime_transitions=lambda: 0,
         states={"wealth": _OUTER_GRID, "illiquid": _OUTER_GRID},
         state_transitions={
             "wealth": lambda liquid_savings: liquid_savings,
@@ -187,10 +188,13 @@ def test_negm_configuration_does_not_change_reachability() -> None:
         step="5Y",
     )
     edges = {
-        "alive": {
-            "alive": AgeRange(exclusive_stop=final_age_alive),
-            "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-        }
+        "alive": Transition(
+            targets={
+                "alive": AgeRange(exclusive_stop=final_age_alive),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+            },
+            law=DeterministicTransition(func=negm_kinked_toy.next_regime),
+        )
     }
     negm_model = Model(
         edges=edges,

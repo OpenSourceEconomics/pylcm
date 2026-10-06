@@ -17,7 +17,6 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
 )
 from lcm.case_piece import BoundaryKind
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -53,7 +52,7 @@ def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
 
 def test_grid_search_executes_the_output_declared_by_case_pieces() -> None:
     """Case pieces generate their split output without a second user combiner."""
-    params = toy.build_params(final_age_alive=1.0)
+    params = toy.build_params()
     generated = (
         toy.build_model(
             variant="brute",
@@ -198,7 +197,6 @@ def _build_model(
             }
         },
         constraints={},
-        regime_transitions={"dead": StochasticTransition(func=toy.prob_die)},
         functions={
             "utility": toy.utility,
             "predicate": predicate,
@@ -220,7 +218,6 @@ def _build_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": grid},
         functions={"utility": toy.bequest},
         solver=GridSearch(),

@@ -18,7 +18,6 @@ from _lcm.simulation.simulate import (
 )
 from _lcm.utils.logging import get_logger
 from lcm import (
-    AgeRange,
     LinearAggregator,
     LinearExpectation,
     Model,
@@ -38,7 +37,7 @@ from tests.test_models.deterministic.regression import (
     get_params,
     graph_bound_working_life_transitions,
     working_life,
-    working_life_transitions,
+    working_life_edges,
 )
 
 
@@ -146,26 +145,17 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             if name != "wage"
         }
         stop_age = START_AGE + n_periods - 1
-        final_age_alive = stop_age - 1
         ages = AgeGrid(start=START_AGE, inclusive_stop=stop_age, step="Y")
-        updated_working_life = working_life.replace(
-            functions=updated_functions,
-            regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
-        )
+        updated_working_life = working_life.replace(functions=updated_functions)
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
-        edges = {"working_life": {"dead": AgeRange(exclusive_stop=stop_age)}}
-        if n_periods > 2:
-            edges["working_life"]["working_life"] = AgeRange(
-                exclusive_stop=final_age_alive
-            )
         model = Model(
             regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "working_life"},
-            edges=edges,
+            edges=working_life_edges(ages),
         )
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model

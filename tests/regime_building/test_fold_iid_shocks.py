@@ -123,21 +123,21 @@ def _make_regimes(
     `test_fold_is_bit_exact_against_unfolded_then_averaged`.
     """
     period0 = Regime(
+        states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("terminal",)
                 )
             }
-        ),
-        states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     return {"period0": period0, "terminal": terminal}
 
 
@@ -218,13 +218,6 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
     with no `fold` argument, so the DEFAULT is what gets exercised.
     """
     period0 = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("terminal",)
-                )
-            }
-        ),
         states={
             "wage_shock": NormalIIDProcess(
                 n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0
@@ -232,11 +225,18 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
         },
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     return {"period0": period0, "terminal": terminal}
 
 
@@ -271,13 +271,6 @@ def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
         return work * (10.0 + a + b + c)
 
     period0 = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("terminal",)
-                )
-            }
-        ),
         states={
             "a": _shock(fold=fold, n_points=3, sigma=1.0),
             "b": _shock(fold=fold, n_points=3, sigma=1.0),
@@ -285,11 +278,18 @@ def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
         },
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility3},
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     return {"period0": period0, "terminal": terminal}
 
 
@@ -322,12 +322,11 @@ def test_fold_on_taste_shocks_regime_is_rejected():
 
     with pytest.raises(RegimeInitializationError, match="taste_shocks"):
         Regime(
-            regime_transitions=None,
             taste_shocks=ExtremeValueTasteShocks(),
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
-        )
+        ).replace(regime_transitions=None)
 
 
 def test_fold_on_non_gridsearch_solver_is_rejected():
@@ -342,7 +341,6 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
     # thing left for the fold check to reject is the non-`GridSearch` solver.
     with pytest.raises(RegimeInitializationError, match="GridSearch"):
         ConsumptionSavingsRegime(
-            regime_transitions=None,
             states={
                 "wage_shock": _shock(fold=True),
                 "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
@@ -362,7 +360,7 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
             solver=DCEGM(
                 savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             ),
-        )
+        ).replace(regime_transitions=None)
 
 
 def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
@@ -383,6 +381,8 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     checks the TARGET side of the same declarations instead.
     """
     Regime(
+        states={"wage_shock": _shock(fold=True)},
+    ).replace(
         regime_transitions={
             "some_target": ValueDependentTransition(
                 probability=StochasticTransition(func=lambda: jnp.asarray(1.0)),
@@ -393,8 +393,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
                     )
                 },
             )
-        },
-        states={"wage_shock": _shock(fold=True)},
+        }
     )
 
 
@@ -404,7 +403,6 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
     downstream may depend on which node was realized."""
     with pytest.raises(RegimeInitializationError, match="next-period transition"):
         Regime(
-            regime_transitions=_next_regime,
             states={
                 "wage_shock": _shock(fold=True),
                 "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
@@ -414,7 +412,7 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
                 "wealth": lambda wealth, wage_shock: wealth + wage_shock,
             },
             functions={"utility": _utility},
-        )
+        ).replace(regime_transitions=_next_regime)
 
 
 def _process(
@@ -469,24 +467,24 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
 
     wealth_grid = LinSpacedGrid(start=0.0, stop=10.0, n_points=3)
     period0 = Regime(
+        states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
+        state_transitions={"wealth": {"terminal": lambda wealth: wealth}},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility_with_wealth},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))
                 }
             }
-        ),
-        states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
-        state_transitions={"wealth": {"terminal": lambda wealth: wealth}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility_with_wealth},
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=True), "wealth": wealth_grid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_with_wealth},
-    )
+    ).replace(regime_transitions=None)
 
     processed = _process(regimes={"period0": period0, "terminal": terminal})
 
@@ -755,23 +753,23 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
     from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     period0 = Regime(
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))
                 }
             }
-        ),
-        states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
-    )
+    ).replace(regime_transitions=None)
 
     processed = _process(regimes={"period0": period0, "terminal": terminal})
 
@@ -821,23 +819,23 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     the support is, so there is nothing about the routing left to disambiguate.
     """
     period0 = Regime(
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("terminal",)
                 )
             }
-        ),
-        states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
-    )
+    ).replace(regime_transitions=None)
 
     processed = _process(regimes={"period0": period0, "terminal": terminal})
 
@@ -871,23 +869,23 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
     """
     fold_name = "source_shock" if shared else "target_shock"
     period0 = Regime(
+        states={"source_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_source_shock},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_regime, targets=("terminal",)
                 )
             }
-        ),
-        states={"source_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_source_shock},
+        )
     )
     terminal = Regime(
-        regime_transitions=None,
         states={fold_name: _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_source_shock if shared else _u_target_shock},
-    )
+    ).replace(regime_transitions=None)
     return {"period0": period0, "terminal": terminal}
 
 
@@ -988,21 +986,21 @@ def test_coarse_self_transition_retains_the_self_continuation():
         return jnp.where(age < 1, jnp.int32(0), jnp.int32(1))
 
     stay = Regime(
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge.until(
             stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
                 func=_next_self, targets=("stay", "done")
             ),
             then=_SupportedDeterministicTransition(func=_next_self, targets=("done",)),
-        ),
-        states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -1058,21 +1056,21 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
         return jnp.int32(0)
 
     stay = Regime(
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge.until(
             stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
                 func=_next_self, targets=("stay", "done")
             ),
             then=_SupportedDeterministicTransition(func=_next_self, targets=("done",)),
-        ),
-        states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
 
     processed = _process(
         regimes={"stay": stay, "done": done}, ages=ages3, regime_names_to_ids=ids
@@ -1106,27 +1104,26 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
         return jnp.int32(1)  # always "stay", never "alt"
 
     src = Regime(
+        states={"wage_shock": _shock(fold=False)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_always_stay, targets=("stay", "alt")
                 )
             }
-        ),
-        states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility},
+        )
     )
     stay = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     alt = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
-    )
+    ).replace(regime_transitions=None)
 
     processed = _process(
         regimes={"src": src, "stay": stay, "alt": alt},
@@ -1160,20 +1157,20 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
 
     def _terminal() -> Regime:
         return Regime(
-            regime_transitions=None,
             states={"wage_shock": _shock(fold=False)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": lambda wage_shock, work: work * (2.0 + wage_shock)},
-        )
+        ).replace(regime_transitions=None)
 
     def _period0(
         transition: DeterministicTransition | Mapping[str, StochasticTransition],
     ) -> Regime:
         return Regime(
-            regime_transitions=ByAge(cases={AgeRange(exclusive_stop=1): transition}),
             states={"wage_shock": _shock(fold=False)},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
+        ).replace(
+            regime_transitions=ByAge(cases={AgeRange(exclusive_stop=1): transition})
         )
 
     coarse = _solve(
@@ -1257,6 +1254,9 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
         return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
 
     src = Regime(
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -1264,20 +1264,16 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
                     "dead_C": StochasticTransition(func=_route_to_C),
                 }
             }
-        ),
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     folded_B = Regime(
-        regime_transitions=None,
         states={"bshock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_folded_B},
-    )
+    ).replace(regime_transitions=None)
     dead_C = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     return {"src": src, "folded_B": folded_B, "dead_C": dead_C}
 
 
@@ -1433,6 +1429,11 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
         return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
 
     src = Regime(
+        states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=3)},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -1440,22 +1441,16 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
                     "dead_C": StochasticTransition(func=_route_to_C),
                 }
             }
-        ),
-        states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=3)},
-        state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     folded_B = Regime(
-        regime_transitions=None,
         states={"bshock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_folded_B},
-    )
+    ).replace(regime_transitions=None)
     dead_C = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
-    )
+    ).replace(regime_transitions=None)
     return {"src": src, "folded_B": folded_B, "dead_C": dead_C}
 
 

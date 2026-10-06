@@ -15,6 +15,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidInitialConditionsError
@@ -65,7 +66,6 @@ def _next_regime(age: float) -> ScalarInt:
 _MODEL = Model(
     regimes={
         "alive": Regime(
-            regime_transitions=DeterministicTransition(func=_next_regime),
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),
                 "health": DiscreteGrid(_Health),
@@ -75,12 +75,17 @@ _MODEL = Model(
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "health": _next_health},
         ),
-        "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
+        "dead": Regime(functions={"utility": lambda: 0.0}),
     },
     ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
     regime_id_class=_RegimeId,
     initial_nodes={0: "alive"},
-    edges={"alive": {"alive": 0, "dead": (0, 1)}},
+    edges={
+        "alive": Transition(
+            targets={"alive": 0, "dead": (0, 1)},
+            law=DeterministicTransition(func=_next_regime),
+        )
+    },
 )
 _PARAMS = {"discount_factor": 0.95}
 

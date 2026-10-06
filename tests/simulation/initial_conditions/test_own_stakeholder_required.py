@@ -28,8 +28,12 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
+    StakeholderRoute,
     StochasticTransition,
+    Transition,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -45,8 +49,11 @@ from tests.regime_building.test_collective_regime_simulate import (
     _WAGE_3,
     DissolutionRegimeId,
     Work,
+    _consent_gate,
+    _identity_wage,
     _make_consent_regimes,
     _make_dissolution_regimes,
+    _no_dissolution_gate,
     _prob_one,
     _u_zero_collective,
 )
@@ -67,6 +74,62 @@ CONSENT_WAGES = (1.0, 2.0)
 
 # Which consent-model subject reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
+
+# The married couple's dissolution law: the couple stays together unless the
+# gate closes, and a dissolving row continues in its own stakeholder's single
+# regime under the identity wage projection.
+MARRIED_DISSOLUTION_LAW = {
+    "married_ir": ValueDependentTransition(
+        probability=StochasticTransition(func=_prob_one),
+        gate=_no_dissolution_gate,
+        routes={
+            "f": StakeholderRoute(
+                target_stakeholder="f",
+                fallback=ProjectedRegimeValue(
+                    regime="single_f", projection={"wage": _identity_wage}
+                ),
+            ),
+            "m": StakeholderRoute(
+                target_stakeholder="m",
+                fallback=ProjectedRegimeValue(
+                    regime="single_m", projection={"wage": _identity_wage}
+                ),
+            ),
+        },
+    )
+}
+
+# The single woman's consent law: she marries when both partners prefer the
+# couple to their own single lives, and otherwise keeps her single value.
+SINGLE_F_CONSENT_LAW = ByAge(
+    cases={
+        AgeRange(exclusive_stop=1): {
+            "married_terminal": ValueDependentTransition(
+                probability=StochasticTransition(func=_prob_one),
+                gate=_consent_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+                gate_references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f_terminal",
+                        projection={"wage": _identity_wage},
+                    ),
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m_terminal",
+                        projection={"wage": _identity_wage},
+                    ),
+                },
+            )
+        }
+    }
+)
 
 
 @categorical(ordered=False)
@@ -92,7 +155,10 @@ def dissolution_model_and_solution():
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
         edges={
-            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
+            ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1, 2)},
@@ -114,7 +180,12 @@ def consent_model_and_solution():
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
         initial_nodes={0: "single_f"},
-        edges={"single_f": {"married_terminal": 0, "single_f_terminal": 0}},
+        edges={
+            "single_f": Transition(
+                targets={"married_terminal": 0, "single_f_terminal": 0},
+                law=SINGLE_F_CONSENT_LAW,
+            )
+        },
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
     return model, solution
@@ -264,18 +335,11 @@ def _make_unreachable_role_routing_regimes():
     """Add a collective start that cannot reach the two-leg dissolution edge.
 
     `alone` carries the same stakeholders as `married` and runs out into its own
-    terminal regime. Its per-target transition names `alone_terminal` alone, so
-    no path leads from it to `married` and none of `married`'s legs can ever
+    terminal regime. Its only outgoing edge leads to `alone_terminal`, so no
+    path leads from it to `married` and none of `married`'s legs can ever
     select on a role a subject started in `alone` with.
     """
     alone = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "alone_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -286,7 +350,6 @@ def _make_unreachable_role_routing_regimes():
         },
     )
     alone_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -318,7 +381,10 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
         initial_nodes={0: ("alone", "married")},
         edges={
             "alone": {"alone_terminal": 0},
-            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
+            ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1, 2)},
@@ -361,32 +427,6 @@ class ReachableRoleRoutingRegimeId:
     single_m_terminal: ScalarInt
 
 
-def _shift_dissolution_one_age() -> dict:
-    """Move the dissolution miniature one age later, freeing age 0 for a start."""
-    regimes = _make_dissolution_regimes()
-    windows = {
-        "married": AgeRange(start=1, exclusive_stop=2),
-        "married_ir": AgeRange(start=2, exclusive_stop=3),
-        "single_f": AgeRange(start=2, exclusive_stop=3),
-        "single_m": AgeRange(start=2, exclusive_stop=3),
-    }
-    return {
-        name: regime.replace(
-            regime_transitions=ByAge(
-                cases={windows[name]: _law(regime.regime_transitions)}
-            )
-        )
-        if name in windows
-        else regime
-        for name, regime in regimes.items()
-    }
-
-
-def _law(transitions: object) -> object:
-    """The single law a regime's transitions declare."""
-    return transitions.laws[0] if isinstance(transitions, ByAge) else transitions
-
-
 def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role():
     """A role is demanded wherever a subject can still arrive at a two-leg edge.
 
@@ -397,13 +437,6 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     every row following one partner's dissolution path.
     """
     prelude = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -414,13 +447,18 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         },
     )
     model = Model(
-        regimes={"prelude": prelude, **_shift_dissolution_one_age()},
+        regimes={"prelude": prelude, **_make_dissolution_regimes()},
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
         initial_nodes={0: "prelude"},
         edges={
             "prelude": {"married": 0},
-            "married": {"married_ir": 1, "single_f": 1, "single_m": 1},
+            "married": Transition(
+                targets={"married_ir": 1, "single_f": 1, "single_m": 1},
+                law=ByAge(
+                    cases={AgeRange(start=1, exclusive_stop=2): MARRIED_DISSOLUTION_LAW}
+                ),
+            ),
             "married_ir": {"married_terminal": 2},
             "single_f": {"single_f_terminal": 2},
             "single_m": {"single_m_terminal": 2},

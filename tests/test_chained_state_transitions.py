@@ -16,6 +16,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -54,7 +55,6 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 
 _active = UserRegime(
-    regime_transitions=DeterministicTransition(func=_next_regime),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
@@ -71,9 +71,7 @@ _active = UserRegime(
 )
 
 
-_dead = UserRegime(
-    regime_transitions=None, functions={"utility": lambda: jnp.array(0.0)}
-)
+_dead = UserRegime(functions={"utility": lambda: jnp.array(0.0)})
 
 
 def _build_model() -> Model:
@@ -82,7 +80,12 @@ def _build_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},
-        edges={"active": {"active": 0, "dead": (0, 1)}},
+        edges={
+            "active": Transition(
+                targets={"active": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 
@@ -202,7 +205,6 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 
 def _f2_build_model() -> Model:
     live = UserRegime(
-        regime_transitions=DeterministicTransition(func=_f2_next_regime),
         states={
             "good": DiscreteGrid(category_class=_Good),
             "capital": DiscreteGrid(category_class=_Capital),
@@ -215,7 +217,6 @@ def _f2_build_model() -> Model:
         functions={"utility": _f2_utility},
     )
     last = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.array(0.0)},
     )
     return Model(
@@ -223,7 +224,12 @@ def _f2_build_model() -> Model:
         ages=AgeGrid(start=25, inclusive_stop=27, step="1Y"),
         regime_id_class=_RegimeIdF2,
         initial_nodes={25: "live"},
-        edges={"live": {"live": 25, "last": (25, 26)}},
+        edges={
+            "live": Transition(
+                targets={"live": 25, "last": (25, 26)},
+                law=DeterministicTransition(func=_f2_next_regime),
+            )
+        },
     )
 
 

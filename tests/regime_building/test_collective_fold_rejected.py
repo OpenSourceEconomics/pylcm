@@ -24,14 +24,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
     ValueDependentConstraint,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND
 from tests.collective_fixtures import (
     AGES,
     FOLDED_SHOCK,
@@ -131,7 +130,6 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
     space is the only one with no sustainable action.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID, "wage_shock": FOLDED_SHOCK},
         state_transitions={"wage": _fixed_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -145,7 +143,6 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -189,8 +186,3 @@ def _terminal_utility_m(work: DiscreteAction) -> FloatND:
 def _fixed_wage(wage: ContinuousState) -> ContinuousState:
     """Wage law: the wage a household starts with is the wage it keeps."""
     return wage
-
-
-def _next_couple_regime() -> ScalarInt:
-    """Regime transition: `couple` becomes `couple_terminal` with probability one."""
-    return CoupleRegimeId.couple_terminal

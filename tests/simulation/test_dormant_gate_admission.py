@@ -8,7 +8,6 @@ gate stages.
 
 import dataclasses
 from types import MappingProxyType
-from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -25,6 +24,7 @@ from lcm import (
     SimulationResult,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -57,11 +57,10 @@ def _projection(*, wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _regime(*, law: Any) -> Regime:
+def _regime(*, terminal: bool) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=3)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
     )
 
@@ -69,28 +68,35 @@ def _regime(*, law: Any) -> Regime:
 def _model(
     *, budgeted: bool, gated: bool, promote: bool, reverse: bool, width: int
 ) -> Model:
-    latent_law = (
-        {
-            "end": ValueDependentTransition(
-                probability=StochasticTransition(func=_probability),
-                gate=_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        target_stakeholder=None,
-                        fallback=ProjectedRegimeValue(
-                            regime="end", projection={"wealth": _projection}
-                        ),
-                    )
-                },
-            )
-        }
+    latent_edges = (
+        Transition(
+            targets={"end": 0},
+            law=ByAge(
+                cases={
+                    0: {
+                        "end": ValueDependentTransition(
+                            probability=StochasticTransition(func=_probability),
+                            gate=_gate,
+                            routes={
+                                "only": StakeholderRoute(
+                                    target_stakeholder=None,
+                                    fallback=ProjectedRegimeValue(
+                                        regime="end", projection={"wealth": _projection}
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            ),
+        )
         if gated
-        else "end"
+        else {"end": 0}
     )
     regimes = {
-        "main": _regime(law=ByAge(cases={0: "end"})),
-        "latent": _regime(law=ByAge(cases={0: latent_law})),
-        "end": _regime(law=None),
+        "main": _regime(terminal=False),
+        "latent": _regime(terminal=False),
+        "end": _regime(terminal=True),
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
@@ -109,7 +115,7 @@ def _model(
             if budgeted
             else ExecutionConfig()
         ),
-        edges={"main": {"end": 0}, "latent": {"end": 0}},
+        edges={"main": {"end": 0}, "latent": latent_edges},
     )
 
 

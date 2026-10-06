@@ -13,7 +13,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
@@ -46,11 +45,6 @@ def _health_probs(health: DiscreteState) -> FloatND:
     return jnp.identity(2)[health]
 
 
-def _next_regime(period: ScalarInt) -> ScalarInt:
-    """The only non-terminal period hands over to the terminal regime."""
-    return jnp.where(period >= 0, _RegimeId.last, _RegimeId.alive)
-
-
 def _alive_utility(health: DiscreteState) -> FloatND:
     return health + 0.0
 
@@ -70,13 +64,11 @@ def model() -> Model:
         edges={"alive": {"last": 25}},
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"health": DiscreteGrid(category_class=_Health)},
                 state_transitions={"health": StochasticTransition(func=_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(
-                regime_transitions=None,
                 states={"health": DiscreteGrid(category_class=_Health)},
                 actions={"spend": DiscreteGrid(category_class=_Spend)},
                 constraints={"survives_to_spend": _survives_to_spend},

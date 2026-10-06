@@ -14,7 +14,14 @@ import pytest
 
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _lowering_key, _program_identity
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import GridSearch
 from lcm.typing import RegimeName
@@ -88,9 +95,6 @@ def _model(
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=3, n_points=n_wealth_points)
                 },
@@ -106,7 +110,12 @@ def _model(
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 18, "dead": (18, 19)},
+                law=working_life_transitions(last_age=final_age_alive + 1),
+            )
+        },
     )
 
 

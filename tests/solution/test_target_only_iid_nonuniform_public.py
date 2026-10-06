@@ -16,12 +16,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LogNormalIIDProcess,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
@@ -41,28 +39,14 @@ def _shock(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one() -> ScalarFloat:
-    return jnp.float32(1)
-
-
-def _target_id() -> ScalarInt:
-    return RegimeId.target
-
-
 def _oracle() -> float:
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
     values = np.exp(math.sqrt(2.0) * raw_nodes)
     return float(np.dot(values, raw_weights / math.sqrt(math.pi)))
 
 
-@pytest.mark.parametrize("coarse", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
-    transition = (
-        DeterministicTransition(func=_target_id)
-        if coarse
-        else {"target": StochasticTransition(func=_one)}
-    )
+def test_target_only_lognormal_iid_uses_quadrature_weights(*, enable_jit):
     process = LogNormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
@@ -73,11 +57,9 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 functions={"utility": _zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock},
             ),

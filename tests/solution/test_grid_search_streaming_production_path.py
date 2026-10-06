@@ -16,7 +16,6 @@ from _lcm.regime_building import max_Q_over_a
 from _lcm.solution import action_streaming
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -51,11 +50,6 @@ class RegimeId:
     done: ScalarInt
 
 
-def _next_regime() -> ScalarInt:
-    """Move from the decision regime to the terminal regime."""
-    return RegimeId.done
-
-
 def _utility(
     *,
     wealth: ContinuousState,
@@ -85,7 +79,6 @@ def _terminal_utility() -> FloatND:
 def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -96,7 +89,6 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         constraints={"only_target": _only_target},
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": _terminal_utility},
     )
     return Model(

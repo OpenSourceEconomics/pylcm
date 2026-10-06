@@ -23,16 +23,13 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Phased,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import FloatND, ScalarInt, UserFunction
+from lcm.typing import FloatND, ScalarInt
 
 BEQUEST_SCALE = 0.8
 
@@ -42,15 +39,6 @@ class _RegimeId:
     working: ScalarInt
     retired: ScalarInt
     dead: ScalarInt
-
-
-def _to_retired(age: float) -> ScalarInt:  # noqa: ARG001
-    return _RegimeId.retired
-
-
-def _from_retired(age: float) -> ScalarInt:
-    # retired is active only at 62 (see `_*_retired` below); its next regime is dead.
-    return jnp.where(age < 62, _RegimeId.retired, _RegimeId.dead)
 
 
 def _impute_pension_wealth(aime: float) -> float:
@@ -90,9 +78,8 @@ def _bequest_utility(pension_wealth: float) -> FloatND:
 def _dead(*, values_bequest: bool) -> UserRegime:
     """Terminal regime, optionally carrying `pension_wealth` to value a bequest."""
     if not values_bequest:
-        return UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+        return UserRegime(functions={"utility": lambda: 0.0})
     return UserRegime(
-        regime_transitions=None,
         states={"pension_wealth": LinSpacedGrid(start=0.0, stop=20.0, n_points=4)},
         functions={"utility": _bequest_utility},
     )
@@ -101,13 +88,6 @@ def _dead(*, values_bequest: bool) -> UserRegime:
 def _carried_retired() -> UserRegime:
     """`retired` carries `pension_wealth`: imputed in solve, gridded in simulate."""
     return UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=62, exclusive_stop=64): DeterministicTransition(
-                    func=_from_retired
-                )
-            }
-        ),
         states={
             "pension_wealth": Phased(
                 solve=_impute_pension_wealth,
@@ -122,21 +102,21 @@ def _carried_retired() -> UserRegime:
 def _ordinary_retired() -> UserRegime:
     """`retired` grids `pension_wealth` ORDINARILY in both phases."""
     return UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=62, exclusive_stop=64): DeterministicTransition(
-                    func=_from_retired
-                )
-            }
-        ),
         states={"pension_wealth": LinSpacedGrid(start=0.0, stop=20.0, n_points=4)},
         state_transitions={"pension_wealth": _evolve_pension_wealth},
         functions={"utility": _retired_utility},
     )
 
 
+_EDGES = {"working": {"retired": 60}, "retired": {"dead": 62}}
+
+
 def _model(
-    *, working: UserRegime, retired: UserRegime, values_bequest: bool = False
+    *,
+    working: UserRegime,
+    retired: UserRegime,
+    values_bequest: bool = False,
+    edges: object = _EDGES,
 ) -> Model:
     return Model(
         regimes={
@@ -147,11 +127,11 @@ def _model(
         ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=_RegimeId,
         initial_nodes={60: "working"},
-        edges={"working": {"retired": 60}, "retired": {"dead": 62}},
+        edges=edges,
     )
 
 
-def _working(*, regime_transitions: UserFunction | Phased) -> UserRegime:
+def _working() -> UserRegime:
     """`working` produces target-only `pension_wealth` and hands it over.
 
     Its own flow utility is consumption now; it does not read the handed-over
@@ -162,9 +142,6 @@ def _working(*, regime_transitions: UserFunction | Phased) -> UserRegime:
         return consumption <= wealth
 
     return UserRegime(
-        regime_transitions=ByAge(
-            cases={AgeRange(start=60, exclusive_stop=62): regime_transitions}
-        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=4),
@@ -200,7 +177,7 @@ def test_target_only_handover_builds_and_solves() -> None:
     """The plain handover — produced by the source, carried by the target."""
     working_V = _solve_working_V(
         _model(
-            working=_working(regime_transitions=_to_retired),
+            working=_working(),
             retired=_ordinary_retired(),
         )
     )
@@ -217,7 +194,7 @@ def test_terminal_bequest_over_a_handed_over_state_solves() -> None:
     """
     working_V = _solve_working_V(
         _model(
-            working=_working(regime_transitions=_to_retired),
+            working=_working(),
             retired=_ordinary_retired(),
             values_bequest=True,
         )
@@ -234,13 +211,13 @@ def test_bequest_raises_the_value_of_working() -> None:
     """
     without = _solve_working_V(
         _model(
-            working=_working(regime_transitions=_to_retired),
+            working=_working(),
             retired=_ordinary_retired(),
         )
     )
     with_bequest = _solve_working_V(
         _model(
-            working=_working(regime_transitions=_to_retired),
+            working=_working(),
             retired=_ordinary_retired(),
             values_bequest=True,
         )
@@ -254,14 +231,13 @@ def test_bequest_raises_the_value_of_working() -> None:
 
 def test_handover_builds_under_a_phase_varying_carrier() -> None:
     """A carrier that only imputes the state in solve still takes the handover."""
-    _model(working=_working(regime_transitions=_to_retired), retired=_carried_retired())
+    _model(working=_working(), retired=_carried_retired())
 
 
-def test_handover_builds_under_a_phase_varying_transition() -> None:
-    """`Phased(solve=..., simulate=...)` on the source's regime transition."""
+def test_handover_builds_under_phased_edges() -> None:
+    """`Phased(solve=..., simulate=...)` edges carry the handover in both phases."""
     _model(
-        working=_working(
-            regime_transitions=Phased(solve=_to_retired, simulate=_to_retired)
-        ),
+        working=_working(),
         retired=_carried_retired(),
+        edges=Phased(solve=_EDGES, simulate=_EDGES),
     )

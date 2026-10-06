@@ -9,7 +9,6 @@ from lcm import (
     JointTransition,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -38,10 +37,6 @@ def _savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> Float
     return wealth - consumption
 
 
-def _certain_target() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _joint_probabilities() -> FloatND:
     return jnp.asarray([0.25, 0.75])
 
@@ -52,7 +47,6 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
 
 def _model(solver: OneMarginSolver | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
-        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -76,7 +70,6 @@ def _model(solver: OneMarginSolver | GridSearch) -> Model:
         solver=solver,
     )
     target = Regime(
-        regime_transitions=None,
         states={"estate": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         functions={"utility": _target_utility},
     )

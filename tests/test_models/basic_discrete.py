@@ -2,7 +2,6 @@
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -26,12 +25,7 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _next_regime() -> ScalarInt:
-    return RegimeId.dead
-
-
 working_life = UserRegime(
-    regime_transitions=DeterministicTransition(func=_next_regime),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -44,7 +38,6 @@ working_life = UserRegime(
 )
 
 retirement = UserRegime(
-    regime_transitions=DeterministicTransition(func=_next_regime),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -57,7 +50,6 @@ retirement = UserRegime(
 )
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 

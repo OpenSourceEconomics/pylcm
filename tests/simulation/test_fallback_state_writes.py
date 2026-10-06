@@ -51,6 +51,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -233,7 +234,10 @@ def _simulate_three_households():
         regime_id_class=RegimeId,
         initial_nodes={0: "married"},
         edges={
-            "married": {"married_terminal": 0, "single_f": 0, "single_m": 0},
+            "married": Transition(
+                targets={"married_terminal": 0, "single_f": 0, "single_m": 0},
+                law=_make_laws(carrying_fallback=True)["married"],
+            ),
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": 1},
         },
@@ -265,7 +269,11 @@ def _simulate_three_households():
 
 def _solve_kernel_level(*, carrying_fallback: bool):
     """Compile and solve the model, returning the pieces the router needs."""
-    regimes_dict = _make_regimes(carrying_fallback=carrying_fallback)
+    laws = _make_laws(carrying_fallback=carrying_fallback)
+    regimes_dict = {
+        name: regime.replace(regime_transitions=laws[name])
+        for name, regime in _make_regimes(carrying_fallback=carrying_fallback).items()
+    }
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(index) for index, name in enumerate(regimes_dict)}
     )
@@ -313,19 +321,11 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
             state and the wife's leg projects a household onto it.
 
     Returns:
-        Dict of regime names to regimes, ready for `Model` or `process_regimes`.
+        Dict of regime names to law-free regimes; `_make_laws` holds their laws.
 
     """
     if carrying_fallback:
-        wife_projection = {"wage": _identity_wage, "career": _project_career}
         single_f = Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(start=1, exclusive_stop=2): {
-                        "single_f_terminal": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
             states={
                 "wage": _WAGE,
                 "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -338,15 +338,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
             functions={"utility": _utility_single_f_with_career},
         )
     else:
-        wife_projection = {"wage": _identity_wage}
         single_f = Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(start=1, exclusive_stop=2): {
-                        "single_f_terminal": StochasticTransition(func=_prob_one)
-                    }
-                }
-            ),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(category_class=Work)},
@@ -354,7 +346,62 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         )
 
     married = Regime(
-        regime_transitions=ByAge(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
+    )
+    married_terminal = Regime(
+        states={"wage": _WAGE},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
+    )
+    single_m = Regime(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility_single_m},
+    )
+    single_terminal = Regime(
+        states={"wage": _WAGE},
+        functions={"utility": _utility_no_payoff},
+    )
+    return {
+        "married": married,
+        "married_terminal": married_terminal,
+        "single_f": single_f,
+        "single_f_terminal": single_terminal,
+        "single_m": single_m,
+        "single_m_terminal": single_terminal.replace(),
+    }
+
+
+def _make_laws(*, carrying_fallback: bool) -> dict[str, object]:
+    """Build each household regime's transition law.
+
+    `married` dissolves through a gated edge whose wife's leg projects the
+    carried `career` state when `carrying_fallback` is set; each single regime
+    moves to its terminal with certainty; the terminal regimes have no law.
+
+    Returns:
+        Dict of regime names to regime laws.
+
+    """
+    wife_projection = (
+        {"wage": _identity_wage, "career": _project_career}
+        if carrying_fallback
+        else {"wage": _identity_wage}
+    )
+    return {
+        "married": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
@@ -379,50 +426,23 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
                 }
             }
         ),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _utility_married_f, "m": _utility_married_m}
-            )
-        },
-    )
-    married_terminal = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _utility_married_f, "m": _utility_married_m}
-            )
-        },
-    )
-    single_m = Regime(
-        regime_transitions=ByAge(
+        "married_terminal": None,
+        "single_f": ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        "single_f_terminal": None,
+        "single_m": ByAge(
             cases={
                 AgeRange(start=1, exclusive_stop=2): {
                     "single_m_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility_single_m},
-    )
-    single_terminal = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        functions={"utility": _utility_no_payoff},
-    )
-    return {
-        "married": married,
-        "married_terminal": married_terminal,
-        "single_f": single_f,
-        "single_f_terminal": single_terminal,
-        "single_m": single_m,
-        "single_m_terminal": single_terminal.replace(),
+        "single_m_terminal": None,
     }
 
 

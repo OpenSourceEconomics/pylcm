@@ -10,6 +10,7 @@ from lcm import (
     NormalIIDProcess,
     RouwenhorstAR1Process,
     TauchenAR1Process,
+    Transition,
     UniformIIDProcess,
 )
 from lcm.ages import AgeGrid
@@ -100,6 +101,8 @@ def get_model(
     ],
 ):
     final_age_alive = n_periods - 2
+    # The alive regime can both stay and die only when it lives past age 0.
+    has_law = final_age_alive > 0
 
     alive = UserRegime(
         states={
@@ -116,29 +119,28 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
-        fixed_params={"final_age_alive": final_age_alive},
+        fixed_params={"final_age_alive": final_age_alive} if has_law else {},
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                **(
-                    {"alive": tuple(range(final_age_alive))}
-                    if final_age_alive > 0
-                    else {}
-                ),
-                "dead": tuple(range(final_age_alive + 1)),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": tuple(range(final_age_alive)),
+                    "dead": tuple(range(final_age_alive + 1)),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+            if has_law
+            else {"dead": tuple(range(final_age_alive + 1))}
         },
     )
 
@@ -148,16 +150,6 @@ class MultiRegimeId:
     work: ScalarInt
     retire: ScalarInt
     dead: ScalarInt
-
-
-def _next_regime_multi(
-    *, age: float, work_final_age: float, retire_final_age: float
-) -> ScalarInt:
-    return jnp.where(
-        age >= retire_final_age,
-        MultiRegimeId.dead,
-        jnp.where(age >= work_final_age, MultiRegimeId.retire, MultiRegimeId.work),
-    )
 
 
 def get_multi_regime_model(
@@ -197,7 +189,6 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=DeterministicTransition(func=_next_regime_multi),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -214,12 +205,10 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=DeterministicTransition(func=_next_regime_multi),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -230,10 +219,6 @@ def get_multi_regime_model(
         },
         regime_id_class=MultiRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
-        fixed_params={
-            "work_final_age": work_final_age,
-            "retire_final_age": retire_final_age,
-        },
         initial_nodes={0: "work"},
         edges={
             "work": {

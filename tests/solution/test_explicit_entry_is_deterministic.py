@@ -32,7 +32,7 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
-    StochasticTransition,
+    Transition,
     UniformIIDProcess,
     categorical,
     fixed_transition,
@@ -62,10 +62,6 @@ def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
     return shock**2
 
 
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _target_process() -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -88,15 +84,11 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -203,9 +195,6 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 # The top of this grid lies outside the target's `(0, 1, 2)`.
                 states={"wealth": LinSpacedGrid(start=1.0, stop=9.0, n_points=3)},
                 state_transitions={
@@ -215,7 +204,6 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -264,15 +252,11 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at_half}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _one_plus_shock},
             ),
@@ -314,9 +298,6 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=QuasiArithmeticMean(
@@ -325,7 +306,6 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
                 ),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -374,9 +354,6 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": _enter_first},
                     "other": {"target": _enter_second},
@@ -385,7 +362,6 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "other": UniformIIDProcess(n_points=2, start=0.0, stop=1.0),
@@ -443,15 +419,11 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "extra": UniformIIDProcess(n_points=2, start=1.0, stop=3.0),
@@ -513,7 +485,6 @@ def test_the_entry_representation_decides_the_action() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=DeterministicTransition(func=_choose),
                 actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={
                     "wealth": {"stay": lambda: jnp.asarray(1.0)},
@@ -523,12 +494,10 @@ def test_the_entry_representation_decides_the_action() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "stay": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 functions={"utility": _stay_utility},
             ),
             "enter": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -538,7 +507,12 @@ def test_the_entry_representation_decides_the_action() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
-        edges={"source": {"stay": (20, 21), "enter": (20, 21)}},
+        edges={
+            "source": Transition(
+                targets={"stay": (20, 21), "enter": (20, 21)},
+                law=DeterministicTransition(func=_choose),
+            )
+        },
     )
     params = {
         "source": {

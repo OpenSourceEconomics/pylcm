@@ -50,10 +50,6 @@ class RegimeId:
     target: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _no_utility() -> ScalarFloat:
     return jnp.float32(0)
 
@@ -87,12 +83,10 @@ def model(request: pytest.FixtureRequest) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"income": {"target": income_law}},
                 functions=functions,
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"income": _THREE_NODES, "shock": _THREE_NODES},
                 functions={"utility": _income_plus_shock},
             ),
@@ -148,13 +142,11 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"noise": _RUNTIME_NOISE},
                 state_transitions={"wealth": {"target": _wealth_from_fixed_draw}},
                 functions={"utility": _utility_reading_the_noise},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "shock": _THREE_NODES,
@@ -217,13 +209,11 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"income": {"target": _income_between_two_nodes}},
                 functions={"utility": _no_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"income": _WIDE_INCOME, "shock": _OFFSET_SHOCK},
                 functions={"utility": _income_only},
             ),
@@ -285,14 +275,10 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
         Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_to_target)
-                    },
                     state_transitions={"health": {"target": conditioned}},
                     functions={"utility": _no_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={
                         "health": DiscreteGrid(category_class=Health),
                         "shock": _THREE_NODES,

@@ -29,6 +29,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -240,40 +241,38 @@ def _make_consent_model() -> Model:
         The model.
 
     """
-    single = Regime(
-        regime_transitions={
-            "married_terminal": ValueDependentTransition(
-                probability=StochasticTransition(func=_certain_transition),
-                gate=_consent_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_terminal",
-                            projection={"education": _identity_education},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_single_ref": ProjectedRegimeValue(
+    single_law = {
+        "married_terminal": ValueDependentTransition(
+            probability=StochasticTransition(func=_certain_transition),
+            gate=_consent_gate,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
                         regime="single_terminal",
                         projection={"education": _identity_education},
-                    )
-                },
-            )
-        },
+                    ),
+                )
+            },
+            gate_references={
+                "V_single_ref": ProjectedRegimeValue(
+                    regime="single_terminal",
+                    projection={"education": _identity_education},
+                )
+            },
+        )
+    }
+    single = Regime(
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_utility},
     )
     single_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _single_terminal_utility},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -291,7 +290,12 @@ def _make_consent_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
         initial_nodes={0: "single"},
-        edges={"single": {"married_terminal": 0, "single_terminal": 0}},
+        edges={
+            "single": Transition(
+                targets={"married_terminal": 0, "single_terminal": 0},
+                law=single_law,
+            )
+        },
     )
 
 

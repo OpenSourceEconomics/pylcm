@@ -1,5 +1,5 @@
 """User-facing transition vocabulary: `fixed_transition`, `StochasticTransition`,
-`DeterministicTransition`, `ByAge`, `AgeRange`, `JointTransition`,
+`DeterministicTransition`, `Transition`, `ByAge`, `AgeRange`, `JointTransition`,
 `AgeSpecializedFunction`, and `AgeSpecializedGrid`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
@@ -66,6 +66,61 @@ class AgeRange:
 type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
 
 
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class Transition:
+    """A source's graph edges together with the law that chooses among them.
+
+    `Model(edges=...)` maps a source regime either to a plain
+    `{target: age_selector}` mapping or to a `Transition`. The plain mapping is
+    enough while the source has exactly one outgoing edge at every age: the
+    graph is then the law. Wherever a source age has more than one outgoing
+    edge, the source is declared as a `Transition` whose `law` chooses among
+    them:
+
+    - a per-target mapping of `StochasticTransition` probabilities (or
+      `ValueDependentTransition` gates), keyed by target;
+    - a plain function or `DeterministicTransition` returning a global regime
+      code, which is how a discrete choice between regimes is written;
+    - a `StochasticTransition` returning the full regime-code probability vector;
+    - a regime name;
+    - `ByAge(...)` selecting one of the above per source age, or `Phased(...)`
+      giving each phase its own.
+
+        edges = {
+            "working": Transition(
+                targets={"working": (60, 61), "dead": (60, 61), "retired": 62},
+                law=ByAge(cases={(60, 61): {"working": survive, "dead": die}}),
+            ),
+            "retired": {"dead": (63, 64)},
+        }
+
+    A `ByAge` law need not select ages with a single outgoing edge; the edge is
+    the law there. It must select every age with more than one. A source whose
+    every age has at most one outgoing edge takes no `Transition`, unless its law
+    carries a `ValueDependentTransition` gate.
+    """
+
+    targets: Mapping[str, AgeSelector]
+    """Destination regimes and the source ages at which each edge fires."""
+
+    law: object
+    """The numerical law choosing among the destinations."""
+
+    def __post_init__(self) -> None:
+        if not self.targets:
+            raise RegimeInitializationError(
+                "`Transition.targets` must be a nonempty mapping from destination "
+                f"regimes to source-age selectors; got {self.targets!r}."
+            )
+        if self.law is None:
+            raise RegimeInitializationError(
+                "`Transition.law` cannot be `None`. A regime with no outgoing "
+                "edges is terminal; leave it out of `Model(edges=...)`."
+            )
+        object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+
+
 class _TargetlessLaw:
     """Refuse destinations on a regime law; `Model(edges=...)` declares them."""
 
@@ -97,12 +152,12 @@ class StochasticTransition(_TargetlessLaw):
         state_transitions={"health": StochasticTransition(func=health_probs)}
 
         # Stochastic regime transition over the full regime-ID vector
-        Regime(
-            regime_transitions=StochasticTransition(
-                func=regime_probs
+        edges = {
+            "working": Transition(
+                targets={"working": ages, "dead": ages},
+                law=StochasticTransition(func=regime_probs),
             ),
-            ...,
-        )
+        }
 
     A bare callable (without the wrapper) is a deterministic state law.
 
@@ -148,12 +203,12 @@ class DeterministicTransition(_TargetlessLaw):
     A regime selector returns an existing global regime code. `Model.edges`
     declares every regime it may select. Evaluation adds no random draw.
 
-        Regime(
-            regime_transitions=DeterministicTransition(
-                func=next_regime
+        edges = {
+            "working": Transition(
+                targets={"working": ages, "retired": ages},
+                law=DeterministicTransition(func=next_regime),
             ),
-            ...,
-        )
+        }
 
     Returning a code outside the model graph is an error; an edge remains
     declared even when its target is never selected at runtime.
@@ -407,7 +462,7 @@ class AgeSpecializedFunction(_AgeSpecialized):
     policy-dependent law of motion is expressed as a plain state transition that
     reads an `AgeSpecializedFunction` entry of `functions`; a direct
     `AgeSpecializedFunction` state-transition value, a specialized regime
-    `regime_transitions`, a regime transition whose dependency graph reads an
+    transition law, a regime transition whose dependency graph reads an
     `AgeSpecializedFunction`, a
     `StochasticTransition(func=AgeSpecializedFunction(...))`, and
     any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`

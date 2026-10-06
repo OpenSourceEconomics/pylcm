@@ -8,13 +8,13 @@ from numpy.testing import assert_allclose, assert_array_almost_equal
 from lcm import (
     AgeGrid,
     AgeRange,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -27,9 +27,9 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
     UserParams,
 )
+from lcm_examples.mortality import RETIREMENT_LAW, WORKING_LIFE_LAW
 from tests.conftest import X64_ENABLED
 from tests.test_models.stochastic import (
     RegimeId,
@@ -44,20 +44,24 @@ from tests.test_models.stochastic import (
 _SPLAY_ATOL = 1e-10 if X64_ENABLED else 1e-5
 
 
-def _lifecycle_edges(
-    *, ages: AgeGrid
-) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+def _lifecycle_edges(*, ages: AgeGrid) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age."""
     return {
-        "working_life": {
-            "working_life": tuple(ages.exact_values[:-2]),
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
-        "retirement": {
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
+        "working_life": Transition(
+            targets={
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=WORKING_LIFE_LAW,
+        ),
+        "retirement": Transition(
+            targets={
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=RETIREMENT_LAW,
+        ),
     }
 
 
@@ -288,11 +292,9 @@ def _make_minimal_stochastic_model(
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -304,10 +306,13 @@ def _make_minimal_stochastic_model(
         ),
         initial_nodes={0: "working_life"},
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=final_age),
-                "dead": AgeRange(exclusive_stop=final_age + 1),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=final_age),
+                    "dead": AgeRange(exclusive_stop=final_age + 1),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )
 
@@ -425,11 +430,7 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
     with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
         Model(
             regimes={
-                "working_life": working_life.replace(
-                    regime_transitions=ByAge(
-                        cases={AgeRange(start=40, exclusive_stop=80): "dead"}
-                    )
-                ),
+                "working_life": working_life,
                 "retirement": retirement,
                 "dead": dead,
             },
@@ -438,8 +439,12 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
             initial_nodes={70: "working_life"},
             edges={
                 "working_life": {"dead": AgeRange(exclusive_stop=70)},
-                "retirement": dict.fromkeys(
-                    ("working_life", "retirement", "dead"), AgeRange(exclusive_stop=70)
+                "retirement": Transition(
+                    targets=dict.fromkeys(
+                        ("working_life", "retirement", "dead"),
+                        AgeRange(exclusive_stop=70),
+                    ),
+                    law=RETIREMENT_LAW,
                 ),
             },
         )

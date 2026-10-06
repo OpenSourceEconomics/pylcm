@@ -20,7 +20,7 @@ from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.solution import backward_induction
 from _lcm.utils.logging import get_logger
-from lcm import AgeGrid, DeterministicTransition, LogSpacedGrid, Model
+from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SIMULATION_POLICY, ArtifactRef
 from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
@@ -43,17 +43,12 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _two_period_bequest_model() -> Model:
     """Two-period log-utility retirement model with a terminal bequest."""
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
     return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions=DeterministicTransition(
-                    func=retirement_only.next_regime_from_retirement
-                )
-            ),
+            "retirement": dcegm_retirement,
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),

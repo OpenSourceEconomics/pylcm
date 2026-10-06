@@ -23,7 +23,6 @@ from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -40,7 +39,6 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
-    next_regime,
     working_life,
 )
 
@@ -70,7 +68,6 @@ def _model(
         edges={"working_life": {"dead": START_AGE}},
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

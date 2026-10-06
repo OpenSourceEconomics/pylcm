@@ -19,7 +19,6 @@ deliberately different grids, so a solver reading the continuation on its own
 grid disagrees rather than coinciding by accident.
 """
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -27,7 +26,6 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -45,7 +43,6 @@ _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.98
 _RETURN = 0.02
 _INCOME = 0.5
-_LAST_AGE = 3.0
 
 # Source and target discretize their single continuous state differently, so
 # reading the continuation on the source's own nodes is observably wrong rather
@@ -108,14 +105,6 @@ def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolN
     return consumption <= wealth
 
 
-def prob_survive(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 < last_age, 1.0, 0.0)
-
-
-def prob_gone(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 >= last_age, 1.0, 0.0)
-
-
 def _model(*, solver, n_consumption=14):
     """A 1-D lifecycle whose terminal regime renames the state it inherits."""
     alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
@@ -130,10 +119,6 @@ def _model(*, solver, n_consumption=14):
             "estate": {"gone": next_estate},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions={
-            "alive": StochasticTransition(func=prob_survive),
-            "gone": StochasticTransition(func=prob_gone),
-        },
         functions={"utility": utility, "savings": savings},
         solver=solver,
         **(
@@ -150,7 +135,6 @@ def _model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        regime_transitions=None,
         states={"estate": _ESTATE_GRID},
         functions={"utility": bequest},
         solver=GridSearch(),
@@ -170,8 +154,8 @@ def _params():
         "alive": {
             "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
-            "alive": {"next_wealth": law, "next_regime": {"last_age": _LAST_AGE}},
-            "gone": {"next_estate": law, "next_regime": {"last_age": _LAST_AGE}},
+            "alive": {"next_wealth": law},
+            "gone": {"next_estate": law},
         },
         "gone": {"utility": {"crra": _CRRA}},
     }

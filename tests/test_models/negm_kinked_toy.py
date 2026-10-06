@@ -30,6 +30,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -181,7 +182,6 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -213,7 +213,6 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
 def build_dead_regime() -> Regime:
     """The terminal regime."""
     return Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -235,9 +234,12 @@ def build_model(
         execution_config=execution_config,
         initial_nodes={20: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )

@@ -21,6 +21,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
@@ -86,14 +87,15 @@ def _simulate(law: Any) -> pd.DataFrame:
         "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},
     }
-    live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
-        state_transitions={"good": law},
-        **common,
-    ).replace()
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
+    live = Regime(state_transitions={"good": law}, **common)
+    last = Regime(state_transitions={}, **common)
     model = Model(
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,

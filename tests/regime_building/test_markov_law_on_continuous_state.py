@@ -27,10 +27,6 @@ class RegimeId:
     target: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _shock_probs() -> FloatND:
     return jnp.array([0.25, 0.5, 0.25], dtype=jnp.float32)
 
@@ -48,14 +44,12 @@ def _build_model() -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_shock_probs)}
                 },
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

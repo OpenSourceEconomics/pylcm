@@ -938,22 +938,22 @@ def _phased_regime_declaration(
 ) -> MappingProxyType[str, object]:
     """Project a regime whose `slot` varies by phase only in its simulate member."""
     phased = Phased(solve=_solve_law, simulate=simulate)
+    law: object = phased if slot == "regime_transitions" else _solve_law
     slots: dict[str, object] = {
-        "regime_transitions": _solve_law,
         "states": {"wealth": LinSpacedGrid(start=0, stop=1, n_points=3)},
         "state_transitions": {"wealth": _solve_law},
         "functions": {"utility": _terminal_utility},
     }
-    if slot == "regime_transitions":
-        slots["regime_transitions"] = phased
-    elif slot == "state_transitions":
+    if slot == "state_transitions":
         slots["state_transitions"] = {"wealth": phased}
     elif slot == "functions":
         slots["functions"] = {"utility": _terminal_utility, "helper": phased}
-    else:
+    elif slot != "regime_transitions":
         raise AssertionError(slot)
     return fingerprints._project_user_regime_declaration(
-        UserRegime(**slots)  # ty: ignore[invalid-argument-type]
+        UserRegime(**slots).replace(  # ty: ignore[invalid-argument-type]
+            regime_transitions=law
+        )
     )
 
 
@@ -987,7 +987,6 @@ def test_phased_protocol_subclass_fails_closed() -> None:
 
 def test_regime_description_is_not_mathematical_identity() -> None:
     regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": _terminal_utility},
         description="first wording",
     )

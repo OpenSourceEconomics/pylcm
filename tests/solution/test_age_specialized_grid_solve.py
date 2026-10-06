@@ -42,6 +42,7 @@ from lcm import (
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -84,28 +85,26 @@ def _next_regime(*, period, last):
 
 
 _DEAD = Regime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
 
-_ALIVE_TRANSITIONS = DeterministicTransition(func=_next_regime)
+_ALIVE_TARGETS = {
+    "alive": AgeRange(exclusive_stop=20 + _N - 2),
+    "dead": AgeRange(exclusive_stop=20 + _N - 1),
+}
 _EDGES = {
-    "alive": {
-        "alive": AgeRange(exclusive_stop=20 + _N - 2),
-        "dead": AgeRange(exclusive_stop=20 + _N - 1),
-    }
+    "alive": Transition(
+        targets=_ALIVE_TARGETS, law=DeterministicTransition(func=_next_regime)
+    )
 }
 
 
-def _alive_regime(
-    *, wealth_grid, regime_transitions=_ALIVE_TRANSITIONS, functions=None
-):
+def _alive_regime(*, wealth_grid, functions=None):
     return Regime(
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
         state_transitions={"wealth": _next_wealth},
-        regime_transitions=regime_transitions,
         constraints={"bc": _bc},
         functions={"utility": _utility} if functions is None else functions,
     )
@@ -513,24 +512,25 @@ def test_age_specialized_marker_on_never_solved_regime_is_rejected(
     with pytest.raises(ModelInitializationError, match="no age of the model"):
         Model(
             regimes={
-                "alive": _alive_regime(
-                    wealth_grid=grid,
-                    functions=functions,
-                    regime_transitions=ByAge(
-                        cases={
-                            AgeRange(start=100): DeterministicTransition(
-                                func=_next_regime
-                            )
-                        }
-                    ),
-                ),
+                "alive": _alive_regime(wealth_grid=grid, functions=functions),
                 "dead": _DEAD,
             },
             ages=_AGES,
             regime_id_class=RegimeId,
             fixed_params={"last": _N - 2},
             initial_nodes={20: "alive"},
-            edges={},
+            edges={
+                "alive": Transition(
+                    targets=_ALIVE_TARGETS,
+                    law=ByAge(
+                        cases={
+                            AgeRange(start=100): DeterministicTransition(
+                                func=_next_regime
+                            )
+                        }
+                    ),
+                )
+            },
         )
 
 

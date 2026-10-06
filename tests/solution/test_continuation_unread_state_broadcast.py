@@ -62,6 +62,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.execution import WidthSearch, WidthSearchPolicy
@@ -217,17 +218,21 @@ def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
             "wealth": _next_wealth,
         },
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         functions={"utility": _utility},
     )
-    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = Regime(functions={"utility": lambda: 0.0})
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=_FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 

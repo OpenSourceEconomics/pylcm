@@ -29,7 +29,6 @@ it is asserted against an exact affine oracle rather than against brute force.
 
 from pathlib import Path
 
-import jax.numpy as jnp
 import numpy as np
 import yaml
 
@@ -38,7 +37,6 @@ from lcm import (
     AgeSpecializedGrid,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -173,12 +171,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
     def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
         return consumption <= wealth
 
-    def prob_survive(*, age: int, last_age: float) -> FloatND:
-        return jnp.where(age + 1 < last_age, 1.0, 0.0)
-
-    def prob_gone(*, age: int, last_age: float) -> FloatND:
-        return jnp.where(age + 1 >= last_age, 1.0, 0.0)
-
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
@@ -188,10 +180,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions={
-            "alive": StochasticTransition(func=prob_survive),
-            "gone": StochasticTransition(func=prob_gone),
-        },
         functions={"utility": utility, "resources": resources, "savings": savings},
         solver=solver,
         **(
@@ -208,7 +196,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": bequest},
         solver=GridSearch(),
@@ -229,8 +216,8 @@ def _renamed_one_asset_params():
         "alive": {
             "utility": {"crra": 2.0},
             "koopmans_aggregator": {"discount_factor": 0.98},
-            "alive": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
-            "gone": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
+            "alive": {"next_wealth": law},
+            "gone": {"next_wealth": law},
         },
         "gone": {"utility": {"crra": 2.0}},
     }

@@ -15,7 +15,7 @@ import weakref
 import jax
 
 from _lcm.solution import negm
-from lcm import AgeGrid, DeterministicTransition, DiscreteGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.regression import (
@@ -24,7 +24,6 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
-    next_regime,
     working_life,
 )
 
@@ -63,7 +62,6 @@ def _model() -> Model:
         edges={"working_life": {"dead": START_AGE}},
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

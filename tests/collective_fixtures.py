@@ -28,7 +28,6 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -124,7 +123,6 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -133,7 +131,6 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -175,7 +172,6 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -184,7 +180,6 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -221,13 +216,11 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
 
     """
     shocked = Regime(
-        regime_transitions=DeterministicTransition(func=_next_shock_regime),
         states={"wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _shock_utility},
     )
     shocked_terminal = Regime(
-        regime_transitions=None,
         functions={"utility": _fold_terminal_utility},
     )
     model = Model(
@@ -261,7 +254,6 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
 
     """
     return {
-        "regime_transitions": DeterministicTransition(func=_next_couple_regime),
         "states": {"wage_shock": FOLDED_SHOCK},
         "actions": {"work": DiscreteGrid(category_class=Work)},
         "functions": {
@@ -286,7 +278,6 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
 
     """
     couple_terminal = Regime(
-        regime_transitions=None,
         states={},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -399,11 +390,6 @@ def _next_wage(work: DiscreteAction) -> ContinuousState:
     return 40.0 * work + 8.0 * (1.0 - work)
 
 
-def _next_couple_regime() -> ScalarInt:
-    """Regime transition: `couple` becomes `couple_terminal` with probability one."""
-    return CoupleRegimeId.couple_terminal
-
-
 def _shock_utility(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Working earns the base wage plus the shock; leisure earns nothing."""
     return work * (10.0 + wage_shock)
@@ -422,8 +408,3 @@ def _shock_utility_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
 def _fold_terminal_utility() -> FloatND:
     """Constant terminal payoff, so the folded regime has a live continuation."""
     return jnp.asarray(FOLD_TERMINAL_PAYOFF)
-
-
-def _next_shock_regime() -> ScalarInt:
-    """Regime transition: `shocked` becomes `shocked_terminal` with probability one."""
-    return ShockRegimeId.shocked_terminal

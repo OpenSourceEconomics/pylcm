@@ -33,6 +33,7 @@ from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
+    _with_full_topology_laws,
 )
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
@@ -62,7 +63,7 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     base = get_model(n_periods=_N_PERIODS)
     model = Model(
         regimes=base.user_regimes,
-        edges=base.graph.edges,
+        edges=base.edges,
         ages=base.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=None),
@@ -212,7 +213,7 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model = Model(
         regimes=_make_full_topology_regimes(),
-        edges=_FULL_TOPOLOGY_EDGES,
+        edges=_with_full_topology_laws(_FULL_TOPOLOGY_EDGES),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},
@@ -753,7 +754,7 @@ def _make_public_capture_model(
     }
     return Model(
         regimes=regimes,
-        edges=base.graph.edges,
+        edges=base.edges,
         ages=base.ages,
         regime_id_class=retirement_model.RegimeId,
         execution_config=ExecutionConfig(

@@ -32,7 +32,6 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -95,14 +94,6 @@ def _bequest_utility(wealth: FloatND) -> FloatND:
     return jnp.log(wealth)
 
 
-def _retire_at_one(age: FloatND) -> FloatND:
-    return jnp.where(age < 1, _RegimeId.working, _RegimeId.retired)
-
-
-def _die_at_three(age: FloatND) -> FloatND:
-    return jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retired)
-
-
 def _entry_kind(wealth: FloatND) -> FloatND:
     """Probabilities over `_Kind`, richer entrants arriving in higher categories."""
     high = jnp.clip(wealth / 100.0, 0.0, 1.0)
@@ -114,7 +105,6 @@ _EDGES = {"working": {"working": 0, "retired": 1}, "retired": {"dead": 2}}
 
 def _working(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": DeterministicTransition(func=_retire_at_one),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -126,7 +116,6 @@ def _working(**overrides: Any) -> Regime:
 
 def _retired(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": DeterministicTransition(func=_die_at_three),
         "states": {"wealth": _WEALTH},
         "actions": {"consumption": _CONSUMPTION},
         "functions": {"utility": _utility_of_consumption},
@@ -138,7 +127,6 @@ def _retired(**overrides: Any) -> Regime:
 
 def _dead() -> Regime:
     return Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )

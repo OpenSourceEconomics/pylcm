@@ -26,6 +26,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -116,10 +117,6 @@ def _model(width: int | None = None) -> Model:
     )
     ages = _ages()
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working": StochasticTransition(func=stay_prob),
-            "dead": StochasticTransition(func=death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH)},
         state_transitions={"wealth": next_wealth},
@@ -140,7 +137,6 @@ def _model(width: int | None = None) -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
@@ -148,10 +144,16 @@ def _model(width: int | None = None) -> Model:
         regimes={"working": working, "dead": dead},
         ages=ages,
         edges={
-            "working": {
-                "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
-                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
-            }
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                    "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+                },
+                law={
+                    "working": StochasticTransition(func=stay_prob),
+                    "dead": StochasticTransition(func=death_prob),
+                },
+            )
         },
         regime_id_class=RegimeId,
         execution_config=config,

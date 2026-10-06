@@ -24,6 +24,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError, PyLCMError
@@ -97,7 +98,6 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _build_model(*, simulate_probabilities) -> Model:
     working = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "experience": Phased(
@@ -118,11 +118,14 @@ def _build_model(*, simulate_probabilities) -> Model:
             }
         },
     )
-    dead = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.asarray(0.0)}
-    )
+    dead = Regime(functions={"utility": lambda: jnp.asarray(0.0)})
     return Model(
-        edges={"working": {"working": 60, "dead": (60, 62)}},
+        edges={
+            "working": Transition(
+                targets={"working": 60, "dead": (60, 62)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,

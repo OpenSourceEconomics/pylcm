@@ -14,8 +14,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -111,14 +109,8 @@ def get_model(
     """
     regime_type = typed and not type_at_model_level
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    last_age = ages.exact_values[-1]
     pref_type = DiscreteGrid(category_class=PrefType)
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=lambda: RegimeId.working),
-            then=DeterministicTransition(func=lambda: RegimeId.dead),
-        ),
         states={"pref_type": pref_type} if regime_type else {},
         state_transitions={
             "wealth": _next_wealth,
@@ -134,7 +126,6 @@ def get_model(
         constraints={"borrowing": _borrowing},
     )
     dead = Regime(
-        regime_transitions=None,
         states={"pref_type": pref_type} if regime_type else {},
         functions={"utility": _typed_bequest if typed else _bequest},
     )

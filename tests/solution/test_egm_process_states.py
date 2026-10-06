@@ -32,6 +32,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     RouwenhorstAR1Process,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -222,7 +223,6 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
 
     if solver == "dcegm":
         alive = ConsumptionSavingsRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states=states,
             state_transitions={"wealth": dcegm_next_wealth},
@@ -241,7 +241,6 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
         )
     else:
         alive = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states=states,
             state_transitions={"wealth": brute_next_wealth},
@@ -251,7 +250,12 @@ def _get_model(*, solver: str, shock_type: str) -> Model:
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
-        edges={"alive": {"alive": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=ProcessRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
     )

@@ -49,10 +49,6 @@ def _next_wealth(
     return wealth - consumption - cost
 
 
-def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
-    return _RegimeId.dead
-
-
 def _utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
@@ -72,7 +68,6 @@ def _xi() -> NormalIIDProcess:
 def _model(*, declared_at: Literal["model", "regime"]) -> Model:
     shocks = {"zeta": _zeta(), "xi": _xi()}
     active = Regime(
-        regime_transitions=_next_regime,
         actions={
             "consumption": LinSpacedGrid(
                 start=CONSUMPTION_NODES[0],
@@ -85,7 +80,6 @@ def _model(*, declared_at: Literal["model", "regime"]) -> Model:
         functions={"utility": _utility, "cost": _cost},
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _bequest},
     )

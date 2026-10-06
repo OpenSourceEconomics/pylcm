@@ -15,6 +15,7 @@ IR mask empties, ``D=True``). The mixture is the strict ``jnp.where`` — never 
 linear ``kappa*V + (1-kappa)*V`` — so a ``-inf`` target cell never leaks NaN.
 """
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -40,6 +41,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -48,7 +50,7 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import StochasticTransition
+from lcm.transition import AgeSelector, StochasticTransition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -116,17 +118,18 @@ def _consent_source_declaring(
 ) -> Regime:
     """The consent source, declaring `transition_into_married` into the couple."""
     return Regime(
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_single_f},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_terminal": transition_into_married
                 }
             }
-        ),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_single_f},
+        )
     )
 
 
@@ -157,17 +160,14 @@ def _make_consent_regimes() -> dict[str, Regime]:
         )
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
-    )
+    ).replace(regime_transitions=None)
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
-    )
+    ).replace(regime_transitions=None)
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -175,7 +175,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_f, "m": _u_married_m}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     return {
         "single_f": single_f,
         "single_f_terminal": single_f_terminal,
@@ -311,6 +311,15 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
+        states={"wage": _WAGE3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -336,24 +345,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"wage": _WAGE3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
+        )
     )
     married_ir = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -380,9 +374,16 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                 },
             ),
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -390,25 +391,25 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     single_f = Regime(
+        states={"wage": _WAGE3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_single_f_ir},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(start=1, exclusive_stop=2): {
                     "single_f_terminal": StochasticTransition(func=_prob_one)
                 }
             }
-        ),
-        states={"wage": _WAGE3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_single_f_ir},
+        )
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE3},
         functions={"utility": _u_zero},
-    )
+    ).replace(regime_transitions=None)
     single_m = single_f.replace(
         regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
         functions={"utility": _u_single_m_ir},
@@ -569,6 +570,11 @@ def test_probabilistic_gate_is_rejected():
     """A stochastic (StochasticTransition) gate is out of scope — boolean only."""
     with pytest.raises(RegimeInitializationError, match="boolean"):
         Regime(
+            states={"wage": _WAGE},
+            state_transitions={"wage": fixed_transition("wage")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_single_f},
+        ).replace(
             regime_transitions=ByAge(
                 cases={
                     AgeRange(exclusive_stop=1): {
@@ -587,11 +593,7 @@ def test_probabilistic_gate_is_rejected():
                         )
                     }
                 }
-            ),
-            states={"wage": _WAGE},
-            state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_single_f},
+            )
         )
 
 
@@ -717,95 +719,27 @@ class EKLRegimeId:
 
 
 def _make_full_topology_regimes() -> dict[str, Regime]:
-    def _consent_leg(
-        *, fallback_regime: str, stakeholder: str
-    ) -> dict[str, StakeholderRoute]:
-        return {
-            stakeholder: StakeholderRoute(
-                target_stakeholder=stakeholder,
-                fallback=ProjectedRegimeValue(
-                    regime=fallback_regime, projection={"wage": _identity_wage}
-                ),
-            )
-        }
+    """The mini-EKL regimes: consent edges into `married`, a dissolution edge out.
 
-    _consent_gate_refs = {
-        "V_single_f_ref": ProjectedRegimeValue(
-            regime="single_f_p1", projection={"wage": _identity_wage}
-        ),
-        "V_single_m_ref": ProjectedRegimeValue(
-            regime="single_m_p1", projection={"wage": _identity_wage}
-        ),
-    }
-
-    def _consent_source(*, fallback_regime: str, stakeholder: str) -> Regime:
-        return Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "married": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=_consent_gate,
-                            routes=_consent_leg(
-                                fallback_regime=fallback_regime, stakeholder=stakeholder
-                            ),
-                            gate_references=_consent_gate_refs,
-                        )
-                    }
-                }
-            ),
-            states={"wage": _WAGE3},
-            state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_single_f},
-        )
-
-    single_f = _consent_source(fallback_regime="single_f_p1", stakeholder="f")
-    single_m = _consent_source(fallback_regime="single_m_p1", stakeholder="m")
+    The regimes carry no law. The sources with several outgoing edges at an age
+    (`single_f`, `single_m`, `married`) take theirs from `_full_topology_laws`;
+    `_with_full_topology_laws` wraps them into a model's edges.
+    """
+    single_f = Regime(
+        states={"wage": _WAGE3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_single_f},
+    )
+    single_m = single_f.replace()
     single_f_p1 = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "single_f_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
-    single_m_p1 = single_f_p1.replace(
-        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
-        functions={"utility": _u_single_m_ir},
-    )
+    single_m_p1 = single_f_p1.replace(functions={"utility": _u_single_m_ir})
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -834,7 +768,6 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -844,7 +777,6 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         },
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE3},
         functions={"utility": _u_zero},
     )
@@ -858,6 +790,97 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         "married_terminal": married_terminal,
         "single_f_terminal": single_f_terminal,
         "single_m_terminal": single_m_terminal,
+    }
+
+
+def _full_topology_laws() -> dict[str, ByAge]:
+    """The laws of the mini-EKL sources with several outgoing edges at an age.
+
+    - `single_f` / `single_m`: at age 0 a mutual-consent edge into `married`,
+      each single's own leg falling back to her `*_p1` regime;
+    - `married`: at age 1 a dissolution edge into `married_terminal`, each
+      stakeholder falling back to her own single terminal regime.
+    """
+
+    def _consent_leg(
+        *, fallback_regime: str, stakeholder: str
+    ) -> dict[str, StakeholderRoute]:
+        return {
+            stakeholder: StakeholderRoute(
+                target_stakeholder=stakeholder,
+                fallback=ProjectedRegimeValue(
+                    regime=fallback_regime, projection={"wage": _identity_wage}
+                ),
+            )
+        }
+
+    consent_gate_refs = {
+        "V_single_f_ref": ProjectedRegimeValue(
+            regime="single_f_p1", projection={"wage": _identity_wage}
+        ),
+        "V_single_m_ref": ProjectedRegimeValue(
+            regime="single_m_p1", projection={"wage": _identity_wage}
+        ),
+    }
+
+    def _consent_law(*, fallback_regime: str, stakeholder: str) -> ByAge:
+        return ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=_consent_gate,
+                        routes=_consent_leg(
+                            fallback_regime=fallback_regime, stakeholder=stakeholder
+                        ),
+                        gate_references=consent_gate_refs,
+                    )
+                }
+            }
+        )
+
+    return {
+        "single_f": _consent_law(fallback_regime="single_f_p1", stakeholder="f"),
+        "single_m": _consent_law(fallback_regime="single_m_p1", stakeholder="m"),
+        "married": ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                }
+            }
+        ),
+    }
+
+
+def _with_full_topology_laws(
+    edges: Mapping[str, Mapping[str, AgeSelector]],
+) -> dict[str, Mapping[str, AgeSelector] | Transition]:
+    """Wrap each source of `edges` that `_full_topology_laws` covers in its law."""
+    laws = _full_topology_laws()
+    return {
+        source: Transition(targets=targets, law=laws[source])
+        if source in laws
+        else targets
+        for source, targets in edges.items()
     }
 
 
@@ -879,17 +902,19 @@ def test_full_ekl_topology_via_public_model_api():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     model = Model(
         regimes=_make_full_topology_regimes(),
-        edges={
-            "single_f": {"married": 0, "single_f_p1": 0},
-            "single_m": {"married": 0, "single_m_p1": 0},
-            "single_f_p1": {"single_f_terminal": 1},
-            "single_m_p1": {"single_m_terminal": (0, 1)},
-            "married": {
-                "married_terminal": 1,
-                "single_f_terminal": 1,
-                "single_m_terminal": 1,
-            },
-        },
+        edges=_with_full_topology_laws(
+            {
+                "single_f": {"married": 0, "single_f_p1": 0},
+                "single_m": {"married": 0, "single_m_p1": 0},
+                "single_f_p1": {"single_f_terminal": 1},
+                "single_m_p1": {"single_m_terminal": (0, 1)},
+                "married": {
+                    "married_terminal": 1,
+                    "single_f_terminal": 1,
+                    "single_m_terminal": 1,
+                },
+            }
+        ),
         ages=ages,
         regime_id_class=EKLRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},
@@ -917,6 +942,11 @@ def test_singleton_source_with_two_legs_is_rejected():
     """A singleton source must declare exactly one edge leg."""
     with pytest.raises(RegimeInitializationError, match="exactly one leg"):
         Regime(
+            states={"wage": _WAGE},
+            state_transitions={"wage": fixed_transition("wage")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_single_f},
+        ).replace(
             regime_transitions=ByAge(
                 cases={
                     AgeRange(exclusive_stop=1): {
@@ -942,11 +972,7 @@ def test_singleton_source_with_two_legs_is_rejected():
                         )
                     }
                 }
-            ),
-            states={"wage": _WAGE},
-            state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_single_f},
+            )
         )
 
 

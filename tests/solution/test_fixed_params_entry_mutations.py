@@ -2,9 +2,8 @@
 
 `Model(fixed_params=...)` pins a parameter at model initialization, so a process
 whose missing fields arrive that way is fixed at construction and can be entered.
-These cases sweep the ways the entry is built — granular and coarse regime
-transitions, eager and compiled — against a Gauss-Hermite oracle that shares no
-code with the grid construction under test.
+These cases sweep the ways the entry is built — eager and compiled — against a
+Gauss-Hermite oracle that shares no code with the grid construction under test.
 """
 
 import math
@@ -16,13 +15,11 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LogNormalIIDProcess,
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -32,14 +29,6 @@ from lcm.typing import FloatND, ScalarFloat, ScalarInt
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
-def target_id() -> ScalarInt:
-    return RegimeId.target
 
 
 def zero() -> ScalarFloat:
@@ -67,7 +56,6 @@ def gh_expectation(transform: Callable[[np.ndarray], np.ndarray]) -> float:
     return float(np.dot(probabilities, transform(nodes)))
 
 
-@pytest.mark.parametrize("coarse", [False, True], ids=["granular", "coarse"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize(
     ("process", "utility", "expected"),
@@ -87,7 +75,6 @@ def gh_expectation(transform: Callable[[np.ndarray], np.ndarray]) -> float:
 )
 def test_a_law_from_fixed_params_prices_an_entered_process(
     *,
-    coarse: bool,
     enable_jit: bool,
     process: NormalIIDProcess | LogNormalIIDProcess,
     utility: Callable[..., FloatND],
@@ -100,19 +87,12 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     runtime template — and still prices the continuation at the law's own
     weighted expectation rather than an unweighted node average.
     """
-    transition = (
-        DeterministicTransition(func=target_id)
-        if coarse
-        else {"target": StochasticTransition(func=one_probability)}
-    )
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 functions={"utility": zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": utility},
             ),

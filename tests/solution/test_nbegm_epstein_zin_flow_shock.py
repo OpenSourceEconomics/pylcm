@@ -27,6 +27,7 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -99,11 +100,11 @@ def _build_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = ConsumptionSavingsRegime(
         states={"liquid": _LIQUID_GRID, "health": _HEALTH},
         state_transitions={"liquid": _next_liquid},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -123,7 +124,6 @@ def _build_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         # Starts at zero so the terminal carry covers the whole attainable
         # savings range: the corner `s = 0` reads the terminal value exactly
         # instead of the edge bracket's secant.
@@ -138,10 +138,13 @@ def _build_model(
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=alive_law,
+            )
         },
     )
 

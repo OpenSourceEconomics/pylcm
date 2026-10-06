@@ -8,6 +8,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -42,13 +43,6 @@ def make_minimal_model() -> Model:
     def utility(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array(0.0)
 
-    def next_regime(period: int) -> ScalarInt:
-        return jnp.where(
-            period + 1 >= 2,
-            RegimeId.terminal,
-            RegimeId.active,
-        )
-
     n_periods = 2
     ages = AgeGrid(start=0, inclusive_stop=n_periods, step="Y")
 
@@ -62,11 +56,9 @@ def make_minimal_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -112,11 +104,9 @@ def make_constraint_model(wealth_grid) -> Model:
         states={"wealth": wealth_grid},
         state_transitions={"wealth": _next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -124,7 +114,12 @@ def make_constraint_model(wealth_grid) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working_life"},
-        edges={"working_life": {"working_life": 0, "dead": (0, 1)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -170,11 +165,9 @@ def make_constrained_asymmetric_model() -> Model:
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -186,7 +179,12 @@ def make_constrained_asymmetric_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -226,11 +224,9 @@ def make_asymmetric_state_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -242,7 +238,12 @@ def make_asymmetric_state_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive", 1: "alive", 2: "dead"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -289,10 +290,8 @@ def make_state_only_constraint_model(
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": dead_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         constraints={"solvent": solvent},
@@ -303,7 +302,12 @@ def make_state_only_constraint_model(
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
         initial_nodes={0: "alive", 1: "alive", 2: "dead"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -348,10 +352,8 @@ def make_period_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"affordable": affordable},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -360,7 +362,12 @@ def make_period_constraint_model() -> Model:
         regime_id_class=RegimeId,
         fixed_params={"alive": {"affordable": {"floor": 0.5}}},
         initial_nodes={0: "alive", 1: "alive", 2: "alive"},
-        edges={"alive": {"alive": (0, 1), "dead": (0, 1, 2)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -401,10 +408,8 @@ def make_joint_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"at_least": at_least, "borrowing": borrowing},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -412,7 +417,12 @@ def make_joint_constraint_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive", 1: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -428,10 +438,6 @@ class HetRegimeId:
     pre65: ScalarInt
     post65: ScalarInt
     dead: ScalarInt
-
-
-def _het_next_regime() -> ScalarInt:
-    return HetRegimeId.dead
 
 
 def _het_utility(*, wealth: float, health: int, bonus: float) -> float:
@@ -453,7 +459,6 @@ def make_heterogeneous_health_model() -> Model:
     and `dead` has no states; ages 50, 60, 70 in steps of ten years.
     """
     pre65 = UserRegime(
-        regime_transitions=DeterministicTransition(func=_het_next_regime),
         states={
             "health": DiscreteGrid(category_class=HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -465,7 +470,6 @@ def make_heterogeneous_health_model() -> Model:
         functions={"utility": _het_utility},
     )
     post65 = UserRegime(
-        regime_transitions=DeterministicTransition(func=_het_next_regime),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -477,7 +481,6 @@ def make_heterogeneous_health_model() -> Model:
         functions={"utility": _het_utility},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": _het_dead_utility},
     )
     return Model(

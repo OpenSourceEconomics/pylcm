@@ -28,6 +28,7 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -142,7 +143,6 @@ def borrowing_constraint(
 
 def _make_dead_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions=None,
         states={
             "wealth": BEQUEST_WEALTH_GRID,
             "pref_type": DiscreteGrid(category_class=PrefType),
@@ -163,7 +163,6 @@ def _get_dcegm_model() -> Model:
         n_constrained_points=64,
     )
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -189,7 +188,12 @@ def _get_dcegm_model() -> Model:
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
-        edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "retirement": Transition(
+                targets={"retirement": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
+        },
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
     )
@@ -200,7 +204,6 @@ def _get_brute_model() -> Model:
     """Mathematically identical brute-force spec sharing `pref_type` with `dead`."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     retirement = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -216,7 +219,12 @@ def _get_brute_model() -> Model:
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
-        edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "retirement": Transition(
+                targets={"retirement": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
+        },
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
     )
@@ -297,7 +305,6 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
 
     # The parent does NOT carry `pref_type`; only `dead` does.
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},
@@ -318,7 +325,12 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         Model(
             regimes={"retirement": retirement, "dead": _make_dead_regime()},
             ages=ages,
-            edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
+            edges={
+                "retirement": Transition(
+                    targets={"retirement": (40, 50), "dead": (40, 50, 60)},
+                    law=DeterministicTransition(func=next_regime_from_retirement),
+                )
+            },
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "retirement"},
         )

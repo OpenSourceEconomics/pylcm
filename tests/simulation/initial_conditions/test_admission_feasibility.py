@@ -17,7 +17,6 @@ from _lcm.simulation.initial_conditions import _SerialValidationRequired
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -43,10 +42,6 @@ def _utility(*, wealth: FloatND, saving: FloatND) -> FloatND:
 
 def _terminal_utility(*, wealth: FloatND) -> FloatND:
     return wealth * 0.0
-
-
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
 
 
 def _costly_constraint(*, wealth: FloatND, saving: FloatND, cutoff: FloatND) -> BoolND:
@@ -103,7 +98,6 @@ def _inputs(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 state_transitions={"wealth": lcm.fixed_transition("wealth")},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=n_actions)},
@@ -111,7 +105,6 @@ def _inputs(
                 constraints=constraints,
             ),
             "done": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 functions={"utility": _terminal_utility},
             ),

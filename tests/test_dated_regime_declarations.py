@@ -181,7 +181,7 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
 def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
     *, build, match: str
 ) -> None:
-    """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
+    """A schedule cannot mark a regime terminal at some ages, nor nest schedules."""
     with pytest.raises(RegimeInitializationError, match=match):
         build()
 
@@ -222,14 +222,18 @@ def test_regime_rejects_a_schedule_inside_a_top_level_phased(
         RegimeInitializationError,
         match=rf"`ByAge` cannot be nested inside `ByAge` or `Phased`.*{side_pattern}",
     ):
-        Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+        Regime(functions={"utility": lambda: 0.0}).replace(
+            regime_transitions=transition
+        )
 
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
 def test_regime_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
     """A top-level `Phased` whose sides are plain laws constructs."""
     transition = Phased(solve=_LAWS[law_form](), simulate=_LAWS[law_form]())
-    regime = Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+    regime = Regime(functions={"utility": lambda: 0.0}).replace(
+        regime_transitions=transition
+    )
     assert regime.regime_transitions is transition
 
 

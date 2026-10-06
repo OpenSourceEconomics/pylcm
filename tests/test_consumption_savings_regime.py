@@ -107,7 +107,6 @@ def _regime(
     if solver is None:
         solver = GridSearch()
     return ConsumptionSavingsRegime(
-        regime_transitions=lambda: 0,
         states={"wealth": _GRID},
         actions={"consumption": _GRID},
         functions=_functions() if functions is None else functions,
@@ -133,7 +132,6 @@ def _nested_regime(
     if functions is not None:
         all_functions = functions
     return NestedConsumptionSavingsRegime(
-        regime_transitions=lambda: 0,
         states={"wealth": _GRID, "durable": _GRID},
         actions={"consumption": _GRID, "new_durable": _GRID},
         functions=all_functions,
@@ -254,7 +252,7 @@ def test_pairing_check_rejects_one_margin_solver_on_nested_regime():
 
 def test_plain_regime_rejects_an_unbound_egm_family_solver():
     with pytest.raises(RegimeInitializationError, match="margin declarations"):
-        Regime(regime_transitions=lambda: 0, solver=_fues_dcegm())
+        Regime(solver=_fues_dcegm())
 
 
 def test_tier_one_liquid_names_are_pairwise_distinct():

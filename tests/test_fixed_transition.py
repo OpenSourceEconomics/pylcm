@@ -20,6 +20,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -55,7 +56,6 @@ def _next_regime(age: float) -> ScalarInt:
 def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
     spec: dict[str, Any] = {
-        "regime_transitions": DeterministicTransition(func=_next_regime),
         "states": {
             "health": DiscreteGrid(category_class=_Health),
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -73,7 +73,6 @@ def _build_regime(**overrides: Any) -> UserRegime:
 
 def _build_model(work: UserRegime) -> Model:
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -81,7 +80,12 @@ def _build_model(work: UserRegime) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
-        edges={"work": {"dead": (0, 1), "work": 0}},
+        edges={
+            "work": Transition(
+                targets={"dead": (0, 1), "work": 0},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 

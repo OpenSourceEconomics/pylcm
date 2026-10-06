@@ -17,6 +17,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -81,7 +82,6 @@ def _terminal_utility(*, wealth: float) -> float:
 def get_model(*, budget_bytes: int | None = None) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -91,13 +91,17 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
     return Model(
         regimes={"acting": acting, "done": done},
-        edges={"acting": {"acting": (0, 1), "done": (0, 1, 2)}},
+        edges={
+            "acting": Transition(
+                targets={"acting": (0, 1), "done": (0, 1, 2)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),

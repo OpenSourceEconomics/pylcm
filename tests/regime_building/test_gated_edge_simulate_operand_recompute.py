@@ -170,6 +170,11 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
+        states={"x": _X2},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -191,27 +196,20 @@ def _make_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"x": _X2},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     target = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_target},
-    )
+    ).replace(regime_transitions=None)
     ref = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_ref},
-    )
+    ).replace(regime_transitions=None)
     fallback = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_fallback},
-    )
+    ).replace(regime_transitions=None)
     return {"src": src, "target": target, "ref": ref, "fallback": fallback}
 
 
@@ -384,6 +382,11 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
 
 def _make_curved_regimes() -> dict[str, Regime]:
     src = Regime(
+        states={"x": _X2},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -400,23 +403,17 @@ def _make_curved_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"x": _X2},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     target = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
-    )
+    ).replace(regime_transitions=None)
     fallback = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_fallback},
-    )
+    ).replace(regime_transitions=None)
     return {"src": src, "target": target, "fallback": fallback}
 
 

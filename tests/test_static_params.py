@@ -14,10 +14,12 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
+from tests.test_models.regime_markov import EDGES as MARKOV_EDGES
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
 from tests.test_models.regime_markov import alive as markov_alive
@@ -53,7 +55,12 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
-_EDGES = {"alive": {"alive": 0, "dead": (0, 1)}}
+_EDGES = {
+    "alive": Transition(
+        targets={"alive": 0, "dead": (0, 1)},
+        law=DeterministicTransition(func=_next_regime),
+    )
+}
 
 
 def _make_model(*, n_periods=3, extra_fixed_params=None):
@@ -68,10 +75,8 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -84,10 +89,13 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         fixed_params=fixed_params,
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=n_periods - 2),
-                "dead": AgeRange(exclusive_stop=n_periods - 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=n_periods - 2),
+                    "dead": AgeRange(exclusive_stop=n_periods - 1),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 
@@ -255,7 +263,7 @@ def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
         regime_id_class=MarkovRegimeId,
         fixed_params=fixed_params or {},
         initial_nodes={60: "alive"},
-        edges={"alive": {"alive": 60, "dead": (60, 61)}},
+        edges=MARKOV_EDGES,
     )
 
 
@@ -358,13 +366,11 @@ def test_series_fixed_param_with_derived_categoricals():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -396,10 +402,8 @@ def test_model_broadcast_merges_into_regimes():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -431,11 +435,9 @@ def test_model_broadcast_same_name_at_both_levels_raises():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         derived_categoricals={"wealth_group": wg_grid},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     with pytest.raises(Exception, match="Ambiguous"):
@@ -464,11 +466,9 @@ def test_model_broadcast_conflicting_grids_raise():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     with pytest.raises(Exception, match="Ambiguous"):
@@ -504,11 +504,9 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
 
     alive = UserRegime(
         functions={"utility": lambda: 0.0},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         derived_categoricals={"group_b": DiscreteGrid(category_class=_GroupB)},
     )

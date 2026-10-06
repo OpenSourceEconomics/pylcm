@@ -27,7 +27,6 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -45,6 +44,7 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
+    _with_full_topology_laws,
 )
 
 
@@ -68,17 +68,19 @@ class _Records(logging.Handler):
 def _model() -> Model:
     return Model(
         regimes=_make_full_topology_regimes(),
-        edges={
-            "single_f": {"married": 0, "single_f_p1": 0},
-            "single_m": {"married": 0, "single_m_p1": 0},
-            "single_f_p1": {"single_f_terminal": 1},
-            "single_m_p1": {"single_m_terminal": (0, 1, 2)},
-            "married": {
-                "married_terminal": 1,
-                "single_f_terminal": 1,
-                "single_m_terminal": 1,
-            },
-        },
+        edges=_with_full_topology_laws(
+            {
+                "single_f": {"married": 0, "single_f_p1": 0},
+                "single_m": {"married": 0, "single_m_p1": 0},
+                "single_f_p1": {"single_f_terminal": 1},
+                "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+                "married": {
+                    "married_terminal": 1,
+                    "single_f_terminal": 1,
+                    "single_m_terminal": 1,
+                },
+            }
+        ),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},
@@ -151,11 +153,6 @@ class _PassThroughRegimeId:
     dead: ScalarInt
 
 
-def _pass_through_next_regime() -> ScalarInt:
-    """One decision period is followed by the terminal regime."""
-    return _PassThroughRegimeId.dead
-
-
 def _pass_through_utility(consumption: ContinuousAction) -> FloatND:
     """Log flow utility of consumption."""
     return jnp.log(consumption)
@@ -204,7 +201,6 @@ def _pass_through_model(
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=_pass_through_next_regime),
         states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
@@ -219,7 +215,6 @@ def _pass_through_model(
         solver=EGM(savings_grid=_PASS_THROUGH_SAVINGS_GRID),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
     )

@@ -30,7 +30,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
@@ -41,10 +40,6 @@ class RegimeId:
     couple: ScalarInt
     couple_terminal: ScalarInt
     single_f_terminal: ScalarInt
-
-
-def _certain(wage: ContinuousState) -> FloatND:
-    return jnp.ones_like(wage)
 
 
 def _zero(wage: ContinuousState) -> FloatND:
@@ -75,13 +70,11 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 def _make_model(*, participation: bool) -> Model:
     couple = Regime(
-        regime_transitions={"couple_terminal": StochasticTransition(func=_certain)},
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -105,7 +98,6 @@ def _make_model(*, participation: bool) -> Model:
         ),
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_option},
     )
@@ -281,7 +273,6 @@ def test_a_terminal_singleton_regime_still_refuses_value_constraints() -> None:
     """
     with pytest.raises(Exception, match="value_constraints"):
         Regime(
-            regime_transitions=None,
             states={"wage": _WAGE},
             functions={"utility": _wage_for_her},
             constraints={

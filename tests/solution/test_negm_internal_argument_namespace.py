@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from dags import rename_arguments
 
-from lcm import AgeGrid, AgeRange, DeterministicTransition, Model
+from lcm import AgeGrid, AgeRange, DeterministicTransition, Model, Transition
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -39,7 +39,6 @@ def _alive_regime_with_outer_node_named(
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=DeterministicTransition(func=toy.next_regime),
         functions={
             "utility": toy.utility,
             outer_node: toy.new_durable,
@@ -73,10 +72,13 @@ def _alive_regime_with_outer_node_named(
 def _model_with_outer_node_named(*, outer_node: str) -> Model:
     return Model(
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
-                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                    "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
+                },
+                law=DeterministicTransition(func=toy.next_regime),
+            )
         },
         regimes={
             "alive": _alive_regime_with_outer_node_named(outer_node=outer_node),

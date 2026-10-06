@@ -50,6 +50,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
 )
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
@@ -495,7 +496,6 @@ def _model(
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={
                     "wealth": LinSpacedGrid(
                         start=1, stop=float(n_wealth), n_points=n_wealth
@@ -521,7 +521,10 @@ def _model(
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
         edges={
-            "working_life": {"working_life": START_AGE, "dead": (START_AGE, last_age)}
+            "working_life": Transition(
+                targets={"working_life": START_AGE, "dead": (START_AGE, last_age)},
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )
 

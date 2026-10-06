@@ -17,7 +17,6 @@ that the pool refuses one if it ever stops.
 import re
 from types import MappingProxyType
 
-import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
@@ -28,7 +27,6 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -133,7 +131,6 @@ def _plain_bonus(wealth: ContinuousState) -> FloatND:
 def _build_model() -> Model:
     """Build a worker whose `bonus` helper is bound per age."""
     worker = Regime(
-        regime_transitions={"dead": StochasticTransition(func=_prob_one)},
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},
         functions={
@@ -142,7 +139,6 @@ def _build_model() -> Model:
         },
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _terminal_utility},
     )
@@ -168,11 +164,6 @@ def _make_bonus(age: float):
         return scale * wealth
 
     return bonus
-
-
-def _prob_one(age: FloatND) -> FloatND:
-    """Regime transition taken with certainty."""
-    return jnp.ones_like(age, dtype=float)
 
 
 def _keep_wealth(wealth: ContinuousState) -> ContinuousState:

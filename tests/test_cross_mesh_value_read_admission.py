@@ -46,8 +46,6 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -164,10 +162,6 @@ _RETIRED_UTILITY = {
 }
 
 
-def _retire() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _enter_b(*, wealth: FloatND) -> FloatND:
     """Probabilities over `_B`, richer entrants arriving in higher categories."""
     high = jnp.clip(wealth / 100.0, 0.0, 1.0)
@@ -205,20 +199,12 @@ def build_model(
 
     """
     working = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "retired": StochasticTransition(func=_retire)
-                }
-            }
-        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _WORKING_UTILITY[tuple(working_reads)]},
         state_transitions={"wealth": _next_wealth},
     )
     retired = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _RETIRED_UTILITY[tuple(retired_reads)]},
     )

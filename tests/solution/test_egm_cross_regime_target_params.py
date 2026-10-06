@@ -27,6 +27,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -215,14 +216,6 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         # Young in the first decision period only, so its only DC-EGM carry
         # target is the *old* regime (a different regime) and the terminal
         # `dead` regime.
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=50): {
-                    "old": StochasticTransition(func=young_stay_prob),
-                    "dead": StochasticTransition(func=young_death_prob),
-                }
-            }
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -264,10 +257,6 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     )
     pension_funcs = {"accrued_pension": accrued_pension, "pension_value": pension_value}
     old = regime_type(
-        regime_transitions={
-            "old": StochasticTransition(func=next_old_stay_prob),
-            "dead": StochasticTransition(func=next_old_death_prob),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -300,7 +289,6 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     fixed_params = (
@@ -315,8 +303,24 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
         regimes={"young": young, "old": old, "dead": dead},
         ages=_ages(),
         edges={
-            "young": {"old": 40, "dead": 40},
-            "old": {"old": 50, "dead": (50, 60)},
+            "young": Transition(
+                targets={"old": 40, "dead": 40},
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=50): {
+                            "old": StochasticTransition(func=young_stay_prob),
+                            "dead": StochasticTransition(func=young_death_prob),
+                        }
+                    }
+                ),
+            ),
+            "old": Transition(
+                targets={"old": 50, "dead": (50, 60)},
+                law={
+                    "old": StochasticTransition(func=next_old_stay_prob),
+                    "dead": StochasticTransition(func=next_old_death_prob),
+                },
+            ),
         },
         regime_id_class=CrossRegimeId,
         fixed_params=fixed_params,

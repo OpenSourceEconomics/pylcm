@@ -14,7 +14,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -25,10 +24,6 @@ from lcm.typing import FloatND, ScalarFloat, ScalarInt
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _no_utility() -> ScalarFloat:
@@ -47,12 +42,10 @@ def _build() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"shock": {"target": _enter_at_several_values}},
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

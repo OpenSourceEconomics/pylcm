@@ -14,7 +14,7 @@ from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import _select_action_width_keyword
-from lcm import AgeGrid, DeterministicTransition, LinSpacedGrid, Model, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
 
@@ -23,11 +23,6 @@ from lcm.typing import ContinuousAction, FloatND, ScalarInt
 class _RegimeId:
     acting: ScalarInt
     done: ScalarInt
-
-
-def _next_regime() -> ScalarInt:
-    """Move from the decision regime to its terminal target."""
-    return _RegimeId.done
 
 
 def _one_collision_utility(*, _lcm_action_block_width: ContinuousAction) -> FloatND:
@@ -76,14 +71,12 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
     Model(
         regimes={
             "acting": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 actions={
                     "action": LinSpacedGrid(start=1.0, stop=3.0, n_points=3),
                 },
                 functions={"utility": _selector_model_utility},
             ),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },
@@ -160,12 +153,10 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     model = Model(
         regimes={
             "acting": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 actions=actions,
                 functions={"utility": utility},
             ),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },

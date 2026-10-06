@@ -19,6 +19,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -75,10 +76,10 @@ def _boolean_gate(x: ContinuousState) -> BoolND:
 
 def _make_model(*, gate) -> Model:
     return Model(
-        edges={"source": {"target": 40, "fallback": 40}},
-        regimes={
-            "source": Regime(
-                regime_transitions={
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
+                law={
                     "target": ValueDependentTransition(
                         probability=StochasticTransition(func=_prob_one),
                         gate=gate,
@@ -92,18 +93,20 @@ def _make_model(*, gate) -> Model:
                         },
                     )
                 },
+            )
+        },
+        regimes={
+            "source": Regime(
                 states={"x": _X},
                 state_transitions={"x": fixed_transition("x")},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},
             ),

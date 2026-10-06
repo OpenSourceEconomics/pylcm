@@ -15,7 +15,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
@@ -35,23 +34,15 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _model_with_process_action(*, enable_jit: bool) -> Model:
     """A target whose `shock` is an action drawn from a process's node set."""
     return Model(
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 actions={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=True, mu=0.5, sigma=1.0

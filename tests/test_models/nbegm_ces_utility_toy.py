@@ -191,7 +191,8 @@ def build_params(
     subsidy_high: float = 3.0,
     subsidy_slope: float = 0.4,
     fpl_cliff: float = 15.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the CES-utility ride-along toy.
 
@@ -226,7 +227,6 @@ def build_params(
             "next_wage": {"wage_persistence": wage_persistence},
         },
         "dead": {"next_liquid": alive_budget},
-        "final_age_alive": final_age_alive,
     }
     return {
         "alive": alive_params,

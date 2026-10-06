@@ -153,8 +153,16 @@ def _settlement_from_health(health: DiscreteState) -> FloatND:
 
 
 def _make_regimes() -> dict[str, Regime]:
-    """Source with a dissolution edge, its target, and the leg's fallback."""
+    """Source with a dissolution edge, its target, and the leg's fallback.
+
+    Each regime carries its bound transition law, as `Model` would bind it.
+    """
     source = Regime(
+        states={"health": DiscreteGrid(category_class=Health)},
+        state_transitions={"health": _next_health},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility_source},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -172,22 +180,16 @@ def _make_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"health": DiscreteGrid(category_class=Health)},
-        state_transitions={"health": _next_health},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _utility_source},
+        )
     )
     target = Regime(
-        regime_transitions=None,
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": _utility_target},
-    )
+    ).replace(regime_transitions=None)
     fallback = Regime(
-        regime_transitions=None,
         states={"settlement": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": _utility_fallback},
-    )
+    ).replace(regime_transitions=None)
     return {"src": source, "target": target, "fallback": fallback}
 
 

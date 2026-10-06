@@ -13,7 +13,6 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     UniformIIDProcess,
     categorical,
 )
@@ -26,10 +25,6 @@ _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _enter_at_the_node() -> ScalarFloat:
@@ -78,12 +73,10 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _ONE_NODE},
                 functions={"utility": _shock_plus_ten},
             ),
@@ -109,7 +102,6 @@ def _model_entering_at(enter_law) -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": enter_law},
@@ -118,7 +110,6 @@ def _model_entering_at(enter_law) -> Model:
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _ONE_NODE, "wealth": _WEALTH},
                 functions={"utility": _shock_and_wealth},
             ),

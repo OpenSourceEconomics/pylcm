@@ -15,7 +15,14 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import core_program_graph
-from lcm import AgeGrid, AgeRange, DeterministicTransition, ExecutionConfig, Model
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    ExecutionConfig,
+    Model,
+    Transition,
+)
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
 from lcm.typing import FloatND
@@ -61,7 +68,6 @@ def _model(width: int | None = None) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "income": _income_process("iid")},
         state_transitions={"wealth": next_wealth_from_savings_iid},
@@ -85,10 +91,13 @@ def _model(width: int | None = None) -> Model:
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=last_age - 10),
-                "dead": AgeRange(exclusive_stop=last_age),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=last_age - 10),
+                    "dead": AgeRange(exclusive_stop=last_age),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )
 

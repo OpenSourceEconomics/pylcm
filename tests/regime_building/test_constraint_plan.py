@@ -14,7 +14,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -76,10 +75,6 @@ def next_wealth(savings: FloatND) -> FloatND:
     return savings
 
 
-def next_regime(_age: float) -> ScalarInt:
-    return RegimeId.done
-
-
 def spends_within_reason(consumption: ContinuousAction) -> FloatND:
     """Reads the continuous action, which the inversion produces."""
     return consumption <= 3.0
@@ -100,14 +95,12 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility, "savings": savings},
         solver=solver,
         liquid=_LIQUID,
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),

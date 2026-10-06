@@ -30,7 +30,14 @@ is flagged, not yet replicated).
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DeterministicTransition, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
+)
 from lcm.grids import DiscreteGrid
 from lcm.regime import Regime
 from lcm.typing import (
@@ -225,11 +232,9 @@ def get_model(
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         constraints={"feasible": feasible},
-        regime_transitions=DeterministicTransition(func=next_regime_from_working),
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -239,14 +244,17 @@ def get_model(
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
         edges={
-            "working": {
-                **(
-                    {"working": ages.exact_values[:-2]}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-                "dead": ages.exact_values[:-1],
-            }
+            "working": (
+                Transition(
+                    targets={
+                        "working": ages.exact_values[:-2],
+                        "dead": ages.exact_values[:-1],
+                    },
+                    law=DeterministicTransition(func=next_regime_from_working),
+                )
+                if ages.exact_values[:-2]
+                else {"dead": ages.exact_values[:-1]}
+            )
         },
     )
 

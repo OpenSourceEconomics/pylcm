@@ -38,6 +38,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
@@ -280,14 +281,16 @@ def _model(
     last_age = START_AGE + _N_PERIODS - 2
     return Model(
         edges={
-            "working_life": {
-                "working_life": AgeRange(exclusive_stop=last_age),
-                "dead": AgeRange(exclusive_stop=last_age + 1),
-            }
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=last_age),
+                    "dead": AgeRange(exclusive_stop=last_age + 1),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={
                     "wealth": LinSpacedGrid(
                         start=1, stop=float(_N_WEALTH), n_points=_N_WEALTH

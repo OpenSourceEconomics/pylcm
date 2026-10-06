@@ -25,6 +25,7 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -120,7 +121,6 @@ def borrowing_constraint(
 
 def _make_dead_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions=None,
         states={"wealth": BEQUEST_WEALTH_GRID},
         functions={
             "utility": bequest_utility,
@@ -146,7 +146,6 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     ages = _ages()
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     retirement = regime_type(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -188,7 +187,12 @@ def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
-        edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "retirement": Transition(
+                targets={"retirement": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
+        },
         regime_id_class=RegimeId,
         fixed_params=_fixed_scale() if scale_is_fixed else {},
         initial_nodes={ages.exact_values[0]: "retirement"},

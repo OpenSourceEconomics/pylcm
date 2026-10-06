@@ -36,7 +36,6 @@ from _lcm.execution.core_program import core_program_graph
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
-    ByAge,
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
@@ -228,7 +227,6 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
         states={"liquid": liquid_grid},
         state_transitions={"liquid": {"child": liquid_law}},
         constraints={},
-        regime_transitions=ByAge.until(stop_age_exclusive=2, law="child", then="child"),
         functions={
             "utility": utility,
             "savings": savings,
@@ -249,9 +247,6 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
             "liquid": {"child": identity_liquid, "dead": identity_liquid}
         },
         constraints={},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=3, law="child", then="dead", start_age_inclusive=1
-        ),
         functions={
             "utility": utility,
             "savings": savings,
@@ -269,7 +264,6 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": zero_bequest},
         solver=GridSearch(),

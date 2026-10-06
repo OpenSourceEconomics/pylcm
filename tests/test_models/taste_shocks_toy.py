@@ -19,7 +19,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -83,12 +82,7 @@ def budget_constraint(
     return consumption <= wealth
 
 
-def next_regime(age: int) -> ScalarInt:  # noqa: ARG001
-    return ToyRegimeId.done
-
-
 alive = UserRegime(
-    regime_transitions=DeterministicTransition(func=next_regime),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -101,7 +95,6 @@ alive = UserRegime(
 )
 
 done = UserRegime(
-    regime_transitions=None,
     states={"wealth": TERMINAL_WEALTH_GRID},
     functions={"utility": utility_done},
 )

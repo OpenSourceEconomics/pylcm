@@ -116,6 +116,9 @@ _AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_work},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -133,20 +136,16 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_work},
+        )
     )
     source_terminal = Regime(
-        regime_transitions=None,
         functions={"utility": _u_zero},
-    )
+    ).replace(regime_transitions=None)
     target = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
-    )
+    ).replace(regime_transitions=None)
     return {"source": source, "source_terminal": source_terminal, "target": target}
 
 
@@ -168,19 +167,11 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
 def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     """`reader` (collective) --same_period_refs--> `ref_target` (collective, folded)."""
     ref_target = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
-    )
+    ).replace(regime_transitions=None)
     reader = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "reader_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
@@ -197,14 +188,21 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "reader_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        )
     )
     reader_terminal = Regime(
-        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
-    )
+    ).replace(regime_transitions=None)
     return {
         "ref_target": ref_target,
         "reader": reader,
@@ -233,6 +231,9 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     plays no part in the ordering this fixture exercises.
     """
     source = Regime(
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_work},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -256,27 +257,22 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_work},
+        )
     )
     source_terminal = Regime(
-        regime_transitions=None,
         functions={"utility": _u_zero},
-    )
+    ).replace(regime_transitions=None)
     target = Regime(
-        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
-    )
+    ).replace(regime_transitions=None)
     ref_target = Regime(
-        regime_transitions=None,
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
-    )
+    ).replace(regime_transitions=None)
     return {
         "source": source,
         "source_terminal": source_terminal,

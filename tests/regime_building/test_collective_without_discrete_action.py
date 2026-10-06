@@ -16,7 +16,6 @@ import numpy as np
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -36,10 +35,6 @@ CONSUMPTION_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
 class CoupleRegimeId:
     couple: ScalarInt  # code 0
     couple_terminal: ScalarInt  # code 1
-
-
-def _next_couple_regime() -> ScalarInt:
-    return CoupleRegimeId.couple_terminal
 
 
 def _flow_utility_f() -> FloatND:
@@ -82,7 +77,6 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     flow payoff: `(1 + 0.95 * 10, 2 + 0.95 * 4) = (10.5, 5.8)`.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={},
         actions={},
         functions={
@@ -92,7 +86,6 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={},
         actions={},
         functions={
@@ -132,7 +125,6 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     `(1 + 0.95 * 1, 2 + 0.95 * 2) = (1.95, 3.9)`.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={
@@ -142,7 +134,6 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={

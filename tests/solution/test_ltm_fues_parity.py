@@ -22,8 +22,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DeterministicTransition, Model, StochasticTransition
-from lcm.typing import BoolND, DiscreteAction, UserAge
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    Model,
+    StochasticTransition,
+    Transition,
+)
+from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import (
     dead,
     retirement_transitions,
@@ -48,19 +54,25 @@ _PARITY_RTOL = 1e-3
 
 
 def _lifecycle_edges(
-    *, ages: AgeGrid
-) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+    *, ages: AgeGrid, working_life_law: object, retirement_law: object
+) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age."""
     return {
-        "working_life": {
-            "working_life": tuple(ages.exact_values[:-2]),
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
-        "retirement": {
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
+        "working_life": Transition(
+            targets={
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=working_life_law,
+        ),
+        "retirement": Transition(
+            targets={
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=retirement_law,
+        ),
     }
 
 
@@ -76,10 +88,6 @@ def _retirement_only_model(*, envelope, n_periods):
         regimes={
             "retirement": _with_backend(
                 regime=dcegm_retirement, envelope=envelope_config(envelope)
-            ).replace(
-                regime_transitions=DeterministicTransition(
-                    func=retirement_only.next_regime_from_retirement
-                )
             ),
             "dead": dead,
         },
@@ -87,10 +95,15 @@ def _retirement_only_model(*, envelope, n_periods):
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
         edges={
-            "retirement": {
-                "retirement": tuple(ages.exact_values[:-2]),
-                "dead": tuple(ages.exact_values[:-1]),
-            }
+            "retirement": Transition(
+                targets={
+                    "retirement": tuple(ages.exact_values[:-2]),
+                    "dead": tuple(ages.exact_values[:-1]),
+                },
+                law=DeterministicTransition(
+                    func=retirement_only.next_regime_from_retirement
+                ),
+            )
         },
     )
 
@@ -99,14 +112,16 @@ def _full_model(*, envelope, n_periods):
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(
+            ages=ages,
+            working_life_law=working_life_transitions(last_age=last_age),
+            retirement_law=retirement_transitions(last_age=last_age),
+        ),
         regimes={
-            "working_life": _with_backend(
-                regime=dcegm_working_life, envelope=envelope
-            ).replace(regime_transitions=working_life_transitions(last_age=last_age)),
+            "working_life": _with_backend(regime=dcegm_working_life, envelope=envelope),
             "retirement": _with_backend(
                 regime=dcegm_retirement_full, envelope=envelope
-            ).replace(regime_transitions=retirement_transitions(last_age=last_age)),
+            ),
             "dead": base.dead,
         },
         ages=ages,
@@ -174,19 +189,22 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
 
     def build(envelope):
         ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
+        retirement_law = retirement_transition
         return Model(
-            edges=_lifecycle_edges(ages=ages),
+            edges=_lifecycle_edges(
+                ages=ages,
+                working_life_law=working_life_transitions(last_age=70),
+                retirement_law=retirement_law,
+            ),
             regimes={
                 "working_life": _with_backend(
                     regime=dcegm_working_life, envelope=envelope
                 ).replace(
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
-                    regime_transitions=working_life_transitions(last_age=70),
                 ),
                 "retirement": _with_backend(
                     regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
-                    regime_transitions=retirement_transition,
                     state_transitions={
                         "wealth": dcegm_retirement_full.state_transitions["wealth"],
                     },

@@ -26,6 +26,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
@@ -146,10 +147,6 @@ def _utility_of_four_draws(
     )
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0, dtype=_active_dtype())
-
-
 def _to_lottery(plan: DiscreteState) -> FloatND:
     return jnp.where(plan == Plan.gamble, 1.0, 0.0)
 
@@ -166,14 +163,6 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
     )
     regimes = {
         "source": Regime(
-            regime_transitions=(
-                {
-                    "lottery": StochasticTransition(func=_to_lottery),
-                    "safe": StochasticTransition(func=_to_safe),
-                }
-                if with_a_safe_alternative
-                else {"lottery": StochasticTransition(func=_certain)}
-            ),
             actions={"plan": DiscreteGrid(category_class=Plan)}
             if with_a_safe_alternative
             else {},
@@ -185,15 +174,12 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
             certainty_equivalent=PowerMean(),
         ),
         "lottery": Regime(
-            regime_transitions=None,
             states={name: DiscreteGrid(category_class=Draw) for name in axis_names},
             functions={"utility": lottery_utility},
         ),
     }
     if with_a_safe_alternative:
-        regimes["safe"] = Regime(
-            regime_transitions=None, functions={"utility": _safe_utility}
-        )
+        regimes["safe"] = Regime(functions={"utility": _safe_utility})
     return Model(
         regimes=regimes,
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -202,7 +188,13 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
         edges={
-            "source": {"lottery": 20, "safe": 20}
+            "source": Transition(
+                targets={"lottery": 20, "safe": 20},
+                law={
+                    "lottery": StochasticTransition(func=_to_lottery),
+                    "safe": StochasticTransition(func=_to_safe),
+                },
+            )
             if with_a_safe_alternative
             else {"lottery": 20}
         },

@@ -25,6 +25,7 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -80,11 +81,11 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(20 + (_N_PERIODS - 2) * 5)
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = ConsumptionSavingsRegime(
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": _next_liquid},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=DeterministicTransition(func=_next_regime),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -104,7 +105,6 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _terminal_value},
     )
@@ -115,10 +115,13 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=alive_law,
+            )
         },
     )
 

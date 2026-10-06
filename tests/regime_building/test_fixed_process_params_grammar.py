@@ -28,7 +28,7 @@ from lcm import (
     NormalIIDProcess,
     Phased,
     Regime,
-    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -60,10 +60,6 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _impute_carried(wealth: ScalarFloat) -> ScalarFloat:
     """Solve-phase value of the carried state, imputed rather than gridded."""
     return wealth * 0.5
@@ -78,13 +74,9 @@ def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> M
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -174,13 +166,9 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _mu_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -232,13 +220,9 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": LogNormalIIDProcess(n_points=3, gauss_hermite=True)},
                 functions={"utility": _shock_utility},
             ),
@@ -274,11 +258,9 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=DeterministicTransition(func=_always_target),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -289,7 +271,12 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
-        edges={"source": {"source": 20, "target": (20, 21)}},
+        edges={
+            "source": Transition(
+                targets={"source": 20, "target": (20, 21)},
+                law=DeterministicTransition(func=_always_target),
+            )
+        },
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -327,9 +314,6 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 states={
                     "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
                     "carried": Phased(
@@ -344,7 +328,6 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),

@@ -16,7 +16,6 @@ import pytest
 
 from lcm import (
     AgeSpecializedFunction,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -27,7 +26,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
-    ScalarInt,
     UserFunction,
 )
 from tests.collective_fixtures import AGES, FOLDED_SHOCK, ShockRegimeId, Work
@@ -74,14 +72,12 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
 
     """
     shocked = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility, "net_wage": net_wage},
         state_transitions={"wealth": _next_wealth},
     )
     shocked_terminal = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _terminal_utility},
     )
@@ -129,8 +125,3 @@ def _terminal_utility(wealth: ContinuousState) -> FloatND:
 def _next_wealth(*, wealth: ContinuousState, net_wage: FloatND) -> ContinuousState:
     """Return next period's wealth: today's wealth plus the net wage."""
     return wealth + net_wage
-
-
-def _next_regime() -> ScalarInt:
-    """Return the target regime: `shocked` becomes `shocked_terminal`."""
-    return ShockRegimeId.shocked_terminal

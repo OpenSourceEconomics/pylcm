@@ -19,6 +19,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -74,10 +75,6 @@ def final_bequest(wealth: FloatND) -> FloatND:
     return jnp.log(wealth + 1.0)
 
 
-def death_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _model(
     *,
     short_old_health: bool,
@@ -111,7 +108,6 @@ def _model(
         if (selected := tuple(age for age in ages if age in parent_ages))
     }
     parent = ConsumptionSavingsRegime(
-        regime_transitions=ByAge(cases=parent_cases),
         states={"wealth": grid, "health": DiscreteGrid(Health)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=20.0, n_points=5)},
         state_transitions={
@@ -143,28 +139,13 @@ def _model(
         regimes={
             "parent": parent,
             "young": parent.replace(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(start=50, exclusive_stop=51): {
-                            "dead": StochasticTransition(func=death_probability)
-                        }
-                    }
-                ),
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "old": parent.replace(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(
-                            start=50 if overlapping_children else 60, exclusive_stop=70
-                        ): {"dead": StochasticTransition(func=death_probability)}
-                    }
-                ),
                 states={"wealth": grid, "health": DiscreteGrid(old_domain)},
                 state_transitions={"wealth": next_wealth, "health": {}},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": final_bequest},
             ),
@@ -173,7 +154,11 @@ def _model(
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
         edges={
-            "parent": parent_edges,
+            # Overlapping children give the parent two edges at age 40, so
+            # its law chooses among them there.
+            "parent": Transition(targets=parent_edges, law=ByAge(cases=parent_cases))
+            if overlapping_children
+            else parent_edges,
             "young": {"dead": 50},
             "old": {"dead": (50, 60) if overlapping_children else 60},
         },

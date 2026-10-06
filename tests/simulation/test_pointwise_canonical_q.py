@@ -23,7 +23,6 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LogSpacedGrid,
@@ -83,9 +82,6 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _bonus_model() -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        regime_transitions=DeterministicTransition(
-            func=retirement_only.next_regime_from_retirement
-        ),
         solver=solver,
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
@@ -100,7 +96,6 @@ def _bonus_model() -> Model:
         },
     )
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )

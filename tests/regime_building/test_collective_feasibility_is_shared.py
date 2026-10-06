@@ -45,7 +45,6 @@ import pytest
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -106,13 +105,8 @@ def _next_wage(work: DiscreteAction) -> ContinuousState:
     return 40.0 * work + 24.0 * (1.0 - work)
 
 
-def _next_regime() -> ScalarInt:
-    return RegimeId.couple_terminal
-
-
 def _make_model() -> Model:
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -122,7 +116,6 @@ def _make_model() -> Model:
         constraints={"participation_f": _participation_f},
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={

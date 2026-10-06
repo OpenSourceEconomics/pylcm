@@ -35,7 +35,6 @@ from _lcm.simulation.chunk_profile_cache import (
 from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -63,21 +62,14 @@ def _next_wealth(*, wealth: ContinuousState, saving: ContinuousAction) -> FloatN
     return wealth + saving
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
-
-
 def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _terminal_utility}
-            ),
+            "done": Regime(functions={"utility": _terminal_utility}),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},
         state_transitions={"wealth": _next_wealth},

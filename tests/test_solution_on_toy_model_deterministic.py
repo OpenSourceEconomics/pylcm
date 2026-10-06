@@ -15,6 +15,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -95,11 +96,9 @@ alive_deterministic = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    regime_transitions=DeterministicTransition(func=next_regime),
 )
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -218,8 +217,12 @@ def matrix_to_dict_of_vectors(*, arr, col_names):
     return dict(zip(col_names, arr.transpose(), strict=True))
 
 
-THREE_PERIOD_TRANSITIONS = DeterministicTransition(func=next_regime)
-THREE_PERIOD_EDGES = {"alive": {"alive": 0, "dead": (0, 1)}}
+THREE_PERIOD_EDGES = {
+    "alive": Transition(
+        targets={"alive": 0, "dead": (0, 1)},
+        law=DeterministicTransition(func=next_regime),
+    )
+}
 
 
 def dict_of_vectors_to_matrix(d):
@@ -238,9 +241,7 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
     )
     model = Model(
         regimes={
-            "alive": alive_deterministic.replace(
-                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
-            ),
+            "alive": alive_deterministic.replace(states=new_states),
             "dead": dead,
         },
         ages=ages,
@@ -290,9 +291,7 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
     )
     model = Model(
         regimes={
-            "alive": alive_deterministic.replace(
-                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
-            ),
+            "alive": alive_deterministic.replace(states=new_states),
             "dead": dead,
         },
         ages=ages,

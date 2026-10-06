@@ -176,6 +176,11 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
+        states={"wage": _WAGE, "shock": _SHOCK},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_single_f},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -204,24 +209,17 @@ def _make_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"wage": _WAGE, "shock": _SHOCK},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_single_f},
+        )
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
-    )
+    ).replace(regime_transitions=None)
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
-    )
+    ).replace(regime_transitions=None)
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE, "shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -229,7 +227,7 @@ def _make_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_f, "m": _u_married_m}
             )
         },
-    )
+    ).replace(regime_transitions=None)
     return {
         "single_f": single_f,
         "single_f_terminal": single_f_terminal,

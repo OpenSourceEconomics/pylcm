@@ -11,7 +11,13 @@ per-constraint diagnostic, and the additional-target pool.
 import jax.numpy as jnp
 import pytest
 
-from lcm import DeterministicTransition, LinSpacedGrid, Model, categorical
+from lcm import (
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.regime import Regime as UserRegime
@@ -63,7 +69,6 @@ def next_regime(age: int) -> ScalarInt:
 def model() -> Model:
     """Model whose only constraint reads the post-decision function."""
     alive = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
         state_transitions={"wealth": next_wealth},
@@ -71,7 +76,6 @@ def model() -> Model:
         constraints={"savings_stay_above_the_floor": savings_stay_above_the_floor},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -79,7 +83,12 @@ def model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -129,7 +138,6 @@ def test_the_constraint_is_available_as_an_additional_target(model):
 def model_with_a_renamed_constraint() -> Model:
     """The same model, declaring the same predicate under a different key."""
     alive = UserRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
         state_transitions={"wealth": next_wealth},
@@ -137,7 +145,6 @@ def model_with_a_renamed_constraint() -> Model:
         constraints={"liquidity_floor": savings_stay_above_the_floor},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     return Model(
@@ -145,7 +152,12 @@ def model_with_a_renamed_constraint() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

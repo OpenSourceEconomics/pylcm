@@ -11,7 +11,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -42,20 +41,15 @@ def _feasible(*, wealth: FloatND, consumption: FloatND) -> FloatND:
     return consumption <= wealth
 
 
-def _next_regime(age: float) -> ScalarInt:
-    return jnp.where(age >= 18, _RegimeId.dead, _RegimeId.working)
-
-
 def _build_model(*, enable_jit: bool) -> Model:
     working = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": _utility},
         constraints={"feasible": _feasible},
     )
-    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = Regime(functions={"utility": lambda: 0.0})
     return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),

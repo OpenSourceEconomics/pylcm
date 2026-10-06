@@ -40,6 +40,7 @@ from _lcm.execution.execution_plan import (
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
+    bind_edge_laws,
     naming_cells_without_edges,
     prepare_graph,
     resolve_graph_edges,
@@ -247,6 +248,7 @@ from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
+from lcm.regime import UNBOUND
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -635,8 +637,12 @@ class Model:
             edges: Mapping from source regime to destination regime to source-age
                 selector. A bare mapping broadcasts to both phases; `Phased`
                 declares perceived solve and realized simulation topology separately.
-                The edge lands at the next grid age. Stored as an immutable,
-                validated graph in `self.graph`.
+                The edge lands at the next grid age. A source with several
+                destinations at some age maps to `Transition(targets=..., law=...)`,
+                whose law chooses among them; a regime with no outgoing edges is
+                terminal. Kept as declared, laws included, in `self.edges`, which
+                this argument accepts back; stored as an immutable, validated
+                graph in `self.graph`.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -674,6 +680,10 @@ class Model:
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        # The graph declares every regime transition: bind each source's law
+        # from its edges before anything reads the regimes.
+        self.edges = edges
+        regimes, edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (
@@ -719,8 +729,7 @@ class Model:
             StructuralBlueprintCache()
         )
 
-        # The declared starts and Model.edges provide roots and support.
-        # Numerical regime_transitions and ByAge select the available laws.
+        # The declared starts and Model.edges provide roots, support and laws.
         # One canonical coverage schedule carries the resulting solve demand
         # through pruning, validation and model-structure preparation; only
         # demanded laws are lowered to the engine's period-independent form.
@@ -732,10 +741,6 @@ class Model:
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        user_transitions = {
-            name: regime.regime_transitions for name, regime in regimes.items()
-        }
-
         model_slots = {
             "functions": functions,
             "constraints": constraints,
@@ -877,11 +882,11 @@ class Model:
             reachability=self.reachability,
             pruned_edges=prepared_graph.pruned_edges,
         )
-        # Public regimes keep each transition as declared; the engine copy
-        # holds the lowered law every internal consumer reads.
+        # Public regimes carry no law, as declared: the graph holds it. The
+        # engine copy holds the lowered law every internal consumer reads.
         self.user_regimes = MappingProxyType(
             {
-                name: regime.replace(regime_transitions=user_transitions[name])
+                name: regime.replace(regime_transitions=UNBOUND)
                 for name, regime in self._engine_user_regimes.items()
             }
         )

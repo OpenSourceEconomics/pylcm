@@ -9,6 +9,7 @@ outside `EGM`'s contract and is refused where the contract is stated, at `Model`
 construction.
 """
 
+import jax.numpy as jnp
 import pytest
 
 from lcm import (
@@ -18,6 +19,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -32,8 +34,6 @@ from tests.solution.test_egm_solver import (
     RegimeId,
     feasible,
     next_wealth,
-    prob_continue,
-    prob_stop,
     savings,
     terminal_utility,
 )
@@ -52,6 +52,14 @@ def utility(
     return consumption ** (1.0 - crra) / (1.0 - crra) - 0.1 * effort
 
 
+def prob_continue(*, age: int, last_age: float) -> FloatND:
+    return jnp.where(age + 1 < last_age, 1.0, 0.0)
+
+
+def prob_stop(*, age: int, last_age: float) -> FloatND:
+    return jnp.where(age + 1 >= last_age, 1.0, 0.0)
+
+
 def test_a_discrete_action_is_refused_at_model_construction() -> None:
     """A regime with a discrete action and `EGM` names the action and fails."""
     saving = ConsumptionSavingsRegime(
@@ -62,10 +70,6 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},
         constraints={"feasible": feasible},
-        regime_transitions={
-            "saving": StochasticTransition(func=prob_continue),
-            "done": StochasticTransition(func=prob_stop),
-        },
         functions={"utility": utility, "savings": savings},
         solver=EGM(savings_grid=_SAVINGS_GRID),
         liquid=LiquidMargin(
@@ -76,7 +80,6 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         ),
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
@@ -86,10 +89,16 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
             edges={
-                "saving": {
-                    "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
-                    "done": AgeRange(exclusive_stop=_N_PERIODS - 1),
-                }
+                "saving": Transition(
+                    targets={
+                        "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
+                        "done": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    },
+                    law={
+                        "saving": StochasticTransition(func=prob_continue),
+                        "done": StochasticTransition(func=prob_stop),
+                    },
+                )
             },
             regime_id_class=RegimeId,
             initial_nodes={0: "saving"},

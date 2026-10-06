@@ -12,7 +12,6 @@ import pytest
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     LiquidMargin,
@@ -70,13 +69,8 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def next_regime(age: int) -> DiscreteState:
-    return jnp.where(age < 2, RegimeId.working, RegimeId.dead)
-
-
 def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={
@@ -102,7 +96,6 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": terminal_utility},
         states={"wealth": _WEALTH},
     )

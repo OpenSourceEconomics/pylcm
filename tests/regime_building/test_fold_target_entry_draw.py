@@ -14,9 +14,6 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -48,14 +45,6 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def _next_bonus() -> ScalarInt:
-    return RegimeId.bonus
-
-
-def _next_terminal() -> ScalarInt:
-    return RegimeId.terminal
-
-
 def _utility_start(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """No payoff of its own — `start` exists only to route into `bonus`."""
     return 0.0 * wealth + 0.0 * work
@@ -68,24 +57,12 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): DeterministicTransition(func=_next_bonus)
-            }
-        ),
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_start},
     )
     bonus = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
-                    func=_next_terminal
-                )
-            }
-        ),
         states={
             "bonus_shock": NormalIIDProcess(
                 n_points=N_POINTS,
@@ -100,7 +77,6 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility_bonus},
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(

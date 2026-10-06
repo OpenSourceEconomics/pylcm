@@ -16,6 +16,7 @@ from lcm import (
     NormalIIDProcess,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
@@ -58,14 +59,18 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 @pytest.fixture
 def model() -> Model:
+    source_law = {
+        "target": StochasticTransition(func=_p_target),
+        "other": StochasticTransition(func=_p_other),
+    }
     return Model(
-        edges={"source": {"target": (20, 21), "other": (20, 21)}},
+        edges={
+            "source": Transition(
+                targets={"target": (20, 21), "other": (20, 21)}, law=source_law
+            )
+        },
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_p_target),
-                    "other": StochasticTransition(func=_p_other),
-                },
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": _enter_shock},
@@ -74,7 +79,6 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -83,7 +87,6 @@ def model() -> Model:
                 functions={"utility": _shock_utility},
             ),
             "other": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _wealth_utility},
             ),

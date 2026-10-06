@@ -29,6 +29,7 @@ from lcm import (
     Model,
     Phased,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
@@ -98,14 +99,12 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
     ).replace()
     last = Regime(
-        regime_transitions=None,
         state_transitions={},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -113,7 +112,12 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     ).replace()
     model = Model(
         regimes={"live": live, "last": last},
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="phase closure of the flow sub-DAG",

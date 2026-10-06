@@ -13,7 +13,6 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -47,23 +46,14 @@ def _keep_flag(flag: jax.Array) -> jax.Array:
     return flag
 
 
-def _finish_regime() -> ScalarInt:
-    return _LifecycleRegimeId.done
-
-
 def test_profile_preserves_same_kind_categorical_storage_dtype(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same-kind integer updates retain the carrier's canonical integer storage."""
     model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_finish_regime),
-                functions={"utility": _flag_utility},
-            ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _flag_utility}
-            ),
+            "alive": Regime(functions={"utility": _flag_utility}),
+            "done": Regime(functions={"utility": _flag_utility}),
         },
         states={"flag": DiscreteGrid(_Flag)},
         state_transitions={
@@ -192,7 +182,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,

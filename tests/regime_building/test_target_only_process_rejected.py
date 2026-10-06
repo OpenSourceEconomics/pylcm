@@ -4,8 +4,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -15,6 +13,7 @@ from lcm import (
     Regime,
     StochasticTransition,
     TauchenAR1Process,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -34,10 +33,6 @@ def _zero_utility() -> ScalarFloat:
 
 def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
-
-
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _next_target() -> ScalarInt:
@@ -60,23 +55,28 @@ _PROCESS_SOLVE_PARAMS = {
 def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Model:
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
-    transition = (
-        DeterministicTransition(func=_next_target)
+    # A coarse law picks among several declared candidates; the source also
+    # loops onto itself at age 20, so its law there chooses between two edges.
+    edges = (
+        {
+            "source": Transition(
+                targets={"source": 20, "target": (20, 21)},
+                law=DeterministicTransition(func=_next_target),
+            )
+        }
         if coarse
-        else {"target": StochasticTransition(func=_one_probability)}
+        else {"source": {"target": (20, 21)}}
     )
     return Model(
-        edges={"source": {"target": (20, 21)}},
+        edges=edges,
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 states=source_states,
                 functions={
                     "utility": _shock_utility if carry_process else _zero_utility
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -97,13 +97,9 @@ def _target_only_process_model(
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -214,14 +210,10 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -243,9 +235,6 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": process},
                     state_transitions={
                         "extra": {"target": lambda: jnp.float32(0.0)},
@@ -253,7 +242,6 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={
                         "shock": process,
                         "extra": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -297,16 +285,12 @@ def _explicit_entry_model(process: TauchenAR1Process) -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -366,13 +350,9 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
             edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={
                         "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                     },
@@ -418,19 +398,9 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
             },
             regimes={
                 "source": Regime(
-                    regime_transitions=ByAge(
-                        cases={
-                            AgeRange(start=20, exclusive_stop=22): {
-                                "target": StochasticTransition(func=_one_probability)
-                            }
-                        }
-                    ),
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    regime_transitions={
-                        "terminal": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
@@ -439,7 +409,6 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                     functions={"utility": _shock_utility},
                 ),
                 "terminal": Regime(
-                    regime_transitions=None,
                     functions={"utility": _zero_utility},
                 ),
             },
@@ -461,14 +430,10 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                 },
@@ -509,16 +474,12 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
@@ -564,16 +525,12 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),

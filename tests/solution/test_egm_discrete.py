@@ -23,6 +23,7 @@ from lcm import (
     DiscreteGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -33,7 +34,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
     retirement_transitions,
@@ -56,20 +56,28 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 N_PERIODS = 4
 
 
-def _lifecycle_edges(
-    *, ages: AgeGrid
-) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
-    """Keep work and retirement before the final death-only source age."""
+def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Transition]:
+    """Keep work and retirement before the final death-only source age.
+
+    The worker chooses by `working_life_transitions`; the retiree follows
+    `retirement_law`.
+    """
     return {
-        "working_life": {
-            "working_life": tuple(ages.exact_values[:-2]),
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
-        "retirement": {
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
+        "working_life": Transition(
+            targets={
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=working_life_transitions(last_age=ages.exact_values[-1]),
+        ),
+        "retirement": Transition(
+            targets={
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=retirement_law,
+        ),
     }
 
 
@@ -121,7 +129,6 @@ def _get_skill_model_params(*, wage: float = 20.0) -> dict:
 def _get_skill_model() -> Model:
     """Full DC-EGM retirement model with a fixed skill state scaling the wage."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     working_life = dcegm_working_life.replace(
         states={
             "wealth": dcegm_working_life.states["wealth"],
@@ -136,16 +143,14 @@ def _get_skill_model() -> Model:
             "wage_factor": wage_factor,
             "labor_income": labor_income_by_skill,
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement = dcegm_retirement_full.replace(
-        regime_transitions=RETIREMENT_TRANSITION,
         state_transitions={
             "wealth": dcegm_retirement_full.state_transitions["wealth"],
         },
     )
     return Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_TRANSITION),
         regimes={
             "working_life": working_life,
             "retirement": retirement,
@@ -163,15 +168,14 @@ def _get_must_retire_model() -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(
+            ages=ages, retirement_law=retirement_transitions(last_age=last_age)
+        ),
         regimes={
             "working_life": dcegm_working_life.replace(
                 constraints={"must_retire": must_retire},
-                regime_transitions=working_life_transitions(last_age=last_age),
             ),
-            "retirement": dcegm_retirement_full.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "retirement": dcegm_retirement_full,
             "dead": base.dead,
         },
         ages=ages,
@@ -252,9 +256,8 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
     """
     params = _get_skill_model_params()
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     brute_model = Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_TRANSITION),
         regimes={
             "working_life": base.working_life.replace(
                 states={
@@ -270,10 +273,8 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
                     "wage_factor": wage_factor,
                     "labor_income": labor_income_by_skill,
                 },
-                regime_transitions=working_life_transitions(last_age=last_age),
             ),
             "retirement": base.retirement.replace(
-                regime_transitions=RETIREMENT_TRANSITION,
                 state_transitions={"wealth": base.next_wealth},
             ),
             "dead": base.dead,
@@ -318,14 +319,17 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     n_periods = 3
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     model = Model(
-        edges={"retirement": {"retirement": 40, "dead": (40, 50)}},
-        regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions={
+        edges={
+            "retirement": Transition(
+                targets={"retirement": 40, "dead": (40, 50)},
+                law={
                     "retirement": StochasticTransition(func=_stay_prob_from_param),
                     "dead": StochasticTransition(func=_death_prob_from_param),
                 },
-            ),
+            )
+        },
+        regimes={
+            "retirement": dcegm_retirement,
             "dead": base.dead,
         },
         ages=ages,
@@ -368,26 +372,21 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
     that regime's presence.
     """
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     lost = base.dead.replace(functions={"utility": _lost_utility})
     shared_regimes = {
-        "working_life": base.working_life.replace(
-            regime_transitions=working_life_transitions(last_age=last_age)
-        ),
-        "retirement": dcegm_retirement_full.replace(
-            regime_transitions=RETIREMENT_TRANSITION,
-        ),
+        "working_life": base.working_life,
+        "retirement": dcegm_retirement_full,
         "dead": base.dead,
     }
     with_lost = Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_TRANSITION),
         regimes={**shared_regimes, "lost": lost},
         ages=ages,
         regime_id_class=RegimeIdWithLost,
         initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     without_lost = Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_TRANSITION),
         regimes=shared_regimes,
         ages=ages,
         regime_id_class=base.RegimeId,
@@ -422,10 +421,8 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
     base_model_regimes = {
         "working_life": dcegm_working_life.replace(
             constraints={"nothing_is_feasible": _nothing_is_feasible},
-            regime_transitions=working_life_transitions(last_age=70),
         ),
         "retirement": dcegm_retirement_full.replace(
-            regime_transitions=RETIREMENT_TRANSITION,
             state_transitions={
                 "wealth": dcegm_retirement_full.state_transitions["wealth"],
             },
@@ -434,7 +431,7 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
     }
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     doomed_model = Model(
-        edges=_lifecycle_edges(ages=ages),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_TRANSITION),
         regimes=base_model_regimes,
         ages=ages,
         regime_id_class=base.RegimeId,

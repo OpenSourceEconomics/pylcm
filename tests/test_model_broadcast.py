@@ -22,6 +22,7 @@ from lcm import (
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -72,7 +73,6 @@ def _retired_transition() -> dict[str, StochasticTransition]:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _work_transition(),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -84,7 +84,6 @@ def _work_regime(**overrides: Any) -> UserRegime:
 
 def _retired_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": _retired_transition(),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -100,9 +99,7 @@ def _build_model(**model_slots: Any) -> Model:
         {
             "work": _work_regime(),
             "retired": _retired_regime(),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
     )
     return Model(
@@ -111,8 +108,12 @@ def _build_model(**model_slots: Any) -> Model:
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
         edges={
-            "work": {"retired": 0, "dead": (0, 1)},
-            "retired": {"retired": 0, "dead": (0, 1)},
+            "work": Transition(
+                targets={"retired": 0, "dead": (0, 1)}, law=_work_transition()
+            ),
+            "retired": Transition(
+                targets={"retired": 0, "dead": (0, 1)}, law=_retired_transition()
+            ),
         },
         **model_slots,
     )
@@ -143,7 +144,6 @@ def test_model_level_utility_satisfies_completeness() -> None:
             "work": _work_regime(functions={}),
             "retired": _retired_regime(functions={}),
             "dead": UserRegime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
                 functions={},
             ),
@@ -171,9 +171,7 @@ def test_none_masks_the_model_entry() -> None:
             "retired": _retired_regime(
                 functions={"utility": _utility_plain, "bonus": None}
             ),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         functions={"bonus": _bonus},
     )
@@ -192,7 +190,6 @@ def test_dead_regime_can_mask_a_model_level_constraint() -> None:
             "work": _work_regime(),
             "retired": _retired_regime(),
             "dead": UserRegime(
-                regime_transitions=None,
                 functions={"utility": lambda: 0.0},
                 constraints={"borrowing_constraint": None},
             ),
@@ -212,9 +209,7 @@ def test_mask_without_model_entry_raises() -> None:
             regimes={
                 "work": _work_regime(functions={"bonus": None}),
                 "retired": _retired_regime(),
-                "dead": UserRegime(
-                    regime_transitions=None, functions={"utility": lambda: 0.0}
-                ),
+                "dead": UserRegime(functions={"utility": lambda: 0.0}),
             },
         )
 
@@ -238,9 +233,7 @@ def test_cross_regime_rescue_keeps_handover_state() -> None:
         regimes={
             "work": _work_regime(functions={"utility": _utility_plain}),
             "retired": _retired_regime(functions={"utility": _utility_with_skill}),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         states={"skill": DiscreteGrid(category_class=_Skill)},
         state_transitions={"skill": fixed_transition("skill")},
@@ -260,9 +253,7 @@ def test_broadcast_action_prunes_where_unused() -> None:
         regimes={
             "work": _work_regime(functions={"utility": _utility_with_effort}),
             "retired": _retired_regime(),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         actions={"effort": DiscreteGrid(category_class=_Skill)},
     )
@@ -296,9 +287,7 @@ def test_broadcast_state_read_only_through_age_specialized_function_survives() -
                 }
             ),
             "retired": _retired_regime(),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         states={"bonus_base": LinSpacedGrid(start=0.0, stop=1.0, n_points=3)},
         state_transitions={"bonus_base": fixed_transition("bonus_base")},
@@ -315,9 +304,7 @@ def test_sharded_state_may_be_pruned_from_a_regime_that_does_not_read_it() -> No
         regimes={
             "work": _work_regime(),
             "retired": _retired_regime(),  # does not read skill
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         execution_config=ExecutionConfig(sharded_states=("skill",)),
     )
@@ -357,7 +344,6 @@ def test_unsupported_sharded_state_combinations_are_refused(*, grid) -> None:
                 "work": _work_regime(),
                 "retired": _retired_regime(functions={"utility": _utility_with_skill}),
                 "dead": UserRegime(
-                    regime_transitions=None,
                     states={"skill": None},
                     functions={"utility": lambda: 0.0},
                 ),
@@ -375,9 +361,7 @@ def test_sharding_preserves_the_outcome_grid_object() -> None:
         regimes={
             "work": _work_regime(),
             "retired": _retired_regime(functions={"utility": _utility_with_skill}),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         execution_config=ExecutionConfig(sharded_states=("skill",)),
     )

@@ -40,6 +40,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -68,9 +69,21 @@ class _RegimeId:
     terminal: ScalarInt
 
 
+def _law(*, source: int) -> StochasticTransition:
+    """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
+
+    def probabilities(age):
+        weight = 0.25 if source == 0 else 0.75
+        return jnp.where(
+            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
+        )
+
+    return StochasticTransition(func=probabilities)
+
+
 _EDGES = {
-    "r0": {"r0": 0, "r1": 0, "terminal": 1},
-    "r1": {"r0": 0, "r1": 0, "terminal": 1},
+    "r0": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=0)),
+    "r1": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=1)),
 }
 
 
@@ -104,14 +117,7 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
         # fixed type states the same annotation.
         utility.__annotations__["pref_type"] = DiscreteState
 
-    def probabilities(age):
-        weight = 0.25 if source == 0 else 0.75
-        return jnp.where(
-            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
-        )
-
     return Regime(
-        regime_transitions=StochasticTransition(func=probabilities),
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": utility,
@@ -148,7 +154,6 @@ def _model(
             "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
             "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
             "terminal": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
                         -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
@@ -700,7 +705,6 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
 
     _require_eight()
     regime = Regime(
-        regime_transitions=None,
         states={
             "liquid": LinSpacedGrid(start=-4, stop=19, n_points=24),
             "pref_type": DiscreteGrid(_Three),

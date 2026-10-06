@@ -30,6 +30,7 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
@@ -112,9 +113,6 @@ def _get_means_tested_model(variant: str) -> Model:
 
     if variant == "brute":
         regime = UserRegime(
-            regime_transitions=DeterministicTransition(
-                func=next_regime_from_retirement
-            ),
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute},
@@ -123,9 +121,6 @@ def _get_means_tested_model(variant: str) -> Model:
         )
     else:
         regime = ConsumptionSavingsRegime(
-            regime_transitions=DeterministicTransition(
-                func=next_regime_from_retirement
-            ),
             actions={"consumption": CONSUMPTION_GRID},
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
@@ -150,10 +145,13 @@ def _get_means_tested_model(variant: str) -> Model:
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         edges={
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
-                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
-            }
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                    "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+                },
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
         },
         regime_id_class=RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
@@ -171,7 +169,6 @@ def _get_corner_model() -> Model:
     """
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     regime = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CORNER_CONSUMPTION_GRID},
         states={"wealth": CORNER_WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},
@@ -196,10 +193,13 @@ def _get_corner_model() -> Model:
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         edges={
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
-                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
-            }
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                    "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+                },
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
         },
         regime_id_class=RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},

@@ -29,7 +29,14 @@ from _lcm.simulation.programs import (
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, DeterministicTransition, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
@@ -259,7 +266,6 @@ def _branch_terminal_utility() -> FloatND:
 def _branching_regime() -> UserRegime:
     """Return one of the two regimes a subject moves between."""
     return UserRegime(
-        regime_transitions=DeterministicTransition(func=_branch_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3)},
@@ -275,16 +281,17 @@ def _two_target_model() -> Model:
         regimes={
             "stay": _branching_regime(),
             "switch": _branching_regime(),
-            "done": UserRegime(
-                regime_transitions=None, functions={"utility": _branch_terminal_utility}
-            ),
+            "done": UserRegime(functions={"utility": _branch_terminal_utility}),
         },
         regime_id_class=_BranchRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "stay"},
         edges={
-            "stay": {"stay": 0, "switch": 0, "done": (0, 1)},
-            "switch": {"stay": 0, "switch": 0, "done": (0, 1)},
+            source: Transition(
+                targets={"stay": 0, "switch": 0, "done": (0, 1)},
+                law=DeterministicTransition(func=_branch_next_regime),
+            )
+            for source in ("stay", "switch")
         },
     )
 

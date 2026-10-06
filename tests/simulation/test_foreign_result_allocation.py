@@ -479,7 +479,7 @@ def test_artifact_route_refuses_before_the_foreign_snapshot(
         regime.solution.artifact_authorities for regime in source._regimes.values()
     )
     model = Model(
-        edges=source.graph.edges,
+        edges=source.edges,
         regimes=dict(source.user_regimes),
         ages=source.ages,
         regime_id_class=_ConformanceRegimeId,

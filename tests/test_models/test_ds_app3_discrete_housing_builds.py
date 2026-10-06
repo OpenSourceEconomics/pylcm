@@ -155,7 +155,7 @@ def test_expected_states_actions_and_wage_process_present():
     assert {"consumption", "housing_choice"} <= set(working.actions)
 
     dead = model.user_regimes["dead"]
-    assert dead.regime_transitions is None
+    assert model._engine_user_regimes["dead"].terminal
     assert {"assets", "housing"} <= set(dead.states)
 
 

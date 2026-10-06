@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.grids import LinSpacedGrid
-from lcm import DeterministicTransition, Model, categorical
+from lcm import Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -50,11 +50,6 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
     def next_health(health: ContinuousState) -> ContinuousState:
         return health
 
-    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
-        transition_into_terminal = period == (n_periods - 2)
-        # 0 = non_terminal, 1 = terminal (based on dict order)
-        return jnp.where(transition_into_terminal, 1, 0)
-
     def borrowing_constraint(
         *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
@@ -80,11 +75,9 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     terminal = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -162,12 +155,10 @@ def inf_value_model(
 
 
 @pytest.fixture
-def params(n_periods: int) -> UserParams:
+def params() -> UserParams:
     return {
         "discount_factor": 0.95,
-        "non_terminal": {
-            "next_regime": {"n_periods": n_periods},
-        },
+        "non_terminal": {},
         "terminal": {},
     }
 

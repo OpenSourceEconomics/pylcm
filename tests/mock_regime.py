@@ -21,7 +21,9 @@ class MockRegime(UserRegime):
     and friends, but bypasses `UserRegime.__init__`'s validation by
     writing fields directly via `object.__setattr__`. Tests use this to
     supply partial / loosely-typed configurations that the real
-    constructor would reject.
+    constructor would reject. `regime_transitions` writes the model-bound
+    law slot directly, as `Model(edges=...)` would bind it; `None` marks a
+    terminal regime.
 
     """
 

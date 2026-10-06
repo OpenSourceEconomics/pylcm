@@ -236,30 +236,34 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         return jnp.where(age >= 1, 2, 1)
 
     early = UserRegime(
+        states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
+        state_transitions={"x": next_x},
+        functions={"utility": lambda x: x},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=regime_transition, targets=("late",)
                 )
             }
-        ),
-        states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
-        state_transitions={"x": next_x},
-        functions={"utility": lambda x: x},
+        )
     )
     late = UserRegime(
+        states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
+        state_transitions={"x": next_x},
+        functions={"utility": lambda x: x},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
                     func=regime_transition, targets=("done",)
                 )
             }
-        ),
-        states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
-        state_transitions={"x": next_x},
-        functions={"utility": lambda x: x},
+        )
     )
-    done = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    done = UserRegime(functions={"utility": lambda: 0.0}).replace(
+        regime_transitions=None
+    )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     finalized_user_regimes = finalize_regimes(
         user_regimes={"early": early, "late": late, "done": done},
@@ -366,7 +370,6 @@ def _pair_handover_regime() -> UserRegime:
         return jnp.asarray(wealth)
 
     return UserRegime(
-        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -380,7 +383,7 @@ def _pair_handover_regime() -> UserRegime:
         },
         actions={},
         functions={"utility": utility},
-    )
+    ).replace(regime_transitions=next_regime)
 
 
 def test_carried_law_registered_for_carried_only_target():
@@ -434,7 +437,6 @@ def test_carried_state_counts_as_covered_for_reachability():
         return jnp.asarray(wealth)
 
     working = UserRegime(
-        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -450,7 +452,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         },
         actions={},
         functions={"utility": utility},
-    )
+    ).replace(regime_transitions=next_regime)
     # `retired` is not named in any per-target dict; its ordinary state need
     # (wealth) is covered by a bare law and the carried law covers the
     # carried state, so it must be reachable and receive both laws.
@@ -492,7 +494,6 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         return jnp.asarray(wealth)
 
     kwargs: dict = {
-        "regime_transitions": next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -507,12 +508,14 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         "functions": {"utility": utility},
     }
     real = finalize_regimes(
-        user_regimes={"regime": UserRegime(**kwargs)},
+        user_regimes={
+            "regime": UserRegime(**kwargs).replace(regime_transitions=next_regime)
+        },
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
-    mock = MockRegime(**kwargs)
+    mock = MockRegime(**kwargs, regime_transitions=next_regime)
     assert set(mock.get_all_functions()) == set(real.get_all_functions())
 
 

@@ -21,7 +21,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -38,10 +37,6 @@ _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _no_utility() -> ScalarFloat:
@@ -73,12 +68,10 @@ def _build(*, functions, next_wealth) -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"wealth": {"target": next_wealth}},
                 functions=functions,
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),
@@ -134,13 +127,11 @@ def _build_reading_a_runtime_draw() -> Model:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"shock": _RUNTIME_SHOCK},
                 state_transitions={"wealth": {"target": _next_wealth_from_draw}},
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _RUNTIME_SHOCK},
                 functions={"utility": _wealth_plus_shock},
             ),

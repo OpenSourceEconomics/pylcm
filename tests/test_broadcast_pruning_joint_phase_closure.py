@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.model_graph import bind_edge_laws
 from _lcm.regime_building.broadcast import (
     _joint_phase_closure,
     merge_model_slots,
@@ -30,8 +31,6 @@ from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.schedules import resolve_regime_schedules
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinearAggregator,
     LinSpacedGrid,
@@ -39,6 +38,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -117,10 +117,6 @@ def _bequest_with_pension(*, wealth: float, pension: int) -> FloatND:
 
 def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
-
-
-def _certain() -> ScalarFloat:
-    return jnp.asarray(1.0)
 
 
 def _even_split() -> ScalarFloat:
@@ -210,13 +206,6 @@ _PHASED_HEALTH_LAW_FORMS = {
 
 def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "retired": StochasticTransition(func=_certain)
-                }
-            }
-        ),
         "states": {"wealth": _WEALTH_GRID},
         "actions": {"consumption": _CONSUMPTION_GRID},
         "functions": {"utility": _utility_from_consumption},
@@ -233,7 +222,6 @@ def _working_regime(*, health_law: object, **overrides: Any) -> Regime:
 def _retired_regime(**overrides: Any) -> Regime:
     """A regime whose payoff reads `health` on the simulation side only."""
     spec: dict[str, Any] = {
-        "regime_transitions": None,
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": Phased(solve=_bequest, simulate=_bequest_with_health)},
     }
@@ -337,10 +325,6 @@ def _couple_model() -> Model:
     return Model(
         regimes={
             "couple": Regime(
-                regime_transitions={
-                    "widow": StochasticTransition(func=_even_split),
-                    "widower": StochasticTransition(func=_even_split),
-                },
                 states={"wealth": _WEALTH_GRID},
                 actions={"consumption": _CONSUMPTION_GRID},
                 functions={"utility": _utility_from_consumption},
@@ -366,14 +350,12 @@ def _couple_model() -> Model:
                 },
             ),
             "widow": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH_GRID},
                 functions={
                     "utility": Phased(solve=_bequest, simulate=_bequest_with_health)
                 },
             ),
             "widower": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH_GRID},
                 functions={
                     "utility": Phased(solve=_bequest, simulate=_bequest_with_pension)
@@ -388,7 +370,15 @@ def _couple_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_CoupleRegimeId,
         initial_nodes={0: "couple"},
-        edges={"couple": {"widow": 0, "widower": 0}},
+        edges={
+            "couple": Transition(
+                targets={"widow": 0, "widower": 0},
+                law={
+                    "widow": StochasticTransition(func=_even_split),
+                    "widower": StochasticTransition(func=_even_split),
+                },
+            )
+        },
     )
 
 
@@ -443,13 +433,6 @@ def _chain_regimes() -> dict[str, Regime]:
     """
     return {
         "early": Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "middle": StochasticTransition(func=_certain)
-                    }
-                }
-            ),
             states={"wealth": _WEALTH_GRID},
             actions={"consumption": _CONSUMPTION_GRID},
             functions={"utility": _utility_from_consumption},
@@ -465,13 +448,6 @@ def _chain_regimes() -> dict[str, Regime]:
             },
         ),
         "middle": Regime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(start=1, exclusive_stop=2): {
-                        "late": StochasticTransition(func=_certain)
-                    }
-                }
-            ),
             states={"wealth": _WEALTH_GRID},
             actions={"consumption": _CONSUMPTION_GRID},
             functions={"utility": _utility_from_consumption},
@@ -485,7 +461,6 @@ def _chain_regimes() -> dict[str, Regime]:
             },
         ),
         "late": Regime(
-            regime_transitions=None,
             states={"wealth": _WEALTH_GRID},
             functions={"utility": Phased(solve=_bequest, simulate=_bequest_with_flag)},
         ),
@@ -498,6 +473,7 @@ _CHAIN_MODEL_STATES = {
     "endowment": _ENDOWMENT_GRID,
 }
 _CHAIN_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
+_CHAIN_EDGES = {"early": {"middle": 0}, "middle": {"late": 1}}
 
 
 def _chain_model() -> Model:
@@ -507,7 +483,7 @@ def _chain_model() -> Model:
         ages=_CHAIN_AGES,
         regime_id_class=_ChainRegimeId,
         initial_nodes={0: "early"},
-        edges={"early": {"middle": 0}, "middle": {"late": 1}},
+        edges=_CHAIN_EDGES,
     )
 
 
@@ -523,7 +499,9 @@ def test_an_alternating_dependency_chain_is_closed_to_its_end(
 
 def _closure_arguments() -> dict[str, Any]:
     """Assemble the arguments the joint closure takes for the chain model."""
-    regimes = _chain_regimes()
+    regimes, _ = bind_edge_laws(
+        edges=_CHAIN_EDGES, regimes=_chain_regimes(), ages=_CHAIN_AGES
+    )
     model_slots: dict[str, Mapping[str, Any]] = {
         "functions": {},
         "constraints": {},

@@ -473,7 +473,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
             liquid_grid=liquid,
         )
         model = Model(
-            edges=template.graph.edges,
+            edges=template.edges,
             regimes={{
                 name: replace(regime, states={{
                     key: grid for key, grid in regime.states.items() if key != "liquid"
@@ -530,7 +530,7 @@ template = toy.build_model(
 two_mesh_params = toy.build_params()
 two_mesh_params["alive"]["consumption"] = {"points": jnp.linspace(0.1, 30.0, 16)}
 simulated = Model(
-    edges=template.graph.edges,
+    edges=template.edges,
     regimes={
         name: dataclasses.replace(
             regime,

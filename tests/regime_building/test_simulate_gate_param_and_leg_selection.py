@@ -175,6 +175,11 @@ def _make_f2_regimes() -> dict[str, Regime]:
     """Source and target BOTH declare a continuous state named `x` on a
     runtime-points `IrregSpacedGrid`, with DIFFERENT points."""
     src = Regime(
+        states={"x": IrregSpacedGrid(n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -191,25 +196,19 @@ def _make_f2_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"x": IrregSpacedGrid(n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     target = Regime(
-        regime_transitions=None,
         states={"x": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_target},
-    )
+    ).replace(regime_transitions=None)
     # Fixed grid: the fallback's V is read by the solve-side fold through the
     # SOURCE's params, so a runtime-points fallback grid would confound this
     # repro with a second (solve-side) namespace question.
     fallback = Regime(
-        regime_transitions=None,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_fallback},
-    )
+    ).replace(regime_transitions=None)
     return {"src": src, "target": target, "fallback": fallback}
 
 
@@ -501,6 +500,11 @@ def _stateless_gate(V_target: FloatND) -> BoolND:
 def _make_f3_regimes() -> dict[str, Regime]:
     """A 3-regime model whose gated target is STATELESS (terminal scrap value)."""
     src = Regime(
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _identity_x},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_src},
+    ).replace(
         regime_transitions=ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
@@ -517,20 +521,14 @@ def _make_f3_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        ),
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _identity_x},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        )
     )
     stateless_target = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_target},
-    )
+    ).replace(regime_transitions=None)
     stateless_fallback = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_fallback},
-    )
+    ).replace(regime_transitions=None)
     return {
         "src": src,
         "stateless_target": stateless_target,

@@ -24,7 +24,7 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
-from lcm import AgeGrid, DeterministicTransition, LinSpacedGrid, Model
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -58,7 +58,6 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "consumption": n_nbegm_toy.CONSUMPTION_GRID,
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=DeterministicTransition(func=n_nbegm_toy.next_regime),
         functions={
             "utility": n_nbegm_toy.utility,
             "new_illiquid": n_nbegm_toy.new_illiquid,
@@ -161,7 +160,6 @@ def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
         states=_VALID.states,
         state_transitions=_VALID.state_transitions,
         actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
-        regime_transitions=_VALID.regime_transitions,
         functions=_VALID.functions,
         solver=n_nbegm_toy.build_solver(variant="brute"),
     )
@@ -250,7 +248,6 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
         }
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -263,7 +260,6 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
             edges={"alive": {"dead": 20}},
             regime_id_class=n_nbegm_toy.RegimeId,
             ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
-            fixed_params={"final_age_alive": 20},
             initial_nodes={20: "alive"},
         )
 

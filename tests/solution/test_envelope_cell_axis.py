@@ -21,6 +21,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import DCEGM, NEGM, EnvelopeConfig, ExactEnvelope, FUESEnvelope
@@ -56,7 +57,6 @@ def _model(
 ) -> Model:
     """Small real DC-EGM model exercising either numerical envelope consumer."""
     retirement = dcegm_retirement.replace(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=6)},
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=12.0, n_points=8),
@@ -77,10 +77,13 @@ def _model(
         ),
         initial_nodes={60 - 10 * (n_periods - 1): "retirement"},
         edges={
-            "retirement": {
-                "retirement": AgeRange(exclusive_stop=50),
-                "dead": AgeRange(exclusive_stop=60),
-            }
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=50),
+                    "dead": AgeRange(exclusive_stop=60),
+                },
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
         },
     )
 

@@ -21,7 +21,6 @@ from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
 from _lcm.solution.retained_buffers import retained_solution_buffers
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -53,20 +52,14 @@ def _lifecycle_next_wealth(
     return wealth + saving
 
 
-def _lifecycle_next_regime() -> ScalarInt:
-    return _LifecycleRegimeId.done
-
-
 def _stateful_target_model() -> Model:
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_lifecycle_next_regime),
                 functions={"utility": _lifecycle_utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _lifecycle_terminal_utility},
             ),
         },

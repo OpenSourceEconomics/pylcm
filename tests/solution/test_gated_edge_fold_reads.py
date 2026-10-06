@@ -27,17 +27,24 @@ from lcm import AgeGrid, Model
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
+    _with_full_topology_laws,
 )
 
 _PERIOD = 1
 
-FULL_TOPOLOGY_EDGES = {
-    "single_f": {"married": 0, "single_f_p1": 0},
-    "single_m": {"married": 0, "single_m_p1": 0},
-    "single_f_p1": {"single_f_terminal": 1},
-    "single_m_p1": {"single_m_terminal": (0, 1, 2)},
-    "married": {"married_terminal": 1, "single_f_terminal": 1, "single_m_terminal": 1},
-}
+FULL_TOPOLOGY_EDGES = _with_full_topology_laws(
+    {
+        "single_f": {"married": 0, "single_f_p1": 0},
+        "single_m": {"married": 0, "single_m_p1": 0},
+        "single_f_p1": {"single_f_terminal": 1},
+        "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+        "married": {
+            "married_terminal": 1,
+            "single_f_terminal": 1,
+            "single_m_terminal": 1,
+        },
+    }
+)
 
 
 def _model() -> Model:

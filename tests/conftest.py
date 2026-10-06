@@ -651,9 +651,11 @@ def build_prepared_structure(
 
     Tests that call `process_regimes` directly (bypassing `Model`) build this
     the same way `Model.__init__` does, rather than `process_regimes` growing
-    a test-only fallback for constructing one internally. `user_regimes` carry
-    their declared `regime_transitions`; pass `lower_declarations` of the same
-    regimes to `process_regimes`.
+    a test-only fallback for constructing one internally. Each of
+    `user_regimes` carries its law bound with
+    `regime.replace(regime_transitions=<law>)` (`None` for a terminal regime),
+    exactly the law `Model(edges=...)` would bind; pass `lower_declarations` of
+    the same regimes to `process_regimes`.
     """
     schedules = _resolve_schedules(user_regimes=user_regimes, ages=ages)
     return prepare_model_structure(
@@ -669,8 +671,9 @@ def build_prepared_structure(
 def lower_declarations(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime], *, ages: AgeGrid
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
-    """Replace each declared `regime_transitions` by its engine law, as `Model` does.
+    """Replace each regime's bound law by its engine law, as `Model` does.
 
+    Each regime carries its law bound with `regime.replace(regime_transitions=...)`.
     Regime codes follow the mapping's order.
     """
     lowered = lower_demanded_transitions(

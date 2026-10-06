@@ -14,14 +14,12 @@ import pytest
 from _lcm.simulation.result_dataframe import _reorder_columns
 from lcm import (
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
     categorical,
 )
 from lcm.exceptions import PyLCMError
-from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import (
     AGES,
@@ -188,7 +186,6 @@ def _make_reverse_alphabetical_collective_model() -> Model:
     the alphabetical order of the names disagree.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -199,7 +196,6 @@ def _make_reverse_alphabetical_collective_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -226,14 +222,12 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
     declares no stakeholders at all.
     """
     working = Regime(
-        regime_transitions=DeterministicTransition(func=_next_solo_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
     )
     retired = Regime(
-        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
@@ -255,7 +249,6 @@ def _make_collective_model_with_colliding_state() -> Model:
     name of the column the wife's published value claims.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -266,7 +259,6 @@ def _make_collective_model_with_colliding_state() -> Model:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"value_f": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -293,9 +285,6 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     never meet — they share nothing but the published frame.
     """
     couple = Regime(
-        regime_transitions={
-            "couple_terminal": StochasticTransition(func=_probability_one)
-        },
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -306,7 +295,6 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -316,16 +304,12 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
     )
     solo = Regime(
-        regime_transitions={
-            "solo_terminal": StochasticTransition(func=_probability_one)
-        },
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _colliding_solo_utility},
     )
     solo_terminal = Regime(
-        regime_transitions=None,
         states={"value_f": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _colliding_solo_utility},
@@ -342,11 +326,6 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         initial_nodes={0: "couple"},
         edges={"couple": {"couple_terminal": 0}, "solo": {"solo_terminal": 0}},
     )
-
-
-def _probability_one(age: FloatND) -> FloatND:
-    """Regime transition: the declared target is reached with probability one."""
-    return jnp.ones_like(age, dtype=float)
 
 
 def _colliding_solo_utility(
@@ -396,13 +375,3 @@ def _next_colliding_state(work: DiscreteAction) -> ContinuousState:
 def _next_wage(work: DiscreteAction) -> ContinuousState:
     """Deterministic wage law: working today yields the high wage tomorrow."""
     return 40.0 * work + 8.0 * (1.0 - work)
-
-
-def _next_couple_regime() -> ScalarInt:
-    """Regime transition: `couple` becomes `couple_terminal` with probability one."""
-    return CoupleRegimeId.couple_terminal
-
-
-def _next_solo_regime() -> ScalarInt:
-    """Regime transition: `working` becomes `retired` with probability one."""
-    return SoloRegimeId.retired

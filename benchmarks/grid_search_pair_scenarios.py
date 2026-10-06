@@ -206,6 +206,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         LinSpacedGrid,
         Model,
         Regime,
+        Transition,
         categorical,
         fixed_transition,
     )
@@ -256,11 +257,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": next_wealth},
                 actions={"consumption": consumption},
@@ -268,7 +264,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
                 constraints={"affordable": affordable},
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},
             ),
@@ -279,10 +274,17 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
         state_transitions={"permanent_type": fixed_transition("permanent_type")},
         initial_nodes=((0, "working"),),
         edges={
-            "working": {
-                "working": ages.exact_values[:-2],
-                "retired": ages.exact_values[:-1],
-            },
+            "working": Transition(
+                targets={
+                    "working": ages.exact_values[:-2],
+                    "retired": ages.exact_values[:-1],
+                },
+                law=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law=DeterministicTransition(func=next_regime),
+                    then="retired",
+                ),
+            ),
         },
         **execution_kwargs,
     )
@@ -300,6 +302,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         Model,
         NormalIIDProcess,
         Regime,
+        Transition,
         categorical,
     )
     from lcm.typing import ScalarInt
@@ -330,11 +333,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
     model = Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
                 states={
                     "wealth": wealth,
                     "wage_shock": NormalIIDProcess(
@@ -351,7 +349,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
                 constraints={"affordable": affordable},
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": retired_utility},
             ),
@@ -360,10 +357,17 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
         regime_id_class=RegimeId,
         initial_nodes=((0, "working"),),
         edges={
-            "working": {
-                "working": ages.exact_values[:-2],
-                "retired": ages.exact_values[:-1],
-            },
+            "working": Transition(
+                targets={
+                    "working": ages.exact_values[:-2],
+                    "retired": ages.exact_values[:-1],
+                },
+                law=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law=DeterministicTransition(func=next_regime),
+                    then="retired",
+                ),
+            ),
         },
         **_gpu_mem.default_budget_execution_kwargs(),
     )

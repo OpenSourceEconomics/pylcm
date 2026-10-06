@@ -23,6 +23,7 @@ from lcm import (
     QuasiArithmeticMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidNameError
@@ -37,10 +38,6 @@ _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _keep_wealth(wealth: ScalarFloat) -> ScalarFloat:
@@ -63,7 +60,6 @@ def _build(
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
                     {"wealth": {"target": _keep_wealth}}
@@ -74,7 +70,6 @@ def _build(
                 koopmans_aggregator=koopmans_aggregator,
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK},
                 functions={"utility": _wealth_and_shock},
             ),
@@ -151,16 +146,12 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
             edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_to_target)
-                    },
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
                     constraints={"affordable": _constraint_of_a_next_name},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
@@ -221,7 +212,6 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
         edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
                     "wealth": {"target": _next_wealth_reading_a_sibling},
@@ -230,7 +220,6 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
                 functions={"utility": _wealth_and_aime},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "aime": aime},
                 functions={"utility": _wealth_and_aime},
             ),
@@ -324,6 +313,21 @@ def _probability_reading_a_next_name(next_wealth: ScalarFloat) -> ScalarFloat:
     return jnp.where(next_wealth >= 0.0, 1.0, 1.0)
 
 
+@categorical(ordered=False)
+class _TwoTargetRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    exit: ScalarInt
+
+
+def _never_exits() -> ScalarFloat:
+    return jnp.float32(0)
+
+
+def _no_utility() -> ScalarFloat:
+    return jnp.float32(0)
+
+
 def test_a_regime_probability_may_not_read_a_next_name() -> None:
     """The regime transition picks the target before that target's laws run.
 
@@ -333,26 +337,31 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
     """
     with pytest.raises(InvalidNameError, match=r"next_regime|next_wealth"):
         Model(
-            edges={"source": {"target": (20, 21)}},
-            regimes={
-                "source": Regime(
-                    regime_transitions={
+            edges={
+                "source": Transition(
+                    targets={"target": (20, 21), "exit": (20, 21)},
+                    law={
                         "target": StochasticTransition(
                             func=_probability_reading_a_next_name
-                        )
+                        ),
+                        "exit": StochasticTransition(func=_never_exits),
                     },
+                )
+            },
+            regimes={
+                "source": Regime(
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
+                "exit": Regime(functions={"utility": _no_utility}),
             },
             ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
-            regime_id_class=RegimeId,
+            regime_id_class=_TwoTargetRegimeId,
             initial_nodes={20: "source"},
         )
 
@@ -375,9 +384,6 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
             edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_to_target)
-                    },
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -387,7 +393,6 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
                     ),
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),

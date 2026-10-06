@@ -32,15 +32,11 @@ def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1], law="working", then="dead"
-                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _utility},
             ),

@@ -21,6 +21,7 @@ from lcm import (
     Model,
     Phased,
     PowerMean,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -161,7 +162,6 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         states=working_life_states,
         state_transitions=working_life_state_transitions,
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions=functions,
         koopmans_aggregator=custom_W,
     )
@@ -180,7 +180,6 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
             return 0.0
 
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": dead_utility},
         states=dead_states,
     )
@@ -191,7 +190,12 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
         initial_nodes={0: "working_life"},
-        edges={"working_life": {"working_life": (0, 1), "dead": (0, 1, 2)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -234,9 +238,8 @@ def test_custom_ces_aggregator_differs_from_default():
 
 def test_default_H_injected_for_non_terminal():
     """The model-level aggregator is injected on the non-terminal finalized regime."""
-    regime = UserRegime(
-        functions={"utility": lambda: 0.0},
-        regime_transitions=lambda: {"a": 1.0},
+    regime = UserRegime(functions={"utility": lambda: 0.0}).replace(
+        regime_transitions=lambda: {"a": 1.0}
     )
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
@@ -249,10 +252,7 @@ def test_default_H_injected_for_non_terminal():
 
 def test_default_W_not_injected_for_terminal():
     """Terminal regimes have no continuation, so they get no aggregator."""
-    r = UserRegime(
-        regime_transitions=None,
-        functions={"utility": lambda: 0.0},
-    )
+    r = UserRegime(functions={"utility": lambda: 0.0}).replace(regime_transitions=None)
     finalized = finalize_regimes(
         user_regimes={"regime": r},
         derived_categoricals={},
@@ -269,10 +269,9 @@ def test_custom_W_not_overwritten():
         return utility + CE
 
     r = UserRegime(
-        regime_transitions=lambda: {"a": 1.0},
         functions={"utility": lambda: 0.0},
         koopmans_aggregator=my_W,
-    )
+    ).replace(regime_transitions=lambda: {"a": 1.0})
     finalized = finalize_regimes(
         user_regimes={"regime": r},
         derived_categoricals={},
@@ -644,11 +643,6 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     """Solve a two-regime model whose discount factor is a `Series` over ages."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=DeterministicTransition(
-            func=lambda age: jnp.where(
-                age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-            )
-        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -656,7 +650,6 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -665,7 +658,16 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                    )
+                ),
+            )
+        },
     )
     discount_factor = pd.Series(
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
@@ -693,11 +695,6 @@ def _solve_with_aggregator_slot(
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=DeterministicTransition(
-            func=lambda age: jnp.where(
-                age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-            )
-        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -706,7 +703,6 @@ def _solve_with_aggregator_slot(
         certainty_equivalent=PowerMean(),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
@@ -715,7 +711,16 @@ def _solve_with_aggregator_slot(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
         initial_nodes={0: "alive"},
-        edges={"alive": {"alive": 0, "dead": (0, 1)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                    )
+                ),
+            )
+        },
     )
     template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
     params = {

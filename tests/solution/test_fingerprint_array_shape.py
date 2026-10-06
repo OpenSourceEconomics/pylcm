@@ -23,7 +23,6 @@ from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -37,7 +36,6 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
-    next_regime,
     working_life,
 )
 
@@ -157,7 +155,6 @@ def _rank_model(reference: np.ndarray) -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": grid},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

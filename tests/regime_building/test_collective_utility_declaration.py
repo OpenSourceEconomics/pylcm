@@ -15,7 +15,6 @@ import pytest
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -82,9 +81,6 @@ def _couple(
 ) -> Regime:
     """The collective regime of the miniature, with `functions` supplied."""
     return Regime(
-        regime_transitions=DeterministicTransition(
-            func=lambda: RegimeId.couple_terminal
-        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -115,7 +111,6 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -142,7 +137,6 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(
@@ -206,7 +200,6 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         }
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={
             "utility": CollectiveUtility(

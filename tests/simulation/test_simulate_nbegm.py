@@ -10,7 +10,6 @@ import pytest
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
-    DeterministicTransition,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -63,10 +62,6 @@ def next_liquid(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def next_regime(age: int) -> ScalarInt:
-    return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
-
-
 def _model(*, hand_written: bool = False) -> Model:
     borrowing_limit = (
         ref("savings") >= 0.0
@@ -78,7 +73,6 @@ def _model(*, hand_written: bool = False) -> Model:
         states={"liquid": _ACTION_GRID},
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
         constraints={"borrowing_limit": borrowing_limit},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": Phased(
@@ -90,7 +84,6 @@ def _model(*, hand_written: bool = False) -> Model:
         liquid=_MARGIN,
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _ACTION_GRID},
         functions={"utility": terminal_utility},
     )

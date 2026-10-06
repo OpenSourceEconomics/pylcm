@@ -39,13 +39,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
-    AgeRange,
     AgeSpecializedGrid,
-    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     ValueDependentConstraint,
     categorical,
     fixed_transition,
@@ -177,10 +176,6 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
         return LinSpacedGrid(start=0.0, stop=ceiling, n_points=2)
 
     single_f = Regime(
-        regime_transitions={
-            "single_f": StochasticTransition(func=_stays_single),
-            "single_f_terminal": StochasticTransition(func=_leaves_single),
-        },
         states={
             "wealth": AgeSpecializedGrid(
                 build=_single_wealth_grid, signature=lambda age: age < 0.5
@@ -190,18 +185,10 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
         functions={"utility": _single_utility},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=INITIAL_CEILING, n_points=2)},
         functions={"utility": _zero_utility},
     )
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "couple_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -222,7 +209,6 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -233,7 +219,13 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
     )
     return Model(
         edges={
-            "single_f": {"single_f": 0, "single_f_terminal": (0, 1)},
+            "single_f": Transition(
+                targets={"single_f": 0, "single_f_terminal": (0, 1)},
+                law={
+                    "single_f": StochasticTransition(func=_stays_single),
+                    "single_f_terminal": StochasticTransition(func=_leaves_single),
+                },
+            ),
             "couple": {"couple_terminal": 0},
         },
         regimes={
@@ -293,8 +285,3 @@ def _stays_single(age: FloatND) -> FloatND:
 def _leaves_single(age: FloatND) -> FloatND:
     """The single wife enters her terminal regime from age 1 on."""
     return jnp.asarray(age >= 1, dtype=float)
-
-
-def _prob_one(age: FloatND) -> FloatND:
-    """The couple enters its terminal regime with probability one."""
-    return jnp.ones_like(age, dtype=float)

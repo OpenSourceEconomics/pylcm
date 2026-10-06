@@ -23,6 +23,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidInitialConditionsError, ModelInitializationError
@@ -40,8 +41,12 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 62, RegimeId.working, RegimeId.dead)
 
 
-WORKING_TRANSITIONS = DeterministicTransition(func=_next_regime)
-WORKING_EDGES = {"working": {"working": 60, "dead": (60, 62)}}
+WORKING_EDGES = {
+    "working": Transition(
+        targets={"working": 60, "dead": (60, 62)},
+        law=DeterministicTransition(func=_next_regime),
+    )
+}
 
 
 def _impute_pension_wealth(aime: float) -> float:
@@ -73,7 +78,6 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
 def _build_pension_regime() -> UserRegime:
     """A non-terminal regime whose pension wealth is a carried state."""
     return UserRegime(
-        regime_transitions=WORKING_TRANSITIONS,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -93,7 +97,7 @@ def _build_pension_regime() -> UserRegime:
     )
 
 
-_DEAD = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+_DEAD = UserRegime(functions={"utility": lambda: 0.0})
 
 
 def _build_pension_model(*, pension_as_pair: bool) -> Model:
@@ -107,7 +111,6 @@ def _build_pension_model(*, pension_as_pair: bool) -> Model:
         working = _build_pension_regime()
     else:
         working = UserRegime(
-            regime_transitions=WORKING_TRANSITIONS,
             states={
                 "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
                 "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -251,14 +254,6 @@ class _ThreeRegimeId:
     dead: ScalarInt
 
 
-def _next_regime_from_working(age: float) -> ScalarInt:
-    return jnp.where(age < 62, _ThreeRegimeId.working, _ThreeRegimeId.retired)
-
-
-def _next_regime_from_retired(age: float) -> ScalarInt:
-    return jnp.where(age < 64, _ThreeRegimeId.retired, _ThreeRegimeId.dead)
-
-
 def _retired_imputed_pension_wealth() -> float:
     return 12.0
 
@@ -267,7 +262,7 @@ def _retired_utility(pension_wealth: float) -> FloatND:
     return jnp.log(pension_wealth)
 
 
-_DEAD3 = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+_DEAD3 = UserRegime(functions={"utility": lambda: 0.0})
 
 
 def _build_handover_model() -> Model:
@@ -278,7 +273,6 @@ def _build_handover_model() -> Model:
     hand-over on the crossing.
     """
     working = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime_from_working),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -297,7 +291,6 @@ def _build_handover_model() -> Model:
         functions={"utility": _utility},
     )
     retired = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime_from_retired),
         states={
             "pension_wealth": Phased(
                 solve=_retired_imputed_pension_wealth,
@@ -462,7 +455,6 @@ def test_constraint_reading_next_carried_state_is_rejected_early() -> None:
         return next_pension_wealth >= 0.0
 
     working = UserRegime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),

@@ -33,6 +33,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -103,10 +104,10 @@ def _projection_model(projection) -> Model:
     it at `0.5` gives `0.5`, while the branch pays `V(0.5**2) = 0.25`.
     """
     return Model(
-        edges={"source": {"target": 0, "fallback": 0}},
-        regimes={
-            "source": Regime(
-                regime_transitions={
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law={
                     "target": ValueDependentTransition(
                         probability=StochasticTransition(func=_certain_target),
                         gate=_closed_above_one,
@@ -120,18 +121,20 @@ def _projection_model(projection) -> Model:
                         off_grid="pointwise",
                     )
                 },
+            )
+        },
+        regimes={
+            "source": Regime(
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _zero_utility},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _fallback_value},
             ),
@@ -270,10 +273,10 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
 def _coupled_model(saving_points) -> Model:
     """A collective target whose feasible set is empty at the middle node."""
     return Model(
-        edges={"source": {"pair": 0, "alone_m": 0}},
-        regimes={
-            "source": Regime(
-                regime_transitions={
+        edges={
+            "source": Transition(
+                targets={"pair": 0, "alone_m": 0},
+                law={
                     "pair": ValueDependentTransition(
                         probability=StochasticTransition(func=_to_pair),
                         gate=_no_dissolution,
@@ -289,13 +292,16 @@ def _coupled_model(saving_points) -> Model:
                         off_grid="pointwise",
                     )
                 },
+            )
+        },
+        regimes={
+            "source": Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": _next_wage},
                 actions={"saving": IrregSpacedGrid(points=saving_points)},
                 functions={"utility": _u_source},
             ),
             "pair": Regime(
-                regime_transitions=None,
                 states={"wage": _WAGE},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={
@@ -315,12 +321,10 @@ def _coupled_model(saving_points) -> Model:
                 },
             ),
             "alone_f": Regime(
-                regime_transitions=None,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_f},
             ),
             "alone_m": Regime(
-                regime_transitions=None,
                 states={"wage": _WAGE},
                 functions={"utility": _outside_option_m},
             ),

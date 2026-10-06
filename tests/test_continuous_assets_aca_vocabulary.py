@@ -17,7 +17,6 @@ from _lcm.regime_building.max_Q_over_a import (
 )
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     GridBreakpoint,
@@ -97,10 +96,6 @@ def _next_aime(aime: FloatND) -> FloatND:
     return 3 - aime / 2
 
 
-def _next_regime(age: FloatND) -> FloatND:
-    return jnp.where(age < 1, _RegimeId.working, _RegimeId.dead)
-
-
 def _model(
     *,
     sharded: bool = True,
@@ -114,7 +109,6 @@ def _model(
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},
                 state_transitions={
@@ -125,7 +119,6 @@ def _model(
                 },
             ),
             "dead": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal},
                 states={"pension": None},
             ),

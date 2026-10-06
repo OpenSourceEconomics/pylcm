@@ -18,6 +18,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -42,7 +43,6 @@ def _next_regime() -> ScalarInt:
 
 
 working = UserRegime(
-    regime_transitions=DeterministicTransition(func=_next_regime),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -55,7 +55,6 @@ working = UserRegime(
 )
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -67,10 +66,13 @@ def _make_model() -> Model:
         regime_id_class=RegimeId,
         initial_nodes={25: "working"},
         edges={
-            "working": {
-                "working": AgeRange(exclusive_stop=29),
-                "dead": AgeRange(exclusive_stop=30),
-            }
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=29),
+                    "dead": AgeRange(exclusive_stop=30),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
 

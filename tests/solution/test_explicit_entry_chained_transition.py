@@ -18,7 +18,6 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -33,10 +32,6 @@ class RegimeId:
 
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
-
-
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _process() -> NormalIIDProcess:
@@ -81,9 +76,6 @@ def _build_model(*, enable_jit: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "other": {"target": _enter_other},
@@ -92,7 +84,6 @@ def _build_model(*, enable_jit: bool) -> Model:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _process(), "other": _process()},
                 functions={"utility": _target_utility},
             ),

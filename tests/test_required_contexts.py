@@ -26,6 +26,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -45,9 +46,6 @@ from tests.regime_building.test_same_period_ref_period_axes import (
     _zero_collective_utility,
     _zero_utility,
 )
-from tests.regime_building.test_same_period_ref_period_axes import (
-    _prob_one as _couple_prob_one,
-)
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -57,9 +55,8 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _nonterminal(*, transition: Any, utility: Any = _utility) -> Regime:
+def _nonterminal(*, utility: Any = _utility) -> Regime:
     return Regime(
-        regime_transitions=transition,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": utility},
@@ -68,7 +65,6 @@ def _nonterminal(*, transition: Any, utility: Any = _utility) -> Regime:
 
 def _terminal() -> Regime:
     return Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )
@@ -115,7 +111,8 @@ def _gated_law(*, fallback: Any = None) -> dict:
     }
 
 
-_NO_LAW_AT_45 = ByAge(cases={40: "fallback"})
+def _with_source_law(*, phase: Any, law: Any) -> dict:
+    return {**phase, "source": Transition(targets=phase["source"], law=law)}
 
 
 def _gated_model(
@@ -127,11 +124,11 @@ def _gated_model(
     fallback: Any = None,
     edges: Any = None,
 ) -> Model:
+    law = source or ByAge(cases={40: _gated_law(fallback=fallback)})
+    structure = edges or {"source": {"target": 40, "fallback": 40}}
     return Model(
         regimes={
-            "source": _nonterminal(
-                transition=source or ByAge(cases={40: _gated_law(fallback=fallback)})
-            ),
+            "source": _nonterminal(),
             "target": _terminal(),
             "reference": reference or _terminal(),
             "priced": priced or _terminal(),
@@ -140,14 +137,21 @@ def _gated_model(
         ages=_GATED_AGES,
         regime_id_class=_GatedId,
         initial_nodes=initial_nodes or {40: "source"},
-        edges=edges or {"source": {"target": 40, "fallback": 40}},
+        edges=(
+            Phased(
+                solve=_with_source_law(phase=structure.solve, law=law),
+                simulate=_with_source_law(phase=structure.simulate, law=law),
+            )
+            if isinstance(structure, Phased)
+            else _with_source_law(phase=structure, law=law)
+        ),
     )
 
 
 def _gate_reference_without_law(initial_nodes: Any) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
-        reference=_nonterminal(transition=_NO_LAW_AT_45),
+        reference=_nonterminal(),
         edges={
             "source": {"target": 40, "fallback": 40},
             "reference": {"fallback": 40},
@@ -158,7 +162,7 @@ def _gate_reference_without_law(initial_nodes: Any) -> Model:
 def _solve_fallback_without_law(initial_nodes: Any) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
-        priced=_nonterminal(transition=_NO_LAW_AT_45),
+        priced=_nonterminal(),
         fallback=Phased(solve=_projected("priced"), simulate=_projected("fallback")),
         edges=Phased(
             solve={
@@ -187,26 +191,15 @@ def _same_period_reference_without_law(initial_nodes: Any) -> Model:
     return Model(
         regimes={
             "single_f": Regime(
-                regime_transitions=ByAge(cases={1: "single_f_terminal"}),
                 states={"wealth": single_grid},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _single_utility},
             ),
             "single_f_terminal": Regime(
-                regime_transitions=None,
                 states={"wealth": single_grid},
                 functions={"utility": _zero_utility},
             ),
             "couple": Regime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "couple_terminal": StochasticTransition(
-                                func=_couple_prob_one
-                            )
-                        }
-                    }
-                ),
                 states={"wealth": COUPLE_GRID},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 actions={"work": DiscreteGrid(category_class=Work)},
@@ -228,7 +221,6 @@ def _same_period_reference_without_law(initial_nodes: Any) -> Model:
                 },
             ),
             "couple_terminal": Regime(
-                regime_transitions=None,
                 states={"wealth": COUPLE_GRID},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={
@@ -326,14 +318,6 @@ class _LifeId:
 
 
 _LIFE_AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
-_LIFE_EDGES = {
-    "working": {
-        "working": (25, 35, 45),
-        "dead": (25, 35, 45),
-        "retirement": 55,
-    },
-    "retirement": {"dead": 65},
-}
 
 
 def _stay() -> FloatND:
@@ -344,32 +328,31 @@ def _die() -> FloatND:
     return jnp.asarray(0.1)
 
 
-def _to_dead_vector() -> FloatND:
-    return jnp.asarray([0.0, 0.0, 1.0])
+_LIFE_EDGES = {
+    "working": Transition(
+        targets={
+            "working": (25, 35, 45),
+            "dead": (25, 35, 45),
+            "retirement": 55,
+        },
+        law=ByAge.until(
+            stop_age_exclusive=65,
+            law={
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            },
+            then="retirement",
+        ),
+    ),
+    "retirement": {"dead": 65},
+}
 
 
 def _life_model(initial_nodes: Any) -> Model:
     return Model(
         regimes={
-            "working": _nonterminal(
-                transition=ByAge.until(
-                    stop_age_exclusive=65,
-                    law={
-                        "working": StochasticTransition(func=_stay),
-                        "dead": StochasticTransition(func=_die),
-                    },
-                    then="retirement",
-                )
-            ),
-            "retirement": _nonterminal(
-                transition=ByAge(
-                    cases={
-                        AgeRange(start=65, exclusive_stop=75): StochasticTransition(
-                            func=_to_dead_vector
-                        )
-                    }
-                )
-            ),
+            "working": _nonterminal(),
+            "retirement": _nonterminal(),
             "dead": _terminal(),
         },
         ages=_LIFE_AGES,
@@ -397,10 +380,10 @@ def test_regime_codes_do_not_depend_on_the_starts(initial_nodes: Any) -> None:
 
 
 @_ROOTS
-def test_full_width_regime_vector_is_accepted_under_any_start(
+def test_retirement_solves_to_the_dead_value_under_any_start(
     initial_nodes: Any,
 ) -> None:
-    """A vector law over all three registered regimes solves to the dead value."""
+    """Retirement moving along its only edge solves to the dead value."""
     values = _life_model(initial_nodes).solve(params=_PARAMS, log_level="off")
     np.testing.assert_allclose(
         np.asarray(values.values[4]["retirement"]), np.asarray([0.0, 1.9])
@@ -477,28 +460,30 @@ def _marital_gate(*, V_target: FloatND, V_stay: FloatND) -> BoolND:
 def _marital_model() -> Model:
     return Model(
         regimes={
-            "single": _nonterminal(
-                transition=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_gated_move(target="married", stay="single"),
-                    then="dead",
-                )
-            ),
-            "married": _nonterminal(
-                transition=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_gated_move(target="single", stay="married"),
-                    then="dead",
-                )
-            ),
+            "single": _nonterminal(),
+            "married": _nonterminal(),
             "dead": _terminal(),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_MaritalId,
         initial_nodes={0: ("single", "married")},
         edges={
-            "single": {"married": 0, "single": 0, "dead": 1},
-            "married": {"single": 0, "married": 0, "dead": 1},
+            "single": Transition(
+                targets={"married": 0, "single": 0, "dead": 1},
+                law=ByAge.until(
+                    stop_age_exclusive=2,
+                    law=_gated_move(target="married", stay="single"),
+                    then="dead",
+                ),
+            ),
+            "married": Transition(
+                targets={"single": 0, "married": 0, "dead": 1},
+                law=ByAge.until(
+                    stop_age_exclusive=2,
+                    law=_gated_move(target="single", stay="married"),
+                    then="dead",
+                ),
+            ),
         },
     )
 
@@ -530,8 +515,20 @@ def _rest_as_int(rate: ScalarInt) -> FloatND:
 def _two_schema_model(initial_nodes: Any) -> Model:
     return Model(
         regimes={
-            "working": _nonterminal(
-                transition=ByAge(
+            "working": _nonterminal(),
+            "retirement": _terminal(),
+            "dead": _terminal(),
+        },
+        ages=_LIFE_AGES,
+        regime_id_class=_LifeId,
+        initial_nodes=initial_nodes,
+        edges={
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=65),
+                    "dead": AgeRange(exclusive_stop=75),
+                },
+                law=ByAge(
                     cases={
                         AgeRange(start=25, exclusive_stop=45): {
                             "working": StochasticTransition(func=_rate_as_float),
@@ -543,19 +540,8 @@ def _two_schema_model(initial_nodes: Any) -> Model:
                         },
                     },
                     default="dead",
-                )
-            ),
-            "retirement": _terminal(),
-            "dead": _terminal(),
-        },
-        ages=_LIFE_AGES,
-        regime_id_class=_LifeId,
-        initial_nodes=initial_nodes,
-        edges={
-            "working": {
-                "working": AgeRange(exclusive_stop=65),
-                "dead": AgeRange(exclusive_stop=75),
-            }
+                ),
+            )
         },
     )
 
@@ -587,15 +573,9 @@ def _bonus_utility(*, wealth: ContinuousState, bonus: float) -> FloatND:
 def _value_only_model() -> Model:
     return Model(
         regimes={
-            "source": _nonterminal(
-                transition=ByAge(
-                    cases={0: Phased(solve="perceived", simulate="realized")}
-                )
-            ),
-            "perceived": _nonterminal(
-                transition=ByAge(cases={1: "end"}), utility=_bonus_utility
-            ),
-            "realized": _nonterminal(transition=ByAge(cases={1: "end"})),
+            "source": _nonterminal(),
+            "perceived": _nonterminal(utility=_bonus_utility),
+            "realized": _nonterminal(),
             "end": _terminal(),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -631,14 +611,6 @@ def _producer_model(initial_nodes: Any) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=65,
-                    law={
-                        "working": StochasticTransition(func=_stay),
-                        "dead": StochasticTransition(func=_die),
-                    },
-                    then="retirement",
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "wealth": {
@@ -649,7 +621,7 @@ def _producer_model(initial_nodes: Any) -> Model:
                 },
                 functions={"utility": _utility},
             ),
-            "retirement": _nonterminal(transition=ByAge(cases={65: "dead"})),
+            "retirement": _nonterminal(),
             "dead": _terminal(),
         },
         ages=_LIFE_AGES,

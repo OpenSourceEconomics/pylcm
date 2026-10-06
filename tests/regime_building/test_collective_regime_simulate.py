@@ -58,6 +58,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -101,6 +102,16 @@ def _prob_one(age: FloatND) -> FloatND:
 
 def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
+
+
+def _bind_laws(
+    *, regimes: dict[str, Regime], laws: dict[str, object]
+) -> dict[str, Regime]:
+    """Bind each regime's law as `Model(edges=...)` would; `None` is terminal."""
+    return {
+        name: regime.replace(regime_transitions=laws[name])
+        for name, regime in regimes.items()
+    }
 
 
 def _solve_and_process(
@@ -168,15 +179,25 @@ def _next_couple_regime() -> ScalarInt:
 _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 
-def _make_couple_regimes() -> dict[str, Regime]:
-    couple = Regime(
-        regime_transitions=ByAge(
+def _couple_laws() -> dict[str, object]:
+    """Return the law of every regime of `_make_couple_regimes`.
+
+    `None` marks a terminal regime.
+    """
+    return {
+        "couple": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_couple_regime, targets=("couple_terminal",)
                 )
             }
         ),
+        "couple_terminal": None,
+    }
+
+
+def _make_couple_regimes() -> dict[str, Regime]:
+    couple = Regime(
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -185,7 +206,6 @@ def _make_couple_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -206,7 +226,7 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     both.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_couple_regimes()
+    regimes_dict = _bind_laws(regimes=_make_couple_regimes(), laws=_couple_laws())
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -278,7 +298,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
     the strictest level, which raises on any validation failure.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_couple_regimes()
+    regimes_dict = _bind_laws(regimes=_make_couple_regimes(), laws=_couple_laws())
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -367,9 +387,13 @@ def _consent_gate(
     return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
 
 
-def _make_consent_regimes() -> dict[str, Regime]:
-    single_f = Regime(
-        regime_transitions=ByAge(
+def _consent_laws() -> dict[str, object]:
+    """Return the law of every regime of `_make_consent_regimes`.
+
+    `None` marks a terminal regime.
+    """
+    return {
+        "single_f": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
@@ -398,23 +422,28 @@ def _make_consent_regimes() -> dict[str, Regime]:
                 }
             }
         ),
+        "single_f_terminal": None,
+        "single_m_terminal": None,
+        "married_terminal": None,
+    }
+
+
+def _make_consent_regimes() -> dict[str, Regime]:
+    single_f = Regime(
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -433,7 +462,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
 
 def _solve_consent():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_consent_regimes()
+    regimes_dict = _bind_laws(regimes=_make_consent_regimes(), laws=_consent_laws())
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -588,34 +617,76 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _make_dissolution_regimes() -> dict[str, Regime]:
-    married = Regime(
-        regime_transitions=ByAge(
+def _married_dissolution_law() -> ByAge:
+    """Return `married`'s law: its gated edge into `married_ir` at age 0.
+
+    The edge's stakeholder routes fall back to `single_f` / `single_m`, so a
+    model declares `married` with all three as targets at age 0.
+    """
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "married_ir": ValueDependentTransition(
+                    probability=StochasticTransition(func=_prob_one),
+                    gate=_no_dissolution_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
+                )
+            }
+        }
+    )
+
+
+def _dissolution_laws() -> dict[str, object]:
+    """Return the law of every regime of `_make_dissolution_regimes`.
+
+    `None` marks a terminal regime. Each nonterminal law but `married`'s picks
+    the single outgoing edge of its source age.
+    """
+    return {
+        "married": _married_dissolution_law(),
+        "married_ir": ByAge(
             cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_ir": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
+        "married_terminal": None,
+        "single_f": ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        "single_f_terminal": None,
+        "single_m": {"single_m_terminal": StochasticTransition(func=_prob_one)},
+        "single_m_terminal": None,
+    }
+
+
+def _make_dissolution_regimes() -> dict[str, Regime]:
+    """Return the dissolution miniature's regimes, without their laws.
+
+    A model declares them as `_make_dissolution_model` does; the kernel-level
+    harness binds `_dissolution_laws` instead.
+    """
+    married = Regime(
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -626,13 +697,6 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -661,7 +725,6 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -671,27 +734,16 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "single_f_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
-    single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
-        functions={"utility": _u_single_m_ir},
-    )
+    single_m = single_f.replace(functions={"utility": _u_single_m_ir})
     single_m_terminal = single_f_terminal.replace()
     return {
         "married": married,
@@ -706,7 +758,9 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
 
 def _solve_dissolution():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_dissolution_regimes()
+    regimes_dict = _bind_laws(
+        regimes=_make_dissolution_regimes(), laws=_dissolution_laws()
+    )
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -965,9 +1019,14 @@ def _u_married_m_educ(
     return wage + 0.0 * work + 0.0 * educ  # {1, 2}
 
 
-def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
-    single_f = Regime(
-        regime_transitions=ByAge(
+def _consent_discrete_axis_laws() -> dict[str, object]:
+    """Return the law of every regime of the discrete-target-axis consent miniature.
+
+    Its regimes come from `_make_consent_regimes_with_discrete_target_axis`; `None`
+    marks a terminal regime.
+    """
+    return {
+        "single_f": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
@@ -1002,6 +1061,14 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
                 }
             }
         ),
+        "single_f_terminal": None,
+        "single_m_terminal": None,
+        "married_terminal": None,
+    }
+
+
+def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
+    single_f = Regime(
         # ONLY difference vs. `_make_consent_regimes`: an added discrete
         # "educ" state, carried as-is (`fixed_transition`), on the source and
         # every regime the gated edge's fold/gate/fallback touch.
@@ -1014,17 +1081,14 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
         functions={"utility": _u_single_f_educ},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         functions={"utility": _u_single_f_terminal_educ},
     )
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -1043,7 +1107,10 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
 
 def _solve_consent_discrete_axis():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_consent_regimes_with_discrete_target_axis()
+    regimes_dict = _bind_laws(
+        regimes=_make_consent_regimes_with_discrete_target_axis(),
+        laws=_consent_discrete_axis_laws(),
+    )
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -1169,7 +1236,10 @@ def _make_dissolution_model() -> Model:
         regime_id_class=DissolutionRegimeId,
         initial_nodes={ages.exact_values[0]: "married"},
         edges={
-            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=_married_dissolution_law(),
+            ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1)},
@@ -1447,26 +1517,35 @@ def _u_solo_terminal(wage: ContinuousState) -> FloatND:
     return wage
 
 
-def _make_solo_regimes() -> dict[str, Regime]:
-    """Singleton-only two-regime model, structurally identical to the couple
-    fixture (`_make_couple_regimes`) minus `stakeholders` and the split
-    `utility_f`/`utility_m` pair — isolates the singleton path from the
-    collective one for the byte-identical regression check below."""
-    solo = Regime(
-        regime_transitions=ByAge(
+def _solo_laws() -> dict[str, object]:
+    """Return the law of every regime of `_make_solo_regimes`.
+
+    `None` marks a terminal regime.
+    """
+    return {
+        "solo": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_next_solo_regime, targets=("solo_terminal",)
                 )
             }
         ),
+        "solo_terminal": None,
+    }
+
+
+def _make_solo_regimes() -> dict[str, Regime]:
+    """Singleton-only two-regime model, structurally identical to the couple
+    fixture (`_make_couple_regimes`) minus `stakeholders` and the split
+    `utility_f`/`utility_m` pair — isolates the singleton path from the
+    collective one for the byte-identical regression check below."""
+    solo = Regime(
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_solo},
     )
     solo_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID_2},
         functions={"utility": _u_solo_terminal},
     )
@@ -1481,7 +1560,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     singleton path is untouched by the fix.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_solo_regimes()
+    regimes_dict = _bind_laws(regimes=_make_solo_regimes(), laws=_solo_laws())
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )
@@ -1572,23 +1651,14 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
-def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
-    """A source active over TWO periods with a repeating self-loop `GatedEdge`.
+def _repeating_self_loop_laws() -> dict[str, object]:
+    """Return the law of every regime of `_make_repeating_self_loop_regimes`.
 
-    `src` is active for ages 0 and 1 (periods 0, 1) and declares a gated edge
-    back to ITSELF (`gated_edges={"src": ...}`). At period 0 the edge fires
-    normally — its target (`src` itself) is active at period 1. At period 1 —
-    `src`'s own last active period, the activity boundary — the edge's target
-    (`src` at period 2) does not exist: `src` is not solved past age 1. The
-    ordinary (ungated) regime transition routes a household past the
-    boundary into `src_exit` instead (`_prob_stay` / `_prob_exit_boundary`,
-    both keyed off age, sum to 1, and structurally declare BOTH `src` and
-    `src_exit` as reachable — the gated edge's target must be one of the
-    regime's declared transition targets).
+    `None` marks a terminal regime.
     """
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
-    src = Regime(
-        regime_transitions=ByAge.until(
+    return {
+        "src": ByAge.until(
             stop_age_exclusive=2,
             law={
                 "src": ValueDependentTransition(
@@ -1607,18 +1677,36 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
             },
             then={"src_exit": exit_cell},
         ),
+        "src_exit": None,
+        "src_fallback": None,
+    }
+
+
+def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
+    """A source active over TWO periods with a repeating self-loop `GatedEdge`.
+
+    `src` is active for ages 0 and 1 (periods 0, 1) and declares a gated edge
+    back to ITSELF (`gated_edges={"src": ...}`). At period 0 the edge fires
+    normally — its target (`src` itself) is active at period 1. At period 1 —
+    `src`'s own last active period, the activity boundary — the edge's target
+    (`src` at period 2) does not exist: `src` is not solved past age 1. The
+    ordinary (ungated) regime transition routes a household past the
+    boundary into `src_exit` instead (`_prob_stay` / `_prob_exit_boundary`,
+    both keyed off age, sum to 1, and structurally declare BOTH `src` and
+    `src_exit` as reachable — the gated edge's target must be one of the
+    regime's declared transition targets).
+    """
+    src = Regime(
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_src_exit},
     )
     src_fallback = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_src_fallback},
     )
@@ -1647,7 +1735,9 @@ def test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_
       own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_repeating_self_loop_regimes()
+    regimes_dict = _bind_laws(
+        regimes=_make_repeating_self_loop_regimes(), laws=_repeating_self_loop_laws()
+    )
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
     )

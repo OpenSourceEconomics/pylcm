@@ -122,7 +122,7 @@ def test_tree_signature_wrappers_share_recursive_semantics():
 
 
 def test_age_specialized_regime_transition_is_rejected(binary_category_class):
-    """An age-specialized `regime_transitions` is rejected."""
+    """An age-specialized regime transition law is rejected."""
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -136,7 +136,7 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
 
     with pytest.raises(
         RegimeInitializationError,
-        match=r"`regime_transitions` cannot be an `AgeSpecializedFunction`",
+        match=r"A regime transition law cannot be an `AgeSpecializedFunction`",
     ):
         _validate_logical_consistency(regime)
 
@@ -318,7 +318,7 @@ def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
     Regime-transition probabilities are built once, not per period, so a
     policy-specialized probability law as the regime transition is just as
     unsound as a bare `AgeSpecializedFunction` transition and must be rejected at
-    `Regime` construction.
+    the moment the law is bound to the regime.
     """
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},

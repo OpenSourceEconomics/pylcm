@@ -27,6 +27,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Phased,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
@@ -107,13 +108,11 @@ def _make_model(*, H_func=beta_delta_H):
         },
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility},
         koopmans_aggregator=H_func,
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(
                 start=WEALTH_START,
@@ -129,7 +128,12 @@ def _make_model(*, H_func=beta_delta_H):
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working"},
-        edges={"working": {"working": 0, "dead": (0, 1)}},
+        edges={
+            "working": Transition(
+                targets={"working": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

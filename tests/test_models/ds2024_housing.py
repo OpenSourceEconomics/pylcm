@@ -51,6 +51,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -352,12 +353,6 @@ def build_model(
         start=STATIONARY_AGE, inclusive_stop=STATIONARY_AGE + n_periods - 1, step="Y"
     )
     stays = ages.exact_values[:-2]
-    edges = {
-        "alive": {
-            **({"alive": stays} if stays else {}),
-            "dead": ages.exact_values[:-1],
-        }
-    }
     final_age = int(ages.exact_values[-1])
     keep_housing = _make_keep_housing(delta)
 
@@ -381,7 +376,6 @@ def build_model(
         return (new_housing >= housing_min) & (new_housing <= housing_max)
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -394,9 +388,20 @@ def build_model(
             DS2024HousingRegimeId.alive,
         )
 
+    dies = ages.exact_values[:-1]
+    edges = {
+        "alive": (
+            Transition(
+                targets={"alive": stays, "dead": dies},
+                law=DeterministicTransition(func=next_regime),
+            )
+            if stays
+            else {"dead": dies}
+        )
+    }
+
     if variant == "brute":
         alive = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -441,7 +446,6 @@ def build_model(
     )
 
     alive = NestedConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,

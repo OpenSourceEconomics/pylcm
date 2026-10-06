@@ -18,7 +18,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.typing import ParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm import DeterministicTransition, Model
+from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.params import MappingLeaf
 from tests.test_models.deterministic.regression import (
@@ -26,8 +26,8 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_model,
     get_params,
-    next_regime,
     working_life,
+    working_life_edges,
 )
 
 
@@ -230,17 +230,13 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
     """`regime` as `jnp.int64` simulates the same as `jnp.int32`."""
     n_periods = 3
     final_age_alive = 18 + n_periods - 2
+    ages = AgeGrid(start=18, inclusive_stop=final_age_alive + 1, step="Y")
     model = Model(
-        regimes={
-            "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
-            ),
-            "dead": dead,
-        },
-        ages=AgeGrid(start=18, inclusive_stop=final_age_alive + 1, step="Y"),
+        regimes={"working_life": working_life, "dead": dead},
+        ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, final_age_alive)}},
+        edges=working_life_edges(ages),
     )
     params = get_params(n_periods=n_periods)
 

@@ -28,6 +28,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
@@ -85,13 +86,17 @@ def _model(law: Any) -> Model:
         "functions": {"utility": utility},
     }
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"good": law},
         **common,
-    ).replace()
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
+    )
+    last = Regime(state_transitions={}, **common)
     return Model(
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
@@ -213,7 +218,6 @@ def test_markov_and_process_states_coexist():
         "functions": {"utility": utility_with_shock},
     }
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={
             "good": Phased(
                 solve=StochasticTransition(func=next_good_belief),
@@ -221,10 +225,15 @@ def test_markov_and_process_states_coexist():
             )
         },
         **common,
-    ).replace()
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
+    )
+    last = Regime(state_transitions={}, **common)
     model = Model(
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
@@ -286,13 +295,17 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         },
     }
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"good": StochasticTransition(func=next_good)},
         **common,
-    ).replace()
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
+    )
+    last = Regime(state_transitions={}, **common)
     model = Model(
-        edges={"live": {"live": 0, "last": (0, 1)}},
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
@@ -329,7 +342,6 @@ def test_both_phase_variants_get_their_own_metadata_entry():
     would reach the solver unchecked.
     """
     live = Regime(
-        regime_transitions=_next_regime,
         state_transitions={
             "good": Phased(
                 solve=StochasticTransition(func=next_good_belief),
@@ -339,7 +351,7 @@ def test_both_phase_variants_get_their_own_metadata_entry():
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
-    )
+    ).replace(regime_transitions=_next_regime)
     entries = collect_stochastic_state_transitions(
         user_regime=live, user_regimes={"live": live}
     )
@@ -353,12 +365,11 @@ def test_both_phase_variants_get_their_own_metadata_entry():
 def test_bare_law_keeps_its_unqualified_key_and_no_phase():
     """A phase-invariant law is untouched by the phase tagging."""
     live = Regime(
-        regime_transitions=_next_regime,
         state_transitions={"good": StochasticTransition(func=next_good_actual)},
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
-    )
+    ).replace(regime_transitions=_next_regime)
     entries = collect_stochastic_state_transitions(
         user_regime=live, user_regimes={"live": live}
     )

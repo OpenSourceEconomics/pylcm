@@ -18,7 +18,6 @@ import pytest
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     ParetoObjective,
@@ -54,10 +53,6 @@ class Power:
 class RegimeId:
     couple: ScalarInt
     couple_terminal: ScalarInt
-
-
-def _next_regime() -> ScalarInt:
-    return RegimeId.couple_terminal
 
 
 def _utility_f(choice: DiscreteAction) -> FloatND:
@@ -105,7 +100,6 @@ def _build_model(
     utility_m=_utility_m,
 ) -> Model:
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states=states or {},
         state_transitions=state_transitions or {},
         actions={"choice": DiscreteGrid(category_class=Choice)},
@@ -116,7 +110,6 @@ def _build_model(
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _terminal_zero, "m": _terminal_zero}
@@ -399,10 +392,6 @@ class ThreeRegimeId:
     household_terminal: ScalarInt
 
 
-def _next_three_regime() -> ScalarInt:
-    return ThreeRegimeId.household_terminal
-
-
 def _utility_child(choice: DiscreteAction) -> FloatND:
     """Prefers `a`, worth 1 against 0."""
     return jnp.where(choice == Choice.a, 1.0, 0.0)
@@ -424,7 +413,6 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     }
     weights = {"f": 0.5, "m": 0.25, "child": 0.25}
     household = Regime(
-        regime_transitions=DeterministicTransition(func=_next_three_regime),
         actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "utility": CollectiveUtility(
@@ -436,7 +424,6 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
         },
     )
     household_terminal = Regime(
-        regime_transitions=None,
         functions={
             "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
         },
@@ -505,7 +492,6 @@ def _carry_power(power: DiscreteState) -> ScalarInt:
 def _build_carried_power_model() -> Model:
     """A household whose Pareto weights read a carried bargaining-power state."""
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "power": Phased(
                 solve=_impute_power, simulate=DiscreteGrid(category_class=Power)
@@ -523,7 +509,6 @@ def _build_carried_power_model() -> Model:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _terminal_zero, "m": _terminal_zero}
@@ -567,7 +552,6 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     weights select her preferred action and publish stakeholder values `(3, 0)`.
     """
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "power": Phased(
                 solve=_impute_power_from_signal,
@@ -587,7 +571,6 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _terminal_zero, "m": _terminal_zero}

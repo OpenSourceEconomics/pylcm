@@ -239,10 +239,6 @@ def _final_utility_np(
     )
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 type _Reads = tuple[str, ...]
 
 
@@ -275,7 +271,6 @@ def _model(
         "pref": DiscreteGrid(category_class=_Pref),
     }
     alive = Regime(
-        regime_transitions={"final": StochasticTransition(func=_certain)},
         states=states,
         state_transitions={"wealth": _WEALTH_LAWS[reads], **laws},
         actions={
@@ -287,7 +282,6 @@ def _model(
         certainty_equivalent=certainty_equivalent,
     )
     final = Regime(
-        regime_transitions=None,
         states=states,
         functions={"utility": _final_utility},
     )
@@ -736,7 +730,6 @@ def _finite_range_model(
         "landing": DiscreteGrid(category_class=_Landing if with_choice else _Binary),
     }
     alive = Regime(
-        regime_transitions={"final": StochasticTransition(func=_certain)},
         states=states,
         state_transitions={
             "z": StochasticTransition(func=_coordinate_probabilities),
@@ -747,7 +740,6 @@ def _finite_range_model(
         functions={"utility": _zero_utility},
     )
     final = Regime(
-        regime_transitions=None,
         states=states,
         functions={
             "utility": _peak_or_three_quarters_for_certain

@@ -35,8 +35,6 @@ from _lcm.solution import backward_induction, block_major
 from lcm import (
     AgeGrid,
     AgeRange,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -96,7 +94,7 @@ def _life_cycle_model(
     """The grouped-simulation life cycle with a typed dead regime."""
     model = life_cycle._model(typed_dead=True, pref_law=pref_law)
     return Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
@@ -811,11 +809,6 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
     last_age = _LONG_AGES.exact_values[-1]
     pref_type = DiscreteGrid(category_class=_SixTypes)
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=lambda: _LongRegimeId.working),
-            then=DeterministicTransition(func=lambda: _LongRegimeId.terminal),
-        ),
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         state_transitions={
             "wealth": _long_next_wealth,
@@ -826,7 +819,6 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
         constraints={"affordable": _long_affordable},
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         functions={"utility": _long_bequest},
     )

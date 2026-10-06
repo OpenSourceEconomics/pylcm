@@ -23,6 +23,7 @@ from lcm import (
     NormalIIDProcess,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
@@ -70,19 +71,14 @@ def _build(state_transitions) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    t: StochasticTransition(func=_half) for t in ("a", "b")
-                },
                 state_transitions=state_transitions,
                 functions={"utility": _no_utility},
             ),
             "a": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK_A},
                 functions={"utility": _wealth_plus_shock},
             ),
             "b": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH, "shock": _SHOCK_B},
                 functions={"utility": _wealth_plus_shock},
             ),
@@ -90,7 +86,12 @@ def _build(state_transitions) -> Model:
         ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
-        edges={"source": {"a": (20, 21), "b": (20, 21)}},
+        edges={
+            "source": Transition(
+                targets={"a": (20, 21), "b": (20, 21)},
+                law={t: StochasticTransition(func=_half) for t in ("a", "b")},
+            )
+        },
     )
 
 

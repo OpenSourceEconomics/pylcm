@@ -18,7 +18,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
-    working_life_transitions,
+    working_life_edges,
 )
 
 
@@ -29,17 +29,13 @@ def test_model_constructor_has_no_population_parameter() -> None:
 
 def _model() -> Model:
     """Build a small three-period model with one acting regime."""
+    ages = AgeGrid(start=18, inclusive_stop=20, step="Y")
     return Model(
-        regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=20)
-            ),
-            "dead": dead,
-        },
-        ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
+        regimes={"working_life": working_life, "dead": dead},
+        ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
-        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
+        edges=working_life_edges(ages),
     )
 
 

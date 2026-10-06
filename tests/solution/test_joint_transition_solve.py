@@ -24,6 +24,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentTransition,
     categorical,
 )
@@ -47,10 +48,6 @@ from tests.conftest import DECIMAL_PRECISION
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _certain_target() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _joint_probabilities() -> FloatND:
@@ -103,9 +100,6 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_certain_target)
-                },
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
                     "target": {
@@ -122,7 +116,6 @@ def _build_model(
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -143,7 +136,6 @@ def _params() -> UserParams:
     return {
         "source": {
             "target": {
-                "next_regime": {},
                 "match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_income": {},
@@ -366,24 +358,24 @@ def _bdy_gate_always_open(V_target_f: FloatND) -> jnp.ndarray:
 
 
 def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
+    single_law = {
+        "couple": ValueDependentTransition(
+            probability=StochasticTransition(func=_bdy_certain_couple),
+            gate=_bdy_gate_always_open,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_terminal",
+                        projection={"wealth": _bdy_identity_wealth},
+                    ),
+                )
+            },
+        )
+    }
     return Model(
         regimes={
             "single": Regime(
-                regime_transitions={
-                    "couple": ValueDependentTransition(
-                        probability=StochasticTransition(func=_bdy_certain_couple),
-                        gate=_bdy_gate_always_open,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_terminal",
-                                    projection={"wealth": _bdy_identity_wealth},
-                                ),
-                            )
-                        },
-                    )
-                },
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_single_utility},
                 joint_transitions={
@@ -402,12 +394,10 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                 },
             ),
             "single_terminal": Regime(
-                regime_transitions=None,
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_fallback_utility},
             ),
             "couple": Regime(
-                regime_transitions=None,
                 actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={
                     "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),
@@ -429,7 +419,11 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "single"},
-        edges={"single": {"couple": 0, "single_terminal": 0}},
+        edges={
+            "single": Transition(
+                targets={"couple": 0, "single_terminal": 0}, law=single_law
+            )
+        },
     )
 
 

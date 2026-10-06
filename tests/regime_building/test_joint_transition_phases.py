@@ -40,10 +40,9 @@ def _regime(
     *, joint_transitions: object, regime_transitions: object = _next_regime
 ) -> Regime:
     return Regime(
-        regime_transitions=regime_transitions,  # ty: ignore[invalid-argument-type]
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions=joint_transitions,  # ty: ignore[invalid-argument-type]
-    )
+    ).replace(regime_transitions=regime_transitions)
 
 
 def test_bare_joint_transition_broadcasts_to_both_phases() -> None:
@@ -115,13 +114,12 @@ def test_joint_node_name_cannot_collide_with_source_function() -> None:
     """A transition-local node cannot shadow a source DAG producer."""
     with pytest.raises(RegimeInitializationError, match=r"node name.*match.*collides"):
         Regime(
-            regime_transitions=_next_regime,
             functions={
                 "utility": lambda: jnp.asarray(0.0),
                 "match": lambda: jnp.asarray(1.0),
             },
             joint_transitions={"couple": {"match": _kernel()}},
-        )
+        ).replace(regime_transitions=_next_regime)
 
 
 def test_joint_node_name_cannot_use_a_reserved_transition_prefix() -> None:

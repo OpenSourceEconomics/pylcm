@@ -19,6 +19,7 @@ from lcm import (
     DeterministicTransition,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidValueFunctionError
@@ -118,20 +119,24 @@ def _nan_producing_model() -> Model:
     """Build a two-regime model whose simulated value is NaN at `NAN_AGE` only."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
     work = UserRegime(
-        regime_transitions=DeterministicTransition(func=_off_node_next_regime),
         actions={"consumption": grid},
         states={"wealth": grid},
         state_transitions={"wealth": _off_node_next_wealth},
         constraints={"borrowing_constraint": _off_node_borrowing_constraint},
         functions={"utility": _off_node_utility},
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
     return Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=OffNodeRegimeId,
         initial_nodes={40: "work"},
-        edges={"work": {"work": 40, "dead": (40, 50)}},
+        edges={
+            "work": Transition(
+                targets={"work": 40, "dead": (40, 50)},
+                law=DeterministicTransition(func=_off_node_next_regime),
+            )
+        },
     )
 
 
@@ -179,10 +184,9 @@ def _two_offender_model() -> Model:
     """Build a model whose simulated value is NaN in two regimes of one period."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
 
-    def occupied_regime(*, regime_transitions: DeterministicTransition) -> UserRegime:
+    def occupied_regime() -> UserRegime:
         """Build one regime whose value goes NaN off a wealth node at `NAN_AGE`."""
         return UserRegime(
-            regime_transitions=regime_transitions,
             actions={"consumption": grid},
             states={"wealth": grid},
             state_transitions={"wealth": _off_node_next_wealth},
@@ -192,22 +196,22 @@ def _two_offender_model() -> Model:
 
     return Model(
         regimes={
-            "work": occupied_regime(
-                regime_transitions=DeterministicTransition(func=_next_regime_from_work)
-            ),
-            "study": occupied_regime(
-                regime_transitions=DeterministicTransition(func=_next_regime_from_study)
-            ),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "work": occupied_regime(),
+            "study": occupied_regime(),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=TwoOffenderRegimeId,
         initial_nodes={40: ("work", "study")},
         edges={
-            "work": {"work": 40, "dead": (40, 50)},
-            "study": {"study": 40, "dead": (40, 50)},
+            "work": Transition(
+                targets={"work": 40, "dead": (40, 50)},
+                law=DeterministicTransition(func=_next_regime_from_work),
+            ),
+            "study": Transition(
+                targets={"study": 40, "dead": (40, 50)},
+                law=DeterministicTransition(func=_next_regime_from_study),
+            ),
         },
     )
 

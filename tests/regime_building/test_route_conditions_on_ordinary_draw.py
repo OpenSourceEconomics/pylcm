@@ -300,36 +300,33 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         ),
     }
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
-            }
-        ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
+    ).replace(
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
+            }
+        )
     )
     target_a = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_a},
-    )
+    ).replace(regime_transitions=None)
     target_b = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_target_b},
-    )
+    ).replace(regime_transitions=None)
     fallback_a = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_a},
-    )
+    ).replace(regime_transitions=None)
     fallback_b = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_2},
         functions={"utility": _u_fallback_b},
-    )
+    ).replace(regime_transitions=None)
     return {
         "src": src,
         "target_a": target_a,

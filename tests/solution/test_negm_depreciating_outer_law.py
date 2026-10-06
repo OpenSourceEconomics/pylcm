@@ -34,6 +34,7 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    Transition,
     outer_unchanged,
 )
 from lcm.exceptions import ModelInitializationError
@@ -42,12 +43,14 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy as toy
 
 _FINAL_AGE = 20 + (toy.N_PERIODS - 1) * 5
-_ALIVE_TRANSITIONS = DeterministicTransition(func=toy.next_regime)
 _EDGES = {
-    "alive": {
-        "alive": AgeRange(exclusive_stop=_FINAL_AGE - 5),
-        "dead": AgeRange(exclusive_stop=_FINAL_AGE),
-    }
+    "alive": Transition(
+        targets={
+            "alive": AgeRange(exclusive_stop=_FINAL_AGE - 5),
+            "dead": AgeRange(exclusive_stop=_FINAL_AGE),
+        },
+        law=DeterministicTransition(func=toy.next_regime),
+    )
 }
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
@@ -89,7 +92,6 @@ def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "new_durable": toy.new_durable,
@@ -132,7 +134,6 @@ def _build_brute_model(alpha: float) -> Model:
             "consumption": toy.CONSUMPTION_GRID_BRUTE,
             "new_durable": toy.OUTER_GRID,
         },
-        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "serviced_durable": toy.serviced_durable_brute,

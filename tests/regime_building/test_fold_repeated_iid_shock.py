@@ -23,6 +23,7 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -68,10 +69,6 @@ def _utility(
 
 def _build_model(*, fold: bool) -> Model:
     alive = Regime(
-        regime_transitions={
-            "alive": StochasticTransition(func=_probability_alive),
-            "dead": StochasticTransition(func=_probability_dead),
-        },
         states={
             "wealth": WEALTH,
             "wage_shock": NormalIIDProcess(
@@ -88,12 +85,19 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
-        edges={"alive": {"alive": (0, 1), "dead": (0, 1, 2)}},
+        edges={
+            "alive": Transition(
+                targets={"alive": (0, 1), "dead": (0, 1, 2)},
+                law={
+                    "alive": StochasticTransition(func=_probability_alive),
+                    "dead": StochasticTransition(func=_probability_dead),
+                },
+            )
+        },
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},

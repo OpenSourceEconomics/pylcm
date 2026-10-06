@@ -22,7 +22,6 @@ The solver is checked against those expressions directly, not against another
 implementation that could share its assumptions.
 """
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -31,7 +30,6 @@ from lcm import (
     AgeRange,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -90,14 +88,6 @@ def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolN
     return consumption <= wealth
 
 
-def prob_continue(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 < last_age, 1.0, 0.0)
-
-
-def prob_stop(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 >= last_age, 1.0, 0.0)
-
-
 def _model(
     *,
     solver,
@@ -130,10 +120,6 @@ def _model(
             "wealth": {"saving": next_wealth, "done": next_wealth},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions={
-            "saving": StochasticTransition(func=prob_continue),
-            "done": StochasticTransition(func=prob_stop),
-        },
         functions=functions,
         solver=solver,
         **(
@@ -152,7 +138,6 @@ def _model(
         ),
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
@@ -177,8 +162,8 @@ def _params():
         "saving": {
             "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
-            "saving": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
-            "done": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
+            "saving": {"next_wealth": law},
+            "done": {"next_wealth": law},
         },
         "done": {"utility": {"crra": _CRRA}},
     }

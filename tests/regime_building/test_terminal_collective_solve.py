@@ -50,13 +50,12 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
 
 def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
-        regime_transitions=None,  # terminal
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
-    )
+    ).replace(regime_transitions=None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(

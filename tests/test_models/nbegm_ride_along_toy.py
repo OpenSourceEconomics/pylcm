@@ -201,7 +201,8 @@ def build_params(
     base_income_hi: float = 4.0,
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the ride-along tax toy.
 
@@ -237,7 +238,6 @@ def build_params(
             "resources": {"base_income": base_income},
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

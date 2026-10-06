@@ -28,6 +28,7 @@ from lcm import (
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -213,10 +214,6 @@ def _resources_param_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob_wealth),
-            "dead": StochasticTransition(func=death_prob_wealth),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -252,7 +249,15 @@ def _resources_param_model(solver: str) -> Model:
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
         initial_nodes={40: "working_life"},
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob_wealth),
+                    "dead": StochasticTransition(func=death_prob_wealth),
+                },
+            )
+        },
     )
 
 
@@ -347,10 +352,6 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
     }
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob_share),
-            "dead": StochasticTransition(func=death_prob_share),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -392,7 +393,15 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
         regime_id_class=AssetRowRegimeId,
         fixed_params=fixed_params,
         initial_nodes={40: "working_life"},
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob_share),
+                    "dead": StochasticTransition(func=death_prob_share),
+                },
+            )
+        },
     )
 
 
@@ -479,10 +488,6 @@ def _imputed_pension_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob_wealth),
-            "dead": StochasticTransition(func=death_prob_wealth),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states=(
             {
@@ -536,7 +541,15 @@ def _imputed_pension_model(solver: str) -> Model:
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
         initial_nodes={40: "working_life"},
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob_wealth),
+                    "dead": StochasticTransition(func=death_prob_wealth),
+                },
+            )
+        },
     )
 
 
@@ -582,10 +595,6 @@ def resources_decreasing(*, wealth: ContinuousState, offset: float) -> FloatND:
 def _decreasing_resources_model() -> Model:
     """Asset-row DC-EGM regime whose resources decreases in wealth."""
     working = ConsumptionSavingsRegime(
-        regime_transitions={
-            "working_life": StochasticTransition(func=stay_prob_wealth),
-            "dead": StochasticTransition(func=death_prob_wealth),
-        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_dcegm},
@@ -609,7 +618,15 @@ def _decreasing_resources_model() -> Model:
         ages=_ages(),
         regime_id_class=AssetRowRegimeId,
         initial_nodes={40: "working_life"},
-        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob_wealth),
+                    "dead": StochasticTransition(func=death_prob_wealth),
+                },
+            )
+        },
     )
 
 

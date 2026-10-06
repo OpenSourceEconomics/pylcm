@@ -8,12 +8,13 @@ model build.
 
 """
 
+import contextvars
 import copy
 import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Self, cast
 
 from beartype import beartype
 
@@ -56,6 +57,32 @@ from lcm.transition import (
 from lcm.typing import UserFunction
 
 
+class _UnboundLaw:
+    """The regime law of a regime that no `Model` has bound from its edges."""
+
+    def __repr__(self) -> str:
+        return "UNBOUND"
+
+
+UNBOUND = _UnboundLaw()
+
+# The law `Regime.replace` hands to the regime it constructs. Every other
+# construction sees `UNBOUND`.
+_LAW_TO_BIND: contextvars.ContextVar[object] = contextvars.ContextVar(
+    "_LAW_TO_BIND", default=UNBOUND
+)
+
+
+def _unbound_law_view() -> int:
+    """Stand in for the law of an unbound regime while it is validated.
+
+    A callable names no target and reads no variable, so construction-time
+    checks that depend on the law's targets or inputs are left to the model,
+    which validates the regime again once it binds the law from its edges.
+    """
+    return 0
+
+
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Regime:
@@ -71,9 +98,10 @@ class Regime:
     (identity law). Stochastic processes have intrinsic transitions and must not
     appear in `state_transitions`.
 
-    The `regime_transitions` field declares movement between regimes. A regime is
-    terminal exactly when `regime_transitions is None`; there is no separate
-    `terminal` flag.
+    Movement between regimes is declared only in `Model(edges=...)`: a source
+    with one outgoing edge per age moves along it, and a `Transition` carries
+    the law wherever an age has several. A regime with no outgoing edges is
+    terminal. `Regime` takes no `regime_transitions`.
 
     """
 
@@ -93,12 +121,14 @@ class Regime:
             StochasticTransition | UserFunction | Phased | ValueDependentTransition,
         ]
         | ValueDependentTransition
+        | _UnboundLaw
         | None
-    )
-    """Regime transition, or `None` for terminal regimes.
+    ) = field(init=False, default=UNBOUND, repr=False)
+    """The regime law a `Model` binds from its edges; never declared on a regime.
 
-    Nonterminal forms declare numerical behavior. `Model.edges` alone declares
-    which destinations are available at each source age:
+    `UNBOUND` on a regime no model has bound. Inside a model, `None` marks a
+    terminal regime (no outgoing edges); nonterminal forms are the law of the
+    source's `Transition`, or the single destination of each source age:
 
     - a regime name specifies a deterministic destination;
     - a plain function or `DeterministicTransition(func=func)` returns its global
@@ -415,8 +445,9 @@ class Regime:
     )
     """Gated edges routing this regime's continuation into a target regime.
 
-    Derived from the `ValueDependentTransition` entries of `regime_transitions`,
-    which is where a model declares them, so that target selection and
+    Derived from the `ValueDependentTransition` entries of the source's
+    `Transition` law in `Model(edges=...)`, which is where a model declares
+    them, so that target selection and
     value-dependent routing are one declaration rather than two.
 
     Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
@@ -427,7 +458,7 @@ class Regime:
     `Wbar^s = jnp.where(gate, V_target, V_fallback)` on the target regime's
     grid at each period's end, and this regime's continuation reads `Wbar` in
     place of the raw target V. See `GatedEdge`. Only meaningful together
-    with the corresponding `regime_transitions` / `state_transitions` into the target's
+    with the corresponding graph edge and `state_transitions` into the target's
     state space; a target reached by a gated edge is exempt from the mixed-
     stakeholder rejection.
     """
@@ -449,9 +480,20 @@ class Regime:
     references.
     """
 
+    def __new__(cls, *args: object, **kwargs: object) -> Self:  # noqa: ARG004
+        if "regime_transitions" in kwargs:
+            raise RegimeInitializationError(
+                "`Regime` takes no `regime_transitions`. Declare every regime "
+                "transition in `Model(edges=...)`: map a source to "
+                "`{target: source_ages}` where it has one destination per age, or "
+                "to `Transition(targets=..., law=...)` where a law chooses among "
+                "several. A regime without outgoing edges is terminal."
+            )
+        return super().__new__(cls)
+
     @property
     def terminal(self) -> bool:
-        """Whether this is a terminal regime: `regime_transitions is None`."""
+        """Whether the model-bound law marks this regime terminal (no out-edges)."""
         return self.regime_transitions is None
 
     def _make_field_immutable(self, *, name: str) -> None:
@@ -460,16 +502,24 @@ class Regime:
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        transition = self.regime_transitions
+        transition = _LAW_TO_BIND.get()
+        # A regime constructed while this one validates binds no law of its own.
+        _LAW_TO_BIND.set(UNBOUND)
+        object.__setattr__(self, "regime_transitions", transition)
         fail_if_phased_wraps_a_schedule(transition)
-        if not uses_declaration_vocabulary(transition):
+        unbound = isinstance(transition, _UnboundLaw)
+        if not unbound and not uses_declaration_vocabulary(transition):
             self._post_init_engine_view()
             return
         # Validate a copy that holds the declaration's period-independent
         # engine view, then take over every field it derived except the
         # transition: this regime keeps the declaration for the model to resolve.
         view = copy.copy(self)
-        object.__setattr__(view, "regime_transitions", declaration_view(transition))
+        object.__setattr__(
+            view,
+            "regime_transitions",
+            _unbound_law_view if unbound else declaration_view(transition),
+        )
         view._post_init_engine_view()  # noqa: SLF001
 
         vars(self).update(
@@ -616,6 +666,8 @@ class Regime:
         Deterministic and idempotent, like the other two views.
         """
         transition = self.regime_transitions
+        if isinstance(transition, _UnboundLaw):
+            return None
         if uses_declaration_vocabulary(transition):
             transition = declaration_view(transition)
         return decompose_transition(transition)
@@ -692,7 +744,7 @@ class Regime:
             f"This regime carries a gated edge into "
             f"{min(self.gated_edges)!r} on {where}. A gate is a route, so "
             "it needs a target to route to: declare it in a per-target "
-            "`regime_transitions` dict, keyed by the regime the gate opens onto."
+            "`Transition` law, keyed by the regime the gate opens onto."
         )
 
     def _lower_value_dependent_transitions(self) -> None:
@@ -703,9 +755,9 @@ class Regime:
                 "This regime declares a `ValueDependentTransition` as its whole "
                 "transition. A gate is a route — it says where a household goes "
                 "when consent fails — so it belongs to one target and is written "
-                "in a per-target `regime_transitions` dict, keyed by the regime "
-                "the gate opens onto: `regime_transitions={'<target>': "
-                "ValueDependentTransition(...)}`."
+                "in a per-target `Transition` law, keyed by the regime the gate "
+                "opens onto: `Transition(targets=..., law={'<target>': "
+                "ValueDependentTransition(...)})`."
             )
         if isinstance(transition, Phased):
             self._lower_phased_value_dependent_transitions(transition)
@@ -843,7 +895,8 @@ class Regime:
                 result[name] = cast("UserFunction", spec.solve)
         result |= cast("Mapping[str, UserFunction]", self.decomposed_constraints)
         decomposed_transition = self.decomposed_transition
-        if decomposed_transition is not None:
+        # An unbound regime still carries its state laws; it has no regime law.
+        if decomposed_transition is not None or not self.terminal:
             joint_output_names = {
                 state_name
                 for kernels in self.joint_transitions.values()
@@ -877,7 +930,7 @@ class Regime:
                     result[f"next_regime__{target_regime_name}"] = cast(
                         "UserFunction", cell
                     )
-            else:
+            elif transition is not None:
                 result["next_regime"] = cast("UserFunction", transition)
         return MappingProxyType(result)
 
@@ -965,6 +1018,9 @@ class Regime:
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
 
+        The model-bound law is carried over; `regime_transitions` names the law
+        to bind instead, which only `Model` does.
+
         Replacing a slot that carries a `CollectiveUtility`,
         `ValueDependentConstraint` or `ValueDependentTransition` replaces the
         declaration itself, and the stakeholders, value constraints and gated
@@ -980,12 +1036,17 @@ class Regime:
             A new regime with the replaced attributes.
 
         """
+        token = _LAW_TO_BIND.set(
+            kwargs.pop("regime_transitions", self.regime_transitions)
+        )
         try:
             return dataclasses.replace(self, **kwargs)
         except (TypeError, ValueError) as e:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
+        finally:
+            _LAW_TO_BIND.reset(token)
 
 
 def decompose_functions(

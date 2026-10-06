@@ -23,6 +23,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
@@ -106,14 +107,12 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
                 solver=documented["WealthSolver"](),
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _terminal_utility},
             ),
@@ -122,10 +121,13 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=_N_PERIODS - 2),
-                "dead": AgeRange(exclusive_stop=_N_PERIODS - 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_N_PERIODS - 2),
+                    "dead": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")

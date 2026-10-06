@@ -74,10 +74,6 @@ def _n_axes() -> int:
     return 3 if _active_dtype() == np.float32 else 4
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0, dtype=_active_dtype())
-
-
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
@@ -192,7 +188,6 @@ def _build_model(
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_certain)},
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{
@@ -203,7 +198,6 @@ def _build_model(
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     **{name: DiscreteGrid(category_class=Draw) for name in axis_names},

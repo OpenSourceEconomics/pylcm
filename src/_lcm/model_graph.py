@@ -29,12 +29,13 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.phased import Phased
-from lcm.regime import Regime
+from lcm.regime import Regime, _UnboundLaw
 from lcm.transition import (
     AgeSelector,
     ByAge,
     DeterministicTransition,
     StochasticTransition,
+    Transition,
     _fail_if_invalid_age_selector,
     _select_periods,
 )
@@ -208,6 +209,228 @@ def prepare_graph(
             bound=bound, edges=edges, after=after, ages=ages
         ),
         cells_without_edges=cells_without_edges,
+    )
+
+
+def bind_edge_laws(
+    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
+) -> tuple[MappingProxyType[RegimeName, Regime], object]:
+    """Bind each regime's law from `Model(edges=...)` and strip laws off the edges.
+
+    Per phase, a source's law at each source age with outgoing edges is:
+
+    - the only destination, where the age has exactly one outgoing edge and the
+      source is a plain `{target: selector}` mapping or its `Transition` law
+      selects nothing there;
+    - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise.
+
+    A source age with several outgoing edges and no law is rejected, and so is
+    a `Transition` on a source whose every age has at most one outgoing edge,
+    unless its law carries a `ValueDependentTransition` gate. A regime with no
+    outgoing edge in either phase is terminal.
+
+    Returns:
+        The regimes with their laws bound, and the edges in the law-free
+        `{source: {target: selector}}` form, `Phased` when the input was.
+    """
+    for name, regime in regimes.items():
+        if not isinstance(regime.regime_transitions, _UnboundLaw):
+            raise ModelInitializationError(
+                f"Regime '{name}' already carries a regime law. Declare regime "
+                "transitions only in `Model(edges=...)`."
+            )
+    if isinstance(edges, GraphEdges):
+        return MappingProxyType(
+            {
+                name: regime.replace(
+                    regime_transitions=_combined_law(
+                        laws_by_side={
+                            side: _single_destination_laws(
+                                source=name,
+                                resolved=getattr(edges, side).get(name, {}),
+                                ages=ages,
+                                side=side,
+                            )
+                            for side in ("solve", "simulate")
+                        },
+                        ages=ages,
+                    )
+                )
+                for name, regime in regimes.items()
+            }
+        ), edges
+    declared = (
+        {"solve": edges.solve, "simulate": edges.simulate}
+        if isinstance(edges, Phased)
+        else {"solve": edges, "simulate": edges}
+    )
+    structural = {
+        side: (
+            {
+                source: (decl.targets if isinstance(decl, Transition) else decl)
+                for source, decl in phase.items()
+            }
+            if isinstance(phase, Mapping)
+            else phase
+        )
+        for side, phase in declared.items()
+    }
+    resolved = {
+        side: _resolve_edges(edges=structural[side], regimes=regimes, ages=ages)
+        for side in ("solve", "simulate")
+    }
+    bound: dict[RegimeName, Regime] = {}
+    for name, regime in regimes.items():
+        laws_by_side = {}
+        for side in ("solve", "simulate"):
+            declaration = cast("Mapping[str, object]", declared[side]).get(name)
+            if isinstance(declaration, Transition):
+                laws_by_side[side] = _transition_laws(
+                    source=name,
+                    transition=declaration,
+                    resolved=resolved[side].get(name, {}),
+                    ages=ages,
+                    side=side,
+                )
+            else:
+                laws_by_side[side] = _single_destination_laws(
+                    source=name,
+                    resolved=resolved[side].get(name, {}),
+                    ages=ages,
+                    side=side,
+                )
+        bound[name] = regime.replace(
+            regime_transitions=_combined_law(laws_by_side=laws_by_side, ages=ages)
+        )
+    law_free = (
+        Phased(solve=structural["solve"], simulate=structural["simulate"])
+        if isinstance(edges, Phased)
+        else structural["solve"]
+    )
+    return MappingProxyType(bound), law_free
+
+
+def _targets_by_period(
+    *, resolved: Mapping[RegimeName, frozenset[UserAge]], ages: AgeGrid
+) -> dict[int, tuple[RegimeName, ...]]:
+    """Return the destinations of each non-final source period that has any."""
+    targets = {
+        period: tuple(
+            target for target, selected in resolved.items() if age in selected
+        )
+        for period, age in enumerate(ages.exact_values[:-1])
+    }
+    return {period: names for period, names in targets.items() if names}
+
+
+def _single_destination_laws(
+    *,
+    source: RegimeName,
+    resolved: Mapping[RegimeName, frozenset[UserAge]],
+    ages: AgeGrid,
+    side: str,
+) -> dict[int, object]:
+    """Read a law-free source's law off its edges: the only destination per age."""
+    laws: dict[int, object] = {}
+    for period, targets in _targets_by_period(resolved=resolved, ages=ages).items():
+        if len(targets) > 1:
+            raise ModelInitializationError(
+                f"'{source}' has {len(targets)} outgoing {side} edges at age "
+                f"{ages.exact_values[period]} ({', '.join(targets)}) and no law to "
+                f"choose among them. Declare `edges['{source}']` as "
+                "`Transition(targets=..., law=...)`."
+            )
+        laws[period] = targets[0]
+    return laws
+
+
+def _transition_laws(
+    *,
+    source: RegimeName,
+    transition: Transition,
+    resolved: Mapping[RegimeName, frozenset[UserAge]],
+    ages: AgeGrid,
+    side: str,
+) -> dict[int, object]:
+    """Select a `Transition`'s law at each source period with outgoing edges."""
+    targets_by_period = _targets_by_period(resolved=resolved, ages=ages)
+    law = transition.law
+    if isinstance(law, Phased):
+        law = getattr(law, side)
+    if all(len(targets) <= 1 for targets in targets_by_period.values()) and not (
+        _carries_gate(law)
+    ):
+        raise ModelInitializationError(
+            f"Every source age of '{source}' has at most one outgoing {side} edge, "
+            f"so the graph is its law. Declare `edges['{source}']` as the plain "
+            "`{target: source_ages}` mapping instead of a `Transition`."
+        )
+    selected = (
+        law.resolve(ages).law_by_period
+        if isinstance(law, ByAge)
+        else dict.fromkeys(targets_by_period, law)
+    )
+    laws: dict[int, object] = {}
+    for period, targets in targets_by_period.items():
+        if period in selected:
+            case = selected[period]
+            laws[period] = getattr(case, side) if isinstance(case, Phased) else case
+        elif len(targets) == 1:
+            laws[period] = targets[0]
+        else:
+            raise ModelInitializationError(
+                f"The law of '{source}' selects nothing at age "
+                f"{ages.exact_values[period]}, where its {side} edges lead to "
+                f"{', '.join(targets)}. Give the `Transition` law a case there."
+            )
+    return laws
+
+
+def _carries_gate(law: object) -> bool:
+    """Whether a law declares a `ValueDependentTransition` cell at any age."""
+    laws = law.laws if isinstance(law, ByAge) else (law,)
+    return any(
+        isinstance(cell, ValueDependentTransition)
+        for one in laws
+        for side in ((one.solve, one.simulate) if isinstance(one, Phased) else (one,))
+        if isinstance(side, Mapping)
+        for cell in side.values()
+    )
+
+
+def _combined_law(
+    *, laws_by_side: Mapping[str, Mapping[int, object]], ages: AgeGrid
+) -> object:
+    """Combine per-phase, per-period laws into one regime law.
+
+    `None` when neither phase has an outgoing edge (terminal). One law object
+    shared by every period is returned as is; otherwise a `ByAge` with one case
+    per source age, `Phased` where the two phases differ.
+    """
+    solve, simulate = laws_by_side["solve"], laws_by_side["simulate"]
+    periods = sorted(set(solve) | set(simulate))
+    if not periods:
+        return None
+    pairs: dict[tuple[int, int], object] = {}
+    combined: dict[int, object] = {}
+    for period in periods:
+        solve_law = solve.get(period, simulate.get(period))
+        simulate_law = simulate.get(period, solve_law)
+        if solve_law is simulate_law or (
+            isinstance(solve_law, str) and solve_law == simulate_law
+        ):
+            combined[period] = solve_law
+            continue
+        key = (id(solve_law), id(simulate_law))
+        if key not in pairs:
+            pairs[key] = Phased(solve=solve_law, simulate=simulate_law)
+        combined[period] = pairs[key]
+    laws = list(combined.values())
+    first = laws[0]
+    if all(law is first or (isinstance(first, str) and law == first) for law in laws):
+        return first
+    return ByAge(
+        cases={ages.exact_values[period]: law for period, law in combined.items()}
     )
 
 
@@ -413,10 +636,6 @@ def _resolve_edges(
             if not isinstance(target, str) or target not in regimes:
                 raise ModelInitializationError(
                     f"Graph names unknown target regime {target!r}."
-                )
-            if regimes[source].terminal:
-                raise ModelInitializationError(
-                    f"Terminal regime '{source}' cannot declare outgoing graph edges."
                 )
             selected[target] = _selected_source_ages(
                 selector=selector,

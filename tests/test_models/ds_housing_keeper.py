@@ -49,6 +49,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -62,7 +63,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 
@@ -246,13 +246,19 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
-def _edges(ages: AgeGrid) -> dict[str, dict[str, tuple[UserAge, ...]]]:
-    """Keep the house before the second-to-last age; die at every non-final age."""
+def _edges(ages: AgeGrid) -> dict[str, Transition]:
+    """Keep the house before the second-to-last age; die at every non-final age.
+
+    Where both edges leave an age, `next_regime` chooses between them.
+    """
     return {
-        "keeper": {
-            "keeper": ages.exact_values[:-2],
-            "dead": ages.exact_values[:-1],
-        }
+        "keeper": Transition(
+            targets={
+                "keeper": ages.exact_values[:-2],
+                "dead": ages.exact_values[:-1],
+            },
+            law=DeterministicTransition(func=next_regime),
+        )
     }
 
 
@@ -269,7 +275,6 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
     """
     if variant == "brute":
         return UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             actions={"consumption": CONSUMPTION_GRID},
             states={
                 "liquid_assets": LIQUID_ASSETS_GRID,
@@ -288,7 +293,6 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             },
         )
     return ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "liquid_assets": LIQUID_ASSETS_GRID,

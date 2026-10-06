@@ -8,7 +8,6 @@ import pytest
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -21,7 +20,6 @@ from lcm.typing import (
     ContinuousAction,
     DiscreteAction,
     FloatND,
-    IntND,
     ScalarInt,
 )
 
@@ -75,15 +73,10 @@ class _CoupleRegimeId:
     widowed: ScalarInt
 
 
-def _next_regime_widowed(age: FloatND) -> IntND:
-    """The married household enters `widowed` next period."""
-    return jnp.full_like(age, _CoupleRegimeId.widowed, dtype=jnp.int32)
-
-
 def test_declaring_non_terminal_stakeholders_constructs():
     """A non-terminal collective regime constructs.
 
-    Declaring `stakeholders` alongside a regime transition is accepted: the
+    Declaring `stakeholders` and binding a regime transition law is accepted: the
     per-stakeholder contract is checked at construction, and the constructed
     regime keeps both its stakeholder tuple and its non-terminal status. What a
     collective regime is allowed to route to, and how it solves, is pinned in
@@ -94,14 +87,13 @@ def test_declaring_non_terminal_stakeholders_constructs():
         return 0
 
     regime = Regime(
-        regime_transitions=_some_transition,
         states={"wealth": _WEALTH},
         actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
-    )
+    ).replace(regime_transitions=_some_transition)
     assert regime.stakeholders == ("f", "m")
     assert not regime.terminal
 
@@ -114,7 +106,6 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     property of the merged regime and is reported when the model finalizes it.
     """
     married = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime_widowed),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -127,7 +118,6 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         },
     )
     widowed = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         actions={
             "labor_supply_f": DiscreteGrid(category_class=LaborSupply),
@@ -160,7 +150,6 @@ def test_singleton_default_is_untouched():
         return jnp.log(consumption)
 
     regime = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},

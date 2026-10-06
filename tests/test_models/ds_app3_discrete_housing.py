@@ -81,6 +81,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     RouwenhorstAR1Process,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -512,11 +513,16 @@ def build_model(
     n_periods = N_PERIODS if n_periods is None else n_periods
     ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y")
     stays = ages.exact_values[:-2]
+    dies = ages.exact_values[:-1]
     edges = {
-        "working": {
-            **({"working": stays} if stays else {}),
-            "dead": ages.exact_values[:-1],
-        }
+        "working": (
+            Transition(
+                targets={"working": stays, "dead": dies},
+                law=DeterministicTransition(func=next_regime),
+            )
+            if stays
+            else {"dead": dies}
+        )
     }
 
     assets_grid = LinSpacedGrid(start=0.0, stop=asset_max, n_points=n_assets)
@@ -534,14 +540,12 @@ def build_model(
     borrowing = borrowing_constraint_taxed if use_taxes else borrowing_constraint
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
     )
 
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=DeterministicTransition(func=next_regime),
             states={
                 "assets": assets_grid,
                 "housing": DiscreteGrid(category_class=Housing),
@@ -573,7 +577,6 @@ def build_model(
         )
 
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={
             "assets": assets_grid,
             "housing": DiscreteGrid(category_class=Housing),
@@ -707,7 +710,9 @@ def build_params(
         }
     return {
         "discount_factor": discount_factor,
-        "final_age_alive": final_age_alive,
+        # The law reading `final_age_alive` exists only where some age has two
+        # outgoing edges, which takes at least three periods.
+        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
         "working": working,
         "dead": {
             "utility": {"interest_rate": interest_rate, "theta": theta},

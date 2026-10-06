@@ -10,6 +10,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.collective import (
@@ -69,31 +70,29 @@ def _closed_gate(V_target: FloatND) -> BoolND:
 
 
 def _build_model(*, gate, enable_jit: bool) -> Model:
-    src = Regime(
-        regime_transitions={
-            "stateless_target": ValueDependentTransition(
-                probability=StochasticTransition(func=_prob_one),
-                gate=gate,
-                routes={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="stateless_fallback", projection={}
-                        )
+    src_law = {
+        "stateless_target": ValueDependentTransition(
+            probability=StochasticTransition(func=_prob_one),
+            gate=gate,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="stateless_fallback", projection={}
                     )
-                },
-            )
-        },
+                )
+            },
+        )
+    }
+    src = Regime(
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     stateless_target = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_fallback},
     )
     return Model(
@@ -107,7 +106,12 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "src"},
-        edges={"src": {"stateless_target": 0, "stateless_fallback": 0}},
+        edges={
+            "src": Transition(
+                targets={"stateless_target": 0, "stateless_fallback": 0},
+                law=src_law,
+            )
+        },
     )
 
 

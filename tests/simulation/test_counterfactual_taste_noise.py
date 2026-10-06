@@ -64,9 +64,7 @@ def _counterfactual_model(*, renamed: bool) -> Model:
         return taste_shocks_toy.get_model()
     return Model(
         regimes={
-            "student": dataclasses.replace(
-                taste_shocks_toy.alive, regime_transitions="absorbed"
-            ),
+            "student": taste_shocks_toy.alive,
             "absorbed": taste_shocks_toy.done,
         },
         ages=AgeGrid(start=39, inclusive_stop=42, step="Y"),

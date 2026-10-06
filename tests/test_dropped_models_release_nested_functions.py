@@ -20,7 +20,7 @@ import pytest
 import _lcm
 import lcm
 from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
-from lcm import AgeGrid, DeterministicTransition, DiscreteGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch, MSSEnvelope
 from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -31,7 +31,6 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
-    next_regime,
     working_life,
 )
 
@@ -80,7 +79,6 @@ def _grid_search_model() -> Model:
     return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

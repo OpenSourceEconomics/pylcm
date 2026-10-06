@@ -47,7 +47,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -265,28 +264,6 @@ def bequest(
     return theta_bar * (estate ** (1.0 - gamma_c) - 1.0) / (1.0 - gamma_c)
 
 
-def next_regime(age: int) -> ScalarInt:
-    """Working → retired at the retirement age, → dead at the terminal age."""
-    return jnp.where(
-        age + 1 >= TERMINAL_AGE,
-        HousingRegimeId.dead,
-        jnp.where(
-            age + 1 >= RETIREMENT_AGE,
-            HousingRegimeId.retired,
-            HousingRegimeId.working,
-        ),
-    )
-
-
-def next_regime_from_retired(age: int) -> ScalarInt:
-    """Retired → dead at the terminal age, else stay retired."""
-    return jnp.where(
-        age + 1 >= TERMINAL_AGE,
-        HousingRegimeId.dead,
-        HousingRegimeId.retired,
-    )
-
-
 def _working_income(wage_income: FloatND) -> FloatND:
     """Working-life income: the AR1 wage level."""
     return wage_income
@@ -430,7 +407,6 @@ def build_model(
     )
 
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -456,7 +432,6 @@ def build_model(
     )
 
     retired = NestedConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime_from_retired),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={
             "liquid": inner_liquid_law,
@@ -474,7 +449,6 @@ def build_model(
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )

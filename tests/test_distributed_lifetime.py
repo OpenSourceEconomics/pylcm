@@ -33,7 +33,6 @@ from lcm import (
     ExecutionConfig,
     Model,
     Regime,
-    StochasticTransition,
     fixed_transition,
 )
 from lcm.solver_api import (
@@ -55,7 +54,7 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
+from lcm.typing import FloatND, RegimeName, ScalarInt, StateName
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
@@ -221,11 +220,6 @@ def _two_leaf_reading_arguments(build: Any) -> dict[str, Any]:
         "count": payload.count,
         "echo": payload.echo,
     }
-
-
-def _certain(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
-    """Probability of the one target the reading regime can reach."""
-    return jnp.asarray(1.0)
 
 
 def _placed_zeros(
@@ -598,14 +592,12 @@ def _model(
     return Model(
         regimes={
             "alive": Regime(
-                regime_transitions={"dead": StochasticTransition(func=_certain)},
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": lambda wealth, type1: wealth * (type1 + 1.0)},
                 solver=solver if solver is not None else _ReadingSolver(),
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
                 solver=(

@@ -20,6 +20,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -50,11 +51,6 @@ def _model(*, devices: tuple[int, ...]) -> Model:
     return Model(
         regimes={
             "working": Regime(
-                regime_transitions=DeterministicTransition(
-                    func=lambda age: jax.numpy.where(
-                        age < 1, _RegimeId.working, _RegimeId.retired
-                    ),
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 functions={
@@ -67,7 +63,6 @@ def _model(*, devices: tuple[int, ...]) -> Model:
                 },
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
             ),
@@ -82,7 +77,16 @@ def _model(*, devices: tuple[int, ...]) -> Model:
             axis_widths={"subject": 16},
         ),
         initial_nodes={0: "working"},
-        edges={"working": {"working": 0, "retired": (0, 1)}},
+        edges={
+            "working": Transition(
+                targets={"working": 0, "retired": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jax.numpy.where(
+                        age < 1, _RegimeId.working, _RegimeId.retired
+                    ),
+                ),
+            )
+        },
     )
 
 

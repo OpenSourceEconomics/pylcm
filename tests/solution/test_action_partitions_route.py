@@ -131,7 +131,7 @@ def _rebuilt(
     *, model: Model, regime_id_class: type, initial_nodes: dict, **config: Any
 ) -> Model:
     return Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=dict(model.user_regimes),
         ages=model.ages,
         regime_id_class=regime_id_class,

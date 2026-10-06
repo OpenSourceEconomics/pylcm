@@ -29,7 +29,7 @@ def test_retention_and_eager_execution_protect_all_output_owners(
     )
     if mode == "eager":
         model = Model(
-            edges=model.graph.edges,
+            edges=model.edges,
             regimes=model.user_regimes,
             ages=model.ages,
             regime_id_class=RegimeId,

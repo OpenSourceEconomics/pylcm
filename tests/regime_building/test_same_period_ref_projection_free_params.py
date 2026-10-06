@@ -8,7 +8,6 @@ leaving the model with no valid parameter assignment. Rejecting it where it is
 declared names the reference, the projection, and the argument.
 """
 
-import jax.numpy as jnp
 import pytest
 
 from lcm import (
@@ -30,10 +29,6 @@ _WEALTH = LinSpacedGrid(start=0.0, stop=10.0, n_points=3)
 class Work:
     leisure: ScalarInt
     work: ScalarInt
-
-
-def _next_regime() -> ScalarInt:
-    return jnp.int32(0)
 
 
 def _utility_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -64,7 +59,6 @@ def _halved_wealth(*, wealth: ContinuousState, divorce_cost: float) -> Continuou
 
 def _make_regime(*, projection) -> Regime:
     return Regime(
-        regime_transitions=_next_regime,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": _next_wealth},
         actions={"work": DiscreteGrid(category_class=Work)},

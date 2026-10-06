@@ -24,6 +24,7 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -85,14 +86,14 @@ def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
 
 def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
+    alive_law = {
+        "alive": StochasticTransition(func=_prob_alive),
+        "dead": StochasticTransition(func=_prob_dead),
+    }
     alive = ConsumptionSavingsRegime(
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions={
-            "alive": StochasticTransition(func=_prob_alive),
-            "dead": StochasticTransition(func=_prob_dead),
-        },
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -112,7 +113,6 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
@@ -127,10 +127,13 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=final_age_alive),
-                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=alive_law,
+            )
         },
     )
 

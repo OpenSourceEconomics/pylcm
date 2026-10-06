@@ -11,7 +11,6 @@ from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -61,10 +60,6 @@ def _feasible(first: ContinuousState) -> BoolND:
     return first > 1.0
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
-
-
 def _model(*, kind: str, width: int) -> Model:
     """Use two state axes and an unchanged action reducer of each supported kind."""
     utility = (
@@ -86,11 +81,10 @@ def _model(*, kind: str, width: int) -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
@@ -195,11 +189,10 @@ def _collision_model() -> Model:
     return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
@@ -251,11 +244,10 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
     model = Model(
         regimes={
             "acting": Regime(
-                regime_transitions=DeterministicTransition(func=_next_regime),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,

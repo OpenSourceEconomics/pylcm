@@ -1,9 +1,10 @@
 """Lower age-indexed regime declarations into demand, support and engine laws.
 
-A regime's `regime_transitions` declares where a local problem is available and
-where it may go. This module is the single place that reads it for that purpose:
+A regime's model-bound law (`Regime.regime_transitions`, bound from
+`Model(edges=...)`) declares where a local problem is available and where it may
+go. This module is the single place that reads it for that purpose:
 
-- `regime_transitions=None` is terminal and available at every age;
+- `None` (no outgoing edges) is terminal and available at every age;
 - a plain nonterminal law — a regime name, a `DeterministicTransition`, a vector
   `StochasticTransition` with `targets`, or a per-target mapping — is available at
   every non-final age;

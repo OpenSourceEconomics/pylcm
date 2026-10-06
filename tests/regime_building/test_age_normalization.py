@@ -59,9 +59,16 @@ def _normalized(
     ages: AgeGrid,
     coverage: dict[str, tuple[int, ...]] | None = None,
 ):
-    """Normalize `regimes`; each is solved at every period unless `coverage` says."""
+    """Normalize `regimes`; each is solved at every period unless `coverage` says.
+
+    `"work"` moves to regime code 0 every period; `"dead"` is terminal.
+    """
+    laws = {"work": _next_regime, "dead": None}
     finalized = finalize_regimes(
-        user_regimes=regimes,
+        user_regimes={
+            name: regime.replace(regime_transitions=laws[name])
+            for name, regime in regimes.items()
+        },
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -79,13 +86,12 @@ def _normalized(
 
 
 def _dead() -> UserRegime:
-    return UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    return UserRegime(functions={"utility": lambda: 0.0})
 
 
 def test_no_markers_passes_through_unchanged() -> None:
     """A model with no age markers normalizes to exactly its input, schedule None."""
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         functions={"utility": lambda consumption: consumption},
@@ -108,7 +114,6 @@ def test_grid_builder_called_once_per_covered_period() -> None:
         return LinSpacedGrid(start=float(age), stop=float(age) + 10.0, n_points=5)
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": AgeSpecializedGrid(build=build, signature=lambda age: age),
         },
@@ -138,7 +143,6 @@ def test_function_builder_called_once_per_covered_period() -> None:
         return lambda consumption: consumption + age
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         functions={
@@ -168,7 +172,6 @@ def test_representative_objects_come_from_first_covered_period() -> None:
         return LinSpacedGrid(start=float(age), stop=float(age) + 10.0, n_points=5)
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": AgeSpecializedGrid(build=build_grid, signature=lambda age: age),
         },
@@ -191,7 +194,6 @@ def test_representative_objects_come_from_first_covered_period() -> None:
 def test_no_public_markers_remain_after_normalization() -> None:
     """Neither the representative regime nor the phase specs keep public markers."""
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": AgeSpecializedGrid(
                 build=lambda age: LinSpacedGrid(
@@ -250,7 +252,6 @@ def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
         return age
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         functions={
@@ -277,7 +278,6 @@ def test_grid_marker_build_receives_float_age_on_integer_age_grid() -> None:
         return age
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={"wealth": AgeSpecializedGrid(build=build, signature=signature)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         functions={"utility": lambda consumption: consumption},
@@ -304,7 +304,6 @@ def test_function_marker_with_varying_parameter_names_is_rejected() -> None:
         return lambda consumption, region=0.0: consumption + region
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         functions={
@@ -332,7 +331,6 @@ def test_age_specialized_function_in_carried_state_solve_is_resolved() -> None:
         return lambda aime: aime * 0.1 + age
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
             "aime": LinSpacedGrid(start=1.0, stop=50.0, n_points=5),
@@ -388,7 +386,6 @@ def test_grid_marker_resolution_calls_to_jax_once_per_period(
     monkeypatch.setattr(LinSpacedGrid, "to_jax", counting_to_jax)
 
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": AgeSpecializedGrid(
                 build=lambda age: LinSpacedGrid(
@@ -419,7 +416,6 @@ def test_age_specialized_process_state_grid_is_rejected() -> None:
     axis nodes kept varying per period.
     """
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "shock": AgeSpecializedGrid(
                 build=lambda age: NormalIIDProcess(
@@ -443,7 +439,6 @@ def test_age_specialized_process_state_grid_is_rejected() -> None:
 def test_age_specialized_runtime_points_grid_is_rejected() -> None:
     """A grid marker resolving to runtime-supplied points is rejected."""
     alive = UserRegime(
-        regime_transitions=_next_regime,
         states={
             "wealth": AgeSpecializedGrid(
                 build=lambda age: IrregSpacedGrid(n_points=5, points=None),  # noqa: ARG005

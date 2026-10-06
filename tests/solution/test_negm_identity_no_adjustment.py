@@ -10,7 +10,15 @@ identical model that names one.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, AgeRange, Model, OuterContinuousMargin, outer_unchanged
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    Model,
+    OuterContinuousMargin,
+    Transition,
+    outer_unchanged,
+)
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
 
@@ -32,10 +40,13 @@ def _model(*, no_adjustment: str) -> Model:
         functions[no_adjustment] = keep_illiquid
     return Model(
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
-                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                    "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
+                },
+                law=DeterministicTransition(func=negm_kinked_toy.next_regime),
+            )
         },
         regimes={
             "alive": alive.replace(

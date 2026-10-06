@@ -33,6 +33,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -164,25 +165,25 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
+    couple_law = {
+        "single": ValueDependentTransition(
+            probability=StochasticTransition(func=_probability_of_separating),
+            gate=_wage_clears_the_floor,
+            routes={
+                "f": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="outside_f", projection={"wage": _identity_wage}
+                    )
+                ),
+                "m": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="outside_m", projection={"wage": _identity_wage}
+                    )
+                ),
+            },
+        )
+    }
     couple = Regime(
-        regime_transitions={
-            "single": ValueDependentTransition(
-                probability=StochasticTransition(func=_probability_of_separating),
-                gate=_wage_clears_the_floor,
-                routes={
-                    "f": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="outside_f", projection={"wage": _identity_wage}
-                        )
-                    ),
-                    "m": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="outside_m", projection={"wage": _identity_wage}
-                        )
-                    ),
-                },
-            )
-        },
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=_Work)},
@@ -203,22 +204,23 @@ def _build_model() -> Model:
         },
     )
     single = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _single_utility},
     )
     outside_f = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_f_utility},
     )
     outside_m = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_m_utility},
     )
     return Model(
-        edges={"couple": {"single": 0, "outside_f": 0, "outside_m": 0}},
+        edges={
+            "couple": Transition(
+                targets={"single": 0, "outside_f": 0, "outside_m": 0}, law=couple_law
+            )
+        },
         regimes={
             "couple": couple,
             "single": single,

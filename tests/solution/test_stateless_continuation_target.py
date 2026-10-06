@@ -23,6 +23,7 @@ from lcm import (
     Regime,
     StochasticTransition,
     TauchenAR1Process,
+    Transition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarInt
@@ -68,19 +69,19 @@ def _enter_shock() -> FloatND:
 
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
-    )
+    gone = Regime(functions={"utility": lambda: jnp.array(bequest)})
     model = Model(
         regimes={"alive": alive, "gone": gone},
-        edges={"alive": {"alive": 20, "gone": (20, 21)}},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -149,29 +150,27 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     def _leaves(*, wealth, age):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
+    alive_law = {
+        "alive": StochasticTransition(
+            func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+        ),
+        "gone": StochasticTransition(
+            func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+        ),
+    }
     alive = Regime(
-        regime_transitions={
-            "alive": StochasticTransition(
-                func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-            ),
-            "gone": StochasticTransition(
-                func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-            ),
-        },
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(10.0)}
-    )
-    limbo = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
-    )
+    gone = Regime(functions={"utility": lambda: jnp.array(10.0)})
+    limbo = Regime(functions={"utility": lambda: jnp.array(limbo_bequest)})
     model = Model(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
-        edges={"alive": {"alive": 20, "gone": (20, 21)}},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=_ThreeRegimeId,
         initial_nodes={20: "alive"},
@@ -210,8 +209,8 @@ def _solve_with_process_only_target(level: float):
     The source supplies an explicit entry law because it does not carry the
     target's process. Once entered, the process carries its own intrinsic law.
     """
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={
@@ -221,7 +220,6 @@ def _solve_with_process_only_target(level: float):
         functions={"utility": _utility},
     )
     retired = Regime(
-        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -234,7 +232,9 @@ def _solve_with_process_only_target(level: float):
     )
     model = Model(
         regimes={"alive": alive, "gone": retired},
-        edges={"alive": {"alive": 20, "gone": (20, 21)}},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},

@@ -29,6 +29,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -198,39 +199,38 @@ def _build_model(
         The model, ready to solve.
 
     """
-    single_f = Regime(
-        regime_transitions={
-            "married_terminal": ValueDependentTransition(
-                probability=StochasticTransition(func=_marry_for_sure),
-                gate=gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f_terminal",
-                            projection={"wage": wife_fallback_projection},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_single_f_ref": ProjectedRegimeValue(
+    single_f_law = {
+        "married_terminal": ValueDependentTransition(
+            probability=StochasticTransition(func=_marry_for_sure),
+            gate=gate,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
                         regime="single_f_terminal",
-                        projection={"wage": _wage_itself},
+                        projection={"wage": wife_fallback_projection},
                     ),
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_terminal",
-                        projection={"wage": husband_reference_projection},
-                    ),
-                },
-            )
-        },
+                )
+            },
+            gate_references={
+                "V_single_f_ref": ProjectedRegimeValue(
+                    regime="single_f_terminal",
+                    projection={"wage": _wage_itself},
+                ),
+                "V_single_m_ref": ProjectedRegimeValue(
+                    regime="single_m_terminal",
+                    projection={"wage": husband_reference_projection},
+                ),
+            },
+        )
+    }
+    single_f = Regime(
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_f},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -240,12 +240,10 @@ def _build_model(
         },
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_f_terminal},
     )
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_single_m_terminal},
     )
@@ -259,7 +257,12 @@ def _build_model(
         ages=_AGES,
         regime_id_class=_RegimeId,
         initial_nodes={0: "single_f"},
-        edges={"single_f": {"married_terminal": 0, "single_f_terminal": 0}},
+        edges={
+            "single_f": Transition(
+                targets={"married_terminal": 0, "single_f_terminal": 0},
+                law=single_f_law,
+            )
+        },
     )
 
 

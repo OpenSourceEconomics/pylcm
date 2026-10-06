@@ -20,7 +20,6 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
@@ -56,10 +55,6 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _entered_process_model(*, at_construction: bool) -> Model:
     """Build a source whose only target carries a process the source lacks."""
     process = _process(at_construction=at_construction)
@@ -67,13 +62,9 @@ def _entered_process_model(*, at_construction: bool) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -135,14 +126,10 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
         return Model(
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -179,13 +166,9 @@ def _model_with_law_value(value: Any) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _process(at_construction=False)},
                 functions={"utility": _shock_utility},
             ),

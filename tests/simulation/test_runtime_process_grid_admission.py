@@ -21,9 +21,6 @@ from _lcm.simulation.residency import (
 )
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
-    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -31,7 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
 from tests.simulation.test_process_grid_entry_admission import (
@@ -235,20 +232,12 @@ def test_runtime_process_support_changes_public_value_and_saving() -> None:
     model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(start=0, exclusive_stop=1): DeterministicTransition(
-                            func=_support_next_regime
-                        )
-                    }
-                ),
                 states=states,
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={"assets": _support_next_assets},
                 functions={"utility": _support_current_payoff},
             ),
             "done": Regime(
-                regime_transitions=None,
                 states=states,
                 functions={"utility": _support_terminal_payoff},
             ),
@@ -293,10 +282,6 @@ def _support_terminal_payoff(
     *, companion: ContinuousState, assets: ContinuousState
 ) -> FloatND:
     return companion * assets
-
-
-def _support_next_regime() -> ScalarInt:
-    return _LifecycleRegimeId.done
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod

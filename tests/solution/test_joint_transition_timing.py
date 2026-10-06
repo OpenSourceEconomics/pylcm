@@ -14,7 +14,6 @@ from lcm import (
     JointTransition,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserParams
@@ -31,10 +30,6 @@ class RegimeId:
 class Choice:
     risky: ScalarInt
     safe: ScalarInt
-
-
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _uniform() -> FloatND:
@@ -54,7 +49,6 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={"target": StochasticTransition(func=_certain)},
                 actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
@@ -69,7 +63,6 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"payoff": IrregSpacedGrid(points=(0.0, 6.0, 10.0))},
                 functions={"utility": lambda payoff: payoff},
             ),
@@ -84,7 +77,6 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     params: UserParams = {
         "source": {
             "target": {
-                "next_regime": {},
                 "shock": {"support": {}, "probabilities": {}},
                 "next_payoff": {},
             },

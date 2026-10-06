@@ -6,7 +6,6 @@ import pytest
 from _lcm.egm.validation import _grid_sample
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -78,10 +77,6 @@ def next_wealth(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def next_regime() -> ScalarInt:
-    return RegimeId.done
-
-
 def consumption_cap(
     *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> BoolND:
@@ -115,7 +110,6 @@ def _model(
         states=states,
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
-        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": post_decision,
@@ -133,7 +127,6 @@ def _model(
     )
     done_regime = Regime(
         actions=done_actions,
-        regime_transitions=None,
         states=done_states,
         functions=done_functions,
         solver=GridSearch(),

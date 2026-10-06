@@ -29,7 +29,6 @@ import pandas as pd
 from lcm import (
     AgeGrid,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     Model,
     Phased,
@@ -93,24 +92,18 @@ def _new_stock_actual(move: DiscreteAction) -> FloatND:
     return jnp.where(move == Move.stay, Stock.bad, Stock.good)
 
 
-def _next_regime() -> ScalarInt:
-    return RegimeId.last
-
-
 PARAMS = {"discount_factor": 0.95}
 IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
     )
     last = Regime(
-        regime_transitions=None,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={

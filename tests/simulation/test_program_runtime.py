@@ -31,9 +31,6 @@ from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     InvariantBlockSchedule,
     LinSpacedGrid,
@@ -101,9 +98,6 @@ def test_simulation_preserves_nested_fixed_parameters(
     model = Model(
         regimes={
             "working": UserRegime(
-                regime_transitions=DeterministicTransition(
-                    func=lambda: independent_types.RegimeId.terminal
-                ),
                 states={
                     "wealth": grid,
                     "pref_type": DiscreteGrid(
@@ -122,7 +116,6 @@ def test_simulation_preserves_nested_fixed_parameters(
                 constraints={"affordable": independent_types.affordable},
             ),
             "terminal": UserRegime(
-                regime_transitions=None,
                 states={
                     "wealth": grid,
                     "pref_type": DiscreteGrid(
@@ -201,11 +194,6 @@ def _width_collision_utility(
     return _lcm_subject_width + wealth
 
 
-def _width_collision_next_regime() -> ScalarInt:
-    """Enter the terminal regime after one decision."""
-    return _WidthCollisionRegimeId.done
-
-
 def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
     """Return an action-free terminal value."""
     return wealth
@@ -216,20 +204,12 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
     model = Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(start=0, exclusive_stop=1): DeterministicTransition(
-                            func=_width_collision_next_regime
-                        )
-                    }
-                ),
                 functions={"utility": _width_collision_utility},
                 actions={
                     "_lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
                 },
             ),
             "done": UserRegime(
-                regime_transitions=None,
                 functions={"utility": _width_collision_terminal_utility},
             ),
         },

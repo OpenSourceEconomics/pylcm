@@ -35,6 +35,7 @@ from lcm import (
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -104,10 +105,8 @@ def _build_model(
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": IrregSpacedGrid(n_points=n_consumption)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -116,10 +115,13 @@ def _build_model(
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=last_alive_age),
-                "dead": AgeRange(exclusive_stop=last_alive_age + 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=last_alive_age),
+                    "dead": AgeRange(exclusive_stop=last_alive_age + 1),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
         },
     )
     consumption_points = jnp.linspace(consumption_lo, consumption_hi, n_consumption)
@@ -367,10 +369,8 @@ def _build_alive_dead_model(
         },
         actions={"consumption": IrregSpacedGrid(n_points=5)},
         constraints={"borrowing_constraint": _alive_borrow},
-        regime_transitions=DeterministicTransition(func=_alive_to_dead),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": _crra_bequest},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
@@ -384,10 +384,13 @@ def _build_alive_dead_model(
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=last_alive_age),
-                "dead": AgeRange(exclusive_stop=last_alive_age + 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=last_alive_age),
+                    "dead": AgeRange(exclusive_stop=last_alive_age + 1),
+                },
+                law=DeterministicTransition(func=_alive_to_dead),
+            )
         },
     )
     cw_arr = jnp.asarray(consumption_weight)
@@ -522,10 +525,8 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=5.0, n_points=5)},
         constraints={"borrow": borrow},
-        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     model = Model(
@@ -534,10 +535,13 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         regime_id_class=RuntimeRegimeId,
         initial_nodes={0: "alive"},
         edges={
-            "alive": {
-                "alive": AgeRange(exclusive_stop=last_alive_age),
-                "dead": AgeRange(exclusive_stop=last_alive_age + 1),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=last_alive_age),
+                    "dead": AgeRange(exclusive_stop=last_alive_age + 1),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
         },
     )
     params = {
