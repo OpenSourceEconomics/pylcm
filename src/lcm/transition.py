@@ -738,6 +738,29 @@ _NESTED_SCHEDULE = (
 )
 
 
+def fail_if_phased_wraps_a_schedule(transition: object) -> None:
+    """Reject a top-level `Phased` regime transition with a `ByAge` side.
+
+    A schedule varies by age and `Phased` by phase; age is the outer dimension,
+    so the `Phased` goes inside each `ByAge` case.
+    """
+    if not isinstance(transition, Phased):
+        return
+    sides = tuple(
+        f"`{name}`"
+        for name, side in (
+            ("solve", transition.solve),
+            ("simulate", transition.simulate),
+        )
+        if isinstance(side, ByAge)
+    )
+    if sides:
+        raise RegimeInitializationError(
+            f"{_NESTED_SCHEDULE} The top-level `Phased` regime transition has a "
+            f"`ByAge` as its {' and '.join(sides)} side."
+        )
+
+
 def _fail_if_not_a_nonterminal_law(law: object) -> None:
     """Reject terminality and nested schedules inside a schedule."""
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)

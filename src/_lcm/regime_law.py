@@ -25,6 +25,7 @@ from lcm.transition import (
     ByAge,
     DeterministicTransition,
     StochasticTransition,
+    fail_if_phased_wraps_a_schedule,
 )
 from lcm.typing import UserFunction
 
@@ -136,6 +137,7 @@ def bind_regime_law(transition: object) -> RegimeLaw:
 
     Raises:
         RegimeInitializationError: If the law is not one of the declaration forms,
+            nests a schedule inside `Phased`,
             declares a `ValueDependentTransition` outside a per-target mapping,
             or declares one gated edge differently in the two phases.
     """
@@ -146,6 +148,7 @@ def bind_regime_law(transition: object) -> RegimeLaw:
             "`StochasticTransition`, a per-target mapping of probabilities, or a "
             f"`ByAge` or `Phased` of these; got {transition!r}."
         )
+    fail_if_phased_wraps_a_schedule(transition)
     view = _engine_view(transition)
     gated_edges = _lower_value_dependent_transitions(view)
     return RegimeLaw(
