@@ -248,25 +248,27 @@ def _states_covered_only_by_removed_joints(
     Without the removed edge, an author would declare each of these states with
     the empty per-target law `{}`; pruning gives them exactly that.
     """
-
-    def outputs(joints: Mapping[str, object]) -> set[str]:
-        return {
-            output
-            for kernels in joints.values()
-            for raw in cast("Mapping[str, object]", kernels).values()
-            for _, kernel in _joint_kernels(raw)
-            for output in kernel.outputs
-        }
-
     return tuple(
         sorted(
             state
-            for state in outputs(regime.joint_transitions) - outputs(joint_transitions)
+            for state in _joint_outputs(regime.joint_transitions)
+            - _joint_outputs(joint_transitions)
             if state in regime.states
             and state not in regime.state_transitions
             and not isinstance(regime.states[state], _ContinuousStochasticProcess)
         )
     )
+
+
+def _joint_outputs(joints: Mapping[str, object]) -> set[str]:
+    """Every state any kernel of `joints` produces, in either phase."""
+    return {
+        output
+        for kernels in joints.values()
+        for raw in cast("Mapping[str, object]", kernels).values()
+        for _, kernel in _joint_kernels(raw)
+        for output in kernel.outputs
+    }
 
 
 def _trim_joint_transitions(
