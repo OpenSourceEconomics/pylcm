@@ -16,6 +16,8 @@ Removing the `high` edge when `p_high` is fixed at exactly zero changes the
 effective graph only; the authored model stays valid and keeps its source states.
 """
 
+from fractions import Fraction
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -90,10 +92,14 @@ def _model(
     enable_jit: bool,
     omit_joint: bool = False,
     omit_driver_read: bool = False,
+    high_wealth_law: bool = False,
+    joint_output: str = "wealth",
 ) -> Model:
     if source_kind == "wealth_source":
         states = {"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)}
-        state_transitions = {}
+        state_transitions = (
+            {"wealth": {"high": _wealth_utility}} if high_wealth_law else {}
+        )
         utility = _wealth_utility
         output = _lottery_wealth
     else:
@@ -110,7 +116,7 @@ def _model(
                     support_size=2,
                     support={"wealth": jnp.asarray([1.0, 3.0])},
                     probabilities=_lottery_probabilities,
-                    outputs={"wealth": output},
+                    outputs={joint_output: output},
                 )
             }
         }
@@ -145,10 +151,23 @@ def _model(
 
 
 def _expected_source_value(*, source_kind: str, probability: float) -> np.ndarray:
-    """Enumerate the two-period paths of `source` exactly."""
-    if source_kind == "wealth_source":
-        return np.asarray([3.0, 4.0, 5.0]) + probability / 2
-    return np.asarray([2.0 + probability / 2, 2.0 + 1.5 * probability])
+    """Enumerate the two-period paths of `source` in exact rational arithmetic."""
+    p_high = Fraction(probability)
+    coordinates = (1, 2, 3) if source_kind == "wealth_source" else (0, 1)
+    values = []
+    for coordinate in coordinates:
+        flow, shift = (
+            (Fraction(coordinate), 0)
+            if source_kind == "wealth_source"
+            else (Fraction(0), coordinate)
+        )
+        paths = (
+            (1 - p_high, Fraction(2)),
+            (p_high / 4, Fraction(1 + shift)),
+            (3 * p_high / 4, Fraction(3 + shift)),
+        )
+        values.append(flow + sum(mass * payoff for mass, payoff in paths))
+    return np.asarray([float(value) for value in values])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -221,4 +240,25 @@ def test_driver_that_nothing_reads_is_rejected() -> None:
             probability=0.5,
             enable_jit=False,
             omit_driver_read=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"high_wealth_law": True}, "multiple producers claim target-state cell"),
+        ({"joint_output": "debt"}, "'debt' of kernel 'match' is not a target state"),
+    ],
+)
+def test_malformed_joint_kernel_on_a_fixed_zero_edge_is_rejected(
+    *, overrides: dict, message: str
+) -> None:
+    """A joint lottery removed with its zero edge must still be well formed."""
+    with pytest.raises(ModelInitializationError, match=message):
+        _model(
+            source_kind="wealth_source",
+            fixed=True,
+            probability=0.0,
+            enable_jit=False,
+            **overrides,
         )

@@ -114,6 +114,9 @@ class GraphPreparation:
     """Graph-bound kernels before fixed-zero pruning, for dormant inspection."""
     consumed_param_keys: frozenset[str]
     """Fixed leaves consumed by a removed zero cell."""
+    removed_reads: MappingProxyType[RegimeName, frozenset[str]]
+    """Per regime, the states and actions read by declarations removed with
+    their zero edges."""
     pruned_edges: MappingProxyType[str, MappingProxyType[Edge, str]]
     """Fixed-zero primary edges and their proof reason."""
     cells_without_edges: CellsWithoutEdges
@@ -199,6 +202,7 @@ def prepare_graph(
         schedules=schedules,
         declarations=declarations,
         consumed_param_keys=fixed_support.consumed_param_keys,
+        removed_reads=fixed_support.removed_reads,
         pruned_edges=fixed_zero_edge_reasons(before=before, after=after, ages=ages),
         cells_without_edges=cells_without_edges,
     )

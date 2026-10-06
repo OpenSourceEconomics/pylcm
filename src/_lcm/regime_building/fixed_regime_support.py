@@ -3,6 +3,14 @@
 Only construction-time fixed leaves may feed the probability or its ordinary DAG
 ancestors. States, actions, time, transition outputs and free parameters make an
 edge conditional; no state probes or runtime values narrow the graph.
+
+Removing an edge changes the effective graph, never the authored model's validity:
+
+- joint kernels leaving with an edge are checked for output ownership first;
+- a source state whose only authored law was such a kernel keeps an empty
+  per-target law, so it stays covered while no target cell is produced;
+- the states and actions those removed declarations read are recorded, so a
+  variable used only across a removed edge still counts as used.
 """
 
 import inspect
@@ -19,9 +27,11 @@ from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     find_param_candidates,
 )
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.typing import FlatParams, RegimeName, StateName
+from _lcm.utils.error_messages import format_messages
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import ByAge, JointTransition, StochasticTransition
@@ -40,6 +50,10 @@ class FixedRegimeSupport:
     consumed_param_keys: frozenset[str]
     """Supplied flat keys used to prove a removed cell constant and zero."""
 
+    removed_reads: MappingProxyType[RegimeName, frozenset[str]]
+    """Per regime, the states and actions read by declarations removed with
+    their zero edges."""
+
 
 def prune_fixed_regime_support(
     *, user_regimes: Mapping[RegimeName, UserRegime], fixed_params: UserParams
@@ -50,21 +64,33 @@ def prune_fixed_regime_support(
     too, and so are joint kernels toward a target removed from both phases. Bare
     laws and source variables remain declared. Fixed keys consumed by removed
     cells retain their provenance for later unknown-key validation.
+
+    Raises:
+        ModelInitializationError: If a removed joint kernel claims a target-state
+            cell that the target lacks or that another producer also claims.
     """
     fixed_flat = flatten_regime_namespace(fixed_params)
     consumed: set[str] = set()
+    errors: list[str] = []
     result: dict[RegimeName, UserRegime] = {}
+    removed_reads: dict[RegimeName, frozenset[str]] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
             regime_name=name, regime=regime, fixed_flat=fixed_flat
         )
         consumed.update(law_keys)
+        removed_in_both = removed["solve"] & removed["simulate"]
+        errors += _removed_joint_ownership_errors(
+            removed=removed_in_both, regime_name=name, user_regimes=user_regimes
+        )
+        reads: set[str] = set()
         joint_transitions = _trim_joint_transitions(
-            removed=removed["solve"] & removed["simulate"],
+            removed=removed_in_both,
             regime_name=name,
             regime=regime,
             fixed_flat=fixed_flat,
             consumed=consumed,
+            reads=reads,
         )
         state_transitions = {
             state: _trim_state_law(
@@ -75,16 +101,30 @@ def prune_fixed_regime_support(
                 regime=regime,
                 fixed_flat=fixed_flat,
                 consumed=consumed,
+                reads=reads,
             )
             for state, law in regime.state_transitions.items()
         }
+        state_transitions |= dict.fromkeys(
+            _states_covered_only_by_removed_joints(
+                regime=regime, joint_transitions=joint_transitions
+            ),
+            MappingProxyType({}),
+        )
+        removed_reads[name] = frozenset(
+            reads & (set(regime.states) | set(regime.actions))
+        )
         result[name] = regime.replace(
             regime_transitions=transition,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
         )
+    if errors:
+        raise ModelInitializationError(format_messages(errors))
     return FixedRegimeSupport(
-        user_regimes=MappingProxyType(result), consumed_param_keys=frozenset(consumed)
+        user_regimes=MappingProxyType(result),
+        consumed_param_keys=frozenset(consumed),
+        removed_reads=MappingProxyType(removed_reads),
     )
 
 
@@ -129,6 +169,88 @@ def _prune_regime_transition(
         protected |= one_phase_joint
 
 
+def _joint_kernels(raw: object) -> tuple[tuple[Side, JointTransition], ...]:
+    """Pair each phase with the joint kernel a declaration uses there."""
+    return tuple(
+        (side, cast("JointTransition", getattr(raw, side)))
+        if isinstance(raw, Phased)
+        else (side, cast("JointTransition", raw))
+        for side in ("solve", "simulate")
+    )
+
+
+def _removed_joint_ownership_errors(
+    *,
+    removed: frozenset[str],
+    regime_name: RegimeName,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> list[str]:
+    """Check the target-state cells claimed by joint kernels about to be removed.
+
+    The checks on retained kernels run on the effective graph; these give a
+    removed kernel the same output and unique-producer contract.
+    """
+    regime = user_regimes[regime_name]
+    errors: list[str] = []
+    for target in sorted(removed & regime.joint_transitions.keys()):
+        target_states = user_regimes[target].states if target in user_regimes else {}
+        for side in ("solve", "simulate"):
+            owners: dict[StateName, str] = {}
+            for kernel_name, raw in regime.joint_transitions[target].items():
+                kernel = dict(_joint_kernels(raw))[side]
+                for output in kernel.outputs:
+                    if output not in target_states:
+                        errors.append(
+                            f"regime '{regime_name}' ({side}): joint-transition "
+                            f"output '{output}' of kernel '{kernel_name}' is not a "
+                            f"target state of regime '{target}'."
+                        )
+                    if output in owners:
+                        errors.append(
+                            f"regime '{regime_name}' ({side}): multiple producers "
+                            f"claim target-state cell ('{target}', '{output}'): "
+                            f"joint kernels '{owners[output]}' and '{kernel_name}'."
+                        )
+                    owners.setdefault(output, kernel_name)
+            for output in owners:
+                law = regime.state_transitions.get(output)
+                if isinstance(law, Phased):
+                    law = getattr(law, side)
+                if isinstance(law, Mapping) and target in law:
+                    errors.append(
+                        f"regime '{regime_name}' ({side}): multiple producers "
+                        f"claim target-state cell ('{target}', '{output}'); an "
+                        "explicit per-target ordinary law and a joint-transition "
+                        "output cannot own the same state."
+                    )
+    return sorted(set(errors))
+
+
+def _states_covered_only_by_removed_joints(
+    *, regime: UserRegime, joint_transitions: Mapping[str, object]
+) -> tuple[StateName, ...]:
+    """Source states whose only authored law is a removed joint kernel's output."""
+
+    def outputs(joints: Mapping[str, object]) -> set[str]:
+        return {
+            output
+            for kernels in joints.values()
+            for raw in cast("Mapping[str, object]", kernels).values()
+            for _, kernel in _joint_kernels(raw)
+            for output in kernel.outputs
+        }
+
+    return tuple(
+        sorted(
+            state
+            for state in outputs(regime.joint_transitions) - outputs(joint_transitions)
+            if state in regime.states
+            and state not in regime.state_transitions
+            and not isinstance(regime.states[state], _ContinuousStochasticProcess)
+        )
+    )
+
+
 def _trim_joint_transitions(
     *,
     removed: frozenset[str],
@@ -136,6 +258,7 @@ def _trim_joint_transitions(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
+    reads: set[str],
 ) -> MappingProxyType[str, object]:
     """Omit joint kernels toward targets removed in both phases at every age."""
     node_names = frozenset(
@@ -145,11 +268,7 @@ def _trim_joint_transitions(
     )
     for target in removed & regime.joint_transitions.keys():
         for kernel_name, raw in regime.joint_transitions[target].items():
-            for side in ("solve", "simulate"):
-                kernel = cast(
-                    "JointTransition",
-                    getattr(raw, side) if isinstance(raw, Phased) else raw,
-                )
+            for side, kernel in _joint_kernels(raw):
                 roles = [
                     ((target, kernel_name, "probabilities"), kernel.probabilities),
                     *(
@@ -169,6 +288,7 @@ def _trim_joint_transitions(
                             fixed_flat=fixed_flat,
                             ancestors=(),
                             non_params=node_names,
+                            reads=reads,
                         )
                     )
     return MappingProxyType(
@@ -424,6 +544,7 @@ def _trim_state_law(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
+    reads: set[str],
 ) -> object:
     """Omit explicit laws toward targets removed from the relevant phase."""
     if isinstance(law, Phased):
@@ -437,6 +558,7 @@ def _trim_state_law(
                 regime=regime,
                 fixed_flat=fixed_flat,
                 consumed=consumed,
+                reads=reads,
             )
         return Phased(
             solve=_trim_state_side(law=law.solve, removed=removed["solve"]),
@@ -452,6 +574,7 @@ def _trim_state_law(
             regime=regime,
             fixed_flat=fixed_flat,
             consumed=consumed,
+            reads=reads,
         )
     solve = _trim_state_side(law=law, removed=removed["solve"])
     simulate = _trim_state_side(law=law, removed=removed["simulate"])
@@ -481,8 +604,9 @@ def _record_removed_state_keys(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
+    reads: set[str],
 ) -> None:
-    """Keep fixed keys on declared handoff cells omitted with their zero edges."""
+    """Keep fixed keys and reads of handoff cells omitted with their zero edges."""
     if not isinstance(law, Mapping):
         return
     for target in removed & law.keys():
@@ -496,6 +620,7 @@ def _record_removed_state_keys(
                     regime=regime,
                     fixed_flat=fixed_flat,
                     ancestors=(),
+                    reads=reads,
                 )
             )
 
@@ -509,13 +634,18 @@ def _get_declared_fixed_keys(
     fixed_flat: Mapping[str, object],
     ancestors: tuple[str, ...],
     non_params: frozenset[str] = frozenset(),
+    reads: set[str],
 ) -> frozenset[str]:
-    """Resolve supplied fixed leaves without evaluating an omitted handoff law."""
+    """Resolve supplied fixed leaves without evaluating an omitted handoff law.
+
+    Runtime arguments the law or its helpers read are added to `reads`.
+    """
     result: set[str] = set()
     for arg_name in inspect.signature(func).parameters:
-        if arg_name in non_params or _is_runtime_argument(
-            arg_name=arg_name, regime=regime
-        ):
+        if arg_name in non_params:
+            continue
+        if _is_runtime_argument(arg_name=arg_name, regime=regime):
+            reads.add(arg_name)
             continue
         helper = regime.functions.get(arg_name)
         if isinstance(helper, Phased):
@@ -530,6 +660,7 @@ def _get_declared_fixed_keys(
                     fixed_flat=fixed_flat,
                     ancestors=(*ancestors, arg_name),
                     non_params=non_params,
+                    reads=reads,
                 )
             )
         elif helper is None:

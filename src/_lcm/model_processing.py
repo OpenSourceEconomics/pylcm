@@ -220,6 +220,7 @@ def validate_model_inputs(
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    removed_reads: Mapping[RegimeName, frozenset[str]] = MappingProxyType({}),
 ) -> None:
     """Validate model constructor inputs.
 
@@ -232,6 +233,9 @@ def validate_model_inputs(
     function still counts as used. A marker only the simulate phase reads is
     resolved at the first of `visited_periods_by_regime`, where a subject can be;
     they default to the active periods.
+
+    `removed_reads` are, per regime, the variables read by declarations that
+    fixed-zero pruning removed with their edges; the authored model uses them.
     """
 
     # DC-EGM contract checks run before the generic checks below: a contract
@@ -304,6 +308,7 @@ def validate_model_inputs(
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
             visited_periods_by_regime=visited_periods_by_regime,
+            removed_reads=removed_reads,
         )
     )
     error_messages.extend(
@@ -389,6 +394,7 @@ def _validate_all_variables_used(
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    removed_reads: Mapping[RegimeName, frozenset[str]] = MappingProxyType({}),
 ) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
@@ -408,7 +414,9 @@ def _validate_all_variables_used(
       evaluated here, so this regime is where the state they read must live;
     - a law of motion, unless it hands the state to itself;
     - for a process state, any of the above reading its next-period draw
-      `next_<state>`, which is taken from the state.
+      `next_<state>`, which is taken from the state;
+    - a declaration of the authored model that fixed-zero pruning removed with
+      its edge (`removed_reads`).
 
     Broadcast variables are exempt: DAG pruning already weeded the unused
     ones, and a retained broadcast variable may be used only through a law
@@ -420,6 +428,8 @@ def _validate_all_variables_used(
             instances.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
+        removed_reads: Per regime, the states and actions read by declarations
+            removed with their fixed-zero edges, which count as used.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -525,6 +535,7 @@ def _validate_all_variables_used(
         # that reads its next-period draw ends the walk at a leaf. The draw is
         # taken from the state, so reading it is a use of the state.
         reachable |= states_read_through_their_draw(regime=user_regime, reads=reachable)
+        reachable |= removed_reads.get(regime_name, frozenset())
         unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:

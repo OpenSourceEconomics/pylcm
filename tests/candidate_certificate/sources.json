@@ -98,7 +98,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
+            "sha256": "a05210e120a80c7437d8fb26ddf87b182c9c8eefb06eb8f0ad62c60d136343f9"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -462,7 +462,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "59ea702fb69c4f93cd89000624df6375ac734e78090967531047f6840056c665"
+            "sha256": "dabe3f3ca730ecea1d3e3b6affb802331a7672057b101ef78772cfefca5a2e54"
           },
           {
             "path": "src/lcm/result.py",
@@ -470,7 +470,7 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a"
+        "source_inventory_sha256": "54647390c4d093ed5b360f66dd4e54f6fc04e62eaf658836a7c8cee93ba21f3b"
       },
       "fast": {
         "candidate_sources": [
@@ -568,7 +568,7 @@
           },
           {
             "path": "src/_lcm/model_processing.py",
-            "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
+            "sha256": "a05210e120a80c7437d8fb26ddf87b182c9c8eefb06eb8f0ad62c60d136343f9"
           },
           {
             "path": "src/_lcm/pandas_utils.py",
@@ -932,7 +932,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "59ea702fb69c4f93cd89000624df6375ac734e78090967531047f6840056c665"
+            "sha256": "dabe3f3ca730ecea1d3e3b6affb802331a7672057b101ef78772cfefca5a2e54"
           },
           {
             "path": "src/lcm/result.py",
@@ -940,13 +940,13 @@
           }
         ],
         "source_count": 116,
-        "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a"
+        "source_inventory_sha256": "54647390c4d093ed5b360f66dd4e54f6fc04e62eaf658836a7c8cee93ba21f3b"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "cc584e41bf345ec825ab5810e809245c0a8a772591db75bfed5f728353d7567a",
+  "source_inventory_sha256": "54647390c4d093ed5b360f66dd4e54f6fc04e62eaf658836a7c8cee93ba21f3b",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1042,7 +1042,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "3092f669e8a8b3fcab0896ed0b92e004090a2eee0409f983cc3ee44724ee0baf"
+      "sha256": "a05210e120a80c7437d8fb26ddf87b182c9c8eefb06eb8f0ad62c60d136343f9"
     },
     {
       "path": "src/_lcm/pandas_utils.py",
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "59ea702fb69c4f93cd89000624df6375ac734e78090967531047f6840056c665"
+      "sha256": "dabe3f3ca730ecea1d3e3b6affb802331a7672057b101ef78772cfefca5a2e54"
     },
     {
       "path": "src/lcm/result.py",
