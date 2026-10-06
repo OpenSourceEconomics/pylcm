@@ -35,6 +35,7 @@ import dataclasses
 import inspect
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast, no_type_check
@@ -721,7 +722,8 @@ def resolve_initial_nodes(
 ) -> frozenset[tuple[object, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
-    `initial_nodes` accepts exact `(age, regime)` pairs or maps age selectors
+    `initial_nodes` accepts a sequence or set of exact `(age, regime)` pairs, so
+    a published `Model.initial_nodes` is accepted back, or maps age selectors
     (as in `ByAge`) to a regime name or a nonempty sequence of names. Selector
     rules contribute the Cartesian product of grid ages and names; all pairs
     are unioned. The result depends on the declaration and clock, never on
@@ -760,7 +762,9 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
-    if isinstance(initial_nodes, Sequence) and not isinstance(initial_nodes, str):
+    if isinstance(initial_nodes, Sequence | AbstractSet) and not isinstance(
+        initial_nodes, str
+    ):
         if not initial_nodes:
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
