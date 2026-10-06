@@ -12,14 +12,13 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Phased,
     Regime,
     categorical,
@@ -33,8 +32,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 
@@ -85,13 +82,8 @@ def _couple(
 ) -> Regime:
     """The collective regime of the miniature, with `functions` supplied."""
     return Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda: RegimeId.couple_terminal,
-                targets=("couple", "couple_terminal"),
-            ),
-            exits=("couple_terminal",),
+        regime_transitions=DeterministicTransition(
+            func=lambda: RegimeId.couple_terminal
         ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -132,8 +124,9 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
         },
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"couple": couple, "couple_terminal": terminal},
+        edges={"couple": {"couple_terminal": 0}},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         functions={"utility_f": _u_f},
@@ -159,8 +152,9 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
     )
 
     with pytest.raises(ModelInitializationError, match="utility_f"):
-        with_fixture_graph(
+        Model(
             regimes={"couple": couple, "couple_terminal": terminal},
+            edges={"couple": {"couple_terminal": 0}},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "couple"},
@@ -220,8 +214,9 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
             ),
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"couple": couple, "couple_terminal": terminal},
+        edges={"couple": {"couple_terminal": 0}},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "couple"},

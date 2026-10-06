@@ -21,6 +21,7 @@ from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from lcm import (
     AgeGrid,
+    AgeRange,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -41,8 +42,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -144,6 +143,16 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
+def _edges(ages: AgeGrid) -> dict[str, dict[str, AgeRange]]:
+    """Stay in working until the penultimate age; die from any non-final age."""
+    return {
+        "working": {
+            "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
+            "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+        }
+    }
+
+
 @functools.cache
 def _model(width: int | None = None) -> Model:
     """Asset-row DC-EGM with a Markov health state the cell axis tiles over.
@@ -153,16 +162,11 @@ def _model(width: int | None = None) -> Model:
     """
     config = _cell_width_config(width)
     ages = _ages()
-    last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -193,9 +197,10 @@ def _model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
+        edges=_edges(ages),
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "working"},
@@ -214,16 +219,11 @@ def _solve(width: int) -> Mapping[int, Mapping[str, FloatND]]:
 def _model_with_batched_health() -> Model:
     """Build the same model with a `batch_size` on its discrete health grid."""
     ages = _ages()
-    last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -251,9 +251,10 @@ def _model_with_batched_health() -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
+        edges=_edges(ages),
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
     )
@@ -280,16 +281,11 @@ def _action_model(width: int | None = None) -> Model:
     """Asset-row DC-EGM with a health state cell axis and a discrete action."""
     config = _cell_width_config(width)
     ages = _ages()
-    last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={
             "consumption": CONSUMPTION_GRID,
             "works": DiscreteGrid(category_class=Work),
@@ -320,9 +316,10 @@ def _action_model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
+        edges=_edges(ages),
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "working"},
@@ -463,16 +460,11 @@ def _two_combo_model(width: int | None = None) -> Model:
     """Asset-row DC-EGM with TWO discrete state axes (health + married)."""
     config = _cell_width_config(width)
     ages = _ages()
-    last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -505,9 +497,10 @@ def _two_combo_model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
+        edges=_edges(ages),
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "working"},

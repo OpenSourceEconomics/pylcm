@@ -9,6 +9,7 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
     categorical,
     fixed_transition,
@@ -28,7 +29,6 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.processes import get_model as get_process_model
 
 
@@ -417,7 +417,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "with_status": with_status,
             "without_status": without_status,
@@ -426,6 +426,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         ages=AgeGrid(start=50, inclusive_stop=52, step="Y"),
         regime_id_class=_Rid,
         initial_nodes={50: "with_status"},
+        edges={"with_status": {"dead": (50, 51)}, "without_status": {"dead": (50, 51)}},
     )
 
     df = pd.DataFrame(
@@ -495,11 +496,12 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"earner": earner, "retiree": retiree, "dead": dead},
         ages=AgeGrid(start=50, inclusive_stop=52, step="Y"),
         regime_id_class=_Rid,
         initial_nodes={50: "earner"},
+        edges={"earner": {"dead": (50, 51)}, "retiree": {"dead": (50, 51)}},
     )
 
     df = pd.DataFrame(

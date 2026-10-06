@@ -14,19 +14,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     Regime,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _LAST_AGE = 22
 
@@ -48,13 +45,7 @@ def _next_regime(*, wealth, age):
 
 def _build_model():
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "gone")
-            ),
-            exits=("gone",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
@@ -63,11 +54,12 @@ def _build_model():
     gone = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.array(5.0)}
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
+        edges={"alive": {"alive": 20, "gone": (20, 21)}},
     )
 
 

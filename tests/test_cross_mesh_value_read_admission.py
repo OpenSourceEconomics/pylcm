@@ -58,7 +58,6 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -237,7 +236,7 @@ def build_model(
         if states_lead_with_b
         else {"a": grids["a"], "b": grids["b"]}
     )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         states=states,
         state_transitions={
@@ -247,6 +246,7 @@ def build_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
         execution_config=ExecutionConfig(
             devices=devices, sharded_states=sharded, **config
         ),

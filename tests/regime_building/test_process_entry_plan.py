@@ -19,8 +19,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -43,14 +41,13 @@ def _one_probability() -> ScalarFloat:
 
 def _model_with_process_action(*, enable_jit: bool) -> Model:
     """A target whose `shock` is an action drawn from a process's node set."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(

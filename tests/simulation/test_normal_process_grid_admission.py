@@ -13,14 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -38,7 +36,6 @@ from tests.simulation.test_process_grid_entry_admission import (
     _terminal_utility,
     _utility,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 # keyword-only-exempt: library-callback=functools.partialmethod
@@ -64,12 +61,10 @@ def _inputs(
     *, budget: int | None, fixed: tuple[str, ...] = (), n_points: int = 5
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     parameters = {"mu": 0.1415, "sigma": 1.876, "n_std": 3.2}
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={
                     "income": NormalIIDProcess(
                         n_points=n_points,
@@ -90,6 +85,7 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     return (
         model,

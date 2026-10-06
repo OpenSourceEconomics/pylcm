@@ -9,10 +9,7 @@ import numpy as np
 import pytest
 from dags import rename_arguments
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, AgeRange, DeterministicTransition, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -21,8 +18,6 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from tests.test_models import negm_kinked_toy as toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 _FINAL_AGE_ALIVE = 20 + (toy.N_PERIODS - 2) * 5
@@ -44,13 +39,7 @@ def _alive_regime_with_outer_node_named(
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            _FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=toy.next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=toy.next_regime),
         functions={
             "utility": toy.utility,
             outer_node: toy.new_durable,
@@ -82,7 +71,13 @@ def _alive_regime_with_outer_node_named(
 
 
 def _model_with_outer_node_named(*, outer_node: str) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
+            }
+        },
         regimes={
             "alive": _alive_regime_with_outer_node_named(outer_node=outer_node),
             "dead": toy.build_dead_regime(),

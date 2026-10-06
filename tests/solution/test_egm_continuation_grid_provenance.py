@@ -37,6 +37,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
     categorical,
 )
@@ -51,8 +52,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.deterministic.ds_pension import get_model, get_params
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 5
 _RETIREMENT_PERIOD = 3
@@ -189,15 +188,10 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=until_exit(
-            3,
-            law={
-                "alive": StochasticTransition(func=prob_survive),
-                "gone": StochasticTransition(func=prob_gone),
-            },
-            exits=("gone",),
-            stays=("alive",),
-        ),
+        regime_transitions={
+            "alive": StochasticTransition(func=prob_survive),
+            "gone": StochasticTransition(func=prob_gone),
+        },
         functions={"utility": utility, "resources": resources, "savings": savings},
         solver=solver,
         **(
@@ -219,9 +213,10 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         functions={"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "gone": gone},
         ages=ages,
+        edges={"alive": {"alive": 0, "gone": 1}},
         regime_id_class=RenamedRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
     )

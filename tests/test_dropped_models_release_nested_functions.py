@@ -20,7 +20,7 @@ import pytest
 import _lcm
 import lcm
 from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, DeterministicTransition, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch, MSSEnvelope
 from lcm.typing import UserParams
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -31,10 +31,9 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _ENGINE_SOURCE_ROOTS = (
     Path(_lcm.__file__).resolve().parent,
@@ -78,10 +77,10 @@ def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
 
 def _grid_search_model() -> Model:
     """Build the smallest one-period grid-search model."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=START_AGE + 1),
+                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -94,6 +93,7 @@ def _grid_search_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=START_AGE + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={START_AGE: "working_life"},
+        edges={"working_life": {"dead": START_AGE}},
     )
 
 

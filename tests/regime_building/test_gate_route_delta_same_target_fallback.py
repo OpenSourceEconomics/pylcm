@@ -26,8 +26,6 @@ from lcm import (
 from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 # Utility strictly prefers 1.0, so every solved row lands at the same
@@ -77,27 +75,24 @@ def _same_target_fallback_model() -> Model:
     The candidate landing (via the ordinary transition) is x=1; a closed gate
     must publish the projected x=0.5 instead.
     """
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 0}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_always_true),
-                            gate=_always_closed,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="target", projection={"x": _half_x}
-                                    )
+                regime_transitions={
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_always_true),
+                        gate=_always_closed,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="target", projection={"x": _half_x}
                                 )
-                            },
-                            off_grid="pointwise",
-                        )
-                    },
-                    exits=("target",),
-                ),
+                            )
+                        },
+                        off_grid="pointwise",
+                    )
+                },
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},

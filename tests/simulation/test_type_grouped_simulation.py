@@ -21,12 +21,12 @@ import pandas as pd
 import pytest
 
 import tests.conftest as test_config
-from _lcm.regime_building.transition_support import _SupportedStochasticTransition
 from _lcm.simulation import value_reads
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.random import generate_simulation_keys
 from lcm import (
     AgeGrid,
+    AgeRange,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -48,8 +48,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _LAST_AGE = 4
 _N_TYPES = 3
@@ -179,13 +177,8 @@ def _model(
     consumption = {"consumption": LinSpacedGrid(start=1, stop=3, n_points=5)}
     regimes = {
         "work": Regime(
-            regime_transitions=until_exit(
-                _LAST_AGE,
-                law=_SupportedStochasticTransition(
-                    func=_survival_beside_outside if outside else _survival,
-                    targets=("work", "dead"),
-                ),
-                exits=("dead",),
+            regime_transitions=StochasticTransition(
+                func=_survival_beside_outside if outside else _survival
             ),
             states={
                 "wealth": wealth,
@@ -213,24 +206,26 @@ def _model(
     }
     if outside:
         regimes["outside"] = Regime(
-            regime_transitions=until_exit(
-                _LAST_AGE,
-                law=_SupportedStochasticTransition(
-                    func=_outside_survival, targets=("outside", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=StochasticTransition(func=_outside_survival),
             states={"wealth": wealth},
             state_transitions={"wealth": _next_wealth},
             actions=consumption,
             functions={"utility": _outside_utility},
             constraints={"feasible": _feasible},
         )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=_OutsideRegimeId if outside else _RegimeId,
         initial_nodes={0: ("work", "outside") if outside else "work"},
+        edges={
+            source: {
+                source: AgeRange(exclusive_stop=_LAST_AGE - 1),
+                "dead": AgeRange(exclusive_stop=_LAST_AGE),
+            }
+            for source in regimes
+            if source != "dead"
+        },
         execution_config=ExecutionConfig(
             invariant_block_widths={"pref_type": 1} if blocked else {},
             axis_widths={"subject": subject_width},

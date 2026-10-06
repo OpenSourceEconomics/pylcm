@@ -39,8 +39,6 @@ from lcm import (
 )
 from lcm.certainty_equivalent import CertaintyEquivalent, QuasiArithmeticMean
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -112,17 +110,14 @@ def _model(
         else {}
     )
     rare_utility = rare_payoff if rare_carries_a_process else _common_payoff
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"common": 20, "rare": 20}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={
-                        "common": StochasticTransition(func=_certain),
-                        "rare": StochasticTransition(func=rare_probability),
-                    },
-                    exits=("common", "rare"),
-                ),
+                regime_transitions={
+                    "common": StochasticTransition(func=_certain),
+                    "rare": StochasticTransition(func=rare_probability),
+                },
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),

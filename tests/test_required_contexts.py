@@ -14,9 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -51,7 +48,6 @@ from tests.regime_building.test_same_period_ref_period_axes import (
 from tests.regime_building.test_same_period_ref_period_axes import (
     _prob_one as _couple_prob_one,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -129,8 +125,9 @@ def _gated_model(
     reference: Regime | None = None,
     priced: Regime | None = None,
     fallback: Any = None,
+    edges: Any = None,
 ) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": _nonterminal(
                 transition=source or ByAge(cases={40: _gated_law(fallback=fallback)})
@@ -143,6 +140,7 @@ def _gated_model(
         ages=_GATED_AGES,
         regime_id_class=_GatedId,
         initial_nodes=initial_nodes or {40: "source"},
+        edges=edges or {"source": {"target": 40, "fallback": 40}},
     )
 
 
@@ -150,6 +148,10 @@ def _gate_reference_without_law(initial_nodes: Any) -> Model:
     return _gated_model(
         initial_nodes=initial_nodes,
         reference=_nonterminal(transition=_NO_LAW_AT_45),
+        edges={
+            "source": {"target": 40, "fallback": 40},
+            "reference": {"fallback": 40},
+        },
     )
 
 
@@ -158,6 +160,16 @@ def _solve_fallback_without_law(initial_nodes: Any) -> Model:
         initial_nodes=initial_nodes,
         priced=_nonterminal(transition=_NO_LAW_AT_45),
         fallback=Phased(solve=_projected("priced"), simulate=_projected("fallback")),
+        edges=Phased(
+            solve={
+                "source": {"target": 40, "priced": 40},
+                "priced": {"fallback": 40},
+            },
+            simulate={
+                "source": {"target": 40, "fallback": 40},
+                "priced": {"fallback": 40},
+            },
+        ),
     )
 
 
@@ -172,7 +184,7 @@ class _CoupleId:
 def _same_period_reference_without_law(initial_nodes: Any) -> Model:
     """The couple reads the single value at age 0, where single has no law."""
     single_grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=2)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "single_f": Regime(
                 regime_transitions=ByAge(cases={1: "single_f_terminal"}),
@@ -232,6 +244,10 @@ def _same_period_reference_without_law(initial_nodes: Any) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_CoupleId,
         initial_nodes=initial_nodes,
+        edges={
+            "single_f": {"single_f_terminal": 1},
+            "couple": {"couple_terminal": 0},
+        },
     )
 
 
@@ -297,7 +313,8 @@ def test_an_unknown_target_in_an_unused_case_is_a_global_error() -> None:
                     40: _gated_law(),
                     45: {"nowhere": StochasticTransition(func=_prob_one)},
                 }
-            )
+            ),
+            edges={"source": {"target": 40, "fallback": 40, "nowhere": 45}},
         )
 
 
@@ -309,6 +326,14 @@ class _LifeId:
 
 
 _LIFE_AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
+_LIFE_EDGES = {
+    "working": {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": 55,
+    },
+    "retirement": {"dead": 65},
+}
 
 
 def _stay() -> FloatND:
@@ -324,7 +349,7 @@ def _to_dead_vector() -> FloatND:
 
 
 def _life_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": _nonterminal(
                 transition=ByAge.until(
@@ -339,10 +364,8 @@ def _life_model(initial_nodes: Any) -> Model:
             "retirement": _nonterminal(
                 transition=ByAge(
                     cases={
-                        AgeRange(
-                            start=65, exclusive_stop=75
-                        ): _SupportedStochasticTransition(
-                            func=_to_dead_vector, targets=("dead",)
+                        AgeRange(start=65, exclusive_stop=75): StochasticTransition(
+                            func=_to_dead_vector
                         )
                     }
                 )
@@ -352,6 +375,7 @@ def _life_model(initial_nodes: Any) -> Model:
         ages=_LIFE_AGES,
         regime_id_class=_LifeId,
         initial_nodes=initial_nodes,
+        edges=_LIFE_EDGES,
     )
 
 
@@ -418,6 +442,7 @@ def _source_owned_fold_model() -> Model:
     return _gated_model(
         initial_nodes={40: "source", 45: "source"},
         source=ByAge(cases={40: "fallback", 45: _gated_law()}),
+        edges={"source": {"fallback": (40, 45), "target": 45}},
     )
 
 
@@ -450,7 +475,7 @@ def _marital_gate(*, V_target: FloatND, V_stay: FloatND) -> BoolND:
 
 
 def _marital_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "single": _nonterminal(
                 transition=ByAge.until(
@@ -471,6 +496,10 @@ def _marital_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_MaritalId,
         initial_nodes={0: ("single", "married")},
+        edges={
+            "single": {"married": 0, "single": 0, "dead": 1},
+            "married": {"single": 0, "married": 0, "dead": 1},
+        },
     )
 
 
@@ -499,7 +528,7 @@ def _rest_as_int(rate: ScalarInt) -> FloatND:
 
 
 def _two_schema_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": _nonterminal(
                 transition=ByAge(
@@ -522,6 +551,12 @@ def _two_schema_model(initial_nodes: Any) -> Model:
         ages=_LIFE_AGES,
         regime_id_class=_LifeId,
         initial_nodes=initial_nodes,
+        edges={
+            "working": {
+                "working": AgeRange(exclusive_stop=65),
+                "dead": AgeRange(exclusive_stop=75),
+            }
+        },
     )
 
 
@@ -550,7 +585,7 @@ def _bonus_utility(*, wealth: ContinuousState, bonus: float) -> FloatND:
 
 
 def _value_only_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": _nonterminal(
                 transition=ByAge(
@@ -566,6 +601,18 @@ def _value_only_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_PhasedId,
         initial_nodes={0: "source"},
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+        ),
     )
 
 
@@ -581,7 +628,7 @@ def _grown(*, wealth: ContinuousState, growth: float) -> ContinuousState:
 
 
 def _producer_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge.until(
@@ -608,6 +655,7 @@ def _producer_model(initial_nodes: Any) -> Model:
         ages=_LIFE_AGES,
         regime_id_class=_LifeId,
         initial_nodes=initial_nodes,
+        edges=_LIFE_EDGES,
     )
 
 

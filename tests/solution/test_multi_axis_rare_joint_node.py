@@ -29,7 +29,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 # Leaves the power mean at exponent `1 - risk_aversion`, so `-3`.
 _RISK_AVERSION = 4.0
@@ -195,13 +194,18 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         regimes["safe"] = Regime(
             regime_transitions=None, functions={"utility": _safe_utility}
         )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId if with_a_safe_alternative else LotteryOnlyRegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={
+            "source": {"lottery": 20, "safe": 20}
+            if with_a_safe_alternative
+            else {"lottery": 20}
+        },
     )
 
 

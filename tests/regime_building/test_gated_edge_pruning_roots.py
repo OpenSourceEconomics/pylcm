@@ -31,7 +31,6 @@ from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import AGES, Work
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -140,7 +139,8 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"worker": {"retired": 0, "outside": 0}},
         regimes={
             "worker": worker,
             "retired": _make_retired_regime(states={"wage": _WAGE_GRID}),
@@ -192,7 +192,8 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"worker": {"retired": 0, "outside": 0}},
         regimes={
             "worker": worker,
             "retired": _make_retired_regime(

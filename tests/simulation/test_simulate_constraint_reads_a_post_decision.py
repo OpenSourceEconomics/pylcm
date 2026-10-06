@@ -11,10 +11,7 @@ per-constraint diagnostic, and the additional-target pool.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
-from lcm import LinSpacedGrid, Model, categorical
+from lcm import DeterministicTransition, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.regime import Regime as UserRegime
@@ -26,8 +23,6 @@ from lcm.typing import (
     ScalarInt,
     UserInitialConditions,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.95}}, "dead": {}}
 _N_PERIODS = 3
@@ -68,13 +63,7 @@ def next_regime(age: int) -> ScalarInt:
 def model() -> Model:
     """Model whose only constraint reads the post-decision function."""
     alive = UserRegime(
-        regime_transitions=until_exit(
-            _N_PERIODS - 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
         state_transitions={"wealth": next_wealth},
@@ -85,11 +74,12 @@ def model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 
@@ -139,13 +129,7 @@ def test_the_constraint_is_available_as_an_additional_target(model):
 def model_with_a_renamed_constraint() -> Model:
     """The same model, declaring the same predicate under a different key."""
     alive = UserRegime(
-        regime_transitions=until_exit(
-            _N_PERIODS - 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=20.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=20.0, n_points=8)},
         state_transitions={"wealth": next_wealth},
@@ -156,11 +140,12 @@ def model_with_a_renamed_constraint() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 

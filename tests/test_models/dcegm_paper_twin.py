@@ -26,11 +26,10 @@ from typing import Literal
 import jax.numpy as jnp
 
 from _lcm.grids import ContinuousGrid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -50,8 +49,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 MIN_AGE = 20
 N_PERIODS = 10
@@ -217,19 +214,7 @@ def _working_life(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=until_exit(
-            LAST_ALIVE_AGE + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_working,
-                targets=(
-                    "working_life",
-                    "retirement",
-                    "done_from_working",
-                    "done_retired",
-                ),
-            ),
-            exits=("done_from_working", "done_retired"),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_from_working),
         states={"wealth": WEALTH_GRID},
         actions={
             "work_choice": DiscreteGrid(category_class=WorkChoice),
@@ -274,13 +259,7 @@ def _retirement(
     solver: Literal["brute_force", "dcegm"],
 ) -> UserRegime | ConsumptionSavingsRegime:
     brute = UserRegime(
-        regime_transitions=until_exit(
-            LAST_ALIVE_AGE + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retirement, targets=("retirement", "done_retired")
-            ),
-            exits=("done_retired",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -311,12 +290,28 @@ def _retirement(
     )
 
 
+# Staying put is possible up to the age before the last alive age; the last
+# alive age only exits into a terminal regime.
+EDGES = {
+    "working_life": {
+        "working_life": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+        "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+        "done_from_working": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+        "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+    },
+    "retirement": {
+        "retirement": AgeRange(exclusive_stop=LAST_ALIVE_AGE),
+        "done_retired": AgeRange(exclusive_stop=LAST_ALIVE_AGE + 1),
+    },
+}
+
+
 @functools.cache
 def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
     """Build the twin model for the requested solver variant."""
     if solver == "dcegm":
         return build_dcegm_model()
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": _working_life(solver),
             "retirement": _retirement(solver),
@@ -326,6 +321,7 @@ def get_model(solver: Literal["brute_force", "dcegm"]) -> Model:
         ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
         initial_nodes={20: ("working_life", "retirement")},
+        edges=EDGES,
     )
 
 
@@ -345,7 +341,7 @@ def build_dcegm_model(
     solver = dataclasses.replace(DCEGM_SOLVER, savings_grid=savings_grid)
     if envelope is not None:
         solver = dataclasses.replace(solver, envelope=envelope)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": _working_life("dcegm").replace(solver=solver),
             "retirement": _retirement("dcegm").replace(solver=solver),
@@ -355,6 +351,7 @@ def build_dcegm_model(
         ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
         initial_nodes={20: ("working_life", "retirement")},
+        edges=EDGES,
     )
 
 

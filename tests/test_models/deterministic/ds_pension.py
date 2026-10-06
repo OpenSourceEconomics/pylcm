@@ -57,8 +57,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
@@ -316,6 +314,7 @@ def get_model(
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     pension_grid = LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_pension)
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
+    die = StochasticTransition(func=prob_die)
 
     working = Regime(
         actions={
@@ -359,14 +358,14 @@ def get_model(
         constraints={}
         if isinstance(retired_solver, EGM)
         else {"feasible": feasible_retired},
-        regime_transitions=until_exit(
-            final_age,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=final_age,
             law={
                 "retired": StochasticTransition(func=prob_stay_retired),
-                "dead": StochasticTransition(func=prob_die),
+                "dead": die,
             },
-            exits=("dead",),
-            start=retirement_age,
+            then={"dead": die},
+            start_age_inclusive=retirement_age,
         ),
         functions={
             "utility": utility_retired,
@@ -396,7 +395,7 @@ def get_model(
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
@@ -404,7 +403,25 @@ def get_model(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={ages.exact_values[0]: "working"},
+        edges=_edges(ages=ages, retirement_period=retirement_period),
     )
+
+
+def _edges(*, ages: AgeGrid, retirement_period: int) -> dict[str, dict[str, object]]:
+    """Work until retiring, stay retired until the last alive age, then die."""
+    values = ages.exact_values
+    stay_working = values[: retirement_period - 1]
+    stay_retired = values[retirement_period:-2]
+    return {
+        "working": {
+            **({"working": stay_working} if stay_working else {}),
+            "retired": values[retirement_period - 1],
+        },
+        "retired": {
+            **({"retired": stay_retired} if stay_retired else {}),
+            "dead": values[retirement_period:-1],
+        },
+    }
 
 
 def _euler_inversion_functions(

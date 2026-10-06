@@ -18,8 +18,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
 
@@ -76,14 +74,11 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     The target's terminal utility is `shock + 10` and its only node is at zero, so the
     continuation is 10 and the source's zero utility leaves `V = 10`.
     """
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"shock": {"target": _enter_at_the_node}},
                 functions={"utility": _no_utility},
             ),
@@ -110,14 +105,11 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
 
 def _model_entering_at(enter_law) -> Model:
     """Source entering the one-node target through a state-dependent law."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": enter_law},

@@ -23,7 +23,6 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -79,7 +78,7 @@ PARAMS = {
 
 
 def _build_model(*, enable_jit: bool) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -103,6 +102,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

@@ -55,6 +55,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     ValueDependentConstraint,
     categorical,
     fixed_transition,
@@ -72,7 +73,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=True)
@@ -391,11 +391,16 @@ def test_within_period_topological_order_overrides_dict_order():
 def test_ir_model_via_public_model_api():
     """The same model through public `Model(...)` + `solve()` (V values only)."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_ir_regimes(),
         ages=ages,
         regime_id_class=IRRegimeId,
         initial_nodes={ages.exact_values[0]: "married"},
+        edges={
+            "single_f": {"single_f_terminal": 0},
+            "single_m": {"single_m_terminal": (0, 1)},
+            "married": {"married_terminal": 0},
+        },
     )
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
@@ -924,7 +929,7 @@ class CycleRegimeId:
 def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
     """A reference cycle among regimes no required problem solves is not checked."""
     ir_regimes = _make_ir_regimes()
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "single_f": ir_regimes["single_f"],
             "single_f_terminal": ir_regimes["single_f_terminal"],
@@ -933,6 +938,11 @@ def test_same_period_ref_cycle_between_unrequired_regimes_does_not_fail():
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=CycleRegimeId,
         initial_nodes={0: "single_f"},
+        edges={
+            "single_f": {"single_f_terminal": 0},
+            "couple_a": {"terminal_a": 0},
+            "couple_b": {"terminal_b": 0},
+        },
     )
     assert model.reachability.nodes == {(0, "single_f"), (1, "single_f_terminal")}
 

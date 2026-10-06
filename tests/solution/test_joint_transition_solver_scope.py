@@ -18,8 +18,6 @@ from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -54,11 +52,7 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
 
 def _model(solver: OneMarginSolver | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
         state_transitions={"wealth": fixed_transition("wealth")},
@@ -86,13 +80,14 @@ def _model(solver: OneMarginSolver | GridSearch) -> Model:
         states={"estate": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         functions={"utility": _target_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"source": source, "target": target},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
+        edges={"source": {"target": 0}},
     )
 
 

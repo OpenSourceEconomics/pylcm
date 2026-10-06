@@ -29,7 +29,6 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -119,11 +118,12 @@ def _entry_targets(*, regime: Regime, state_name: str) -> set[str]:
 
 
 def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
         **model_slots,
     )
 

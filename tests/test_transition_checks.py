@@ -12,12 +12,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -34,8 +32,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -96,19 +92,14 @@ def _model_with_state_probs(next_health_func) -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -252,13 +243,7 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_local_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_local_next_regime),
     )
     terminal = UserRegime(
         regime_transitions=None,
@@ -267,11 +252,12 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subscript"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "terminal": terminal},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_LocalRegimeId,
             initial_nodes={0: "alive"},
+            edges={"alive": {"terminal": 0}},
         )
 
 
@@ -331,13 +317,7 @@ def test_per_target_dict_validates_each_entry() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"dead": StochasticTransition(func=bad_heir_probs)},
         },
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_to_dead, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_to_dead),
     )
     dead = UserRegime(
         regime_transitions=None,
@@ -347,11 +327,12 @@ def test_per_target_dict_validates_each_entry() -> None:
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
@@ -418,19 +399,14 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -457,20 +433,15 @@ def _model_with_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -522,25 +493,20 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": terminal},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -589,20 +555,15 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.6},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):
@@ -663,19 +624,14 @@ def _model_with_function_reading_health_probs(next_health_func) -> Model:
         functions={"utility": _utility_alive, "effort": _effort, "income": _income},
         derived_categoricals={"effort": DiscreteGrid(category_class=_Effort)},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 

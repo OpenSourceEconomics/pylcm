@@ -26,8 +26,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -127,14 +125,11 @@ def _model(*, node_is_reachable: bool = True) -> Model:
     levels = DiscreteGrid(category_class=_Level)
     health_probs = _health_probs if node_is_reachable else _unreachable_health_probs
     mood_probs = _mood_probs if node_is_reachable else _unreachable_mood_probs
-    return with_fixture_graph(
+    return Model(
+        edges={"alive": {"dead": 20}},
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"dead": StochasticTransition(func=_certain)},
-                    exits=("dead",),
-                ),
+                regime_transitions={"dead": StochasticTransition(func=_certain)},
                 actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={

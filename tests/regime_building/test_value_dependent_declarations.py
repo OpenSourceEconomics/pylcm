@@ -27,6 +27,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -57,7 +58,6 @@ from tests.regime_building.test_collective_regime_simulate import (
     _u_zero,
     _u_zero_collective,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
@@ -196,11 +196,17 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
 
 def _solve(regimes):
     """Solve the dissolution miniature built from `regimes`."""
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
     return model.solve(params=_PARAMS, log_level="off").values
 

@@ -31,8 +31,6 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.typing import FloatND, ScalarInt, UserParams
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -82,11 +80,7 @@ def _next_income(matched_income: FloatND) -> FloatND:
 
 def _helper_model() -> Model:
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         functions={
             "utility": lambda: jnp.asarray(0.0),
             "matched_wealth": _read_match,
@@ -117,7 +111,8 @@ def _helper_model() -> Model:
         },
         functions={"utility": lambda wealth, income: wealth + income},
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 0}},
         regimes={"source": source, "target": target},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_OneTargetRegimeId,
@@ -186,11 +181,7 @@ def test_nontransition_consumers_cannot_read_a_joint_node(
 ) -> None:
     """A transition-local node cannot be rebound to a user parameter in utility."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         functions=functions,  # ty: ignore[invalid-argument-type]
         joint_transitions={
             "target": {
@@ -212,7 +203,8 @@ def test_nontransition_consumers_cannot_read_a_joint_node(
     with pytest.raises(
         InvalidNameError, match=r"utility.*joint.*match|utility.*match.*transition"
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": 0}},
             regimes={"source": source, "target": target},
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
@@ -229,11 +221,7 @@ def _probabilities_reading_match(match: FloatND) -> FloatND:
 def test_joint_probabilities_cannot_read_a_joint_node() -> None:
     """Sibling-conditional lotteries remain unsupported and fail at construction."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {
@@ -256,7 +244,8 @@ def test_joint_probabilities_cannot_read_a_joint_node() -> None:
         InvalidNameError,
         match=r"probabilit.*match.*lotter|probabilit.*joint.*match",  # codespell:ignore
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": 0}},
             regimes={"source": source, "target": target},
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
@@ -277,14 +266,10 @@ def _next_b(*, match_a: FloatND, match_b: FloatND) -> FloatND:
 def test_joint_node_is_scoped_to_its_declared_target() -> None:
     """A node on source→A is unavailable to an output on source→B."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "target_a": StochasticTransition(func=_half_target),
-                "target_b": StochasticTransition(func=_half_target),
-            },
-            exits=("target_a", "target_b"),
-        ),
+        regime_transitions={
+            "target_a": StochasticTransition(func=_half_target),
+            "target_b": StochasticTransition(func=_half_target),
+        },
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target_a": {
@@ -319,7 +304,8 @@ def test_joint_node_is_scoped_to_its_declared_target() -> None:
     with pytest.raises(
         ModelInitializationError, match=r"match_a.*target_b|target_b.*match_a"
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target_a": 0, "target_b": 0}},
             regimes={
                 "source": source,
                 "target_a": target_a,
@@ -396,11 +382,7 @@ def test_joint_support_cannot_read_runtime_transition_values(
 ) -> None:
     """Declared support is hoistable: only period, age, and params may enter it."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": lambda wealth: wealth},
@@ -422,7 +404,8 @@ def test_joint_support_cannot_read_runtime_transition_values(
     )
 
     with pytest.raises(InvalidNameError, match=message):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": 0}},
             regimes={"source": source, "target": target},
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
@@ -439,11 +422,7 @@ def _probabilities_reading_next_value(next_value: FloatND) -> FloatND:
 def test_joint_probabilities_cannot_read_a_next_output() -> None:
     """Weights are formed before output realization and cannot condition on it."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {
@@ -467,7 +446,8 @@ def test_joint_probabilities_cannot_read_a_next_output() -> None:
         match=r"probabilit.*(next_value|match).*(draw|transition)"  # codespell:ignore
         r"|next_value.*probabilit",  # codespell:ignore
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": 0}},
             regimes={"source": source, "target": target},
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_OneTargetRegimeId,
@@ -492,11 +472,7 @@ def _phase_schema_output(match: dict[str, FloatND]) -> FloatND:
 def test_callable_phased_support_keeps_one_static_schema() -> None:
     """Params-bound preflight compares callable support schemas across phases."""
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"target": StochasticTransition(func=_certain_target)},
-            exits=("target",),
-        ),
+        regime_transitions={"target": StochasticTransition(func=_certain_target)},
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {
@@ -522,7 +498,8 @@ def test_callable_phased_support_keeps_one_static_schema() -> None:
         states={"wealth": LinSpacedGrid(start=0.0, stop=3.0, n_points=4)},
         functions={"utility": lambda wealth: wealth},
     )
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": 0}},
         regimes={"source": source, "target": target},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_OneTargetRegimeId,

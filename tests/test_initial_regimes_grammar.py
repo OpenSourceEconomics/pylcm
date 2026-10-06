@@ -20,9 +20,12 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
+EDGES = {
+    "working": {"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55},
+    "retirement": {"dead": 65},
+}
 
 
 @categorical(ordered=False)
@@ -75,8 +78,12 @@ def _regimes() -> dict[str, Regime]:
 
 
 def _model(**kwargs: Any) -> Model:
-    return with_fixture_graph(
-        regimes=_regimes(), ages=AGES, regime_id_class=RegimeId, **kwargs
+    return Model(
+        regimes=_regimes(),
+        ages=AGES,
+        regime_id_class=RegimeId,
+        edges=EDGES,
+        **kwargs,
     )
 
 
@@ -246,8 +253,9 @@ def test_unused_final_age_law_does_not_fail_model_construction() -> None:
     regimes["retirement"] = _regime(
         regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
+        edges=EDGES,
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={25: "working"},
@@ -262,8 +270,9 @@ def test_root_at_final_age_of_a_nonterminal_regime_fails() -> None:
         regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
     )
     with pytest.raises(ModelInitializationError, match="75"):
-        with_fixture_graph(
+        Model(
             regimes=regimes,
+            edges=EDGES,
             ages=AGES,
             regime_id_class=RegimeId,
             initial_nodes={75: "retirement"},

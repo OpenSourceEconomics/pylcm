@@ -4,10 +4,8 @@ from typing import Any, Literal
 from jax import numpy as jnp
 
 from _lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
+    DeterministicTransition,
     LogNormalIIDProcess,
     NormalIIDProcess,
     RouwenhorstAR1Process,
@@ -27,8 +25,6 @@ from lcm.typing import (
     ScalarInt,
     UserParams,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _SHOCK_GRID_CLASSES = {
     "uniform": UniformIIDProcess,
@@ -120,13 +116,7 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=until_exit(
-            final_age_alive + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -134,12 +124,22 @@ def get_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={0: "alive"},
+        edges={
+            "alive": {
+                **(
+                    {"alive": tuple(range(final_age_alive))}
+                    if final_age_alive > 0
+                    else {}
+                ),
+                "dead": tuple(range(final_age_alive + 1)),
+            }
+        },
     )
 
 
@@ -197,13 +197,7 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=until_exit(
-            work_final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime_multi, targets=("work",)
-            ),
-            exits=("retire",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime_multi),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -220,14 +214,7 @@ def get_multi_regime_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        regime_transitions=until_exit(
-            retire_final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime_multi, targets=("retire",)
-            ),
-            exits=("dead",),
-            start=work_final_age + 1,
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime_multi),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -235,7 +222,7 @@ def get_multi_regime_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "work": work_regime,
             "retire": retire_regime,
@@ -248,6 +235,22 @@ def get_multi_regime_model(
             "retire_final_age": retire_final_age,
         },
         initial_nodes={0: "work"},
+        edges={
+            "work": {
+                **(
+                    {"work": tuple(range(work_final_age))} if work_final_age > 0 else {}
+                ),
+                "retire": work_final_age,
+            },
+            "retire": {
+                **(
+                    {"retire": tuple(range(work_final_age + 1, retire_final_age))}
+                    if retire_final_age > work_final_age + 1
+                    else {}
+                ),
+                "dead": retire_final_age,
+            },
+        },
         execution_config=execution_config,
     )
 

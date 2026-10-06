@@ -13,8 +13,10 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
     categorical,
 )
@@ -35,10 +37,6 @@ from tests.solution.test_egm_solver import (
     savings,
     terminal_utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
-
-_LAST_AGE = float(_N_PERIODS - 1)
 
 
 @categorical(ordered=False)
@@ -64,14 +62,10 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},
         constraints={"feasible": feasible},
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "saving": StochasticTransition(func=prob_continue),
-                "done": StochasticTransition(func=prob_stop),
-            },
-            exits=("done",),
-        ),
+        regime_transitions={
+            "saving": StochasticTransition(func=prob_continue),
+            "done": StochasticTransition(func=prob_stop),
+        },
         functions={"utility": utility, "savings": savings},
         solver=EGM(savings_grid=_SAVINGS_GRID),
         liquid=LiquidMargin(
@@ -88,9 +82,15 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         solver=GridSearch(),
     )
     with pytest.raises(ModelInitializationError, match="effort"):
-        with_fixture_graph(
+        Model(
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
+            edges={
+                "saving": {
+                    "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
+                    "done": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                }
+            },
             regime_id_class=RegimeId,
             initial_nodes={0: "saving"},
         )

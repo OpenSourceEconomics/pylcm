@@ -62,8 +62,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -179,14 +177,10 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
         return LinSpacedGrid(start=0.0, stop=ceiling, n_points=2)
 
     single_f = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "single_f": StochasticTransition(func=_stays_single),
-                "single_f_terminal": StochasticTransition(func=_leaves_single),
-            },
-            exits=("single_f_terminal",),
-        ),
+        regime_transitions={
+            "single_f": StochasticTransition(func=_stays_single),
+            "single_f_terminal": StochasticTransition(func=_leaves_single),
+        },
         states={
             "wealth": AgeSpecializedGrid(
                 build=_single_wealth_grid, signature=lambda age: age < 0.5
@@ -237,7 +231,11 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "single_f": {"single_f": 0, "single_f_terminal": (0, 1)},
+            "couple": {"couple_terminal": 0},
+        },
         regimes={
             "single_f": single_f,
             "single_f_terminal": single_f_terminal,

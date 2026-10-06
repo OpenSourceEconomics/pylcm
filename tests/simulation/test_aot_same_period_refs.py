@@ -48,8 +48,6 @@ from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
 
@@ -205,11 +203,9 @@ def _make_participation_model() -> Model:
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"couple_terminal": StochasticTransition(func=_certain_transition)},
-            exits=("couple_terminal",),
-        ),
+        regime_transitions={
+            "couple_terminal": StochasticTransition(func=_certain_transition)
+        },
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -240,11 +236,9 @@ def _make_participation_model() -> Model:
         },
     )
     single_f = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"single_f_terminal": StochasticTransition(func=_certain_transition)},
-            exits=("single_f_terminal",),
-        ),
+        regime_transitions={
+            "single_f_terminal": StochasticTransition(func=_certain_transition)
+        },
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -255,7 +249,7 @@ def _make_participation_model() -> Model:
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": couple,
             "couple_terminal": couple_terminal,
@@ -267,6 +261,7 @@ def _make_participation_model() -> Model:
         initial_nodes={0: "couple"},
         # The internal replay entry point supplies no retained residency.
         execution_config=ExecutionConfig(device_memory_bytes=None),
+        edges={"couple": {"couple_terminal": 0}, "single_f": {"single_f_terminal": 0}},
     )
 
 

@@ -19,11 +19,9 @@ import pytest
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     NormalIIDProcess,
@@ -34,8 +32,6 @@ from lcm import (
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -89,18 +85,13 @@ def _model(law: Any) -> Model:
         "functions": {"utility": utility},
     }
     live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"good": law},
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    return with_fixture_graph(
+    return Model(
+        edges={"live": {"live": 0, "last": (0, 1)}},
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
@@ -222,13 +213,7 @@ def test_markov_and_process_states_coexist():
         "functions": {"utility": utility_with_shock},
     }
     live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={
             "good": Phased(
                 solve=StochasticTransition(func=next_good_belief),
@@ -238,7 +223,8 @@ def test_markov_and_process_states_coexist():
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = with_fixture_graph(
+    model = Model(
+        edges={"live": {"live": 0, "last": (0, 1)}},
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
@@ -300,18 +286,13 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         },
     }
     live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"good": StochasticTransition(func=next_good)},
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = with_fixture_graph(
+    model = Model(
+        edges={"live": {"live": 0, "last": (0, 1)}},
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,

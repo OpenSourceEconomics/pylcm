@@ -9,18 +9,18 @@ from dags.tree import QNAME_DELIMITER
 
 from _lcm.grids import IrregSpacedGrid
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.regime_building.transitions import (
     _IdentityTransition,
     collect_state_transitions,
 )
 from lcm import (
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    Model,
     categorical,
     fixed_transition,
 )
@@ -36,8 +36,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def utility(consumption):
@@ -75,11 +73,12 @@ def test_regime_name_does_not_contain_separator():
 
     # Regime name containing separator should raise at Model creation
     with pytest.raises(ModelInitializationError, match=QNAME_DELIMITER):
-        with_fixture_graph(
+        Model(
             regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "work__test"},
+            edges={f"work{QNAME_DELIMITER}test": {"dead": AgeRange(exclusive_stop=5)}},
         )
 
 
@@ -403,13 +402,7 @@ def test_regime_with_fixed_states_only():
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         constraints={"borrowing": fixed_borrowing},
-        regime_transitions=until_exit(
-            final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=fixed_next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=fixed_next_regime),
         functions={"utility": fixed_utility},
         state_transitions={"wealth": fixed_transition("wealth")},
     )
@@ -417,11 +410,17 @@ def test_regime_with_fixed_states_only():
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": {
+                "working_life": AgeRange(exclusive_stop=final_age),
+                "dead": AgeRange(exclusive_stop=final_age + 1),
+            }
+        },
     )
     V = model.solve(
         log_level="debug",

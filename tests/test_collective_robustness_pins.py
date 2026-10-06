@@ -27,6 +27,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     ParetoObjective,
     Regime,
     ValueDependentTransition,
@@ -44,7 +45,6 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.mock_regime import MockRegime
-from tests.test_models.graph import with_fixture_graph
 
 # Lifecycle of the gated-edge model: the source is active at age 0, both
 # terminal regimes from age 1 on.
@@ -144,11 +144,12 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
     while the model is being built.
     """
     with pytest.raises((PyLCMError, NotImplementedError), match="D_target"):
-        with_fixture_graph(
+        Model(
             regimes=_make_singleton_target_dissolution_gate_regimes(),
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
             initial_nodes={0: "source"},
+            edges={"source": {"target": 0, "fallback": 0}},
         )
 
 

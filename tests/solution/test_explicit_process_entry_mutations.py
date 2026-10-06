@@ -21,7 +21,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -70,7 +69,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     def enter_at_mean() -> ScalarFloat:
         return jnp.asarray(mu)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -97,6 +96,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     got = source_value(model)

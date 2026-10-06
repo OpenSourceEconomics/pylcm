@@ -21,9 +21,6 @@ import pytest
 
 import _lcm.simulation.chunk_admission as admission
 import _lcm.simulation.chunk_profile_inventory as chunk_profile_inventory_module
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.chunk_admission import (
     _simulation_chunk_profile_key,
 )
@@ -38,6 +35,7 @@ from _lcm.simulation.chunk_profile_cache import (
 from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -45,7 +43,6 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -71,12 +68,10 @@ def _next_regime() -> ScalarInt:
 
 
 def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
@@ -90,6 +85,7 @@ def _budgeted_model(*, device_memory_bytes: int = 2**32) -> Model:
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
 
 

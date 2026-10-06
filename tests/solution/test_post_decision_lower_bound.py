@@ -15,13 +15,9 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.grids import ContinuousGrid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -46,7 +42,6 @@ from lcm.typing import (
     UserFunction,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 _LIQUID = LiquidMargin(
     state="wealth",
@@ -114,13 +109,7 @@ def _model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=next_regime, targets=("done",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -139,8 +128,9 @@ def _model(
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving_regime, "done": done_regime},
+        edges={"saving": {"done": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},
@@ -307,13 +297,7 @@ def _grid_search_model(
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=next_regime, targets=("done",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -327,8 +311,9 @@ def _grid_search_model(
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving_regime, "done": done_regime},
+        edges={"saving": {"done": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},
@@ -373,13 +358,7 @@ def _replace_constraints(*, constraints: dict) -> Model:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=next_regime, targets=("done",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": savings,
@@ -393,8 +372,9 @@ def _replace_constraints(*, constraints: dict) -> Model:
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving_regime, "done": done_regime},
+        edges={"saving": {"done": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},

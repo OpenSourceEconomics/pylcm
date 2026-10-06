@@ -2,12 +2,8 @@
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
-    AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -28,8 +24,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.basic_discrete import Health
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def make_minimal_model() -> Model:
@@ -68,13 +62,7 @@ def make_minimal_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        regime_transitions=until_exit(
-            n_periods - 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("active", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
@@ -82,11 +70,12 @@ def make_minimal_model() -> Model:
         functions={"utility": lambda: 0.0},
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"active": alive, "terminal": dead},
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "active"},
+        edges={"active": {"terminal": 0}},
     )
 
 
@@ -123,24 +112,19 @@ def make_constraint_model(wealth_grid) -> Model:
         states={"wealth": wealth_grid},
         state_transitions={"wealth": _next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working_life"},
+        edges={"working_life": {"working_life": 0, "dead": (0, 1)}},
     )
 
 
@@ -186,13 +170,7 @@ def make_constrained_asymmetric_model() -> Model:
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
@@ -203,11 +181,12 @@ def make_constrained_asymmetric_model() -> Model:
         },
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 
@@ -247,13 +226,7 @@ def make_asymmetric_state_model() -> Model:
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
 
     dead = UserRegime(
@@ -264,11 +237,12 @@ def make_asymmetric_state_model() -> Model:
         },
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive", 1: "alive", 2: "dead"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 
@@ -315,13 +289,7 @@ def make_state_only_constraint_model(
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
         regime_transitions=None,
@@ -329,12 +297,13 @@ def make_state_only_constraint_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         constraints={"solvent": solvent},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=device_memory_bytes),
         initial_nodes={0: "alive", 1: "alive", 2: "dead"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 
@@ -379,24 +348,19 @@ def make_period_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"affordable": affordable},
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"alive": {"affordable": {"floor": 0.5}}},
         initial_nodes={0: "alive", 1: "alive", 2: "alive"},
+        edges={"alive": {"alive": (0, 1), "dead": (0, 1, 2)}},
     )
 
 
@@ -437,23 +401,18 @@ def make_joint_constraint_model() -> Model:
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
         constraints={"at_least": at_least, "borrowing": borrowing},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive", 1: "alive"},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
     )
 
 
@@ -494,13 +453,7 @@ def make_heterogeneous_health_model() -> Model:
     and `dead` has no states; ages 50, 60, 70 in steps of ten years.
     """
     pre65 = UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=65): _SupportedDeterministicTransition(
-                    func=_het_next_regime, targets=("dead",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=_het_next_regime),
         states={
             "health": DiscreteGrid(category_class=HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -512,15 +465,7 @@ def make_heterogeneous_health_model() -> Model:
         functions={"utility": _het_utility},
     )
     post65 = UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(
-                    start=65, exclusive_stop=80
-                ): _SupportedDeterministicTransition(
-                    func=_het_next_regime, targets=("dead",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=_het_next_regime),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -535,9 +480,10 @@ def make_heterogeneous_health_model() -> Model:
         regime_transitions=None,
         functions={"utility": _het_dead_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"pre65": pre65, "post65": post65, "dead": dead},
         ages=AgeGrid(start=50, inclusive_stop=80, step="10Y"),
         regime_id_class=HetRegimeId,
         initial_nodes={50: "pre65", 70: "post65"},
+        edges={"pre65": {"dead": (50, 60)}, "post65": {"dead": 70}},
     )

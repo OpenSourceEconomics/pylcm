@@ -24,7 +24,6 @@ from lcm import (
 )
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -55,7 +54,7 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -78,6 +77,7 @@ def _build_model() -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
+        edges={"source": {"low": 0, "high": 0}},
     )
 
 

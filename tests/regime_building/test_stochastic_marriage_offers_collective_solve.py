@@ -52,16 +52,15 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
+    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -80,7 +79,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.graph import with_fixture_graph
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
 # with a spouse-type draw feeding the mutual-consent gated edge.
@@ -347,8 +345,9 @@ def test_stochastic_marriage_offer_matches_public_model_api():
         married_terminal: ScalarInt
 
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_offer_regimes(),
+        edges={"single_f": {"married_terminal": 0, "single_f_terminal": 0}},
         ages=ages,
         regime_id_class=OfferRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},
@@ -409,8 +408,8 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=lambda: JobRegimeId.job_terminal, targets=("job_terminal",)
+                AgeRange(exclusive_stop=1): DeterministicTransition(
+                    func=lambda: JobRegimeId.job_terminal
                 )
             }
         ),
@@ -442,8 +441,9 @@ _EXPECTED_V_JOB_PERIOD_0 = np.array([4.23, 8.23])
 def test_job_offer_gates_feasible_actions_and_solves():
     """A drawn discrete job-offer state gates action feasibility (EKL eq. 24)."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_job_offer_regimes(),
+        edges={"job": {"job_terminal": 0}},
         ages=ages,
         regime_id_class=JobRegimeId,
         initial_nodes={ages.exact_values[0]: "job"},

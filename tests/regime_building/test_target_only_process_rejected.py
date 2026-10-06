@@ -2,13 +2,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -22,7 +20,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -64,11 +61,12 @@ def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Mo
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
     transition = (
-        _SupportedDeterministicTransition(func=_next_target, targets=("target",))
+        DeterministicTransition(func=_next_target)
         if coarse
         else {"target": StochasticTransition(func=_one_probability)}
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -95,7 +93,8 @@ def _target_only_process_model(
     process: TauchenAR1Process | NormalIIDProcess,
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -211,7 +210,8 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     )
 
     def _process_only_model() -> Model:
-        return with_fixture_graph(
+        return Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
                     regime_transitions={
@@ -239,7 +239,8 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return shock + jnp.float32(0) * extra
 
     def _process_and_inert_law_model() -> Model:
-        return with_fixture_graph(
+        return Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
                     regime_transitions={
@@ -292,7 +293,8 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
 
 def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     """Build a source that enters its target's process at the value `0.0`."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -360,7 +362,8 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
                     regime_transitions={
@@ -408,7 +411,11 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        with_fixture_graph(
+        Model(
+            edges={
+                "source": {"target": (20, 21)},
+                "target": {"terminal": (20, 21, 22)},
+            },
             regimes={
                 "source": Regime(
                     regime_transitions=ByAge(
@@ -450,7 +457,8 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     def _enter_shock() -> ScalarFloat:
         return jnp.float32(0.5)
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -497,7 +505,8 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -551,7 +560,8 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions={

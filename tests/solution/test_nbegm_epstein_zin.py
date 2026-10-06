@@ -15,12 +15,11 @@ arXiv:2601.04438 (2026).
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
     CESAggregator,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -31,8 +30,6 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _N_INCOME_NODES = 5
@@ -87,13 +84,7 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": _next_liquid},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=until_exit(
-            final_age_alive + 5,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -117,12 +108,18 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _terminal_value},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (_N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=final_age_alive),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+            }
+        },
     )
 
 

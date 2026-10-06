@@ -8,13 +8,12 @@ the mapping form must too.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Regime,
     categorical,
 )
@@ -27,8 +26,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -65,16 +62,10 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 1, _RegimeId.alive, _RegimeId.dead)
 
 
-_MODEL = with_fixture_graph(
+_MODEL = Model(
     regimes={
         "alive": Regime(
-            regime_transitions=until_exit(
-                2,
-                law=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("alive", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=_next_regime),
             states={
                 "wealth": LinSpacedGrid(start=1, stop=10, n_points=4),
                 "health": DiscreteGrid(_Health),
@@ -89,6 +80,7 @@ _MODEL = with_fixture_graph(
     ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
     regime_id_class=_RegimeId,
     initial_nodes={0: "alive"},
+    edges={"alive": {"alive": 0, "dead": (0, 1)}},
 )
 _PARAMS = {"discount_factor": 0.95}
 

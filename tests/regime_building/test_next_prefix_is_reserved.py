@@ -28,8 +28,6 @@ from lcm import (
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0)
@@ -61,14 +59,11 @@ def _build(
     state_transitions=None,
 ) -> Model:
     """Two-regime model whose source is configurable, target always terminal."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH} if states is None else states,
                 state_transitions=(
                     {"wealth": {"target": _keep_wealth}}
@@ -152,14 +147,13 @@ def test_a_state_this_regime_moves_is_also_rejected_outside_a_transition() -> No
 def test_a_constraint_may_not_read_a_targets_draw() -> None:
     """A constraint is evaluated before any target is entered."""
     with pytest.raises(InvalidNameError, match="next_shock"):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions=until_exit(
-                        22,
-                        law={"target": StochasticTransition(func=_to_target)},
-                        exits=("target",),
-                    ),
+                    regime_transitions={
+                        "target": StochasticTransition(func=_to_target)
+                    },
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -223,14 +217,11 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     extrapolation enters.
     """
     aime = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"wealth": _WEALTH, "aime": aime},
                 state_transitions={
                     "wealth": {"target": _next_wealth_reading_a_sibling},
@@ -341,18 +332,15 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
     for a value whose destination it is still choosing.
     """
     with pytest.raises(InvalidNameError, match=r"next_regime|next_wealth"):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions=until_exit(
-                        22,
-                        law={
-                            "target": StochasticTransition(
-                                func=_probability_reading_a_next_name
-                            )
-                        },
-                        exits=("target",),
-                    ),
+                    regime_transitions={
+                        "target": StochasticTransition(
+                            func=_probability_reading_a_next_name
+                        )
+                    },
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},
@@ -383,14 +371,13 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
     next-period value.
     """
     with pytest.raises(InvalidNameError, match=r"certainty_equivalent|next_wealth"):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions=until_exit(
-                        22,
-                        law={"target": StochasticTransition(func=_to_target)},
-                        exits=("target",),
-                    ),
+                    regime_transitions={
+                        "target": StochasticTransition(func=_to_target)
+                    },
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": {"target": _keep_wealth}},
                     functions={"utility": _plain_utility},

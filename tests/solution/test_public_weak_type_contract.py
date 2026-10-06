@@ -31,7 +31,14 @@ from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.typing import FlatParams, FloatND
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import KernelOutput, ResultRetention, SolverIdentity
@@ -43,10 +50,9 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _N_WEALTH = 3
@@ -272,10 +278,16 @@ def _model(
 ) -> Model:
     """Build the regression regime with its solver replaced by the scalar edge."""
     last_age = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working_life": {
+                "working_life": AgeRange(exclusive_stop=last_age),
+                "dead": AgeRange(exclusive_stop=last_age + 1),
+            }
+        },
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age + 1),
+                regime_transitions=DeterministicTransition(func=next_regime),
                 states={
                     "wealth": LinSpacedGrid(
                         start=1, stop=float(_N_WEALTH), n_points=_N_WEALTH

@@ -17,13 +17,13 @@ from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
+    Model,
     Phased,
     Regime,
     StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 def test_an_edge_is_the_declared_support_at_its_period() -> None:
@@ -359,7 +359,8 @@ def test_fixed_zero_probability_removes_target_problem(fixed_params: dict) -> No
 
         return jnp.asarray(1.0)
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"low": 0, "high": 0}},
         regimes={
             "source": Regime(
                 regime_transitions={

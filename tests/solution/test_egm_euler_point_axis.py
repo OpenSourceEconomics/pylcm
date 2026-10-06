@@ -20,6 +20,7 @@ from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from lcm import (
     AgeGrid,
+    AgeRange,
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -37,8 +38,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, invariance_tolerances
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -116,16 +115,11 @@ def _model(width: int | None = None) -> Model:
         else ExecutionConfig(axis_widths={EULER_POINT_AXIS: width})
     )
     ages = _ages()
-    last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH)},
         state_transitions={"wealth": next_wealth},
@@ -150,9 +144,15 @@ def _model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
+        edges={
+            "working": {
+                "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+            }
+        },
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "working"},

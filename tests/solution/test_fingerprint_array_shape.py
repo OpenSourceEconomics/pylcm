@@ -21,7 +21,13 @@ from pandas.testing import assert_frame_equal
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+)
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.persistence import load_solution
 from lcm.typing import FloatND, UserInitialConditions, UserParams
@@ -31,10 +37,9 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _DTYPES = [np.float32, np.float64]
 
@@ -149,12 +154,10 @@ def _rank_model(reference: np.ndarray) -> Model:
     """Two-period GridSearch model whose terminal payoff depends on the closure rank."""
     final_age_alive = START_AGE
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
+                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": grid},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -168,6 +171,7 @@ def _rank_model(reference: np.ndarray) -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"dead": START_AGE}},
     )
 
 

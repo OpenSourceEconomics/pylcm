@@ -22,6 +22,7 @@ from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
     DiscreteGrid,
     LinSpacedGrid,
@@ -97,8 +98,6 @@ from tests.conformance_solver import (
     TerminalCounterSolver,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -386,17 +385,13 @@ def _model(
     utility: Callable[..., object] = _utility,
 ) -> Model:
     """Build the same tiny lifecycle around any solver under comparison."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "active": Regime(
-                regime_transitions=until_exit(
-                    _N_PERIODS,
-                    law={
-                        "active": StochasticTransition(func=_stay_active),
-                        "retired": StochasticTransition(func=_enter_retirement),
-                    },
-                    exits=("retired",),
-                ),
+                regime_transitions={
+                    "active": StochasticTransition(func=_stay_active),
+                    "retired": StochasticTransition(func=_enter_retirement),
+                },
                 states={
                     "wealth": wealth_grid,
                     "productivity": _PRODUCTIVITY_GRID,
@@ -433,6 +428,12 @@ def _model(
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},
+        edges={
+            "active": {
+                "active": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                "retired": AgeRange(exclusive_stop=_N_PERIODS),
+            }
+        },
     )
 
 

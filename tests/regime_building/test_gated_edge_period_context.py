@@ -27,8 +27,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _BETA = 0.5
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
@@ -145,49 +143,46 @@ def _make_model(
         if gate_open
         else _context_gate_closed
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 40, "fallback": 40}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    45,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={
-                                            "x": (
-                                                _identity_x
-                                                if action_sensitive
-                                                else _age_projection
-                                                if split_context
-                                                else _context_projection
-                                            )
-                                        },
-                                    )
-                                )
-                            },
-                            gate_references={}
-                            if action_sensitive
-                            else {
-                                "V_reference": ProjectedRegimeValue(
-                                    regime="reference",
+                regime_transitions={
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
                                     projection={
                                         "x": (
-                                            _age_projection
+                                            _identity_x
+                                            if action_sensitive
+                                            else _age_projection
                                             if split_context
                                             else _context_projection
                                         )
                                     },
                                 )
-                            },
-                        )
-                    },
-                    exits=("target",),
-                ),
+                            )
+                        },
+                        gate_references={}
+                        if action_sensitive
+                        else {
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference",
+                                projection={
+                                    "x": (
+                                        _age_projection
+                                        if split_context
+                                        else _context_projection
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
                 states={"x": _X},
                 state_transitions={
                     "x": (

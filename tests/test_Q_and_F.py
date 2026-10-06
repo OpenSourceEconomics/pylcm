@@ -30,12 +30,11 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    ByAge,
+    DeterministicTransition,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
@@ -59,12 +58,10 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
     get_params,
+    graph_bound_working_life_transitions,
     utility,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 
 @pytest.mark.illustrative
@@ -72,7 +69,7 @@ def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
-            regime_transitions=working_life_transitions(last_age=4)
+            regime_transitions=graph_bound_working_life_transitions(last_age=4)
         ),
         "dead": dead,
     }
@@ -371,11 +368,7 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=until_exit(
-            3,
-            law=choose_among(work_transition, targets=("work", "retire", "dead")),
-            exits=("dead",),
-        ),
+        regime_transitions=work_transition,
         functions={"utility": _utility},
     )
     retire = UserRegime(
@@ -390,13 +383,7 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_func, targets=("work", "retire", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_func),
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
@@ -404,8 +391,12 @@ def _build_partial_coverage_model(
         functions={"utility": lambda: 0.0},
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
+        edges={
+            "work": {"work": (0, 1), "dead": (0, 1, 2)},
+            "retire": {"work": (0, 1), "retire": (0, 1), "dead": (0, 1, 2)},
+        },
         regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         initial_nodes={0: ("work", "retire")},
@@ -927,18 +918,19 @@ def _model_emitting_total_regime_mass(
     certainty equivalent admits.
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    to_dead = StochasticTransition(
+        func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+    )
     alive = UserRegime(
-        regime_transitions=until_exit(
-            2,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
             law={
                 "alive": StochasticTransition(
                     func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
                 ),
-                "dead": StochasticTransition(
-                    func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
-                ),
+                "dead": to_dead,
             },
-            exits=("dead",),
+            then={"dead": to_dead},
         ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
@@ -951,8 +943,9 @@ def _model_emitting_total_regime_mass(
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_MassRegimeId,
         initial_nodes={0: "alive"},

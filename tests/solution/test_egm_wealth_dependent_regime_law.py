@@ -7,13 +7,12 @@ as the equivalent per-target Markov law.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     Regime,
     StochasticTransition,
 )
@@ -21,7 +20,6 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.solution import test_egm_solver as egm_toy
-from tests.test_models.graph import with_fixture_graph
 
 _PER_TARGET_LAW = "per_target"
 _DETERMINISTIC_LAW = "deterministic"
@@ -60,19 +58,13 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
     done regime at age 2, so each node's single declared target carries weight one.
     """
     wealth_grid = LinSpacedGrid(start=2.0, stop=60.0, n_points=8)
-    keep, stop = (
-        (
-            _SupportedDeterministicTransition(
-                func=_next_regime_by_wealth, targets=("saving",)
-            ),
-            _SupportedDeterministicTransition(
-                func=_next_regime_by_wealth, targets=("done",)
-            ),
-        )
+    regime_transitions = (
+        DeterministicTransition(func=_next_regime_by_wealth)
         if law == _DETERMINISTIC_LAW
-        else (
-            {"saving": StochasticTransition(func=_prob_keep_saving)},
-            {"done": StochasticTransition(func=_prob_stop_saving)},
+        else ByAge.until(
+            stop_age_exclusive=3.0,
+            law={"saving": StochasticTransition(func=_prob_keep_saving)},
+            then={"done": StochasticTransition(func=_prob_stop_saving)},
         )
     )
     saving = ConsumptionSavingsRegime(
@@ -83,7 +75,7 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
             "wealth": {"saving": egm_toy.next_wealth, "done": egm_toy.next_wealth}
         },
         constraints={},
-        regime_transitions=ByAge.until(stop_age_exclusive=3.0, law=keep, then=stop),
+        regime_transitions=regime_transitions,
         solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=40)),
         liquid=LiquidMargin(
             state="wealth",
@@ -98,12 +90,13 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
         functions={"utility": egm_toy.terminal_utility},
         solver=GridSearch(),
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"saving": saving, "done": done},
         regime_id_class=egm_toy.RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         fixed_params={"last_age": 3.0},
         initial_nodes={0: "saving"},
+        edges={"saving": {"saving": (0, 1), "done": 2}},
     )
     law_params = {"return_liquid": 0.03, "retirement_income": 0.0}
     params = {

@@ -14,15 +14,17 @@ schedules.
 import jax
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    categorical,
 )
-from lcm import AgeGrid, LinSpacedGrid, categorical
 from lcm.params import MappingLeaf, as_leaf
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -91,24 +93,24 @@ def test_validation_vmaps_over_action_combos():
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            n_periods - 1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
     )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=n_periods - 2),
+                "dead": AgeRange(exclusive_stop=n_periods - 1),
+            }
+        },
     )
 
     params = {

@@ -21,11 +21,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -45,8 +43,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_PERIODS = 4
 # The lowest wealth nodes are where grid search is least reliable (the value
@@ -162,19 +158,12 @@ def _make_dead_regime() -> UserRegime:
 def _get_dcegm_model() -> Model:
     """Retirement DC-EGM model with a fixed `pref_type` shared with `dead`."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     solver = DCEGM(
         savings_grid=SAVINGS_GRID,
         n_constrained_points=64,
     )
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retirement, targets=("retirement", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -197,9 +186,10 @@ def _get_dcegm_model() -> Model:
             post_decision_state="savings_post",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
+        edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
     )
@@ -209,15 +199,8 @@ def _get_dcegm_model() -> Model:
 def _get_brute_model() -> Model:
     """Mathematically identical brute-force spec sharing `pref_type` with `dead`."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     retirement = UserRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retirement, targets=("retirement", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -230,9 +213,10 @@ def _get_brute_model() -> Model:
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": _make_dead_regime()},
         ages=ages,
+        edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
     )
@@ -303,7 +287,6 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
     solver mis-index the continuation.
     """
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     solver = DCEGM(
         savings_grid=SAVINGS_GRID,
         n_constrained_points=64,
@@ -314,13 +297,7 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
 
     # The parent does NOT carry `pref_type`; only `dead` does.
     retirement = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retirement, targets=("retirement", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime_from_retirement),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_from_savings},
@@ -338,9 +315,10 @@ def test_terminal_discrete_state_not_carried_by_parent_is_rejected():
         ),
     )
     with pytest.raises(ModelInitializationError, match="pref_type"):
-        with_fixture_graph(
+        Model(
             regimes={"retirement": retirement, "dead": _make_dead_regime()},
             ages=ages,
+            edges={"retirement": {"retirement": (40, 50), "dead": (40, 50, 60)}},
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "retirement"},
         )

@@ -16,9 +16,6 @@ import numpy as np
 import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import host_operations
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.action_grids import PreflightActionGrids
@@ -27,6 +24,7 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -40,7 +38,6 @@ from lcm.solver_api import SolutionResult
 from lcm.typing import BoolND, FloatND, ScalarInt, UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -80,9 +77,7 @@ def _inputs(
 ) -> tuple[Model, UserParams, UserInitialConditions]:
     regimes = {
         "alive": Regime(
-            regime_transitions=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("done",)
-            ),
+            regime_transitions=DeterministicTransition(func=_next_regime),
             states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
             state_transitions={"wealth": fixed_transition("wealth")},
             actions={
@@ -106,12 +101,13 @@ def _inputs(
                 "saving": LinSpacedGrid(start=0, stop=3, n_points=4),
             },
         )
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
         regime_id_class=_ThreeRegimeId if two_regimes else _LifecycleRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
         initial_nodes={0: ("alive", "other") if two_regimes else "alive"},
+        edges={"alive": {"done": 0}} | ({"other": {"done": 0}} if two_regimes else {}),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.9}}, "done": {}}
     if two_regimes:

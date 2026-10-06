@@ -21,11 +21,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -44,8 +42,6 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -152,7 +148,6 @@ DCEGM_SOLVER = DCEGM(
 @functools.cache
 def _get_model(solver: str) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = float(ages.exact_values[-1])
 
     states = {
         "wealth": WEALTH_GRID,
@@ -160,13 +155,7 @@ def _get_model(solver: str) -> Model:
     }
     if solver == "dcegm":
         alive = ConsumptionSavingsRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("alive", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions={"consumption": CONSUMPTION_GRID},
             states=states,
             state_transitions={"wealth": next_wealth},
@@ -187,22 +176,17 @@ def _get_model(solver: str) -> Model:
         )
     else:
         alive = UserRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("alive", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions={"consumption": CONSUMPTION_GRID},
             states=states,
             state_transitions={"wealth": next_wealth_brute},
             constraints={"borrowing_constraint": borrowing_constraint},
             functions={"utility": utility, "wage_income": wage_income},
         )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
+        edges={"alive": {"alive": (40, 50), "dead": (40, 50, 60)}},
         regime_id_class=ProcessResourcesRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
     )

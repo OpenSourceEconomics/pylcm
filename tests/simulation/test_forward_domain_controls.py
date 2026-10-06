@@ -28,7 +28,6 @@ from lcm import (
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import GatedId, _gated_model
-from tests.test_models.graph import with_fixture_graph
 
 _DISCOUNT = 0.5
 
@@ -75,7 +74,7 @@ def _config(*, budgeted: bool) -> ExecutionConfig:
 
 def _mixed_model(*, budgeted: bool) -> Model:
     """`perceived` is value-only at period 1 and physically visited at period 2."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": _regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
@@ -90,12 +89,24 @@ def _mixed_model(*, budgeted: bool) -> Model:
         regime_id_class=ControlId,
         initial_nodes={0: "source"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"perceived": 1, "end": 2},
+                "realized": {"perceived": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"perceived": 1, "end": 2},
+                "realized": {"perceived": 1},
+            },
+        ),
     )
 
 
 def _value_only_terminal_model(*, budgeted: bool) -> Model:
     """The value-only pair is a terminal regime."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": _regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="end")})
@@ -107,12 +118,15 @@ def _value_only_terminal_model(*, budgeted: bool) -> Model:
         regime_id_class=TerminalId,
         initial_nodes={0: "source"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={"source": {"perceived": 0}}, simulate={"source": {"end": 0}}
+        ),
     )
 
 
 def _multi_root_model(*, budgeted: bool) -> Model:
     """Two cohorts start at different ages; `perceived` stays value-only."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": _regime(
                 law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
@@ -125,6 +139,18 @@ def _multi_root_model(*, budgeted: bool) -> Model:
         regime_id_class=ControlId,
         initial_nodes={0: "source", 1: "realized"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+        ),
     )
 
 

@@ -13,6 +13,7 @@ from _lcm.regime_building.transition_support import (
 from lcm import (
     AgeGrid,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -39,8 +40,6 @@ from lcm_examples.mortality import (
 from lcm_examples.mortality import (
     utility_working as utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -70,13 +69,37 @@ DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
     """Work until the age before `last_age`, then die."""
-    return until_exit(
-        last_age,
+    return ByAge.until(
+        stop_age_exclusive=last_age,
+        law=DeterministicTransition(func=next_regime),
+        then=DeterministicTransition(func=next_regime),
+    )
+
+
+def graph_bound_working_life_transitions(*, last_age: UserAge | float) -> ByAge:
+    """`working_life_transitions` with the destinations a model graph would bind.
+
+    For tests that lower regime declarations directly, without a `Model` to bind
+    the laws to its edges.
+    """
+    return ByAge.until(
+        stop_age_exclusive=last_age,
         law=_SupportedDeterministicTransition(
             func=next_regime, targets=("working_life", "dead")
         ),
-        exits=("dead",),
+        then=_SupportedDeterministicTransition(func=next_regime, targets=("dead",)),
     )
+
+
+def working_life_edges(ages: AgeGrid) -> dict[str, dict[str, tuple[UserAge, ...]]]:
+    """Keep working before the second-to-last age; die from every non-final age."""
+    stays = tuple(ages.exact_values[:-2])
+    return {
+        "working_life": {
+            **({"working_life": stays} if stays else {}),
+            "dead": tuple(ages.exact_values[:-1]),
+        }
+    }
 
 
 working_life = UserRegime(
@@ -121,7 +144,8 @@ def get_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
-    return with_fixture_graph(
+    ages = AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y")
+    return Model(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -135,10 +159,11 @@ def get_model(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
+        ages=ages,
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
+        edges=working_life_edges(ages),
     )
 
 

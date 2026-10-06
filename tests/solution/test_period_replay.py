@@ -40,10 +40,16 @@ from tests.test_models.deterministic.discrete import (
     get_model,
     get_params,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 
 _N_PERIODS = 3
+_FULL_TOPOLOGY_EDGES = {
+    "single_f": {"married": 0, "single_f_p1": 0},
+    "single_m": {"married": 0, "single_m_p1": 0},
+    "single_f_p1": {"single_f_terminal": 1},
+    "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+    "married": {"married_terminal": 1, "single_f_terminal": 1, "single_m_terminal": 1},
+}
 
 
 def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
@@ -204,8 +210,9 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     """
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "single_f@0")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_full_topology_regimes(),
+        edges=_FULL_TOPOLOGY_EDGES,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},

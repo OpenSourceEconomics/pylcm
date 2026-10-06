@@ -14,19 +14,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LogNormalIIDProcess,
+    Model,
     Regime,
     StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -61,7 +59,7 @@ def _oracle() -> float:
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
     transition = (
-        _SupportedDeterministicTransition(func=_target_id, targets=("target",))
+        DeterministicTransition(func=_target_id)
         if coarse
         else {"target": StochasticTransition(func=_one)}
     )
@@ -71,7 +69,8 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         mu=0.0,
         sigma=1.0,
     )
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
                 regime_transitions=transition,

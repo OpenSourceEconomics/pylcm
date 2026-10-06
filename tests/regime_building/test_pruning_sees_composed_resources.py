@@ -9,13 +9,10 @@ after which finalization has nothing to compose.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    ByAge,
     ConsumptionSavingsRegime,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     LiquidMargin,
@@ -30,7 +27,6 @@ from lcm.solvers import (
     FUESEnvelope,
 )
 from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -80,13 +76,7 @@ def next_regime(age: int) -> DiscreteState:
 
 def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
     working = ConsumptionSavingsRegime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working",)
-            ),
-            then=_SupportedDeterministicTransition(func=next_regime, targets=("dead",)),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={
@@ -126,7 +116,8 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
                 "tier": fixed_transition("tier"),
             },
         )
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"working": (0, 1), "dead": 2}},
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,

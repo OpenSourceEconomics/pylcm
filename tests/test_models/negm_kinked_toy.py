@@ -22,11 +22,10 @@ The outer search runs over `new_durable` with the no-adjustment candidate
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -47,8 +46,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_X = 12
 N_Z = 12
@@ -177,7 +174,6 @@ NEGM_SOLVER = NEGM(
 
 def build_alive_regime() -> NestedConsumptionSavingsRegime:
     """The non-terminal NEGM regime (two assets, two continuous actions)."""
-    final_age_alive = 20 + (N_PERIODS - 2) * 5
     return NestedConsumptionSavingsRegime(
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         state_transitions={"wealth": next_wealth, "illiquid": durable_transition},
@@ -185,13 +181,7 @@ def build_alive_regime() -> NestedConsumptionSavingsRegime:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            final_age_alive + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -234,7 +224,7 @@ def build_model(
 ) -> Model:
     """Build the kinked-toy NEGM model (the G1 parity target)."""
     final_age_alive = 20 + (N_PERIODS - 2) * 5
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": build_alive_regime(),
             "dead": build_dead_regime(),
@@ -244,4 +234,10 @@ def build_model(
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
         initial_nodes={20: "alive"},
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=final_age_alive),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+            }
+        },
     )

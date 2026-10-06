@@ -17,11 +17,9 @@ the parity oracle.
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -43,7 +41,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.schedules import until_exit
 
 N_X = 8
 N_Z = 8
@@ -186,13 +183,7 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -291,13 +282,7 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility_brute},
         constraints={"feasible": feasible_brute},
     )

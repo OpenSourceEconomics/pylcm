@@ -23,6 +23,7 @@ from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, mss
 from lcm import (
     AgeGrid,
+    AgeRange,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -35,8 +36,6 @@ from lcm.solvers import DCEGM, GridSearch, MSSEnvelope
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 requires_exact_kernel = pytest.mark.requires_exact_affine_kernel(
     reason=EXACT_KERNEL_SKIP_REASON
@@ -279,14 +278,10 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
     is_dcegm = arithmetic is not None
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working_life = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "working_life": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working_life": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -325,11 +320,17 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y"),
         regime_id_class=AssetRowRegimeId,
         initial_nodes={40: "working_life"},
+        edges={
+            "working_life": {
+                "working_life": AgeRange(exclusive_stop=40 + (N_PERIODS - 2) * 10),
+                "dead": AgeRange(exclusive_stop=40 + (N_PERIODS - 1) * 10),
+            }
+        },
     )
 
 

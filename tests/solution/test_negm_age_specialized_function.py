@@ -28,13 +28,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedFunction,
     ByAge,
+    DeterministicTransition,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
@@ -47,7 +46,6 @@ from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, ResultRetention
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.negm_kinked_toy import (
     N_PERIODS,
     NEGM_SOLVER,
@@ -62,7 +60,6 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -134,13 +131,7 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            _FINAL_AGE_ALIVE + _AGE_STEP,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -160,8 +151,14 @@ def _build_model(*, helper_name: str, override) -> Model:
             no_adjustment=no_adjustment,
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": build_dead_regime()},
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + _AGE_STEP),
+            }
+        },
         regime_id_class=RegimeId,
         ages=AgeGrid(
             start=_MIN_AGE,
@@ -357,7 +354,11 @@ def _early_late_model(*, late_keep: Any) -> Model:
     `late_keep` is `late`'s no-adjustment map: an `AgeSpecializedFunction` or a
     concrete function pinned to one age.
     """
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "early": {"early": _MIN_AGE, "late": _MIN_AGE + _AGE_STEP},
+            "late": {"dead": _LATE_AGE},
+        },
         regimes={
             "early": _negm_regime(
                 keep_illiquid=None,

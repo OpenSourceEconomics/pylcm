@@ -11,11 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
@@ -23,8 +21,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -70,16 +66,11 @@ def _survives_to_spend(health: DiscreteState) -> BoolND:
 
 @pytest.fixture
 def model() -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"alive": {"last": 25}},
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    26,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("alive", "last")
-                    ),
-                    exits=("last",),
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"health": DiscreteGrid(category_class=_Health)},
                 state_transitions={"health": StochasticTransition(func=_health_probs)},
                 functions={"utility": _alive_utility},

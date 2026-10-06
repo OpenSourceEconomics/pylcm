@@ -10,10 +10,9 @@ identical model that names one.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model, OuterContinuousMargin, outer_unchanged
+from lcm import AgeGrid, AgeRange, Model, OuterContinuousMargin, outer_unchanged
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
-from tests.test_models.graph import with_fixture_graph
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 _FINAL_AGE_ALIVE = 20 + (negm_kinked_toy.N_PERIODS - 2) * 5
@@ -31,7 +30,13 @@ def _model(*, no_adjustment: str) -> Model:
     functions = dict(alive.functions)
     if no_adjustment != outer_unchanged:
         functions[no_adjustment] = keep_illiquid
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + 5),
+            }
+        },
         regimes={
             "alive": alive.replace(
                 functions=functions,

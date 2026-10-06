@@ -32,11 +32,14 @@ from lcm.exceptions import (
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import _phased_model
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
 _AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
+_EDGES = {
+    "island": {"island": (25, 35, 45, 55), "dead": (25, 35, 45, 55, 65)},
+    "working": {"working": (25, 35, 45, 55), "dead": (25, 35, 45, 55, 65)},
+}
 _N_SUBJECTS = 64
 
 
@@ -92,7 +95,7 @@ def _island() -> Regime:
 
 
 def _model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": _mortal(),
@@ -105,6 +108,7 @@ def _model(initial_nodes: Any) -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes=initial_nodes,
+        edges=_EDGES,
     )
 
 
@@ -212,7 +216,7 @@ def _laws(*, die: Any) -> dict:
 
 def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_wealth)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": Regime(
@@ -232,6 +236,7 @@ def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_EDGES,
     )
 
 
@@ -337,7 +342,7 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
         calls.append(None)
         return jnp.asarray(0.5)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "island": _island(),
             "working": Regime(
@@ -362,6 +367,7 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_EDGES,
     )
     # Construction may evaluate this fixed scalar law to prove support. A refused
     # simulation must not evaluate it again, including while tracing user code.
@@ -399,7 +405,7 @@ def _drift(wealth: ContinuousState) -> ContinuousState:
 
 def _drifting_model() -> Model:
     """Valid regime-law rows on the wealth grid [0, 1]; simulated wealth leaves it."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": Regime(
@@ -424,6 +430,7 @@ def _drifting_model() -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_EDGES,
     )
 
 

@@ -16,7 +16,7 @@ two solvers are handed the identical `Regime` and must agree.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, StochasticTransition
+from lcm import AgeGrid, AgeRange, LinSpacedGrid, Model, StochasticTransition
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import EGM, GridSearch
@@ -37,8 +37,6 @@ from tests.solution.test_egm_solver import (
     terminal_utility,
     utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _FIXED_COST = 0.5
 
@@ -56,7 +54,6 @@ def next_wealth_net_of_a_fixed_cost(
 
 def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
     """The closed-form consumption--saving lifecycle, plus a fixed cost."""
-    last_age = float(_N_PERIODS - 1)
     law = {"saving": law, "done": law}
     regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
     saving = regime_type(
@@ -66,15 +63,10 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": law},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "saving": StochasticTransition(func=prob_continue),
-                "done": StochasticTransition(func=prob_stop),
-            },
-            exits=("done",),
-            stays=("saving",),
-        ),
+        regime_transitions={
+            "saving": StochasticTransition(func=prob_continue),
+            "done": StochasticTransition(func=prob_stop),
+        },
         functions={"utility": utility, "savings": savings},
         solver=solver,
         **(
@@ -96,9 +88,15 @@ def _model(*, solver, n_consumption=200, law=next_wealth_net_of_a_fixed_cost):
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving, "done": done},
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
+        edges={
+            "saving": {
+                "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
+                "done": _N_PERIODS - 2,
+            }
+        },
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},
     )

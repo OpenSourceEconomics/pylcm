@@ -14,11 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     JointTransition,
     LinSpacedGrid,
     Model,
@@ -30,8 +28,6 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.95
 _WEALTH = (1.0, 5.5, 10.0)
@@ -75,13 +71,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _model(*, support: tuple[float, float]) -> Model:
     working = Regime(
-        regime_transitions=until_exit(
-            62,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(
                 start=_WEALTH[0], stop=_WEALTH[-1], n_points=len(_WEALTH)
@@ -108,11 +98,12 @@ def _model(*, support: tuple[float, float]) -> Model:
         },
     )
     dead = Regime(regime_transitions=None, functions={"utility": _zero_utility})
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, inclusive_stop=63, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={60: "working"},
+        edges={"working": {"working": 60, "dead": (60, 61)}},
     )
 
 

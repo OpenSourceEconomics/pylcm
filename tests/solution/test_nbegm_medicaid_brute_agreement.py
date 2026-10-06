@@ -26,8 +26,6 @@ from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import FloatND, UserFunction
 from tests.test_models import nbegm_medicaid_toy as toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 2.0) & (_LIQUID < 22.0)
@@ -200,14 +198,7 @@ def _build_model(
             }
         },
         constraints={},
-        regime_transitions=until_exit(
-            1.0,
-            law={
-                "alive": StochasticTransition(func=toy.prob_stay_alive),
-                "dead": StochasticTransition(func=toy.prob_die),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={"dead": StochasticTransition(func=toy.prob_die)},
         functions={
             "utility": toy.utility,
             "predicate": predicate,
@@ -234,8 +225,9 @@ def _build_model(
         functions={"utility": toy.bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"dead": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=toy.RegimeId,
         initial_nodes={0: "alive"},

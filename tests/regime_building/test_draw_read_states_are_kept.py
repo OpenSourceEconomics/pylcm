@@ -26,8 +26,6 @@ from lcm.processes import NormalIIDProcess, RouwenhorstAR1Process
 from lcm.regime import Regime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import X64_ENABLED
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 DISCOUNT_FACTOR = 0.9
 WEALTH_GRID = LinSpacedGrid(start=-10.0, stop=10.0, n_points=81)
@@ -74,11 +72,7 @@ def _xi() -> NormalIIDProcess:
 def _model(*, declared_at: Literal["model", "regime"]) -> Model:
     shocks = {"zeta": _zeta(), "xi": _xi()}
     active = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=choose_among(_next_regime, targets=("dead",)),
-            exits=("dead",),
-        ),
+        regime_transitions=_next_regime,
         actions={
             "consumption": LinSpacedGrid(
                 start=CONSUMPTION_NODES[0],
@@ -95,8 +89,9 @@ def _model(*, declared_at: Literal["model", "regime"]) -> Model:
         states={"wealth": WEALTH_GRID},
         functions={"utility": _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"active": active, "dead": dead},
+        edges={"active": {"dead": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},

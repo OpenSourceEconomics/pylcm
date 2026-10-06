@@ -25,8 +25,6 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import ScalarFloat, ScalarInt, UserParams
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so the unconditional mean is `mu` and a dropped continuation
@@ -66,14 +64,12 @@ def _entered_process_model(*, at_construction: bool) -> Model:
     """Build a source whose only target carries a process the source lacks."""
     process = _process(at_construction=at_construction)
     fixed_params = {} if at_construction else {"target": {"shock": _PROCESS_LAW}}
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -88,6 +84,7 @@ def _entered_process_model(*, at_construction: bool) -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 
@@ -135,14 +132,12 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
                 "target": {"shock": _PROCESS_LAW},
             }
         )
-        return with_fixture_graph(
+        return Model(
             regimes={
                 "source": Regime(
-                    regime_transitions=until_exit(
-                        22,
-                        law={"target": StochasticTransition(func=_one_probability)},
-                        exits=("target",),
-                    ),
+                    regime_transitions={
+                        "target": StochasticTransition(func=_one_probability)
+                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -158,6 +153,7 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
             enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=None),
             initial_nodes={20: "source"},
+            edges={"source": {"target": (20, 21)}},
         )
 
     from_construction = (
@@ -180,14 +176,12 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
 
 def _model_with_law_value(value: Any) -> Model:
     """Build the entered-process model with one law field set to `value`."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
+                regime_transitions={
+                    "target": StochasticTransition(func=_one_probability)
+                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
@@ -204,6 +198,7 @@ def _model_with_law_value(value: Any) -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

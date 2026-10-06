@@ -6,6 +6,7 @@ targets are structurally unreachable. The coarse forms (one callable over all
 regimes) remain valid and reach every regime.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import jax.numpy as jnp
@@ -28,8 +29,6 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -72,11 +71,12 @@ def _granular_transition() -> dict[str, StochasticTransition]:
     }
 
 
+_WORK_EDGES = {"work": 0, "retired": (0, 1), "dead": (0, 1)}
+
+
 def _build_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": until_exit(
-            2, law=_granular_transition(), exits=("retired", "dead")
-        ),
+        "regime_transitions": _granular_transition(),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -86,34 +86,39 @@ def _build_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _build_model(*, work: UserRegime, retired: UserRegime | None = None) -> Model:
+def _build_model(
+    *,
+    work: UserRegime,
+    work_edges: Mapping[str, object] = _WORK_EDGES,
+    retired: UserRegime | None = None,
+) -> Model:
     # `retired` outlives `work` by one age so that the mass `work` sends it in
     # its final transition lands on an active regime, and hands everything to
     # `dead` in its own final transition.
     if retired is None:
         retired = _build_regime(
-            regime_transitions=until_exit(
-                3,
-                law={
-                    "retired": StochasticTransition(
-                        func=lambda age: jnp.where(age < 2, 0.5, 0.0),
-                    ),
-                    "dead": StochasticTransition(
-                        func=lambda age: jnp.where(age < 2, 0.5, 1.0),
-                    ),
-                },
-                exits=("dead",),
-            ),
+            regime_transitions={
+                "retired": StochasticTransition(
+                    func=lambda age: jnp.where(age < 2, 0.5, 0.0),
+                ),
+                "dead": StochasticTransition(
+                    func=lambda age: jnp.where(age < 2, 0.5, 1.0),
+                ),
+            },
         )
     dead = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"work": work, "retired": retired, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges={
+            "work": work_edges,
+            "retired": {"retired": (0, 1), "dead": (0, 1, 2)},
+        },
     )
 
 
@@ -147,20 +152,16 @@ def test_template_has_per_target_regime_transition_keys() -> None:
         return jnp.clip(hazard * (1.0 + age), 0.0, 1.0)
 
     work = _build_regime(
-        regime_transitions=until_exit(
-            3,
-            law={
-                "work": StochasticTransition(
-                    func=lambda age, hazard: (
-                        1.0 - _prob_dead_with_param(age=age, hazard=hazard)
-                    )
-                ),
-                "dead": StochasticTransition(func=_prob_dead_with_param),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "work": StochasticTransition(
+                func=lambda age, hazard: (
+                    1.0 - _prob_dead_with_param(age=age, hazard=hazard)
+                )
+            ),
+            "dead": StochasticTransition(func=_prob_dead_with_param),
+        },
     )
-    model = _build_model(work=work)
+    model = _build_model(work=work, work_edges={"work": (0, 1), "dead": (0, 1, 2)})
     template = model.get_params_template()
     assert "hazard" in template["work"]["dead"]["next_regime"]
     assert "hazard" in template["work"]["work"]["next_regime"]
@@ -191,7 +192,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
         },
     )
     with pytest.raises(ModelInitializationError, match=r"valhalla"):
-        _build_model(work=work)
+        _build_model(work=work, work_edges={"work": (0, 1, 2)})
 
 
 @pytest.mark.parametrize("phase_local_handoffs", [False, True])
@@ -216,7 +217,7 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
         if phase_local_handoffs
         else lambda investment: investment
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "work": UserRegime(
                 regime_transitions=Phased(
@@ -251,6 +252,7 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
         enable_jit=False,
+        edges=Phased(solve={"work": {"dead": 0}}, simulate={"work": {"retired": 0}}),
     )
     template = model.get_params_template()["work"]
     assert "perceived_mass" in template["dead"]["next_regime"]
@@ -288,7 +290,7 @@ def test_public_transition_names_describe_the_law_kind(name: str) -> None:
 
 def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
     """Admit exactly the initial age-regime pair named by the node selector."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "dead": UserRegime(
                 regime_transitions=None,
@@ -299,6 +301,7 @@ def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
         regime_id_class=_TerminalRegimeId,
         initial_nodes={0: "dead"},
         enable_jit=False,
+        edges={},
     )
     assert model.initial_nodes == frozenset({(0, "dead")})
 
@@ -309,7 +312,7 @@ def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() ->
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "work": _build_regime(
                 regime_transitions={
@@ -324,6 +327,7 @@ def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() ->
         initial_nodes={0: "work"},
         fixed_params={"probability": 0.0},
         enable_jit=False,
+        edges={"work": {"dead": 0}},
     )
     assert model.reachability.solution.targets(period=0, source="work") == ("dead",)
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
@@ -334,7 +338,7 @@ def test_simulation_only_regime_prices_its_perceived_continuation() -> None:
     """Solve the perceived continuation needed by a simulation-only decision node."""
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
     certain = StochasticTransition(func=lambda: jnp.asarray(1.0))
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "work": UserRegime(
                 regime_transitions=Phased(
@@ -362,6 +366,10 @@ def test_simulation_only_regime_prices_its_perceived_continuation() -> None:
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
         enable_jit=False,
+        edges=Phased(
+            solve={"work": {"dead": (0, 1)}, "retired": {"dead": (0, 1)}},
+            simulate={"work": {"retired": (0, 1)}, "retired": {"dead": (0, 1)}},
+        ),
     )
     assert model.reachability.nodes == frozenset(
         {(0, "work"), (1, "retired"), (1, "dead"), (2, "dead")}
@@ -393,10 +401,7 @@ def test_uncovered_reachable_target_raises_with_remedy() -> None:
     state; the error points to the granular transition spelling."""
     work = _build_regime(
         state_transitions={"wealth": {"work": _next_wealth}},
-        # Declares retired as reachable.
-        regime_transitions=until_exit(
-            2, law=_granular_transition(), exits=("retired", "dead")
-        ),
+        regime_transitions=_granular_transition(),
     )
     with pytest.raises(
         ModelInitializationError, match=r"retired.*wealth|wealth.*retired"
@@ -408,17 +413,13 @@ def test_granular_keys_narrow_reachability() -> None:
     """A per-target state law covering exactly the declared targets is valid —
     the granular key set, not coverage inference, decides reachability."""
     work = _build_regime(
-        regime_transitions=until_exit(
-            3,
-            law={
-                "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
-                "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
+            "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
+        },
         state_transitions={"wealth": {"retired": _next_wealth}},
     )
-    model = _build_model(work=work)
+    model = _build_model(work=work, work_edges={"retired": (0, 1), "dead": (0, 1, 2)})
     assert "work" in model.user_regimes
 
 

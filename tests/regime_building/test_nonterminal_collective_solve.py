@@ -48,8 +48,10 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -66,7 +68,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=True)
@@ -102,21 +103,25 @@ def _next_regime() -> ScalarInt:
     return RegimeId.couple_terminal
 
 
+_GRAPH_BOUND_LAW = _SupportedDeterministicTransition(
+    func=_next_regime, targets=("couple_terminal",)
+)
+
+
 _WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 _EXPECTED_V_TERMINAL = np.array([[30.0, 0.0], [40.0, 80.0]])
 _EXPECTED_V_PERIOD_0 = np.array([[46.0, 92.0], [78.0, 156.0]])
 
 
-def _make_couple_regimes() -> dict[str, Regime]:
+def _make_couple_regimes(*, law: object) -> dict[str, Regime]:
+    """Build the couple regimes, `couple` leaving by `law` at age 0.
+
+    Model-level tests pass a public law and declare the edge in `Model(edges=...)`;
+    kernel-level tests bypass `Model` and pass the graph-bound law.
+    """
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("couple_terminal",)
-                )
-            }
-        ),
+        regime_transitions=ByAge(cases={AgeRange(exclusive_stop=1): law}),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -141,7 +146,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_make_couple_regimes(),
+                user_regimes=_make_couple_regimes(law=_GRAPH_BOUND_LAW),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
@@ -150,7 +155,7 @@ def test_nonterminal_collective_regime_solves_with_continuation():
         ),
         user_regimes=lower_declarations(
             finalize_regimes(
-                user_regimes=_make_couple_regimes(),
+                user_regimes=_make_couple_regimes(law=_GRAPH_BOUND_LAW),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
@@ -206,8 +211,9 @@ def test_nonterminal_collective_regime_solves_with_continuation():
 def test_nonterminal_collective_full_model_solve_matches_kernel_level():
     """Model-level: the same two regimes through public Model(...) + solve()."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = with_fixture_graph(
-        regimes=_make_couple_regimes(),
+    model = Model(
+        regimes=_make_couple_regimes(law=DeterministicTransition(func=_next_regime)),
+        edges={"couple": {"couple_terminal": 0}},
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "couple"},
@@ -370,8 +376,9 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
     special threading).
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = with_fixture_graph(
-        regimes=_make_couple_regimes(),
+    model = Model(
+        regimes=_make_couple_regimes(law=DeterministicTransition(func=_next_regime)),
+        edges={"couple": {"couple_terminal": 0}},
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "couple"},

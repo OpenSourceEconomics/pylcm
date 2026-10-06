@@ -31,8 +31,6 @@ from lcm import (
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 
@@ -87,31 +85,27 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 def _make_model() -> Model:
     worker = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "retired": ValueDependentTransition(
-                    probability=StochasticTransition(func=_certain),
-                    gate=_well_off,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=Phased(
-                                solve=ProjectedRegimeValue(
-                                    regime="hardship",
-                                    projection={"wealth": _whole_wealth},
-                                ),
-                                simulate=ProjectedRegimeValue(
-                                    regime="shelter",
-                                    stakeholder="guest",
-                                    projection={"wealth": _settled_wealth},
-                                ),
-                            )
+        regime_transitions={
+            "retired": ValueDependentTransition(
+                probability=StochasticTransition(func=_certain),
+                gate=_well_off,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=Phased(
+                            solve=ProjectedRegimeValue(
+                                regime="hardship",
+                                projection={"wealth": _whole_wealth},
+                            ),
+                            simulate=ProjectedRegimeValue(
+                                regime="shelter",
+                                stakeholder="guest",
+                                projection={"wealth": _settled_wealth},
+                            ),
                         )
-                    },
-                )
-            },
-            exits=("retired",),
-        ),
+                    )
+                },
+            )
+        },
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _zero},
@@ -133,7 +127,7 @@ def _make_model() -> Model:
             "utility": CollectiveUtility(utilities={"guest": _lavish, "host": _zero})
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "worker": worker,
             "retired": retired,
@@ -143,6 +137,10 @@ def _make_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "worker"},
+        edges=Phased(
+            solve={"worker": {"retired": 0, "hardship": 0}},
+            simulate={"worker": {"retired": 0, "shelter": 0}},
+        ),
     )
 
 

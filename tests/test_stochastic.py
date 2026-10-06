@@ -5,13 +5,11 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_allclose, assert_array_almost_equal
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -33,8 +31,6 @@ from lcm.typing import (
     UserParams,
 )
 from tests.conftest import X64_ENABLED
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -292,20 +288,14 @@ def _make_minimal_stochastic_model(
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
@@ -313,6 +303,12 @@ def _make_minimal_stochastic_model(
             axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
         ),
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": {
+                "working_life": AgeRange(exclusive_stop=final_age),
+                "dead": AgeRange(exclusive_stop=final_age + 1),
+            }
+        },
     )
 
 
@@ -427,7 +423,7 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
     there is no age left to transition into.
     """
     with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "working_life": working_life.replace(
                     regime_transitions=ByAge(
@@ -440,4 +436,10 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
             ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),
             regime_id_class=RegimeId,
             initial_nodes={70: "working_life"},
+            edges={
+                "working_life": {"dead": AgeRange(exclusive_stop=70)},
+                "retirement": dict.fromkeys(
+                    ("working_life", "retirement", "dead"), AgeRange(exclusive_stop=70)
+                ),
+            },
         )

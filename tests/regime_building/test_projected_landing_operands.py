@@ -48,8 +48,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Nodes 0, 1, 2 on every regime's grid.
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
@@ -104,27 +102,24 @@ def _projection_model(projection) -> Model:
     pullback surface over the nodes `{0, 1, 2}` is `[0, 1, 4]` and interpolating
     it at `0.5` gives `0.5`, while the branch pays `V(0.5**2) = 0.25`.
     """
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 0, "fallback": 0}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_certain_target),
-                            gate=_closed_above_one,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback", projection={"x": projection}
-                                    )
+                regime_transitions={
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_certain_target),
+                        gate=_closed_above_one,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": projection}
                                 )
-                            },
-                            off_grid="pointwise",
-                        )
-                    },
-                    exits=("target",),
-                ),
+                            )
+                        },
+                        off_grid="pointwise",
+                    )
+                },
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
@@ -274,29 +269,26 @@ def _no_dissolution(D_target: BoolND) -> BoolND:
 
 def _coupled_model(saving_points) -> Model:
     """A collective target whose feasible set is empty at the middle node."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"pair": 0, "alone_m": 0}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "pair": ValueDependentTransition(
-                            probability=StochasticTransition(func=_to_pair),
-                            gate=_no_dissolution,
-                            routes={
-                                "only": StakeholderRoute(
-                                    target_stakeholder="f",
-                                    fallback=ProjectedRegimeValue(
-                                        regime="alone_m",
-                                        projection={"wage": _identity_wage},
-                                    ),
-                                )
-                            },
-                            off_grid="pointwise",
-                        )
-                    },
-                    exits=("pair",),
-                ),
+                regime_transitions={
+                    "pair": ValueDependentTransition(
+                        probability=StochasticTransition(func=_to_pair),
+                        gate=_no_dissolution,
+                        routes={
+                            "only": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="alone_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            )
+                        },
+                        off_grid="pointwise",
+                    )
+                },
                 states={"wage": _WAGE},
                 state_transitions={"wage": _next_wage},
                 actions={"saving": IrregSpacedGrid(points=saving_points)},

@@ -17,14 +17,13 @@ import jax
 import pytest
 
 from _lcm.execution import workspace_planning
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import chunk_admission, host_operations, runtime
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
+    Model,
     NormalIIDProcess,
     Regime,
 )
@@ -37,7 +36,6 @@ from tests.simulation.test_process_grid_entry_admission import (
     _terminal_utility,
     _utility,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @contextmanager
@@ -233,12 +231,10 @@ def _axis_width_case(
     required to get a real multi-candidate doubling frontier at all.
     """
     parameters = {"mu": 0.1415, "sigma": 1.876, "n_std": 3.2}
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"income": NormalIIDProcess(n_points=5, gauss_hermite=False)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _utility},
@@ -253,6 +249,7 @@ def _axis_width_case(
             device_memory_bytes=budget, axis_widths=axis_widths
         ),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params = {
         "alive": {

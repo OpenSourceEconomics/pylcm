@@ -46,7 +46,6 @@ from lcm import (
 )
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.nbegm_common import make_alive_dead_model, savings, utility
 
 
@@ -275,9 +274,10 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
         functions={"utility": zero_bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"source": source, "child": child, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        edges={"source": {"child": (0, 1)}, "child": {"child": 1, "dead": 2}},
         regime_id_class=_SourceChildId,
         initial_nodes={0: "source", 1: "source"},
     )

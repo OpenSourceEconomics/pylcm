@@ -42,7 +42,6 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -55,7 +54,7 @@ type _Candidate = tuple[tuple[str, int, str], Hashable]
 def _reordered_actions_model() -> Model:
     """The identity toy with its two actions declared in the opposite order."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -73,6 +72,7 @@ def _reordered_actions_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
     )
 
 
@@ -85,7 +85,7 @@ def _rewaged_model() -> Model:
     """The identity toy with a different wage function body."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     functions = {**working_life.functions, "wage": _steeper_wage}
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -104,12 +104,13 @@ def _rewaged_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
     )
 
 
 def _fixed_discount_model(*, discount_factor: float) -> Model:
     """The identity toy with its discount factor fixed at construction."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -130,6 +131,7 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
         regime_id_class=RegimeId,
         fixed_params={"discount_factor": discount_factor},
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
     )
 
 

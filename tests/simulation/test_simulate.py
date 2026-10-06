@@ -18,8 +18,10 @@ from _lcm.simulation.simulate import (
 )
 from _lcm.utils.logging import get_logger
 from lcm import (
+    AgeRange,
     LinearAggregator,
     LinearExpectation,
+    Model,
 )
 from lcm.ages import AgeGrid
 from lcm.result import (
@@ -34,10 +36,10 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_model,
     get_params,
+    graph_bound_working_life_transitions,
     working_life,
     working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @pytest.fixture
@@ -49,7 +51,9 @@ def simulate_inputs():
             **working_life.actions,
             "consumption": working_life.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
+        regime_transitions=graph_bound_working_life_transitions(
+            last_age=final_age_alive + 1
+        ),
     )
     user_regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
@@ -151,11 +155,17 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
-        model = with_fixture_graph(
+        edges = {"working_life": {"dead": AgeRange(exclusive_stop=stop_age)}}
+        if n_periods > 2:
+            edges["working_life"]["working_life"] = AgeRange(
+                exclusive_stop=final_age_alive
+            )
+        model = Model(
             regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "working_life"},
+            edges=edges,
         )
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model

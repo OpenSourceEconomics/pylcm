@@ -38,7 +38,6 @@ from tests.solution.test_dcegm_axis_width_policy import (
     utility,
 )
 from tests.solution.test_dcegm_core_program import _run
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -102,6 +101,15 @@ def _model(
             if isinstance(selector, AgeRange)
             and selector.start == 40 + 10 * parent_period
         }
+    parent_ages = (40, 50) if parent_period is None else (40 + 10 * parent_period,)
+    parent_edges = {
+        target: selected
+        for target, ages in (
+            ("young", (40,)),
+            ("old", (40, 50) if overlapping_children else (50,)),
+        )
+        if (selected := tuple(age for age in ages if age in parent_ages))
+    }
     parent = ConsumptionSavingsRegime(
         regime_transitions=ByAge(cases=parent_cases),
         states={"wealth": grid, "health": DiscreteGrid(Health)},
@@ -131,7 +139,7 @@ def _model(
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "parent": parent,
             "young": parent.replace(
@@ -164,6 +172,11 @@ def _model(
         ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),
         regime_id_class=DiagnosisRegimes,
         execution_config=ExecutionConfig(devices=(0,)),
+        edges={
+            "parent": parent_edges,
+            "young": {"dead": 50},
+            "old": {"dead": (50, 60) if overlapping_children else 60},
+        },
         # The parent is a start at each age it declares a law for.
         initial_nodes={
             (40, 50) if parent_period is None else 40 + 10 * parent_period: "parent"

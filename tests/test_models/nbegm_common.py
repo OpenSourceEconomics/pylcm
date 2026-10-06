@@ -41,8 +41,6 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -204,6 +202,7 @@ def make_alive_dead_model(
     """
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = ages.exact_values[-1]
+    stays = ages.exact_values[:-2]
     if liquid_grid is None:
         liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     alive_actions = {
@@ -223,7 +222,11 @@ def make_alive_dead_model(
     # Default survival is deterministic: stay alive until the age before
     # `final_age`, then die, one declared target per age.
     alive_transitions = (
-        until_exit(final_age, law=dict(survival_transition), exits=("dead",))
+        ByAge.until(
+            stop_age_exclusive=final_age,
+            law=dict(survival_transition),
+            then={"dead": survival_transition["dead"]},
+        )
         if survival_transition is not None
         else ByAge.until(
             stop_age_exclusive=final_age,
@@ -268,7 +271,7 @@ def make_alive_dead_model(
         else {"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
@@ -276,4 +279,12 @@ def make_alive_dead_model(
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges={
+            "alive": {
+                **({"alive": stays} if stays else {}),
+                "dead": ages.exact_values[:-1]
+                if survival_transition is not None
+                else ages.exact_values[-2],
+            }
+        },
     )

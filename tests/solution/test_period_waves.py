@@ -14,12 +14,22 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def _model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes=_make_full_topology_regimes(),
+        edges={
+            "single_f": {"married": 0, "single_f_p1": 0},
+            "single_m": {"married": 0, "single_m_p1": 0},
+            "single_f_p1": {"single_f_terminal": 1},
+            "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+            "married": {
+                "married_terminal": 1,
+                "single_f_terminal": 1,
+                "single_m_terminal": 1,
+            },
+        },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},

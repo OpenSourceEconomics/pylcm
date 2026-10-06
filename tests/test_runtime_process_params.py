@@ -5,12 +5,11 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     NormalIIDProcess,
     TauchenAR1Process,
     UniformIIDProcess,
@@ -18,8 +17,6 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -65,15 +62,8 @@ def _make_model(*, fixed_params=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=lambda period: jnp.where(
-                    period >= 1, RegimeId.dead, RegimeId.alive
-                ),
-                targets=("alive", "dead"),
-            ),
-            exits=("dead",),
+        regime_transitions=DeterministicTransition(
+            func=lambda period: jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
         ),
     )
     dead = UserRegime(
@@ -81,9 +71,10 @@ def _make_model(*, fixed_params=None):
         functions={"utility": lambda: 0.0},
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        edges={"alive": {"alive": 0, "dead": (0, 1)}},
         regime_id_class=RegimeId,
         fixed_params=fixed_params or {},
         initial_nodes={0: "alive"},

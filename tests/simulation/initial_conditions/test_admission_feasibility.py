@@ -12,14 +12,12 @@ import numpy as np
 import pytest
 
 import lcm
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import initial_conditions as preflight
 from _lcm.simulation.initial_conditions import _SerialValidationRequired
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -31,7 +29,6 @@ from lcm.params import MappingLeaf, as_leaf
 from lcm.persistence import load_solution
 from lcm.solver_api import SolutionResult
 from lcm.typing import BoolND, FloatND, ScalarInt, UserInitialConditions, UserParams
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -103,12 +100,10 @@ def _inputs(
     constraints.update(
         {f"check_{index}": _reject_every_action for index in range(diagnostic_checks)}
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
                 state_transitions={"wealth": lcm.fixed_transition("wealth")},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=n_actions)},
@@ -125,6 +120,7 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params = {
         "alive": {

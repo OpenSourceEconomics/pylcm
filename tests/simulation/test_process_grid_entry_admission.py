@@ -17,9 +17,6 @@ import pytest
 
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import host_operations, process_grids
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
@@ -27,6 +24,7 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -44,7 +42,6 @@ from lcm.persistence import load_solution
 from lcm.typing import FloatND, ScalarInt, UserInitialConditions, UserParams
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
 from tests.simulation.test_budget_lifecycle import _LifecycleRegimeId
-from tests.test_models.graph import with_fixture_graph
 
 
 @pytest.fixture(autouse=True)
@@ -80,12 +77,10 @@ def _inputs(
     companion: _ContinuousStochasticProcess | None = None,
     companion_params: dict[str, float] | None = None,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"income": UniformIIDProcess(n_points=5, start=fixed_start)}
                 | ({} if companion is None else {"companion": companion}),
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
@@ -103,6 +98,7 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params = {
         "alive": {

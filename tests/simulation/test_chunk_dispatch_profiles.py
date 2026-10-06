@@ -9,13 +9,11 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -28,7 +26,6 @@ from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
     _stateful_target_model,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 
 
@@ -58,12 +55,10 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same-kind integer updates retain the carrier's canonical integer storage."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_finish_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_finish_regime),
                 functions={"utility": _flag_utility},
             ),
             "done": Regime(
@@ -78,6 +73,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off")

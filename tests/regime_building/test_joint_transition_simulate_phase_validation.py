@@ -15,13 +15,11 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.engine import StateActionSpace
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.transition_checks import _evaluate_joint_weights
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     JointTransition,
     LinSpacedGrid,
     Model,
@@ -31,8 +29,6 @@ from lcm import (
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError, PyLCMError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _SUPPORT = jnp.asarray([1.0, 2.0])
 
@@ -101,13 +97,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
 
 def _build_model(*, simulate_probabilities) -> Model:
     working = Regime(
-        regime_transitions=until_exit(
-            64,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "experience": Phased(
@@ -131,7 +121,8 @@ def _build_model(*, simulate_probabilities) -> Model:
     dead = Regime(
         regime_transitions=None, functions={"utility": lambda: jnp.asarray(0.0)}
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"working": 60, "dead": (60, 62)}},
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=RegimeId,

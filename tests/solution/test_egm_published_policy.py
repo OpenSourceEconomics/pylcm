@@ -20,7 +20,7 @@ from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.solution import backward_induction
 from _lcm.utils.logging import get_logger
-from lcm import AgeGrid, LogSpacedGrid, Model
+from lcm import AgeGrid, DeterministicTransition, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import SIMULATION_POLICY, ArtifactRef
 from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
@@ -32,7 +32,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -48,14 +47,17 @@ def _two_period_bequest_model() -> Model:
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
-                regime_transitions=retirement_only.retirement_transitions(last_age=50)
+                regime_transitions=DeterministicTransition(
+                    func=retirement_only.next_regime_from_retirement
+                )
             ),
             "dead": bequest_dead,
         },
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
+        edges={"retirement": {"dead": 40}},
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
     )

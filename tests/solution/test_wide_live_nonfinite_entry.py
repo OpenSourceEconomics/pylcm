@@ -30,8 +30,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
@@ -189,15 +187,12 @@ def _build_model(
 ) -> Model:
     """A source entering the target's income process at several rare draws."""
     axis_names = tuple(f"draw_{index}" for index in range(_n_axes()))
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 20}},
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"target": StochasticTransition(func=_certain)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_certain)},
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{

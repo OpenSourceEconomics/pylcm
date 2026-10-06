@@ -21,7 +21,14 @@ from _lcm.execution.execution_plan import visible_device_ids
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import replay_period
 from lcm.solvers import GridSearch
@@ -33,10 +40,9 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _N_CONSUMPTION = 3
@@ -60,12 +66,11 @@ def _model(
 ) -> Model:
     """Hold the state-cell width at one to isolate action-width budget selection."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
+        edges={"working_life": {"dead": START_AGE}},
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
+                regime_transitions=DeterministicTransition(func=next_regime),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),

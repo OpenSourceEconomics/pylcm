@@ -11,12 +11,10 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.result_dataframe import _reorder_columns
 from lcm import (
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
@@ -33,8 +31,6 @@ from tests.collective_fixtures import (
     Work,
     make_couple_initial_conditions,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -192,13 +188,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
     the alphabetical order of the names disagree.
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_couple_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -218,11 +208,12 @@ def _make_reverse_alphabetical_collective_model() -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
     )
 
 
@@ -235,13 +226,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
     declares no stakeholders at all.
     """
     working = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_solo_regime, targets=("working", "retired")
-            ),
-            exits=("retired",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_solo_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -253,11 +238,12 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired},
         ages=AGES,
         regime_id_class=SoloRegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
     )
 
 
@@ -269,13 +255,7 @@ def _make_collective_model_with_colliding_state() -> Model:
     name of the column the wife's published value claims.
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_couple_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -295,11 +275,12 @@ def _make_collective_model_with_colliding_state() -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
     )
 
 
@@ -312,11 +293,9 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     never meet — they share nothing but the published frame.
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"couple_terminal": StochasticTransition(func=_probability_one)},
-            exits=("couple_terminal",),
-        ),
+        regime_transitions={
+            "couple_terminal": StochasticTransition(func=_probability_one)
+        },
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -337,11 +316,9 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         },
     )
     solo = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"solo_terminal": StochasticTransition(func=_probability_one)},
-            exits=("solo_terminal",),
-        ),
+        regime_transitions={
+            "solo_terminal": StochasticTransition(func=_probability_one)
+        },
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -353,7 +330,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _colliding_solo_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": couple,
             "solo": solo,
@@ -363,6 +340,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         ages=AGES,
         regime_id_class=MixedRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}, "solo": {"solo_terminal": 0}},
     )
 
 

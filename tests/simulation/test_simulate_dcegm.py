@@ -23,9 +23,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model, Phased, post_decision_lower_bound
+from lcm import AgeGrid, AgeRange, Model, Phased, post_decision_lower_bound
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
-from tests.test_models.graph import with_fixture_graph
 
 pytest.importorskip("lcm.solvers", reason="DC-EGM solver not yet implemented")
 
@@ -329,11 +328,17 @@ def _phase_variant_savings_model(n_periods: int) -> Model:
             ),
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": dcegm_variants.dead},
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges={
+            "retirement": {
+                "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                "dead": AgeRange(exclusive_stop=last_age),
+            }
+        },
     )
 
 

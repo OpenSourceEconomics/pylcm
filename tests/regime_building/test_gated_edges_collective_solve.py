@@ -36,6 +36,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -56,7 +57,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=True)
@@ -877,8 +877,19 @@ def test_full_ekl_topology_via_public_model_api():
     Wbar_f = [1.5, 5.5, 6]; V_single_f(0) = wage + 0.95*Wbar_f = [2.425, 7.225, 8.7].
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_full_topology_regimes(),
+        edges={
+            "single_f": {"married": 0, "single_f_p1": 0},
+            "single_m": {"married": 0, "single_m_p1": 0},
+            "single_f_p1": {"single_f_terminal": 1},
+            "single_m_p1": {"single_m_terminal": (0, 1)},
+            "married": {
+                "married_terminal": 1,
+                "single_f_terminal": 1,
+                "single_m_terminal": 1,
+            },
+        },
         ages=ages,
         regime_id_class=EKLRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},

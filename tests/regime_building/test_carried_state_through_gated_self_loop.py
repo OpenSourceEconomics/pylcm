@@ -44,6 +44,7 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Phased,
@@ -66,7 +67,6 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
-from tests.test_models.schedules import until_exit
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -124,9 +124,10 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 
 
 def _make_regimes() -> dict[str, Regime]:
+    exit_cell = StochasticTransition(func=_prob_exit_boundary)
     src = Regime(
-        regime_transitions=until_exit(
-            2,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
             law={
                 "src": ValueDependentTransition(
                     probability=StochasticTransition(func=_prob_stay),
@@ -140,9 +141,9 @@ def _make_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": StochasticTransition(func=_prob_exit_boundary),
+                "src_exit": exit_cell,
             },
-            exits=("src_exit",),
+            then={"src_exit": exit_cell},
         ),
         states={
             "wage": _WAGE,

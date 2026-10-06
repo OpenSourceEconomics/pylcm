@@ -48,7 +48,9 @@ from tests.solution.test_egm_solver import _model as egm_model
 from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 from tests.test_models.deterministic.base import dead, working_life
-from tests.test_models.deterministic.regression import working_life_transitions
+from tests.test_models.deterministic.regression import (
+    graph_bound_working_life_transitions,
+)
 from tests.test_nbegm_constraint_validation import _build_smooth_model
 
 
@@ -138,7 +140,7 @@ def test_process_regimes():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
-            regime_transitions=working_life_transitions(last_age=4)
+            regime_transitions=graph_bound_working_life_transitions(last_age=4)
         ),
         "dead": dead,
     }

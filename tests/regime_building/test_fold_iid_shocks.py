@@ -63,7 +63,6 @@ from lcm.transition import StochasticTransition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -470,10 +469,12 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
 
     wealth_grid = LinSpacedGrid(start=0.0, stop=10.0, n_points=3)
     period0 = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))},
-            exits=("terminal",),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))
+                }
+            }
         ),
         states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
         state_transitions={"wealth": {"terminal": lambda wealth: wealth}},
@@ -754,10 +755,12 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
     from lcm.transition import StochasticTransition  # noqa: PLC0415
 
     period0 = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))},
-            exits=("terminal",),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "terminal": StochasticTransition(func=lambda: jnp.asarray(1.0))
+                }
+            }
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -818,12 +821,12 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     the support is, so there is nothing about the routing left to disambiguate.
     """
     period0 = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("period0", "terminal")
-            ),
-            exits=("terminal",),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_next_regime, targets=("terminal",)
+                )
+            }
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -985,12 +988,12 @@ def test_coarse_self_transition_retains_the_self_continuation():
         return jnp.where(age < 1, jnp.int32(0), jnp.int32(1))
 
     stay = Regime(
-        regime_transitions=until_exit(
-            2,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
                 func=_next_self, targets=("stay", "done")
             ),
-            exits=("done",),
+            then=_SupportedDeterministicTransition(func=_next_self, targets=("done",)),
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1055,12 +1058,12 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
         return jnp.int32(0)
 
     stay = Regime(
-        regime_transitions=until_exit(
-            2,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
                 func=_next_self, targets=("stay", "done")
             ),
-            exits=("done",),
+            then=_SupportedDeterministicTransition(func=_next_self, targets=("done",)),
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -1103,12 +1106,12 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
         return jnp.int32(1)  # always "stay", never "alt"
 
     src = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_always_stay, targets=("src", "stay", "alt")
-            ),
-            exits=("stay", "alt"),
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=_always_stay, targets=("stay", "alt")
+                )
+            }
         ),
         states={"wage_shock": _shock(fold=False)},
         actions={"work": DiscreteGrid(category_class=Work)},

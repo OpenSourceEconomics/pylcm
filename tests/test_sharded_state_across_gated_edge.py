@@ -58,8 +58,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -216,14 +214,10 @@ def build_model(
         else StochasticTransition(func=_half_before_age_two)
     )
     solo = Regime(
-        regime_transitions=until_exit(
-            3,
-            law={
-                "solo": StochasticTransition(func=_all_before_age_two),
-                "dead": StochasticTransition(func=_none_before_age_two),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "solo": StochasticTransition(func=_all_before_age_two),
+            "dead": StochasticTransition(func=_none_before_age_two),
+        },
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -233,15 +227,11 @@ def build_model(
         },
     )
     pair = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "pair": StochasticTransition(func=_half_before_age_two),
-                "mate": leaving,
-                "dead": StochasticTransition(func=_half_from_age_one),
-            },
-            exits=("mate", "dead"),
-        ),
+        regime_transitions={
+            "pair": StochasticTransition(func=_half_before_age_two),
+            "mate": leaving,
+            "dead": StochasticTransition(func=_half_from_age_one),
+        },
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -254,14 +244,10 @@ def build_model(
         },
     )
     mate = Regime(
-        regime_transitions=until_exit(
-            3,
-            law={
-                "mate": StochasticTransition(func=_all_before_age_two),
-                "dead": StochasticTransition(func=_none_before_age_two),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "mate": StochasticTransition(func=_all_before_age_two),
+            "dead": StochasticTransition(func=_none_before_age_two),
+        },
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_level},
@@ -275,8 +261,14 @@ def build_model(
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
-    return with_fixture_graph(
+    pair_edges = {"pair": 0, "mate": (0, 1), "dead": (0, 1)}
+    return Model(
         regimes={"solo": solo, "pair": pair, "mate": mate, "dead": dead},
+        edges={
+            "solo": {"solo": (0, 1), "dead": (0, 1, 2)},
+            "pair": pair_edges | ({"solo": (0, 1)} if gated else {}),
+            "mate": {"mate": (0, 1), "dead": (0, 1, 2)},
+        },
         states={
             "x": DiscreteGrid(category_class=_Category),
             "level": DiscreteGrid(category_class=_Level),

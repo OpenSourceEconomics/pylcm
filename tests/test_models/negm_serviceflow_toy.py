@@ -24,11 +24,10 @@ bound: NEGM weakly dominates and approaches it as the brute grids refine.
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -50,8 +49,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_X = 8
 N_Z = 8
@@ -243,6 +240,12 @@ NEGM_SOLVER = NEGM(
 
 
 FINAL_AGE_ALIVE = 20 + (N_PERIODS - 2) * 5
+EDGES = {
+    "alive": {
+        "alive": AgeRange(exclusive_stop=FINAL_AGE_ALIVE),
+        "dead": AgeRange(exclusive_stop=FINAL_AGE_ALIVE + 5),
+    }
+}
 
 
 def _build_dead_regime() -> Regime:
@@ -262,13 +265,7 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -296,12 +293,13 @@ def build_negm_model() -> Model:
             no_adjustment=outer_unchanged,
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
         initial_nodes={20: "alive"},
+        edges=EDGES,
     )
 
 
@@ -317,23 +315,18 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "serviced_durable": serviced_durable_brute,
         },
         constraints={"feasible": feasible},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": FINAL_AGE_ALIVE},
         initial_nodes={20: "alive"},
+        edges=EDGES,
     )

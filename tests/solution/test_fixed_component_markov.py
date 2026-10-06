@@ -19,13 +19,11 @@ import pytest
 
 from _lcm.regime_building.fixed_components import _restricted_law
 from _lcm.regime_building.next_state import _DiscreteStochasticNextState
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     JointTransition,
@@ -53,8 +51,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -178,16 +174,10 @@ def _model(
         model_states = {"kind": DiscreteGrid(_Kind)}
         model_laws = {"kind": fixed_transition("kind")}
         functions = {"kind_health": _kind_health}
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    3,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("alive", "dead")
-                    ),
-                    exits=("dead",),
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
                     **states,
@@ -213,6 +203,7 @@ def _model(
             else ()
         ),
         initial_nodes={0: ("alive", "dead")},
+        edges={"alive": {"alive": (0, 1), "dead": (0, 1, 2)}},
     )
 
 
@@ -365,13 +356,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
             }
         )
         if terminal_carries
-        else until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
+        else DeterministicTransition(func=_next_regime),
         states=local_states,
         state_transitions=local_laws,
         functions={"utility": _code_utility},
@@ -383,13 +368,16 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         if terminal_carries
         else {"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         states=model_states,
         state_transitions=model_laws,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}}
+        if terminal_carries
+        else {"alive": {"alive": 0, "dead": (0, 1)}},
     )
     assert {"kind_health_rest", "kind_health_fixed"} <= model.user_regimes[
         "alive"
@@ -445,16 +433,10 @@ def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(
 def test_fixed_component_rejects_an_occupied_model_state_name():
     """A user state cannot alias the generated fixed coordinate."""
     with pytest.raises(RegimeInitializationError, match="kind_health_fixed"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "alive": Regime(
-                    regime_transitions=until_exit(
-                        1,
-                        law=_SupportedDeterministicTransition(
-                            func=_next_regime, targets=("alive", "dead")
-                        ),
-                        exits=("dead",),
-                    ),
+                    regime_transitions=DeterministicTransition(func=_next_regime),
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     state_transitions={
                         "kind_health": StochasticTransition(
@@ -478,6 +460,7 @@ def test_fixed_component_rejects_an_occupied_model_state_name():
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "alive"},
+            edges={"alive": {"dead": 0}},
         )
 
 
@@ -571,7 +554,7 @@ def test_fixed_component_transition_parameters_keep_their_public_names(
     named_params = {
         "alive": {"dead": transition_params} if per_target else transition_params
     }
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
                 regime_transitions=ByAge(
@@ -595,6 +578,7 @@ def test_fixed_component_transition_parameters_keep_their_public_names(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
     params = {"discount_factor": 0.5} | ({} if fixed else named_params)
     panel = (
@@ -657,7 +641,7 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
         ),
     }
     functions = {"utility": _two_code_utility}
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "first": Regime(
                 regime_transitions=ByAge(
@@ -694,6 +678,7 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
             sharded_states=("kind_health_fixed",) if sharded else ()
         ),
         initial_nodes={0: "first"},
+        edges={"first": {"middle": 0}, "middle": {"last": 1}},
     )
     first = np.repeat(np.arange(4), 4)
     other = np.tile(np.arange(4), 4)
@@ -739,7 +724,7 @@ def test_fixed_component_rejects_incoherent_handoff_laws(*, reset: bool) -> None
     states = {"kind_health": DiscreteGrid(_KindHealth)}
     functions = {"utility": _code_utility}
     with pytest.raises(RegimeInitializationError, match=r"group|fixed_component"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "first": Regime(
                     regime_transitions=ByAge(
@@ -776,6 +761,7 @@ def test_fixed_component_rejects_incoherent_handoff_laws(*, reset: bool) -> None
             ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
             regime_id_class=_CarrierRegimeId,
             initial_nodes={0: "first"},
+            edges={"first": {"middle": 0}, "middle": {"last": 1}},
         )
 
 
@@ -785,16 +771,10 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
 ) -> None:
     """Generated state names cannot occupy user constraint or categorical slots."""
     with pytest.raises(RegimeInitializationError, match="kind_health_fixed"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "alive": Regime(
-                    regime_transitions=until_exit(
-                        1,
-                        law=_SupportedDeterministicTransition(
-                            func=_next_regime, targets=("alive", "dead")
-                        ),
-                        exits=("dead",),
-                    ),
+                    regime_transitions=DeterministicTransition(func=_next_regime),
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     state_transitions={
                         "kind_health": StochasticTransition(
@@ -816,6 +796,7 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "alive"},
+            edges={"alive": {"dead": 0}},
         )
 
 
@@ -838,16 +819,10 @@ def test_fixed_component_ignores_object_codes_for_a_wholly_absent_cohort() -> No
 def test_fixed_component_rejects_cross_state_identity_at_model_level() -> None:
     """A law named for another state cannot establish this state's group identity."""
     with pytest.raises(RegimeInitializationError, match="names must match"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "alive": Regime(
-                    regime_transitions=until_exit(
-                        2,
-                        law=_SupportedDeterministicTransition(
-                            func=_next_regime, targets=("alive", "dead")
-                        ),
-                        exits=("dead",),
-                    ),
+                    regime_transitions=DeterministicTransition(func=_next_regime),
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     functions={"utility": _code_utility},
                 ),
@@ -866,12 +841,13 @@ def test_fixed_component_rejects_cross_state_identity_at_model_level() -> None:
             ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "alive"},
+            edges={"alive": {"alive": 0, "dead": (0, 1)}},
         )
 
 
 def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
     """Eager sharded reconstruction preserves values before dropping the state."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
                 regime_transitions=ByAge(
@@ -896,6 +872,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(sharded_states=("kind_health_fixed",)),
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
     panel = (
         model.simulate(
@@ -1052,7 +1029,7 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
     functions: dict[str, Callable[..., object]] = {"utility": _next_output_utility}
     if through_helper:
         functions["landing"] = _next_output_copy
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(
@@ -1083,6 +1060,7 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_NextOutputRegimeId,
         initial_nodes={0: "source"},
+        edges={"source": {"end": 0}},
     )
     assert _next_output_parameter_leaves(value=model.get_params_template()) == []
     params = {"discount_factor": 0.5}
@@ -1224,13 +1202,16 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
     regimes["end"] = Regime(
         regime_transitions=None, states=states, functions={"utility": utility}
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=last_period, step="Y"),
         regime_id_class=_ConsumerRegimeId
         if kind == "probability"
         else _NextOutputRegimeId,
         initial_nodes={0: "source"},
+        edges={"source": {"middle": 0}, "middle": {"end": 1}}
+        if kind == "probability"
+        else {"source": {"end": 0}},
     )
     assert _next_output_parameter_leaves(value=model.get_params_template()) == []
     s = np.repeat(np.arange(4, dtype=np.int32), 4)

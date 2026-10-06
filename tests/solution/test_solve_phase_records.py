@@ -7,13 +7,11 @@ from typing import Any, cast
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import backward_induction
 from benchmarks.warm_solve_phases import CallPhases, parse_phase_records
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -24,8 +22,6 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PHASES = (
     "params_validation",
@@ -85,13 +81,7 @@ def _terminal_utility(*, wealth: float) -> float:
 def get_model(*, budget_bytes: int | None = None) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("acting", "done")
-            ),
-            exits=("done",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -105,8 +95,9 @@ def get_model(*, budget_bytes: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"acting": acting, "done": done},
+        edges={"acting": {"acting": (0, 1), "done": (0, 1, 2)}},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),

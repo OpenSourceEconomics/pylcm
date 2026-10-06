@@ -19,8 +19,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 
@@ -60,17 +58,14 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 @pytest.fixture
 def model() -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21), "other": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={
-                        "target": StochasticTransition(func=_p_target),
-                        "other": StochasticTransition(func=_p_other),
-                    },
-                    exits=("target", "other"),
-                ),
+                regime_transitions={
+                    "target": StochasticTransition(func=_p_target),
+                    "other": StochasticTransition(func=_p_other),
+                },
                 states={"wealth": _WEALTH},
                 state_transitions={
                     "shock": {"target": _enter_shock},

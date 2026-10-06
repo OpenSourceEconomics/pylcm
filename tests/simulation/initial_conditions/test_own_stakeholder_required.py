@@ -27,6 +27,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Model,
     Regime,
     StochasticTransition,
     categorical,
@@ -49,7 +50,6 @@ from tests.regime_building.test_collective_regime_simulate import (
     _prob_one,
     _u_zero_collective,
 )
-from tests.test_models.graph import with_fixture_graph
 
 # The three wage nodes the dissolution miniature is solved on. Its participation
 # mask empties at wage 2 alone, so exactly the middle subject dissolves.
@@ -86,11 +86,17 @@ def dissolution_model_and_solution():
     `married` carries the stakeholders `("f", "m")` and a dissolution edge whose
     legs send the wife to `single_f` and the husband to `single_m`.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     return model, solution
@@ -103,11 +109,12 @@ def consent_model_and_solution():
     `single_f` is a singleton whose gated edge into the collective
     `married_terminal` declares one leg, and that leg carries no role.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_consent_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
         initial_nodes={0: "single_f"},
+        edges={"single_f": {"married_terminal": 0, "single_f_terminal": 0}},
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off")
     return model, solution
@@ -304,11 +311,18 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
     reach it, so demanding a seed on its account refuses a well specified
     model over a column that would go unread.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_unreachable_role_routing_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
         initial_nodes={0: ("alone", "married")},
+        edges={
+            "alone": {"alone_terminal": 0},
+            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
@@ -399,11 +413,18 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
             )
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"prelude": prelude, **_shift_dissolution_one_age()},
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
         initial_nodes={0: "prelude"},
+        edges={
+            "prelude": {"married": 0},
+            "married": {"married_ir": 1, "single_f": 1, "single_m": 1},
+            "married_ir": {"married_terminal": 2},
+            "single_f": {"single_f_terminal": 2},
+            "single_m": {"single_m_terminal": 2},
+        },
     )
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     with pytest.raises(InvalidInitialConditionsError, match="prelude"):

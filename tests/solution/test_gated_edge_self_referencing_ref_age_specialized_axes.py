@@ -33,8 +33,6 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -168,30 +166,26 @@ def _build_model(*, reference_regime: str) -> Model:
         else {"m_balance": _same_balance}
     )
     saver = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "saver": StochasticTransition(func=_probability_of_staying_put),
-                "account": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_of_opening),
-                    gate=_clears_the_hurdle,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity",
-                                projection={"principal": _same_balance},
-                            )
+        regime_transitions={
+            "saver": StochasticTransition(func=_probability_of_staying_put),
+            "account": ValueDependentTransition(
+                probability=StochasticTransition(func=_probability_of_opening),
+                gate=_clears_the_hurdle,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity",
+                            projection={"principal": _same_balance},
                         )
-                    },
-                    gate_references={
-                        "ref_value": ProjectedRegimeValue(
-                            regime=reference_regime, projection=projection
-                        )
-                    },
-                ),
-            },
-            exits=("account",),
-        ),
+                    )
+                },
+                gate_references={
+                    "ref_value": ProjectedRegimeValue(
+                        regime=reference_regime, projection=projection
+                    )
+                },
+            ),
+        },
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
@@ -214,7 +208,7 @@ def _build_model(*, reference_regime: str) -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "saver": saver,
             "account": account,
@@ -224,6 +218,7 @@ def _build_model(*, reference_regime: str) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "saver"},
+        edges={"saver": {"saver": 0, "account": (0, 1), "annuity": (0, 1)}},
     )
 
 

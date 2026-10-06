@@ -20,10 +20,9 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
-from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from lcm import (
     AgeGrid,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -55,8 +54,6 @@ from tests.solution.test_fixed_component_markov import (
 from tests.solution.test_fixed_component_markov import (
     _model as _fixed_component_model,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -154,16 +151,6 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _RegimeId.work, _RegimeId.dead)
 
 
-def _work_dead_transition() -> ByAge:
-    return until_exit(
-        3,
-        law=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("work", "dead")
-        ),
-        exits=("dead",),
-    )
-
-
 def _model(
     *,
     pref_law: object = None,
@@ -190,10 +177,11 @@ def _model(
     if typed_health:
         work_states["health"] = DiscreteGrid(_Health)
         work_laws["health"] = StochasticTransition(func=_next_health)
-    return with_fixture_graph(
+    return Model(
+        edges={"work": {"work": (0, 1), "dead": (0, 1, 2)}},
         regimes={
             "work": Regime(
-                regime_transitions=_work_dead_transition(),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states=work_states,
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 functions={
@@ -242,30 +230,26 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
     consumption = {"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)}
     entry_law = StochasticTransition(func=_draw_pref_type)
     regime_id = _ReentryRegimeId if drop_and_reenter else _EntryRegimeId
-    work_targets = ("work", "gap", "dead") if drop_and_reenter else ("work", "dead")
+    edges: dict[str, dict[str, int | tuple[int, ...]]] = {
+        "young": {"work": 0},
+        "work": {"work": 1, "gap": 1, "dead": (1, 2)}
+        if drop_and_reenter
+        else {"work": 1, "dead": (1, 2)},
+    }
+    if drop_and_reenter:
+        edges["gap"] = {"dead": 2}
     to_work = _reentry_to_work if drop_and_reenter else _entry_to_work
     next_work_regime = _work_to_gap if drop_and_reenter else _work_to_work
     regimes = {
         "young": Regime(
-            regime_transitions=until_exit(
-                1,
-                law=_SupportedDeterministicTransition(func=to_work, targets=("work",)),
-                exits=("work",),
-            ),
+            regime_transitions=DeterministicTransition(func=to_work),
             actions=consumption,
             functions={"utility": _type_free_young_utility},
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "pref_type": entry_law},
         ),
         "work": Regime(
-            regime_transitions=until_exit(
-                3,
-                law=_SupportedDeterministicTransition(
-                    func=next_work_regime, targets=work_targets
-                ),
-                exits=("dead",),
-                start=1,
-            ),
+            regime_transitions=DeterministicTransition(func=next_work_regime),
             states={"pref_type": DiscreteGrid(_PrefType)},
             actions=consumption,
             functions={"utility": _work_utility},
@@ -276,14 +260,7 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
             },
         ),
         "gap": Regime(
-            regime_transitions=until_exit(
-                3,
-                law=_SupportedDeterministicTransition(
-                    func=to_work, targets=("work", "dead")
-                ),
-                exits=("dead",),
-                start=2,
-            ),
+            regime_transitions=DeterministicTransition(func=to_work),
             actions=consumption,
             functions={"utility": _type_free_young_utility},
             constraints={"feasible": _feasible},
@@ -295,8 +272,9 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
     }
     if not drop_and_reenter:
         del regimes["gap"]
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
+        edges=edges,
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=regime_id,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -499,8 +477,9 @@ def test_same_period_reference_is_an_unsupported_channel():
 
 def test_gated_edge_is_an_unsupported_channel():
     """A gated edge touching a carrier refuses the coordinate."""
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_gated_self_loop_regimes(),
+        edges={"src": {"src": 0, "src_fallback": 0, "src_exit": (0, 1)}},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GatedRegimeId,
         initial_nodes={0: "src"},

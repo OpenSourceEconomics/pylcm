@@ -84,8 +84,6 @@ from lcm.typing import (
 )
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -1165,11 +1163,17 @@ class DissolutionRegimeId:
 
 def _make_dissolution_model() -> Model:
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    return with_fixture_graph(
+    return Model(
         regimes=_make_dissolution_regimes(),
         ages=ages,
         regime_id_class=DissolutionRegimeId,
         initial_nodes={ages.exact_values[0]: "married"},
+        edges={
+            "married": {"married_ir": 0, "single_f": 0, "single_m": 0},
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1)},
+        },
     )
 
 
@@ -1582,9 +1586,10 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     `src_exit` as reachable — the gated edge's target must be one of the
     regime's declared transition targets).
     """
+    exit_cell = StochasticTransition(func=_prob_exit_boundary)
     src = Regime(
-        regime_transitions=until_exit(
-            2,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=2,
             law={
                 "src": ValueDependentTransition(
                     probability=StochasticTransition(func=_prob_stay),
@@ -1598,9 +1603,9 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
                         )
                     },
                 ),
-                "src_exit": StochasticTransition(func=_prob_exit_boundary),
+                "src_exit": exit_cell,
             },
-            exits=("src_exit",),
+            then={"src_exit": exit_cell},
         ),
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},

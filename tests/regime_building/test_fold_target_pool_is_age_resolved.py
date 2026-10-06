@@ -33,8 +33,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=2)
@@ -135,9 +133,7 @@ def _plain_bonus(wealth: ContinuousState) -> FloatND:
 def _build_model() -> Model:
     """Build a worker whose `bonus` helper is bound per age."""
     worker = Regime(
-        regime_transitions=until_exit(
-            3, law={"dead": StochasticTransition(func=_prob_one)}, exits=("dead",)
-        ),
+        regime_transitions={"dead": StochasticTransition(func=_prob_one)},
         states={"wealth": _WEALTH},
         state_transitions={"wealth": {"dead": _keep_wealth}},
         functions={
@@ -150,8 +146,9 @@ def _build_model() -> Model:
         states={"wealth": _WEALTH},
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"worker": worker, "dead": dead},
+        edges={"worker": {"dead": (0, 1, 2)}},
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "worker"},

@@ -17,11 +17,9 @@ investment, and the branch on dense grids, and is the agreement oracle.
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
@@ -42,7 +40,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy as smooth
-from tests.test_models.schedules import until_exit
 
 # Flat utility gain from holding insurance — makes the branch worth buying.
 INSURANCE_UTILITY = 0.15
@@ -115,13 +112,7 @@ def build_model(
         "illiquid_investment": illiquid_investment_grid,
         "buy_private": DiscreteGrid(category_class=BuyPrivate),
     }
-    transitions = until_exit(
-        final_age_alive + 5,
-        law=_SupportedDeterministicTransition(
-            func=smooth.next_regime, targets=("alive", "dead")
-        ),
-        exits=("dead",),
-    )
+    transitions = DeterministicTransition(func=smooth.next_regime)
     if variant == "brute":
         # Same oracle correction as the smooth toy: reaching `s'` through an
         # investment action would let the oracle land on only 3 of the 15 outer

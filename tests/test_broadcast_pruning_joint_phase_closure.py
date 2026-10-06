@@ -44,8 +44,6 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -247,7 +245,7 @@ def _phased_model(
     *, health_law: object = _PHASED_HEALTH_LAW_FORMS["phased-keyed"]
 ) -> Model:
     """`health` and `endowment` promoted to model-level states."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": _working_regime(health_law=health_law),
             "retired": _retired_regime(),
@@ -256,6 +254,7 @@ def _phased_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
     )
 
 
@@ -268,7 +267,7 @@ def _regime_level_model(
     model-level slot first, so the control declares the promoted state ahead of
     `wealth` to compare value arrays without transposing them.
     """
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": _working_regime(
                 health_law=health_law,
@@ -281,6 +280,7 @@ def _regime_level_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
     )
 
 
@@ -334,17 +334,13 @@ def test_declaration_placement_leaves_the_entry_law_inputs_unchanged() -> None:
 
 def _couple_model() -> Model:
     """One source, two terminal targets, each keeping a different state."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "widow": StochasticTransition(func=_even_split),
-                        "widower": StochasticTransition(func=_even_split),
-                    },
-                    exits=("widow", "widower"),
-                ),
+                regime_transitions={
+                    "widow": StochasticTransition(func=_even_split),
+                    "widower": StochasticTransition(func=_even_split),
+                },
                 states={"wealth": _WEALTH_GRID},
                 actions={"consumption": _CONSUMPTION_GRID},
                 functions={"utility": _utility_from_consumption},
@@ -392,6 +388,7 @@ def _couple_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"widow": 0, "widower": 0}},
     )
 
 
@@ -504,12 +501,13 @@ _CHAIN_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 def _chain_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes=_chain_regimes(),
         states=_CHAIN_MODEL_STATES,
         ages=_CHAIN_AGES,
         regime_id_class=_ChainRegimeId,
         initial_nodes={0: "early"},
+        edges={"early": {"middle": 0}, "middle": {"late": 1}},
     )
 
 

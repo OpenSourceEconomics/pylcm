@@ -13,9 +13,6 @@ import pytest
 import _lcm.simulation.transitions as transitions_module
 import lcm._solver_api.entries as entries_module
 from _lcm.execution.core_program import CoreProgram
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.program_types import DECISION_PROGRAM, ROUTE_PROGRAM
@@ -24,6 +21,7 @@ from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
 from _lcm.solution.retained_buffers import retained_solution_buffers
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
@@ -33,7 +31,6 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.solution.test_solution_result import _small_grid_search_inputs
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -61,12 +58,10 @@ def _lifecycle_next_regime() -> ScalarInt:
 
 
 def _stateful_target_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_lifecycle_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_lifecycle_next_regime),
                 functions={"utility": _lifecycle_utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
@@ -81,6 +76,7 @@ def _stateful_target_model() -> Model:
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
 
 

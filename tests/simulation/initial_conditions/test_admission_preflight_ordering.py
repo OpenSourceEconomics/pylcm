@@ -14,9 +14,6 @@ import pytest
 
 import _lcm.simulation.initial_conditions as initial_module
 from _lcm.params.processing import process_params
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -29,6 +26,7 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     categorical,
@@ -51,7 +49,6 @@ from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constrained_asymmetric_model,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_transition_checks import _model_with_state_probs
 
 
@@ -327,10 +324,8 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         name: UserRegime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(
-                        start=0, exclusive_stop=1
-                    ): _SupportedDeterministicTransition(
-                        func=next_regime, targets=("dead",)
+                    AgeRange(start=0, exclusive_stop=1): DeterministicTransition(
+                        func=next_regime
                     )
                 }
             ),
@@ -350,11 +345,12 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         states=states,
         functions={"utility": terminal_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: ("first", "second")},
+        edges={"first": {"dead": 0}, "second": {"dead": 0}},
     )
     armed = True
     with pytest.raises(InvalidInitialConditionsError) as caught:

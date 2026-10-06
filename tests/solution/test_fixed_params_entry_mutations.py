@@ -14,11 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LogNormalIIDProcess,
     Model,
@@ -28,7 +26,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -104,11 +101,11 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
     weighted expectation rather than an unweighted node average.
     """
     transition = (
-        _SupportedDeterministicTransition(func=target_id, targets=("target",))
+        DeterministicTransition(func=target_id)
         if coarse
         else {"target": StochasticTransition(func=one_probability)}
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions=transition,
@@ -126,6 +123,7 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     np.testing.assert_allclose(
         source_value(model=model, params={"discount_factor": 1.0}),

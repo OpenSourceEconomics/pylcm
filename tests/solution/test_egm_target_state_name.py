@@ -26,6 +26,7 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
     categorical,
 )
@@ -39,8 +40,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.98
@@ -131,15 +130,10 @@ def _model(*, solver, n_consumption=14):
             "estate": {"gone": next_estate},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "alive": StochasticTransition(func=prob_survive),
-                "gone": StochasticTransition(func=prob_gone),
-            },
-            exits=("gone",),
-            stays=("alive",),
-        ),
+        regime_transitions={
+            "alive": StochasticTransition(func=prob_survive),
+            "gone": StochasticTransition(func=prob_gone),
+        },
         functions={"utility": utility, "savings": savings},
         solver=solver,
         **(
@@ -161,9 +155,10 @@ def _model(*, solver, n_consumption=14):
         functions={"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        edges={"alive": {"alive": (0, 1), "gone": 2}},
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )

@@ -21,9 +21,6 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.program_types import (
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
@@ -36,6 +33,7 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     InvariantBlockSchedule,
     LinSpacedGrid,
@@ -55,7 +53,6 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models import independent_types
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
 
@@ -101,12 +98,11 @@ def test_simulation_preserves_nested_fixed_parameters(
     if subject_sharding and jax.local_device_count() < 2:
         pytest.skip("requires two actual devices for subject sharding")
     grid = LinSpacedGrid(start=0, stop=2, n_points=3)
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "working": UserRegime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=lambda: independent_types.RegimeId.terminal,
-                    targets=("terminal",),
+                regime_transitions=DeterministicTransition(
+                    func=lambda: independent_types.RegimeId.terminal
                 ),
                 states={
                     "wealth": grid,
@@ -153,6 +149,7 @@ def test_simulation_preserves_nested_fixed_parameters(
             ),
             axis_widths={"subject": 2, "action_product": 2},
         ),
+        edges={"working": {"terminal": 0}},
     )
     params: UserParams = {"working": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = None if combined else model.solve(params=params, log_level="off")
@@ -216,15 +213,13 @@ def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
 
 def test_user_subject_width_name_remains_an_economic_action() -> None:
     """A legal user action cannot be consumed as an internal static tile width."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": UserRegime(
                 regime_transitions=ByAge(
                     cases={
-                        AgeRange(
-                            start=0, exclusive_stop=1
-                        ): _SupportedDeterministicTransition(
-                            func=_width_collision_next_regime, targets=("done",)
+                        AgeRange(start=0, exclusive_stop=1): DeterministicTransition(
+                            func=_width_collision_next_regime
                         )
                     }
                 ),
@@ -244,6 +239,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(

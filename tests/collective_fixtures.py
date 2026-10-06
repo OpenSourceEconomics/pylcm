@@ -25,14 +25,10 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -41,8 +37,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, IntND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Nested `{regime: {function: {parameter: value}}}` params, as `solve` takes them.
 type ParamsDict = dict[str, dict[str, dict[str, float]]]
@@ -130,13 +124,7 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_couple_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -152,11 +140,12 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
     )
     return model, _couple_params()
 
@@ -186,13 +175,7 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_couple_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_couple_regime),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -210,11 +193,12 @@ def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
             )
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
     )
     return model, _couple_params()
 
@@ -237,13 +221,7 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
 
     """
     shocked = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_shock_regime, targets=("shocked", "shocked_terminal")
-            ),
-            exits=("shocked_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_shock_regime),
         states={"wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _shock_utility},
@@ -252,11 +230,12 @@ def make_folding_singleton_model() -> tuple[Model, ParamsDict]:
         regime_transitions=None,
         functions={"utility": _fold_terminal_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
         initial_nodes={0: "shocked"},
+        edges={"shocked": {"shocked_terminal": 0}},
     )
     params: ParamsDict = {
         "shocked": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},
@@ -282,13 +261,7 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
 
     """
     return {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_couple_regime, targets=("couple_terminal",)
-                )
-            }
-        ),
+        "regime_transitions": DeterministicTransition(func=_next_couple_regime),
         "states": {"wage_shock": FOLDED_SHOCK},
         "actions": {"work": DiscreteGrid(category_class=Work)},
         "functions": {
@@ -303,8 +276,8 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
     """Return the regimes of a model whose collective source declares a fold.
 
     Pass straight to `Model(regimes=..., ages=AGES,
-    regime_id_class=CoupleRegimeId)`, which is where the combination is
-    rejected.
+    regime_id_class=CoupleRegimeId, edges={"couple": {"couple_terminal": 0}})`,
+    which is where the combination is rejected.
 
     Returns:
         Dict of regime names to regimes: the collective source `couple` built

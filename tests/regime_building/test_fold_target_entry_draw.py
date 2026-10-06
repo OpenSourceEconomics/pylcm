@@ -12,13 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -28,7 +26,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
@@ -73,9 +70,7 @@ def _build_model(*, fold: bool) -> Model:
     start = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_bonus, targets=("bonus",)
-                )
+                AgeRange(exclusive_stop=1): DeterministicTransition(func=_next_bonus)
             }
         ),
         states={"wealth": WEALTH},
@@ -86,8 +81,8 @@ def _build_model(*, fold: bool) -> Model:
     bonus = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=_next_terminal, targets=("terminal",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=_next_terminal
                 )
             }
         ),
@@ -108,8 +103,9 @@ def _build_model(*, fold: bool) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"start": start, "bonus": bonus, "terminal": terminal},
+        edges={"start": {"bonus": 0}, "bonus": {"terminal": 1}},
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "start"},

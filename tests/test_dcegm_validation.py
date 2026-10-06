@@ -11,12 +11,8 @@ import dataclasses
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -57,11 +53,10 @@ from tests.test_models.deterministic import (
     retirement_only,
 )
 from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_PERIODS = 3
 LAST_AGE = 40 + (N_PERIODS - 1) * 10
+RETIREMENT_EDGES = {"retirement": {"retirement": 40, "dead": (40, 50)}}
 
 
 def _build_model(
@@ -70,12 +65,13 @@ def _build_model(
     config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
@@ -158,13 +154,14 @@ def _utility_reading_kind(*, consumption: ContinuousAction, kind: ScalarInt) -> 
 def _build_with_model_level_sharded_pruned() -> Model:
     """The DCEGM regime never reads the sharded state, so it is pruned there."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": VALID, "dead": dead},
         states={"kind": DiscreteGrid(category_class=_ShardedKind)},
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
@@ -178,20 +175,21 @@ def _build_with_model_level_sharded_used() -> Model:
             "kind": fixed_transition("kind"),
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": dead},
         states={"kind": DiscreteGrid(category_class=_ShardedKind)},
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
 def _build_with_regime_level_sharded_terminal() -> Model:
     """A distributed state is declared regime-level on the terminal target."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={
             "retirement": VALID,
             "dead": dead.replace(
@@ -206,6 +204,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
@@ -357,15 +356,8 @@ CASES = {
     ),
     "regime_transition_cliff_in_wealth": (
         lambda: VALID.replace(
-            regime_transitions=ByAge.until(
-                stop_age_exclusive=LAST_AGE,
-                law=_SupportedDeterministicTransition(
-                    func=_regime_transition_with_wealth_cliff,
-                    targets=("retirement", "dead"),
-                ),
-                then=_SupportedDeterministicTransition(
-                    func=_regime_transition_with_wealth_cliff, targets=("dead",)
-                ),
+            regime_transitions=DeterministicTransition(
+                func=_regime_transition_with_wealth_cliff
             )
         ),
         "regime transition function.*discontinuous",
@@ -622,7 +614,7 @@ def _three_regime_model_with_brute_worker(
     """Model with a brute-force worker regime next to a DC-EGM retirement regime."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
         edges={
             "working_life": {
                 "dead": tuple(ages.exact_values[:-1]),
@@ -645,9 +637,7 @@ def _three_regime_model_with_brute_worker(
                 regime_transitions=working_life_transitions(last_age=last_age)
             ),
             "retirement": PORTABLE_DCEGM_RETIREMENT_FULL.replace(
-                regime_transitions=until_exit(
-                    last_age, law=retirement_transition, exits=("dead",)
-                ),
+                regime_transitions=retirement_transition,
             ),
             "dead": dead,
         },
@@ -658,11 +648,10 @@ def _three_regime_model_with_brute_worker(
 
 
 def test_granular_transition_excluding_brute_regime_passes():
-    """Declared reachability narrows the target-compatibility check.
+    """Declared edges narrow the target-compatibility check.
 
-    A granular regime transition declares its key set as the reachable
-    targets; regimes outside it are structurally unreachable. A DC-EGM
-    regime whose declared targets are itself and a terminal regime may
+    Regimes the graph gives no edge into are structurally unreachable. A
+    DC-EGM regime whose edges lead only to itself and a terminal regime may
     therefore coexist with a brute-force non-terminal regime it never
     transitions into (the brute regime targeting the DC-EGM regime is
     allowed in that direction).
@@ -679,8 +668,8 @@ def test_granular_transition_excluding_brute_regime_passes():
 def test_coarse_transition_reaching_brute_regime_raises():
     """A declared brute-force non-terminal target fails target compatibility.
 
-    The same model fails the check once the DC-EGM regime's transition also
-    declares the brute-force `working_life` regime as a target.
+    The same model fails the check once the graph also gives the DC-EGM regime
+    an edge into the brute-force `working_life` regime.
     """
     with pytest.raises(ModelInitializationError, match="GridSearch"):
         _three_regime_model_with_brute_worker(
@@ -728,7 +717,7 @@ def test_non_dcegm_non_terminal_target_raises():
         ModelInitializationError,
         match="non-terminal target of a DCEGM regime must itself use the DCEGM",
     ):
-        with_fixture_graph(
+        Model(
             edges={
                 "working_life": {
                     "working_life": (40,),

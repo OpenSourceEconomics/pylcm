@@ -19,11 +19,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -48,8 +46,6 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -282,13 +278,7 @@ def _health_insurance_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
@@ -318,11 +308,12 @@ def _health_insurance_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
         initial_nodes={40: "working_life"},
+        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
     )
 
 
@@ -368,13 +359,7 @@ def _means_test_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -400,11 +385,12 @@ def _means_test_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
         initial_nodes={40: "working_life"},
+        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
     )
 
 
@@ -468,14 +454,10 @@ def _per_target_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "working_life": StochasticTransition(func=_stay_prob),
-                "dead": StochasticTransition(func=_death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working_life": StochasticTransition(func=_stay_prob),
+            "dead": StochasticTransition(func=_death_prob),
+        },
         actions={
             "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
@@ -512,11 +494,12 @@ def _per_target_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": bequest},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
         initial_nodes={40: "working_life"},
+        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
     )
 
 
@@ -563,13 +546,7 @@ def _phased_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -601,11 +578,12 @@ def _phased_law_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
         initial_nodes={40: "working_life"},
+        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
     )
 
 
@@ -650,13 +628,7 @@ def _chained_law_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
@@ -686,11 +658,12 @@ def _chained_law_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
         initial_nodes={40: "working_life"},
+        edges={"working_life": {"working_life": (40, 50), "dead": (40, 50, 60)}},
     )
 
 

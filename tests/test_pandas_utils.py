@@ -18,12 +18,11 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.processing import broadcast_to_template
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     JointTransition,
     LinSpacedGrid,
@@ -41,9 +40,7 @@ from tests.simulation.initial_conditions._models import (
 from tests.test_models.basic_discrete import (
     Health,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
-from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -174,19 +171,18 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         return 0.0
 
     a = UserRegime(
-        regime_transitions=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("dead",)
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": _dead_utility})
-    m = with_fixture_graph(
+    m = Model(
         regimes={"a": a, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=_RId,
         initial_nodes={25: "a"},
+        edges={"a": {"dead": AgeRange(exclusive_stop=75)}},
     )
     ages = m.ages.exact_values
     sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
@@ -1130,13 +1126,8 @@ def test_convert_series_per_target_transition() -> None:
             "wealth": _next_wealth,
         },
         functions={"utility": _utility},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
-                targets=("working", "retired"),
-            ),
-            exits=("retired",),
+        regime_transitions=DeterministicTransition(
+            func=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working)
         ),
     )
     retired = UserRegime(
@@ -1147,11 +1138,12 @@ def test_convert_series_per_target_transition() -> None:
         },
         functions={"utility": _utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "working"},
+        edges={"working": {"working": 0, "retired": (0, 1)}},
     )
 
     index = pd.MultiIndex.from_tuples(
@@ -1240,13 +1232,8 @@ def test_convert_series_structured_derived_categoricals() -> None:
         return wealth
 
     regime_a = UserRegime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
-                targets=("regime_a", "regime_b"),
-            ),
-            exits=("regime_b",),
+        regime_transitions=DeterministicTransition(
+            func=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a)
         ),
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
@@ -1259,11 +1246,12 @@ def test_convert_series_structured_derived_categoricals() -> None:
         functions={"utility": func_b, "derived": _derived_b},
         derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceB)},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "regime_a"},
+        edges={"regime_a": {"regime_b": 0}},
     )
 
     # "derived" has 2 outcomes in regime_a (_ChoiceA: x,y) and 3 in
@@ -1298,13 +1286,8 @@ def test_convert_series_runtime_grid_param() -> None:
         dead: ScalarInt
 
     alive = UserRegime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
-                targets=("alive", "dead"),
-            ),
-            exits=("dead",),
+        regime_transitions=DeterministicTransition(
+            func=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive)
         ),
         states={"wealth": IrregSpacedGrid(n_points=4)},
         state_transitions={"wealth": lambda wealth: wealth},
@@ -1315,11 +1298,12 @@ def test_convert_series_runtime_grid_param() -> None:
         states={"wealth": IrregSpacedGrid(n_points=4)},
         functions={"utility": lambda wealth: wealth},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
 
     sr = pd.Series([1.0, 2.0, 5.0, 10.0])
@@ -1430,13 +1414,8 @@ def test_convert_series_cross_grid_transition() -> None:
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": lambda health, wealth: wealth + health},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
-                targets=("pre65", "post65"),
-            ),
-            exits=("post65",),
+        regime_transitions=DeterministicTransition(
+            func=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65)
         ),
     )
     post65 = UserRegime(
@@ -1447,11 +1426,12 @@ def test_convert_series_cross_grid_transition() -> None:
         },
         functions={"utility": lambda health, wealth: wealth + health},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"pre65": pre65, "post65": post65},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "pre65"},
+        edges={"pre65": {"post65": 0}},
     )
 
     # Cross-grid transition probs: 3 source states → 2 target states

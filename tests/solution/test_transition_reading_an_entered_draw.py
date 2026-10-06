@@ -26,8 +26,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts symmetric nodes on `(0, 1, 2)`,
 # so the draw has mean one whatever weights the discretization assigns them.
@@ -71,14 +69,11 @@ def _next_wealth_via_helper(scaled: ScalarFloat) -> ScalarFloat:
 
 
 def _build(*, functions, next_wealth) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"wealth": {"target": next_wealth}},
                 functions=functions,
             ),
@@ -135,14 +130,11 @@ _RUNTIME_SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False)
 
 def _build_reading_a_runtime_draw() -> Model:
     """Both regimes carry the same process, whose law arrives at runtime."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"shock": _RUNTIME_SHOCK},
                 state_transitions={"wealth": {"target": _next_wealth_from_draw}},
                 functions={"utility": _shock_utility},

@@ -26,20 +26,17 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
+    Model,
     Phased,
     Regime,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -95,13 +92,7 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulated(new_stock=_new_stock):
     live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions={"stock": _carry_new_stock},
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -114,12 +105,13 @@ def _simulated(new_stock=_new_stock):
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _flat_utility},
     ).replace()
-    model = with_fixture_graph(
+    model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="transition-dependent target",
         initial_nodes={0: "live"},
+        edges={"live": {"live": 0, "last": (0, 1)}},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     return model.simulate(

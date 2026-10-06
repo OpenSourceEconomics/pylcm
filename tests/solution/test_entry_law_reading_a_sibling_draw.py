@@ -30,8 +30,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Symmetric nodes on `(0, 1, 2)`, so the draw has mean one whatever weights the
 # discretization assigns them.
@@ -86,14 +84,10 @@ def model(request: pytest.FixtureRequest) -> Model:
         functions["scaled_draw"] = _scaled_draw
         income_law = _income_from_helper
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"income": {"target": income_law}},
                 functions=functions,
             ),
@@ -106,6 +100,7 @@ def model(request: pytest.FixtureRequest) -> Model:
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 
@@ -150,14 +145,10 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
     carried across and parameterized at solve time, but nothing reads `next_noise`,
     so it has no bearing on what the dependent law resolves against.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 states={"noise": _RUNTIME_NOISE},
                 state_transitions={"wealth": {"target": _wealth_from_fixed_draw}},
                 functions={"utility": _utility_reading_the_noise},
@@ -175,6 +166,7 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     V = model.solve(
@@ -222,14 +214,10 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
     two income nodes and hand that spread to the risk transform, which a
     power-mean certainty equivalent prices strictly lower.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"income": {"target": _income_between_two_nodes}},
                 functions={"utility": _no_utility},
                 certainty_equivalent=PowerMean(),
@@ -243,6 +231,7 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     risk_aversion = 3.0
@@ -293,14 +282,12 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
     """
     conditioned = StochasticTransition(func=_health_probs_from_a_draw)
     with pytest.raises(ModelInitializationError, match="joint kernel"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "source": Regime(
-                    regime_transitions=until_exit(
-                        22,
-                        law={"target": StochasticTransition(func=_to_target)},
-                        exits=("target",),
-                    ),
+                    regime_transitions={
+                        "target": StochasticTransition(func=_to_target)
+                    },
                     state_transitions={"health": {"target": conditioned}},
                     functions={"utility": _no_utility},
                 ),
@@ -316,4 +303,5 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
             ages=_AGES,
             regime_id_class=RegimeId,
             initial_nodes={20: "source"},
+            edges={"source": {"target": (20, 21)}},
         )

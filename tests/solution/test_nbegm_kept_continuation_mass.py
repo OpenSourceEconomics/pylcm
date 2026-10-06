@@ -21,6 +21,7 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    ByAge,
     CESAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -39,8 +40,6 @@ from lcm.exceptions import (
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _FIRST_AGE = 20
 _LAST_LIVING_AGE = 25
@@ -123,13 +122,13 @@ def _build_model(
         },
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=until_exit(
-            _LAST_LIVING_AGE + 5,
+        regime_transitions=ByAge.until(
+            stop_age_exclusive=_LAST_LIVING_AGE + 5,
             law={
                 "alive": StochasticTransition(func=_prob_alive),
                 "dead": StochasticTransition(func=_prob_dead),
             },
-            exits=("dead",),
+            then={"dead": StochasticTransition(func=_prob_dead)},
         ),
         functions={
             "utility": _utility,
@@ -158,8 +157,9 @@ def _build_model(
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"alive": _FIRST_AGE, "dead": (_FIRST_AGE, _LAST_LIVING_AGE)}},
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=_FIRST_AGE, inclusive_stop=_LAST_LIVING_AGE + 5, step="5Y"),
         fixed_params={
@@ -245,8 +245,9 @@ def test_nbegm_refuses_a_ces_aggregator_under_expected_utility() -> None:
         functions={"utility": _bequest},
     )
     with pytest.raises(RegimeInitializationError, match="LinearAggregator"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
+            edges={"alive": {"dead": _FIRST_AGE}},
             regime_id_class=_RegimeId,
             ages=AgeGrid(start=_FIRST_AGE, inclusive_stop=_LAST_LIVING_AGE, step="5Y"),
             initial_nodes={_FIRST_AGE: "alive"},

@@ -24,7 +24,6 @@ from lcm import (
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -121,7 +120,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
     target_states = _ordered(
         items=[("shock", _process()), ("other", _process())], reverse=reverse
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -142,6 +141,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
@@ -178,7 +178,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         items=[("shock", _process()), ("good", DiscreteGrid(category_class=Good))],
         reverse=reverse,
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -198,6 +198,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
@@ -241,7 +242,7 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         ],
         reverse=reverse,
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -261,6 +262,7 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {

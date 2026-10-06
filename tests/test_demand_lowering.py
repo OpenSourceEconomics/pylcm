@@ -30,7 +30,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
@@ -60,6 +59,7 @@ def _late_die(late_rate: float) -> FloatND:
 
 
 _RETIREMENT_EXIT = ByAge(cases={AgeRange(start=55, exclusive_stop=75): "dead"})
+_WORKING_EDGES = {"working": (25, 35, 45, 55), "dead": (25, 35, 45, 55, 65)}
 
 
 @categorical(ordered=False)
@@ -73,9 +73,12 @@ def _model(
     *,
     initial_nodes: Any,
     retirement_transitions: Any = _RETIREMENT_EXIT,
+    retirement_exit_ages: tuple[int, ...] = (55, 65),
 ) -> Model:
-
-    return with_fixture_graph(
+    edges: dict[str, dict[str, Any]] = {"working": _WORKING_EDGES}
+    if retirement_exit_ages:
+        edges["retirement"] = {"dead": retirement_exit_ages}
+    return Model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
@@ -110,6 +113,7 @@ def _model(
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=LifeId,
         initial_nodes=initial_nodes,
+        edges=edges,
     )
 
 
@@ -217,7 +221,7 @@ def _age_specialized_model(*, built_ages: list[float], initial_nodes: Any) -> Mo
         built_ages.append(float(age))
         return _utility
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
@@ -248,6 +252,7 @@ def _age_specialized_model(*, built_ages: list[float], initial_nodes: Any) -> Mo
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=LifeId,
         initial_nodes=initial_nodes,
+        edges={"working": {"dead": (25, 35, 45, 55)}, "retirement": {"dead": (55, 65)}},
     )
 
 
@@ -274,7 +279,7 @@ def _health_die(*, health: ContinuousState, early_rate: float) -> FloatND:
 
 
 def _broadcast_health_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge(
@@ -305,6 +310,7 @@ def _broadcast_health_model(initial_nodes: Any) -> Model:
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=_WorkingDeadId,
         initial_nodes=initial_nodes,
+        edges={"working": _WORKING_EDGES},
     )
 
 
@@ -330,7 +336,7 @@ def test_a_state_read_only_by_an_undemanded_case_is_not_live(
 def _gated_fold_model(
     *,
     initial_nodes: Any,
-    later_source_law: object | None = None,
+    fallback_at_45: bool = False,
 ) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {
@@ -350,13 +356,13 @@ def _gated_fold_model(
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(
                     cases={
                         40: target_law,
-                        **({} if later_source_law is None else {45: later_source_law}),
+                        **({45: "fallback"} if fallback_at_45 else {}),
                     }
                 ),
                 states={"wealth": _WEALTH},
@@ -370,6 +376,9 @@ def _gated_fold_model(
         ages=AgeGrid(start=40, inclusive_stop=50, step="5Y"),
         regime_id_class=_GatedId,
         initial_nodes=initial_nodes,
+        edges={
+            "source": {"target": 40, "fallback": (40, 45) if fallback_at_45 else 40}
+        },
     )
 
 
@@ -405,7 +414,7 @@ def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
     fold and requires no gate reference at the next age."""
     model = _gated_fold_model(
         initial_nodes={40: "source", 45: "source", 50: "target"},
-        later_source_law="fallback",
+        fallback_at_45=True,
     )
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
@@ -452,6 +461,7 @@ def test_a_regime_whose_laws_cover_no_available_age_builds_while_unrequired() ->
     model = _model(
         initial_nodes={25: "working"},
         retirement_transitions=ByAge(cases={75: "dead"}),
+        retirement_exit_ages=(),
     )
     assert model.reachability.nodes.isdisjoint(
         {(age, "retirement") for age in model.ages.exact_values}
@@ -466,4 +476,5 @@ def test_requiring_a_regime_whose_laws_cover_no_available_age_fails() -> None:
         _model(
             initial_nodes={55: "retirement"},
             retirement_transitions=ByAge(cases={75: "dead"}),
+            retirement_exit_ages=(),
         )

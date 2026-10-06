@@ -30,7 +30,6 @@ from lcm import (
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -161,8 +160,9 @@ def _make_model(
             simulate=checked if law_phase == "simulate" else constant,
         )
     )
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        edges={"working": {"left": (0, 1), "right": 1}},
         regime_id_class=RegimeId,
         initial_nodes={(0, 1): "working"} if earlier_root else {1: "working"},
         enable_jit=enable_jit,

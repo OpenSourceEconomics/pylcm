@@ -35,7 +35,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
-from tests.test_models.graph import with_fixture_graph
 
 # Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
 # the original `consumption <= wealth` constraint. This is the number the regime
@@ -132,7 +131,7 @@ def get_retirement_only_model(
         return retirement_only.get_model(n_periods)
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(
@@ -144,6 +143,7 @@ def get_retirement_only_model(
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=retirement_only.retirement_edges(ages),
     )
 
 

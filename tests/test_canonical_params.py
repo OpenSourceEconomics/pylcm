@@ -11,9 +11,6 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -26,7 +23,6 @@ from lcm import (
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -34,6 +30,9 @@ class _RegimeId:
     work: ScalarInt
     retired: ScalarInt
     dead: ScalarInt
+
+
+_EDGES = {"work": {"retired": (0, 1), "dead": (0, 1)}, "retired": {"dead": (0, 1, 2)}}
 
 
 def _utility(consumption: float) -> FloatND:
@@ -103,7 +102,7 @@ def _retired_regime() -> UserRegime:
 
 
 def _build_model(work: UserRegime) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "work": work,
             "retired": _retired_regime(),
@@ -114,6 +113,7 @@ def _build_model(work: UserRegime) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges=_EDGES,
     )
 
 
@@ -184,11 +184,12 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         functions={"utility": lambda wealth: 0.1 * wealth},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges=_EDGES,
     )
     params = {
         "work": {
@@ -258,11 +259,7 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
 
     work = _work_regime(
         regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=2): _SupportedStochasticTransition(
-                    func=_prob_vector, targets=("retired", "dead")
-                )
-            }
+            cases={AgeRange(exclusive_stop=2): StochasticTransition(func=_prob_vector)}
         ),
         state_transitions={"wealth": _next_wealth},
     )

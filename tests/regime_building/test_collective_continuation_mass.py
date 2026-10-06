@@ -42,8 +42,6 @@ from tests.collective_fixtures import (
     Work,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 # The stakeholders every collective regime in this module carries, wife first.
 STAKEHOLDERS = ("f", "m")
@@ -241,11 +239,7 @@ def _build_model(
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            source_ends_at_age,
-            law=choose_among(regime_transitions, targets=("couple", "couple_terminal")),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=regime_transitions,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -257,11 +251,21 @@ def _build_model(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
-    return with_fixture_graph(
+    # Every target is reachable before the last source age; only the terminal
+    # regime is reachable at it.
+    return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={
+            "couple": {
+                **dict.fromkeys(
+                    regime_transitions, tuple(range(source_ends_at_age - 1))
+                ),
+                "couple_terminal": tuple(range(source_ends_at_age)),
+            }
+        },
     )
 
 

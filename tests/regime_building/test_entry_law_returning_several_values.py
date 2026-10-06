@@ -19,8 +19,6 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -46,14 +44,10 @@ def _enter_at_several_values() -> FloatND:
 
 
 def _build() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
+                regime_transitions={"target": StochasticTransition(func=_to_target)},
                 state_transitions={"shock": {"target": _enter_at_several_values}},
                 functions={"utility": _no_utility},
             ),
@@ -70,6 +64,7 @@ def _build() -> Model:
         ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

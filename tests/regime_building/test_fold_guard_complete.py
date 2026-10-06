@@ -54,7 +54,6 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -373,22 +372,22 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
     so no rule may fire.
     """
     source = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "target": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=lambda wage_shock: wage_shock > 0.0,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="source_terminal", projection={}
+        regime_transitions=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=lambda wage_shock: wage_shock > 0.0,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="source_terminal", projection={}
+                                )
                             )
-                        )
-                    },
-                )
-            },
-            exits=("target",),
+                        },
+                    )
+                }
+            }
         ),
         states={"wage_shock": _shock(fold=True)},
         actions={"work": DiscreteGrid(category_class=Work)},

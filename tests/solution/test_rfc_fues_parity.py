@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model, StochasticTransition
+from lcm import AgeGrid, ByAge, DeterministicTransition, Model, StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
     dead,
@@ -38,8 +38,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_params,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # The no-crossing-insertion delta is a kink-placement error of order the local
 # grid spacing, propagated through the exact-slope Hermite carry. On the
@@ -74,14 +72,19 @@ def _with_backend(*, regime, envelope):
 
 def _retirement_only_model(*, envelope, n_periods):
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "retirement": {
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            }
+        },
         regimes={
             "retirement": _with_backend(
                 regime=dcegm_retirement, envelope=envelope_config(envelope)
             ).replace(
-                regime_transitions=retirement_only.retirement_transitions(
-                    last_age=last_age
+                regime_transitions=DeterministicTransition(
+                    func=retirement_only.next_regime_from_retirement
                 )
             ),
             "dead": dead,
@@ -183,8 +186,10 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                 "retirement": _with_backend(
                     regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
-                    regime_transitions=until_exit(
-                        70, law=retirement_transition, exits=("dead",)
+                    regime_transitions=ByAge.until(
+                        stop_age_exclusive=70,
+                        law=retirement_transition,
+                        then={"dead": retirement_transition["dead"]},
                     ),
                     state_transitions={
                         "wealth": dcegm_retirement_full.state_transitions["wealth"],

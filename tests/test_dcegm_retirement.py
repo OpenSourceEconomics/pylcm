@@ -26,7 +26,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
     get_full_params,
 )
-from tests.test_models.schedules import until_exit
 
 pytestmark = [
     pytest.mark.slow,
@@ -132,14 +131,10 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
                 regime_transitions=working_transitions
             ),
             "retirement": dcegm_variants.dcegm_retirement_full.replace(
-                regime_transitions=until_exit(
-                    last_age,
-                    law={
-                        "retirement": StochasticTransition(func=_retirement_stay_prob),
-                        "dead": StochasticTransition(func=_retirement_death_prob),
-                    },
-                    exits=("dead",),
-                ),
+                regime_transitions={
+                    "retirement": StochasticTransition(func=_retirement_stay_prob),
+                    "dead": StochasticTransition(func=_retirement_death_prob),
+                },
             ),
             "dead": base.dead,
         },

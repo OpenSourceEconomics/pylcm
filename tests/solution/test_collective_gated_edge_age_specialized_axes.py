@@ -53,8 +53,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -242,39 +240,35 @@ def _build_gate_ref_model() -> Model:
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "couple": StochasticTransition(func=_probability_of_staying_put),
-                "account": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_of_leaving),
-                    gate=_index_clears_the_hurdle,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity_f",
-                                projection={"principal": _principal_from_balance},
-                            ),
+        regime_transitions={
+            "couple": StochasticTransition(func=_probability_of_staying_put),
+            "account": ValueDependentTransition(
+                probability=StochasticTransition(func=_probability_of_leaving),
+                gate=_index_clears_the_hurdle,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity_f",
+                            projection={"principal": _principal_from_balance},
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity_m",
-                                projection={"principal": _principal_from_balance},
-                            ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity_m",
+                            projection={"principal": _principal_from_balance},
                         ),
-                    },
-                    gate_references={
-                        "index_value": ProjectedRegimeValue(
-                            regime="index",
-                            projection={"level": _level_from_balance},
-                        )
-                    },
-                ),
-            },
-            exits=("account",),
-        ),
+                    ),
+                },
+                gate_references={
+                    "index_value": ProjectedRegimeValue(
+                        regime="index",
+                        projection={"level": _level_from_balance},
+                    )
+                },
+            ),
+        },
         state_transitions={"balance": {"account": _entry_amount}},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -310,7 +304,7 @@ def _build_gate_ref_model() -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_m},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": couple,
             "account": account,
@@ -321,6 +315,14 @@ def _build_gate_ref_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GateRefRegimeId,
         initial_nodes={0: "couple"},
+        edges={
+            "couple": {
+                "couple": 0,
+                "account": (0, 1),
+                "annuity_f": (0, 1),
+                "annuity_m": (0, 1),
+            }
+        },
     )
 
 
@@ -354,33 +356,29 @@ def _build_dissolution_model() -> Model:
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "couple": StochasticTransition(func=_probability_of_staying_put),
-                "pair": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_of_leaving),
-                    gate=_household_consents,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"s": _single_state_from_w},
-                            ),
+        regime_transitions={
+            "couple": StochasticTransition(func=_probability_of_staying_put),
+            "pair": ValueDependentTransition(
+                probability=StochasticTransition(func=_probability_of_leaving),
+                gate=_household_consents,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"s": _single_state_from_w},
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m",
-                                projection={"s": _single_state_from_w},
-                            ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_m",
+                            projection={"s": _single_state_from_w},
                         ),
-                    },
-                ),
-            },
-            exits=("pair",),
-        ),
+                    ),
+                },
+            ),
+        },
         state_transitions={"w": {"pair": _entry_amount}},
         actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
@@ -427,7 +425,7 @@ def _build_dissolution_model() -> Model:
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_m},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": couple,
             "pair": pair,
@@ -438,6 +436,15 @@ def _build_dissolution_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_DissolutionRegimeId,
         initial_nodes={0: "couple"},
+        edges={
+            "couple": {
+                "couple": 0,
+                "pair": (0, 1),
+                "single_f": (0, 1),
+                "single_m": (0, 1),
+            },
+            "pair": {"pair_terminal": (1, 2)},
+        },
     )
 
 

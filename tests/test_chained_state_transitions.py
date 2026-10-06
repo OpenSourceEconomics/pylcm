@@ -9,11 +9,9 @@ mathematically expected next-period values in solve and simulate.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -22,8 +20,6 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -58,13 +54,7 @@ def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
 
 
 _active = UserRegime(
-    regime_transitions=until_exit(
-        2,
-        law=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("active", "dead")
-        ),
-        exits=("dead",),
-    ),
+    regime_transitions=DeterministicTransition(func=_next_regime),
     actions={
         "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
@@ -87,11 +77,12 @@ _dead = UserRegime(
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={"active": _active, "dead": _dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},
+        edges={"active": {"active": 0, "dead": (0, 1)}},
     )
 
 
@@ -211,13 +202,7 @@ def _f2_next_regime(period: Period) -> ScalarInt:
 
 def _f2_build_model() -> Model:
     live = UserRegime(
-        regime_transitions=until_exit(
-            27,
-            law=_SupportedDeterministicTransition(
-                func=_f2_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_f2_next_regime),
         states={
             "good": DiscreteGrid(category_class=_Good),
             "capital": DiscreteGrid(category_class=_Capital),
@@ -233,11 +218,12 @@ def _f2_build_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.array(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(start=25, inclusive_stop=27, step="1Y"),
         regime_id_class=_RegimeIdF2,
         initial_nodes={25: "live"},
+        edges={"live": {"live": 25, "last": (25, 26)}},
     )
 
 

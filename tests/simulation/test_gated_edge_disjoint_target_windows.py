@@ -9,13 +9,11 @@ simulation must not demand their landing values.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -33,7 +31,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -131,8 +128,8 @@ def _build_model(*, enable_jit: bool) -> Model:
     near = _decision_regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=near_next, targets=("far",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=near_next
                 )
             }
         )
@@ -147,7 +144,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
     )
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regimes={
             "source": source,
@@ -159,6 +156,10 @@ def _build_model(*, enable_jit: bool) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
+        edges={
+            "source": {"near": 0, "far": (0, 1), "source": 0, "far_fallback": (0, 1)},
+            "near": {"far": 1},
+        },
     )
 
 

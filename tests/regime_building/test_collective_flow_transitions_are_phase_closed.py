@@ -26,20 +26,17 @@ flow built from the solve pool would choose `stay`.
 import jax.numpy as jnp
 import pandas as pd
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
+    Model,
     Phased,
     Regime,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -106,13 +103,7 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "stock": ["bad"] * 8})
 
 def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(category_class=Stock)},
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -128,12 +119,13 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
             )
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1)),
         regime_id_class=RegimeId,
         description="phase closure of a collective regime's flow sub-DAG",
         initial_nodes={0: "live"},
+        edges={"live": {"last": 0}},
     )
     V = model.solve(params=PARAMS, log_level="off")
     return (

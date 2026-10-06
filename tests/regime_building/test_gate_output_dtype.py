@@ -26,8 +26,6 @@ from lcm import (
 from lcm.exceptions import PyLCMError
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -76,27 +74,24 @@ def _boolean_gate(x: ContinuousState) -> BoolND:
 
 
 def _make_model(*, gate) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 40, "fallback": 40}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    45,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={"x": _identity_x},
-                                    )
+                regime_transitions={
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _identity_x},
                                 )
-                            },
-                        )
-                    },
-                    exits=("target",),
-                ),
+                            )
+                        },
+                    )
+                },
                 states={"x": _X},
                 state_transitions={"x": fixed_transition("x")},
                 actions={"work": DiscreteGrid(category_class=Work)},

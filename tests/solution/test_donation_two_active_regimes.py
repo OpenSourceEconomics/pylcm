@@ -57,7 +57,6 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
-from tests.test_models.graph import with_fixture_graph
 from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
@@ -256,7 +255,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
     Each acting regime stays in itself until the last acting age, where it
     moves into the terminal `dead`.
     """
-    return with_fixture_graph(
+    return Model(
         regimes={
             name: Regime(
                 regime_transitions=ByAge.until(
@@ -282,6 +281,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: _ACTING_REGIMES},
+        edges={name: {name: (0, 1), "dead": 2} for name in _ACTING_REGIMES},
     )
 
 

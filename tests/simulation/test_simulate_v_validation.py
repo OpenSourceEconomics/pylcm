@@ -13,13 +13,10 @@ import logging
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
-    ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     categorical,
@@ -28,8 +25,6 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def _simulate(*, log_level: LogLevel) -> None:
@@ -123,13 +118,7 @@ def _nan_producing_model() -> Model:
     """Build a two-regime model whose simulated value is NaN at `NAN_AGE` only."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
     work = UserRegime(
-        regime_transitions=until_exit(
-            60,
-            law=_SupportedDeterministicTransition(
-                func=_off_node_next_regime, targets=("work", "dead")
-            ),
-            exits=("dead",),
-        ),
+        regime_transitions=DeterministicTransition(func=_off_node_next_regime),
         actions={"consumption": grid},
         states={"wealth": grid},
         state_transitions={"wealth": _off_node_next_wealth},
@@ -137,11 +126,12 @@ def _nan_producing_model() -> Model:
         functions={"utility": _off_node_utility},
     )
     dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return with_fixture_graph(
+    return Model(
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=OffNodeRegimeId,
         initial_nodes={40: "work"},
+        edges={"work": {"work": 40, "dead": (40, 50)}},
     )
 
 
@@ -189,7 +179,7 @@ def _two_offender_model() -> Model:
     """Build a model whose simulated value is NaN in two regimes of one period."""
     grid = LinSpacedGrid(start=1.0, stop=5.0, n_points=5)
 
-    def occupied_regime(*, regime_transitions: ByAge) -> UserRegime:
+    def occupied_regime(*, regime_transitions: DeterministicTransition) -> UserRegime:
         """Build one regime whose value goes NaN off a wealth node at `NAN_AGE`."""
         return UserRegime(
             regime_transitions=regime_transitions,
@@ -200,25 +190,13 @@ def _two_offender_model() -> Model:
             functions={"utility": _off_node_utility},
         )
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "work": occupied_regime(
-                regime_transitions=until_exit(
-                    60,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime_from_work, targets=("work", "dead")
-                    ),
-                    exits=("dead",),
-                )
+                regime_transitions=DeterministicTransition(func=_next_regime_from_work)
             ),
             "study": occupied_regime(
-                regime_transitions=until_exit(
-                    60,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime_from_study, targets=("study", "dead")
-                    ),
-                    exits=("dead",),
-                )
+                regime_transitions=DeterministicTransition(func=_next_regime_from_study)
             ),
             "dead": UserRegime(
                 regime_transitions=None, functions={"utility": lambda: 0.0}
@@ -227,6 +205,10 @@ def _two_offender_model() -> Model:
         ages=AgeGrid(start=40, inclusive_stop=60, step="10Y"),
         regime_id_class=TwoOffenderRegimeId,
         initial_nodes={40: ("work", "study")},
+        edges={
+            "work": {"work": 40, "dead": (40, 50)},
+            "study": {"study": 40, "dead": (40, 50)},
+        },
     )
 
 

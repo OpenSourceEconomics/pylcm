@@ -18,16 +18,13 @@ import numpy as np
 import pytest
 
 import _lcm.model_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-    _SupportedStochasticTransition,
-)
 from _lcm.simulation.random import site_simulation_key
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -55,7 +52,6 @@ from tests.regime_building.test_same_period_ref_period_axes import (
 )
 from tests.test_admission_and_random_sites import _model as _admission_model
 from tests.test_demand_worklists import _phased_model
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -109,8 +105,19 @@ _EARLY = {
 }
 
 
-def _life_model(*, law_at_55: Any, initial_nodes: Any, early: Any = None) -> Model:
-    return with_fixture_graph(
+def _life_model(
+    *,
+    law_at_55: Any,
+    initial_nodes: Any,
+    early: Any = None,
+    retires_at_55: bool = True,
+) -> Model:
+    return Model(
+        edges={
+            "working": {"working": (25, 35, 45), "dead": (25, 35, 45, 55)}
+            | ({"retirement": 55} if retires_at_55 else {}),
+            "retirement": {"dead": 65},
+        },
         regimes={
             "working": _nonterminal(
                 ByAge(
@@ -145,12 +152,9 @@ def test_stray_mass_into_a_pair_another_start_solves_fails(
 ) -> None:
     """A law declaring only `dead` may not send mass to the solved retirement."""
     model = _life_model(
-        law_at_55=_SupportedStochasticTransition(
-            func=_all_to_retirement, targets=("dead",)
-        ),
-        early=_SupportedStochasticTransition(
-            func=_stay_vector, targets=("working", "dead")
-        ),
+        law_at_55=StochasticTransition(func=_all_to_retirement),
+        early=StochasticTransition(func=_stay_vector),
+        retires_at_55=False,
         initial_nodes={25: "working", 65: "retirement"},
     )
     with pytest.raises(
@@ -204,9 +208,7 @@ def _code_seven() -> ScalarInt:
 def test_a_deterministic_code_outside_the_targets_fails_with_logging_off() -> None:
     """A selector returning the unregistered code 7 leaves a zero-mass row."""
     model = _life_model(
-        law_at_55=_SupportedDeterministicTransition(
-            func=_code_seven, targets=("retirement", "dead")
-        ),
+        law_at_55=DeterministicTransition(func=_code_seven),
         initial_nodes={25: "working"},
     )
     with pytest.raises(
@@ -222,7 +224,7 @@ def _even_split() -> FloatND:
 
 def test_public_probability_kernel_rejects_embedded_topology() -> None:
     """Destination mappings own topology; kernels reject the former targets field."""
-    with pytest.raises(TypeError, match="targets"):
+    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
         StochasticTransition(
             func=_even_split,
             targets=("working", "working", "dead"),  # ty: ignore[unknown-argument]
@@ -250,7 +252,8 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 
 def _numeric_gate_model() -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 40, "fallback": 40}},
         regimes={
             "source": _nonterminal(
                 ByAge(
@@ -372,11 +375,24 @@ _SHARED_HALF = {
     "unemployed_after_switch": StochasticTransition(func=_half),
     "employed": StochasticTransition(func=_half),
 }
+_REMAIN_TARGETS = (
+    "unemployed_before_switch",
+    "unemployed_after_switch",
+    "employed",
+)
 
 
-def _job_model(first_law: Any) -> Model:
+# keyword-only-exempt: primary-argument=first_law
+def _job_model(
+    first_law: Any, *, targets_at_25: tuple[str, ...] = _REMAIN_TARGETS
+) -> Model:
     """Every destination is a known regime with a law at 35 and a wealth handoff."""
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "unemployed_before_switch": dict.fromkeys(targets_at_25, 25) | {"dead": 35},
+            "unemployed_after_switch": {"dead": 35},
+            "employed": {"dead": 35},
+        },
         regimes={
             "unemployed_before_switch": _nonterminal(
                 ByAge(cases={25: first_law, 35: "dead"})
@@ -443,7 +459,11 @@ def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
     precision: 501 / 499 under x64, 487 / 513 under float32.
     """
     panel = _job_simulate(
-        model=_job_model(_SHARED_HALF), log_level="warning", n_subjects=_N_SUBJECTS
+        model=_job_model(
+            _SHARED_HALF, targets_at_25=("unemployed_after_switch", "employed")
+        ),
+        log_level="warning",
+        n_subjects=_N_SUBJECTS,
     ).to_dataframe()
     after_switch = 501 if jax.config.jax_enable_x64 else 487
     assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
@@ -483,7 +503,13 @@ def _later_age_invalid_model() -> Model:
         "working": StochasticTransition(func=_excess),
         "dead": StochasticTransition(func=_half),
     }
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working": {
+                "working": AgeRange(exclusive_stop=65),
+                "dead": AgeRange(exclusive_stop=75),
+            }
+        },
         regimes={
             "working": _nonterminal(_phased_by_age(valid=valid, invalid=invalid)),
             "retirement": _terminal(),
@@ -521,7 +547,8 @@ def _off_grid_model() -> Model:
         "working": StochasticTransition(func=_nonfinite_between_nodes),
         "dead": StochasticTransition(func=_complement_between_nodes),
     }
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"working": 25, "dead": (25, 35)}},
         regimes={
             "working": _nonterminal(
                 ByAge.until(
@@ -799,7 +826,11 @@ def _shock_utility(*, wealth: ContinuousState, income: ContinuousState) -> Float
 
 
 def _shock_model(exit_law: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working": {"retirement": 25},
+            "retirement": {"retirement": (35, 45, 55), "dead": 65},
+        },
         regimes={
             "working": _nonterminal(ByAge(cases={25: exit_law})),
             "retirement": Regime(
@@ -844,9 +875,7 @@ def _shock_panel(exit_law: Any) -> Any:
 _EXIT_FORMS = pytest.mark.parametrize(
     "exit_law",
     [
-        _SupportedDeterministicTransition(
-            func=_choose_retirement, targets=("retirement",)
-        ),
+        DeterministicTransition(func=_choose_retirement),
         {"retirement": StochasticTransition(func=_certain)},
     ],
     ids=["choose", "singleton-markov"],

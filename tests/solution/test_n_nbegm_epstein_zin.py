@@ -22,6 +22,8 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CESAggregator,
     LinSpacedGrid,
     Model,
@@ -38,8 +40,6 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FIRST_AGE = 20
@@ -169,13 +169,13 @@ def _build_model(*, variant: str) -> Model:
         "consumption": _CONSUMPTION_GRID,
         "illiquid_investment": _ILLIQUID_INVESTMENT_GRID,
     }
-    transition = until_exit(
-        _FIRST_AGE + (_N_PERIODS - 1) * 5,
+    transition = ByAge.until(
+        stop_age_exclusive=_FIRST_AGE + (_N_PERIODS - 1) * 5,
         law={
             "alive": StochasticTransition(func=_prob_alive),
             "dead": StochasticTransition(func=_prob_dead),
         },
-        exits=("dead",),
+        then={"dead": StochasticTransition(func=_prob_dead)},
     )
     functions = {
         "utility": _utility,
@@ -229,8 +229,14 @@ def _build_model(*, variant: str) -> Model:
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={
+            "alive": {
+                "alive": AgeRange(exclusive_stop=final_age_alive),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+            }
+        },
         regime_id_class=_RegimeId,
         ages=AgeGrid(
             start=_FIRST_AGE,

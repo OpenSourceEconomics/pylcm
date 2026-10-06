@@ -15,12 +15,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     ParetoObjective,
@@ -36,8 +34,6 @@ from lcm.exceptions import (
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
@@ -109,13 +105,7 @@ def _build_model(
     utility_m=_utility_m,
 ) -> Model:
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states=states or {},
         state_transitions=state_transitions or {},
         actions={"choice": DiscreteGrid(category_class=Choice)},
@@ -133,7 +123,8 @@ def _build_model(
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"couple": {"couple_terminal": 0}},
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
@@ -433,13 +424,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     }
     weights = {"f": 0.5, "m": 0.25, "child": 0.25}
     household = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_three_regime, targets=("household", "household_terminal")
-            ),
-            exits=("household_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_three_regime),
         actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "utility": CollectiveUtility(
@@ -456,7 +441,8 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
             "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
         },
     )
-    model = with_fixture_graph(
+    model = Model(
+        edges={"household": {"household_terminal": 0}},
         regimes={
             "household": household,
             "household_terminal": household_terminal,
@@ -519,13 +505,7 @@ def _carry_power(power: DiscreteState) -> ScalarInt:
 def _build_carried_power_model() -> Model:
     """A household whose Pareto weights read a carried bargaining-power state."""
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "power": Phased(
                 solve=_impute_power, simulate=DiscreteGrid(category_class=Power)
@@ -550,7 +530,8 @@ def _build_carried_power_model() -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
+        edges={"couple": {"couple_terminal": 0}},
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,
@@ -586,13 +567,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     weights select her preferred action and publish stakeholder values `(3, 0)`.
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("couple", "couple_terminal")
-            ),
-            exits=("couple_terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "power": Phased(
                 solve=_impute_power_from_signal,
@@ -619,7 +594,8 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
             )
         },
     )
-    model = with_fixture_graph(
+    model = Model(
+        edges={"couple": {"couple_terminal": 0}},
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=_AGES,
         regime_id_class=RegimeId,

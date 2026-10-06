@@ -14,7 +14,6 @@ from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -29,7 +28,8 @@ def _utility(wealth: ContinuousState) -> FloatND:
 
 def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    return with_fixture_graph(
+    exit_age = ages.exact_values[-2]
+    return Model(
         regimes={
             "working": Regime(
                 regime_transitions=ByAge.until(
@@ -48,6 +48,9 @@ def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
         ages=ages,
         regime_id_class=_RegimeId,
         initial_nodes=initial_nodes,
+        edges={
+            "working": {"working": AgeRange(exclusive_stop=exit_age), "dead": exit_age}
+        },
     )
 
 

@@ -29,8 +29,6 @@ from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -74,7 +72,7 @@ def _retired_transition() -> dict[str, StochasticTransition]:
 
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": until_exit(2, law=_work_transition(), exits=("dead",)),
+        "regime_transitions": _work_transition(),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -86,7 +84,7 @@ def _work_regime(**overrides: Any) -> UserRegime:
 
 def _retired_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": until_exit(2, law=_retired_transition(), exits=("dead",)),
+        "regime_transitions": _retired_transition(),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
@@ -107,11 +105,15 @@ def _build_model(**model_slots: Any) -> Model:
             ),
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges={
+            "work": {"retired": 0, "dead": (0, 1)},
+            "retired": {"retired": 0, "dead": (0, 1)},
+        },
         **model_slots,
     )
 

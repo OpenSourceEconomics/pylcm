@@ -44,7 +44,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -123,7 +122,7 @@ def _inputs(
     budget: int | None,
     devices: tuple[int, ...] | None = None,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
                 regime_transitions={
@@ -157,6 +156,7 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
         initial_nodes={0: "source"},
+        edges={"source": {"target": 0}},
     )
     params: UserParams = {
         "source": {

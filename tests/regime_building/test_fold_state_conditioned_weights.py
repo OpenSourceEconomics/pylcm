@@ -19,13 +19,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     NormalIIDProcess,
@@ -39,8 +37,6 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.processes import StateConditioned
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_POINTS = 5
 N_STD = 3.0
@@ -117,13 +113,7 @@ def _shock(*, sigma: float | StateConditioned, fold: bool = True) -> NormalIIDPr
 
 def _conditioned_model() -> Model:
     period0 = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("period0", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={
             "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
@@ -138,8 +128,9 @@ def _conditioned_model() -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"period0": period0, "terminal": terminal},
+        edges={"period0": {"terminal": 0}},
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "period0"},
@@ -153,13 +144,7 @@ def _unconditioned_model(*, sigma: float) -> Model:
     the widest category — see `test_high_risk_cell_matches_the_unconditioned_fold`.
     """
     period0 = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("period0", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=_next_regime),
         states={"wage_shock": _shock(sigma=sigma)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
@@ -168,8 +153,9 @@ def _unconditioned_model(*, sigma: float) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"period0": period0, "terminal": terminal},
+        edges={"period0": {"terminal": 0}},
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "period0"},
@@ -279,8 +265,8 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
         Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                        func=_next_regime, targets=("terminal",)
+                    AgeRange(exclusive_stop=1): DeterministicTransition(
+                        func=_next_regime
                     )
                 }
             ),
@@ -326,9 +312,7 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     entry = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_to_folding, targets=("folding",)
-                )
+                AgeRange(exclusive_stop=1): DeterministicTransition(func=_to_folding)
             }
         ),
         states={
@@ -345,8 +329,8 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     folding = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=_to_done, targets=("done",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=_to_done
                 )
             }
         ),
@@ -366,8 +350,9 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
     )
 
     with pytest.raises(ModelInitializationError, match="conditioning state"):
-        with_fixture_graph(
+        Model(
             regimes={"entry": entry, "folding": folding, "done": done},
+            edges={"entry": {"folding": 0}, "folding": {"done": 1}},
             ages=_THREE_AGES,
             regime_id_class=ThreeRegimeId,
             initial_nodes={0: "entry"},
@@ -432,8 +417,8 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     folding = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=_to_done_from_split, targets=("done",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=_to_done_from_split
                 )
             }
         ),
@@ -450,8 +435,8 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     sideways = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=_to_done_from_split, targets=("done",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=_to_done_from_split
                 )
             }
         ),
@@ -465,7 +450,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "entry": entry,
             "folding": folding,
@@ -475,6 +460,11 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         ages=_THREE_AGES,
         regime_id_class=SplitRegimeId,
         initial_nodes={0: "entry"},
+        edges={
+            "entry": {"folding": 0, "sideways": 0},
+            "folding": {"done": 1},
+            "sideways": {"done": 1},
+        },
     )
 
     assert set(model.user_regimes) == {"entry", "folding", "sideways", "done"}
@@ -545,8 +535,8 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     folding = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=lambda: PhasedSplitRegimeId.done, targets=("done",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=lambda: PhasedSplitRegimeId.done
                 )
             }
         ),
@@ -563,8 +553,8 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
     sideways = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=lambda: PhasedSplitRegimeId.done, targets=("done",)
+                AgeRange(start=1, exclusive_stop=2): DeterministicTransition(
+                    func=lambda: PhasedSplitRegimeId.done
                 )
             }
         ),
@@ -578,7 +568,7 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "safe_entry": safe_entry,
             "moving_entry": moving_entry,
@@ -589,6 +579,12 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         ages=_THREE_AGES,
         regime_id_class=PhasedSplitRegimeId,
         initial_nodes={0: "safe_entry"},
+        edges={
+            "safe_entry": {"folding": 0},
+            "moving_entry": {"sideways": 0},
+            "folding": {"done": 1},
+            "sideways": {"done": 1},
+        },
     )
 
     assert set(model.user_regimes) == {

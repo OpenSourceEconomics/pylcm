@@ -46,6 +46,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -62,7 +63,6 @@ from tests.conftest import (
     build_prepared_structure,
     lower_declarations,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _BETA = 0.95
 
@@ -227,11 +227,16 @@ def _route_three_households() -> MappingProxyType:
 
 def _simulate_three_households():
     """Solve and simulate the model whose `single_f` carries a career state."""
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_regimes(carrying_fallback=True),
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": {"married_terminal": 0, "single_f": 0, "single_m": 0},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": 1},
+        },
     )
     params = {"discount_factor": _BETA}
     solution = model.solve(params=params, log_level="off")

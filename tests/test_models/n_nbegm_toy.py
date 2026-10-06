@@ -26,6 +26,7 @@ import jax.numpy as jnp
 from _lcm.grids.base import Grid
 from lcm import (
     AgeGrid,
+    AgeRange,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -58,8 +59,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 N_WEALTH = 12
 N_ILLIQUID = 10
@@ -329,11 +328,6 @@ def build_model(
         )
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
-    transitions = until_exit(
-        final_age_alive + 5,
-        law=choose_among(regime_transition, targets=("alive", "dead")),
-        exits=("dead",),
-    )
     states: dict[str, Grid | Phased | AgeSpecializedGrid] = {
         "wealth": WEALTH_GRID,
         "illiquid": illiquid_grid,
@@ -381,7 +375,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
+            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -401,7 +395,7 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
+            regime_transitions=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
@@ -425,11 +419,21 @@ def build_model(
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         execution_config=execution_config,
         initial_nodes={20: ("alive", "dead")},
+        edges={
+            "alive": {
+                **(
+                    {"alive": AgeRange(exclusive_stop=final_age_alive)}
+                    if n_periods > 2
+                    else {}
+                ),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+            }
+        },
     )

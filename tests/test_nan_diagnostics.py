@@ -7,11 +7,8 @@ import pytest
 
 from _lcm.engine import StateActionSpace
 from _lcm.grids import LinSpacedGrid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution.validate_V import validate_V
-from lcm import Model, categorical
+from lcm import DeterministicTransition, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
@@ -22,8 +19,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def _make_state_action_space(
@@ -132,23 +127,18 @@ def _build_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("non_terminal", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_Rid,
         initial_nodes={0: "non_terminal"},
+        edges={"non_terminal": {"terminal": 0}},
     )
     params = {
         "discount_factor": 0.95,
@@ -193,23 +183,18 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         state_transitions={"wealth": next_wealth},
         functions={"utility": utility},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("non_terminal", "terminal")
-            ),
-            exits=("terminal",),
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
     )
     terminal = UserRegime(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_Rid,
         initial_nodes={0: "non_terminal"},
+        edges={"non_terminal": {"terminal": 0}},
     )
     params = {
         "discount_factor": 0.95,

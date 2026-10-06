@@ -4,13 +4,9 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.egm.validation import _grid_sample
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -30,7 +26,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
 _ACTION_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -120,13 +115,7 @@ def _model(
         states=states,
         state_transitions=state_transitions,
         constraints={} if constraint is None else {"cap": constraint},
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=next_regime, targets=("done",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=next_regime),
         functions={
             "utility": utility,
             "savings": post_decision,
@@ -149,9 +138,10 @@ def _model(
         functions=done_functions,
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving_regime, "done": done_regime},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"saving": {"done": 0}},
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},
     )

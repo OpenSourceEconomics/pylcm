@@ -31,7 +31,6 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _IDENTITY = ("program", "fingerprint", "working_life", "main", ("signature",), None)
@@ -86,7 +85,7 @@ def _model(
 ) -> Model:
     """A two-regime grid-search toy whose wealth grid size is a build input."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
                 regime_transitions=working_life_transitions(
@@ -107,6 +106,7 @@ def _model(
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
     )
 
 

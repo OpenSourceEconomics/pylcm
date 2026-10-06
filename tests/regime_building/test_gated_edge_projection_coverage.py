@@ -52,8 +52,6 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
@@ -222,23 +220,19 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         {"principal": _project_principal} if fallback_projects_principal else {}
     )
     src = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "src_exit": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_wage_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity", projection=projection
-                            )
+        regime_transitions={
+            "src_exit": ValueDependentTransition(
+                probability=StochasticTransition(func=_prob_one),
+                gate=_wage_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity", projection=projection
                         )
-                    },
-                )
-            },
-            exits=("src_exit",),
-        ),
+                    )
+                },
+            )
+        },
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -258,8 +252,9 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         },
         functions={"utility": _utility_annuity},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"src": src, "src_exit": src_exit, "annuity": annuity},
+        edges={"src": {"src_exit": 0, "annuity": 0}},
         ages=_AGES,
         regime_id_class=AgeSpecializedRegimeId,
         initial_nodes={0: "src"},
@@ -341,12 +336,16 @@ def _build_model(
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "src": src,
             "src_exit": src_exit,
             "fallback": fallback,
             "fallback_exit": fallback_exit,
+        },
+        edges={
+            "src": {"src_exit": 0, "fallback": 0},
+            "fallback": {"fallback_exit": 1},
         },
         ages=_AGES,
         regime_id_class=RegimeId,

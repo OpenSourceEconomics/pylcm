@@ -15,9 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -25,6 +22,7 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -43,7 +41,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -81,12 +78,24 @@ def _perceived_law(*, choice: Any = _realized_choice) -> ByAge:
         cases={
             1: Phased(
                 solve="end",
-                simulate=_SupportedDeterministicTransition(
-                    func=choice, targets=("end", "other_end")
-                ),
+                simulate=DeterministicTransition(func=choice),
             )
         }
     )
+
+
+_DEMAND_EDGES = Phased(
+    solve={
+        "source": {"perceived": 0},
+        "perceived": {"end": 1},
+        "realized": {"end": 1},
+    },
+    simulate={
+        "source": {"realized": 0},
+        "perceived": {"end": 1, "other_end": 1},
+        "realized": {"end": 1},
+    },
+)
 
 
 def _demand_model(
@@ -108,7 +117,8 @@ def _demand_model(
         roots[1] = "perceived"
     if redundant_root:
         roots[2] = "end"
-    return with_fixture_graph(
+    return Model(
+        edges=_DEMAND_EDGES,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -341,9 +351,7 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
             cases={
                 age: Phased(
                     solve="end",
-                    simulate=_SupportedDeterministicTransition(
-                        func=choice, targets=("end", "other_end")
-                    ),
+                    simulate=DeterministicTransition(func=choice),
                 )
                 for age, choice in ((1, _realized_choice), (2, _late_choice))
             }
@@ -359,7 +367,19 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": (1, 2)},
+                "realized": {"perceived": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"end": (1, 2), "other_end": (1, 2)},
+                "realized": {"perceived": 1},
+            },
+        ),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_DemandId,
         initial_nodes={0: "source"},
@@ -413,7 +433,8 @@ def _collective_demand_model(*, promote: bool) -> Model:
     roots: dict[object, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
-    return with_fixture_graph(
+    return Model(
+        edges=_DEMAND_EDGES,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_DemandId,
         initial_nodes=roots,
@@ -523,7 +544,8 @@ def _age_grid_model(
         else (_left_from_wealth, _right_from_wealth)
     )
     roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"left": (0, 1), "right": 1}},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -598,7 +620,8 @@ def _stray_carried_right(*, carried_share: ContinuousState) -> FloatND:
 
 def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
     """The solve law is (1/2, 1/2); the realized law reads the carried share."""
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"left": 0, "right": 0}},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -724,7 +747,8 @@ def _feasibility_model(
     left = _bad_on_feasible_left if bad_feasible else _feasible_left
     right = _bad_on_feasible_right if bad_feasible else _feasible_right
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"left": 0, "right": 0}},
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),

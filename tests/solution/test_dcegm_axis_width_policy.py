@@ -49,8 +49,6 @@ from lcm.typing import (
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -146,17 +144,12 @@ def _ages() -> AgeGrid:
 def _model(*, execution_config: ExecutionConfig) -> Model:
     """Asset-row DC-EGM toy declaring every tiled axis at once."""
     ages = _ages()
-    last_age = ages.exact_values[-1]
 
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law={
-                "working": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
+        regime_transitions={
+            "working": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
         actions={"consumption": LinSpacedGrid(start=0.25, stop=100.0, n_points=20)},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
@@ -187,12 +180,13 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=12)},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"working": 40, "dead": (40, 50)}},
     )
 
 

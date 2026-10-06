@@ -15,12 +15,9 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     GridBreakpoint,
@@ -38,7 +35,6 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -115,18 +111,10 @@ def _model(
     budget: int = 2**30,
 ) -> Model:
     devices = tuple(device.id for device in jax.devices()[:8]) if sharded else (0,)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("working",)
-                    ),
-                    then=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("dead",)
-                    ),
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},
                 state_transitions={
@@ -181,6 +169,7 @@ def _model(
             device_memory_bytes=budget,
         ),
         initial_nodes={0: "working"},
+        edges={"working": {"working": 0, "dead": 1}},
     )
 
 

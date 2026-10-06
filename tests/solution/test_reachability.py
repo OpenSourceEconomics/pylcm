@@ -1,9 +1,15 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, ExecutionConfig, Regime, StochasticTransition, categorical
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    Model,
+    Regime,
+    StochasticTransition,
+    categorical,
+)
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -35,7 +41,8 @@ def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
 
 def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     """Free probabilities change values without changing graph membership."""
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"low": 0, "high": 0}},
         regimes={
             "source": Regime(
                 regime_transitions={

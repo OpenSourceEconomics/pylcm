@@ -19,11 +19,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -43,8 +42,6 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -245,21 +242,13 @@ def _get_model(variant: str) -> Model:
     - `"brute_bonus_pension"`: dense-grid brute force, equivalent spec.
     """
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = float(ages.exact_values[-1])
-
     actions = {
         "labor_supply": DiscreteGrid(category_class=LaborChoice),
         "consumption": CONSUMPTION_GRID,
     }
     if variant == "dcegm_bonus":
         working = ConsumptionSavingsRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
@@ -281,13 +270,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "brute_bonus":
         working = UserRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute_bonus},
@@ -300,13 +283,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_bonus_age":
         working = ConsumptionSavingsRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_from_savings},
@@ -329,13 +306,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "brute_bonus_age":
         working = UserRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID},
             state_transitions={"wealth": next_wealth_brute_bonus_and_age_transfer},
@@ -349,13 +320,7 @@ def _get_model(variant: str) -> Model:
         )
     elif variant == "dcegm_bonus_pension":
         working = ConsumptionSavingsRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
             state_transitions={
@@ -380,13 +345,7 @@ def _get_model(variant: str) -> Model:
         )
     else:
         working = UserRegime(
-            regime_transitions=until_exit(
-                last_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working_life", "dead")
-                ),
-                exits=("dead",),
-            ),
+            regime_transitions=DeterministicTransition(func=next_regime),
             actions=actions,
             states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
             state_transitions={
@@ -400,9 +359,15 @@ def _get_model(variant: str) -> Model:
                 "is_working": is_working,
             },
         )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=ages,
+        edges={
+            "working_life": {
+                "working_life": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
+            }
+        },
         regime_id_class=BonusRegimeId,
         initial_nodes={ages.exact_values[0]: "working_life"},
     )

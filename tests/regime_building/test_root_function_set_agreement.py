@@ -23,6 +23,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -43,7 +44,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
 
 # Which regime is asked for its roots, in which phase.
 type RootCallKey = tuple[str, str]
@@ -187,8 +187,14 @@ def _record_root_calls(
     monkeypatch.setattr(broadcast, "root_functions", make_spy("pruning"))
     monkeypatch.setattr(model_processing, "root_functions", make_spy("usage"))
 
-    with_fixture_graph(
+    Model(
         regimes=_make_regimes(),
+        edges={
+            "couple": {"couple_ir": 0, "single_f": 0, "single_m": 0},
+            "couple_ir": {"couple_terminal": 1},
+            "single_f": {"single_terminal": 1},
+            "single_m": {"single_terminal": 1},
+        },
         ages=_AGES,
         regime_id_class=RegimeId,
         states={"bonus": _BONUS_GRID},

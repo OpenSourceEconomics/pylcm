@@ -31,7 +31,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.slow
 
@@ -52,7 +51,7 @@ def _closed_form_model() -> Model:
     # the intended stress case because its segment sweep is closest to the
     # required crossing-complete representation.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
-    return with_fixture_graph(
+    return Model(
         regimes={
             "retirement": dcegm_retirement.replace(
                 regime_transitions=retirement_only.retirement_transitions(last_age=50),
@@ -63,6 +62,7 @@ def _closed_form_model() -> Model:
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
+        edges={"retirement": {"dead": 40}},
     )
 
 
@@ -207,11 +207,12 @@ def _skill_model() -> Model:
         },
         functions={"utility": _skill_bequest_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
+        edges={"retirement": {"dead": 40}},
     )
 
 
@@ -288,11 +289,12 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
+        edges={"retirement": {"dead": 40}},
     )
     params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 

@@ -16,11 +16,9 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -40,7 +38,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -105,12 +102,10 @@ def _inputs(
     else:
         law = _valid_health_probabilities if valid else _invalid_health_probabilities
     grid = DiscreteGrid(category_class=_Health)
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
+                regime_transitions=DeterministicTransition(func=_next_regime),
                 states={"health": grid},
                 state_transitions={"health": StochasticTransition(func=law)},
                 functions={"utility": _utility},
@@ -125,6 +120,7 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     return (
         model,

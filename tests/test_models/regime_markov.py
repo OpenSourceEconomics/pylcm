@@ -1,19 +1,16 @@
 """Model with StochasticTransition on regime transitions."""
 
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -38,13 +35,7 @@ def _next_regime_probs(
 
 
 alive = UserRegime(
-    regime_transitions=until_exit(
-        62,
-        law=_SupportedStochasticTransition(
-            func=_next_regime_probs, targets=("alive", "dead")
-        ),
-        exits=("dead",),
-    ),
+    regime_transitions=StochasticTransition(func=_next_regime_probs),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),

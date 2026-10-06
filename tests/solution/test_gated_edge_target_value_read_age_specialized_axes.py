@@ -37,8 +37,6 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -149,27 +147,23 @@ def _build_model() -> Model:
 
     """
     saver = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "saver": StochasticTransition(func=_probability_of_staying_put),
-                "account": ValueDependentTransition(
-                    probability=StochasticTransition(
-                        func=_probability_of_opening_the_account
-                    ),
-                    gate=_account_value_clears_the_floor,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity",
-                                projection={"principal": _principal_from_balance},
-                            )
-                        )
-                    },
+        regime_transitions={
+            "saver": StochasticTransition(func=_probability_of_staying_put),
+            "account": ValueDependentTransition(
+                probability=StochasticTransition(
+                    func=_probability_of_opening_the_account
                 ),
-            },
-            exits=("account",),
-        ),
+                gate=_account_value_clears_the_floor,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity",
+                            projection={"principal": _principal_from_balance},
+                        )
+                    )
+                },
+            ),
+        },
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
@@ -187,11 +181,12 @@ def _build_model() -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saver": saver, "account": account, "annuity": annuity},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "saver"},
+        edges={"saver": {"saver": 0, "account": (0, 1), "annuity": (0, 1)}},
     )
 
 

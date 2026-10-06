@@ -24,8 +24,6 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -67,17 +65,14 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     def _to_b() -> ScalarFloat:
         return jnp.float32(probability_b)
 
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"a": 20, "b": 20}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={
-                        "a": StochasticTransition(func=_to_a),
-                        "b": StochasticTransition(func=_to_b),
-                    },
-                    exits=("a", "b"),
-                ),
+                regime_transitions={
+                    "a": StochasticTransition(func=_to_a),
+                    "b": StochasticTransition(func=_to_b),
+                },
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},
@@ -169,7 +164,8 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
             functions={"utility": _pays_wealth},
         )
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"live": 20, "gone_a": 20, "gone_b": 20}},
         regimes={
             "source": Regime(
                 regime_transitions=ByAge(

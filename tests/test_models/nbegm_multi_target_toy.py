@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ByAge,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
@@ -39,7 +40,6 @@ from tests.test_models.nbegm_common import (
     savings,
     utility,
 )
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -135,14 +135,15 @@ def _build_living_regime(
             "alive_b": lcm.fixed_transition("kind"),
         },
     }
-    regime_transition = until_exit(
-        final_age,
+    to_dead = StochasticTransition(func=prob_to_dead)
+    regime_transition = ByAge.until(
+        stop_age_exclusive=final_age,
         law={
             "alive_a": StochasticTransition(func=prob_to_alive_a),
             "alive_b": StochasticTransition(func=prob_to_alive_b),
-            "dead": StochasticTransition(func=prob_to_dead),
+            "dead": to_dead,
         },
-        exits=("dead",),
+        then={"dead": to_dead},
     )
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.

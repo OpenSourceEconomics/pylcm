@@ -21,17 +21,13 @@ import pytest
 from _lcm.execution.scheduler import BufferRegistry, shard_identities
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.grids.base import Grid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import backward_induction
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm import (
     AgeGrid,
-    AgeRange,
     AgeSpecializedGrid,
-    ByAge,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -50,7 +46,6 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def _params() -> dict[str, float]:
@@ -71,8 +66,19 @@ class _Records(logging.Handler):
 
 
 def _model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes=_make_full_topology_regimes(),
+        edges={
+            "single_f": {"married": 0, "single_f_p1": 0},
+            "single_m": {"married": 0, "single_m_p1": 0},
+            "single_f_p1": {"single_f_terminal": 1},
+            "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+            "married": {
+                "married_terminal": 1,
+                "single_f_terminal": 1,
+                "single_m_terminal": 1,
+            },
+        },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},
@@ -198,13 +204,7 @@ def _pass_through_model(
     """
     margin = _pass_through_margin()
     working = ConsumptionSavingsRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_pass_through_next_regime, targets=("dead",)
-                )
-            }
-        ),
+        regime_transitions=DeterministicTransition(func=_pass_through_next_regime),
         states={"wealth": wealth_grid},
         actions={"consumption": _PASS_THROUGH_CONSUMPTION_GRID},
         state_transitions={"wealth": _pass_through_next_wealth},
@@ -223,8 +223,9 @@ def _pass_through_model(
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
+        edges={"working": {"dead": 0}},
         regime_id_class=_PassThroughRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         enable_jit=enable_jit,

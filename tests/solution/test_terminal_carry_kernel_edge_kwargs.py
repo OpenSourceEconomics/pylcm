@@ -35,6 +35,7 @@ from lcm import (
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
+    Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -51,7 +52,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 DISCOUNT_FACTOR = 0.95
 
@@ -98,8 +98,12 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     gated-edge branch, so `mover`'s value function is the one the gated-edge
     branch produces on its own.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_mixed_regimes(),
+        edges={
+            "mover": {"moved_terminal": 0, "stay_terminal": 0},
+            "saver": {"saver_terminal": 0},
+        },
         ages=AGES,
         regime_id_class=MixedRegimeId,
         initial_nodes={0: "mover"},
@@ -120,8 +124,9 @@ def test_gated_edge_source_solves_on_its_own():
     Fixes the value the mixed model has to reproduce, and shows the gate is
     genuinely closed at the two low-wealth nodes.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_gated_regimes(),
+        edges={"mover": {"moved_terminal": 0, "stay_terminal": 0}},
         ages=AGES,
         regime_id_class=GatedRegimeId,
         initial_nodes={0: "mover"},

@@ -32,7 +32,6 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import SolutionResult
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -95,7 +94,7 @@ def _model(
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regimes=regimes,
         regime_id_class=DormantId,
@@ -110,6 +109,7 @@ def _model(
             if budgeted
             else ExecutionConfig()
         ),
+        edges={"main": {"end": 0}, "latent": {"end": 0}},
     )
 
 

@@ -21,13 +21,11 @@ from typing import cast
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Phased,
@@ -35,8 +33,6 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among
 
 BEQUEST_SCALE = 0.8
 
@@ -107,10 +103,8 @@ def _carried_retired() -> UserRegime:
     return UserRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(
-                    start=62, exclusive_stop=64
-                ): _SupportedDeterministicTransition(
-                    func=_from_retired, targets=("dead",)
+                AgeRange(start=62, exclusive_stop=64): DeterministicTransition(
+                    func=_from_retired
                 )
             }
         ),
@@ -130,10 +124,8 @@ def _ordinary_retired() -> UserRegime:
     return UserRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(
-                    start=62, exclusive_stop=64
-                ): _SupportedDeterministicTransition(
-                    func=_from_retired, targets=("dead",)
+                AgeRange(start=62, exclusive_stop=64): DeterministicTransition(
+                    func=_from_retired
                 )
             }
         ),
@@ -146,7 +138,7 @@ def _ordinary_retired() -> UserRegime:
 def _model(
     *, working: UserRegime, retired: UserRegime, values_bequest: bool = False
 ) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": working,
             "retired": retired,
@@ -155,6 +147,7 @@ def _model(
         ages=AgeGrid(start=60, inclusive_stop=64, step="2Y"),
         regime_id_class=_RegimeId,
         initial_nodes={60: "working"},
+        edges={"working": {"retired": 60}, "retired": {"dead": 62}},
     )
 
 
@@ -170,11 +163,7 @@ def _working(*, regime_transitions: UserFunction | Phased) -> UserRegime:
 
     return UserRegime(
         regime_transitions=ByAge(
-            cases={
-                AgeRange(start=60, exclusive_stop=62): choose_among(
-                    regime_transitions, targets=("retired",)
-                )
-            }
+            cases={AgeRange(start=60, exclusive_stop=62): regime_transitions}
         ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8),
