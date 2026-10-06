@@ -28,6 +28,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
+    RegimeInitializationError,
 )
 from lcm.regime import Regime
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
@@ -752,4 +753,36 @@ def test_off_grid_monthly_start_raises_at_every_log_level(
             age=jnp.array([0.05]),
             log_level=log_level,
             initial_nodes={0: "end", Fraction(1, 12): "end"},
+        )
+
+
+@pytest.mark.parametrize(
+    "wrapper", [DeterministicTransition, StochasticTransition], ids=lambda w: w.__name__
+)
+def test_a_regime_law_naming_its_targets_is_refused_at_construction(
+    *, wrapper: Any
+) -> None:
+    """Destinations belong to `Model(edges=...)`; a law cannot name them."""
+    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
+        wrapper(func=lambda: RegimeId.dead, targets=("dead",))
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [_SupportedDeterministicTransition, _SupportedStochasticTransition],
+    ids=lambda w: w.__name__,
+)
+def test_a_model_refuses_a_regime_law_carrying_its_targets(*, wrapper: Any) -> None:
+    """A regime law tagged with destinations is refused; the graph declares them."""
+    with pytest.raises(ModelInitializationError, match=r"Model\(edges=\.\.\.\)"):
+        _dated_model(
+            retirement=_regime(
+                regime_transitions=wrapper(
+                    func=lambda: RegimeId.dead, targets=("dead",)
+                )
+            ),
+            edges={
+                "working": {"working": (25, 35, 45), "retirement": 55},
+                "retirement": {"dead": 65},
+            },
         )
