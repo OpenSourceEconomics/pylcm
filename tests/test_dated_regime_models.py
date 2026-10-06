@@ -419,7 +419,10 @@ def test_initial_nodes_are_the_permitted_covered_pairs(
     [
         (
             {25: "retirement"},
-            r"requires 'retirement' at age 25, where 'retirement' supplies no law",
+            (
+                r"requires 'retirement' at age 25, where `edges` declares no edge "
+                r"out of 'retirement' at that age"
+            ),
         ),
         ({25: "unknown"}, r"names unknown regime\(s\) \['unknown'\]"),
         ({61: "working"}, r"^Age 61 in selector 61 is not an age of the model"),

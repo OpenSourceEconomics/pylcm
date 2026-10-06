@@ -61,7 +61,7 @@ from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.transition_plans import TargetTransitionPlans
+from _lcm.transition_plans import SupportOrigin, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -973,17 +973,20 @@ class Solver(ABC):
         return None
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
-        """Whether this solver consumes transition-local lottery axes.
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """The support origins of the transition-local lotteries this solver consumes.
 
-        A ``JointTransition`` is enumerated inside the source action value.  The
-        grid-search Q kernel implements that dataflow.  Continuation-based
-        solvers must opt in only after their own child-read representation also
-        enumerates the canonical ``TargetTransitionPlan`` lotteries; accepting
-        the declaration without doing so would defer a semantic mismatch to a
-        runtime missing-node failure.
+        - `SupportOrigin.DECLARED` ⇒ a `JointTransition`, enumerated inside the
+          source action value; the grid-search Q kernel implements that dataflow.
+        - `SupportOrigin.SOURCE_PROCESS` ⇒ an edge's draw of a source random
+          state, enumerated as a node axis of the child read.
+
+        A continuation-based solver lists an origin only once its own child-read
+        representation enumerates those `TargetTransitionPlan` lotteries;
+        accepting the declaration without doing so would defer a semantic
+        mismatch to a runtime missing-node failure.
         """
-        return False
+        return frozenset()
 
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
