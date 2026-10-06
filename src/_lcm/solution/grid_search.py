@@ -72,6 +72,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
@@ -183,9 +184,9 @@ class GridSearch(Solver):
         )
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
-        """Grid search enumerates transition-local lotteries inside Q."""
-        return True
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """Grid search enumerates every transition-local lottery inside Q."""
+        return frozenset({SupportOrigin.DECLARED, SupportOrigin.SOURCE_PROCESS})
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
