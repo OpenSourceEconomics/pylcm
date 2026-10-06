@@ -251,6 +251,7 @@ def _canonicalize_phase_transitions(
             target_regime_name
             for target_regime_name in required_targets
             if target_regime_name in declared_carriers
+            and (target_regime_name, state_name) not in claimed_joint_cells
         }
         errors += _per_target_law_errors(
             state_name=state_name,
