@@ -15,6 +15,7 @@ linearly in wealth. It shares nothing with the engine but the model's
 primitives.
 """
 
+import inspect
 import itertools
 import re
 from types import MappingProxyType
@@ -566,15 +567,20 @@ def _array_shapes_of_the_pointwise_Q(
 def _traced_pointwise_Q(
     *, model: Model, params: Any, solution: Any, subjects: dict[str, Any]
 ) -> str:
-    """Return the jaxpr text of the period-0 pointwise `Q` of `alive`."""
+    """Return the jaxpr text of the period-0 pointwise `Q` of `alive`.
+
+    Only the `subjects` entries that `Q` takes as arguments are passed to it.
+    """
     regime = model._regimes["alive"]
     flat_params = model._process_params(params)["alive"]
     next_regime_to_V_arr = MappingProxyType(dict(solution.values[1]))
     age = jnp.asarray(model.ages.period_to_age(0))
+    Q_and_F = regime.simulation.Q_and_F[0]
+    arguments = inspect.signature(Q_and_F).parameters
 
     def pointwise_Q() -> Any:
-        return regime.simulation.Q_and_F[0](
-            **subjects,
+        return Q_and_F(
+            **{name: value for name, value in subjects.items() if name in arguments},
             next_regime_to_V_arr=next_regime_to_V_arr,
             **flat_params,
             period=jnp.int32(0),
