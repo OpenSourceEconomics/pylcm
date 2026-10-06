@@ -11,7 +11,6 @@ from lcm import (
     Model,
     StochasticTransition,
     categorical,
-    fixed_transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
@@ -40,6 +39,10 @@ def _savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> Float
     return wealth - consumption
 
 
+def _next_wealth(savings: FloatND) -> ContinuousState:
+    return savings
+
+
 def _certain_target() -> FloatND:
     return jnp.asarray(1.0)
 
@@ -61,7 +64,7 @@ def _model(solver: OneMarginSolver | GridSearch) -> Model:
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
-        state_transitions={"wealth": fixed_transition("wealth")},
+        state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility, "savings": _savings},
         joint_transitions={
             "target": {
