@@ -110,3 +110,94 @@ def two_period_log_value(
             optimum = 0.5 * (low + high)
         best = max(best, objective(s=optimum, below=below))
     return best
+
+
+def blended_row_preimages(
+    *,
+    child_nodes: Sequence[Fraction],
+    query: Fraction,
+    threshold: Fraction,
+    slope: Fraction,
+    offset: Fraction,
+) -> tuple[Fraction, ...]:
+    """Return the savings preimages of the cliffs of every child row a query blends.
+
+    The child's value at co-state `query` is the linear interpolation of its rows
+    at the two child nodes bracketing `query`; a node carrying zero weight is not
+    read. Row `w` loses its subsidy where `liquid + w` reaches `threshold`, and
+    the liquid law is `slope * s + offset`.
+
+    Args:
+        child_nodes: The child's co-state nodes, strictly increasing.
+        query: The child co-state the source lands on, inside the nodes.
+        threshold: Income threshold of the cliff.
+        slope: Positive savings slope of the liquid law.
+        offset: Intercept of the liquid law.
+
+    Returns:
+        The distinct preimages, ascending.
+
+    """
+    if any(lower >= upper for lower, upper in itertools.pairwise(child_nodes)):
+        msg = f"The child nodes must increase strictly; got {child_nodes}."
+        raise ValueError(msg)
+    if not child_nodes[0] <= query <= child_nodes[-1]:
+        msg = f"The query {query} lies outside the child nodes {child_nodes}."
+        raise ValueError(msg)
+    if slope <= 0:
+        msg = f"The liquid law must increase in savings; got slope {slope}."
+        raise ValueError(msg)
+    read: set[Fraction] = set()
+    for lower, upper in itertools.pairwise(child_nodes):
+        if lower <= query <= upper:
+            weight_upper = (query - lower) / (upper - lower)
+            read |= {
+                node
+                for node, weight in ((lower, 1 - weight_upper), (upper, weight_upper))
+                if weight
+            }
+            break
+    return tuple(sorted((threshold - node - offset) / slope for node in read))
+
+
+def age_closure_preimage(
+    *,
+    threshold: Fraction,
+    base_income: Fraction,
+    increment: Fraction,
+    child_age: Fraction,
+) -> Fraction:
+    """Return the liquid level where the child's income reaches `threshold`.
+
+    The child's income is `liquid + base_income + increment * child_age`.
+    """
+    return threshold - base_income - increment * child_age
+
+
+def sibling_draw_preimages(
+    *,
+    cutoffs: Sequence[Fraction],
+    slope: Fraction,
+    shifts: Sequence[Fraction],
+) -> frozenset[Fraction]:
+    """Return the save-to-cliff centres when the cliff and the law read sibling draws.
+
+    The child's kind `k` sets its liquid cutoff `cutoffs[k]`; an independent
+    draw `z` sets the liquid law `slope * s + shifts[z]`. Every joint child
+    `(k, z)` with positive mass contributes `(cutoffs[k] - shifts[z]) / slope`.
+
+    Args:
+        cutoffs: Child liquid cutoff of each kind.
+        slope: Positive savings slope of the liquid law.
+        shifts: Liquid-law intercept of each draw node.
+
+    Returns:
+        The distinct centres.
+
+    """
+    if slope <= 0:
+        msg = f"The liquid law must increase in savings; got slope {slope}."
+        raise ValueError(msg)
+    return frozenset(
+        (cutoff - shift) / slope for cutoff, shift in itertools.product(cutoffs, shifts)
+    )

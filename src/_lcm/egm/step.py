@@ -236,6 +236,9 @@ def build_egm_step_functions(
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None,
+    period_to_user_regimes: (
+        MappingProxyType[int, Mapping[RegimeName, UserRegime]] | None
+    ) = None,
     age_values: FloatND | IntND,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
@@ -280,8 +283,12 @@ def build_egm_step_functions(
             V-interpolation info per regime, or `None` for an age-invariant
             model. A period-`t` kernel reads its targets' entries at `t + 1`.
         period_to_regime_grid_signature: Immutable mapping of period to each
-            regime's user-declared grid signature, or `None` for an
-            age-invariant model. Folded into the kernel-sharing group key.
+            regime's user-declared age-specialization signature, or `None` for
+            an age-invariant model. Folded into the kernel-sharing group key.
+        period_to_user_regimes: Immutable mapping of period to every regime's
+            declaration with its age markers resolved at that period, or `None`
+            for an age-invariant model. A period-`t` kernel reads its carry
+            targets' resources maps from their declarations at `t + 1`.
 
     Returns:
         The per-period kernel mapping, the regime's all-finite carry template
@@ -445,9 +452,17 @@ def build_egm_step_functions(
         )
         if unsupported is not None:
             raise ModelInitializationError(unsupported)
+        # A target's resources map is the child's own at `t + 1`: its age
+        # markers resolve there, and the group key holds the targets'
+        # signatures at `t + 1`, so the representative period stands for all.
+        child_user_regimes = (
+            user_regimes
+            if period_to_user_regimes is None
+            else period_to_user_regimes.get(representative_period + 1, user_regimes)
+        )
         kernel = _get_egm_step(
             solver=solver,
-            user_regimes=user_regimes,
+            user_regimes=child_user_regimes,
             functions=group_functions,
             koopmans_aggregator=koopmans_aggregator,
             constraints=group_constraints,

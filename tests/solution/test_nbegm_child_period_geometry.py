@@ -10,10 +10,13 @@ declarations make the child's cliff geometry differ from the source's:
   child's cliff sits where the child's own income crosses the threshold.
 
 Both the production cliff targets and the scalar oracle's must bracket the
-savings preimages of the child's cliffs. The full period kernel must also agree
-with the scalar oracle.
+savings preimages of the child's cliffs, which `_cliff_pullback_reference`
+computes in exact arithmetic without reading either. The full period kernel must
+also agree with the scalar oracle.
 """
 
+import dataclasses
+from fractions import Fraction
 from typing import Any
 
 import jax
@@ -30,11 +33,15 @@ from _lcm.execution.core_program import (
 from _lcm.solution.nbegm import _cliff_savings_targets as production_targets
 from lcm import AgeSpecializedFunction, AgeSpecializedGrid, DiscreteGrid, LinSpacedGrid
 from lcm.typing import ContinuousState, FloatND
+from tests.solution._cliff_pullback_reference import (
+    age_closure_preimage,
+    blended_row_preimages,
+)
 from tests.solution._nbegm_direct_oracle import (
     _cliff_savings_targets as oracle_targets,
 )
 from tests.solution._nbegm_direct_oracle import (
-    child_period_kwargs,
+    child_period_context,
     ride_along_kernel,
 )
 from tests.solution.test_nbegm_direct_oracle import (
@@ -142,25 +149,54 @@ def _income_closure_model(*, increment: float) -> tuple[Any, dict[str, Any]]:
     return model, params
 
 
-# Each case: the model kind, its parameter, and the savings preimages of the
-# child's cliffs.
-# - Wage grids: source wage 4 moves to 0.9 * 4 = 3.6; the child blends the two
-#   child nodes bracketing 3.6; each node's cliff is `liquid = 15 - wage` and
-#   `liquid' = s + 1`, so each centre is `14 - wage_node`.
-# - Income closures: income `liquid + 2 + increment` at child age 1 crosses 11
-#   at `liquid = 9 - increment`, and `liquid' = s`.
+def _grid_centres(*, child_top: float) -> tuple[float, ...]:
+    """Source wage 4 moves to `0.9 * 4`; each blended row's cliff is income 15."""
+    top = Fraction(child_top)
+    return tuple(
+        float(centre)
+        for centre in blended_row_preimages(
+            child_nodes=(Fraction(0), top / 2, top),
+            query=Fraction(9, 10) * 4,
+            threshold=Fraction(15),
+            slope=Fraction(1),
+            offset=Fraction(1),
+        )
+    )
+
+
+def _income_centres(*, increment: float) -> tuple[float, ...]:
+    """The child, at age 1, loses the subsidy at income 11; `liquid' = s`."""
+    return (
+        float(
+            age_closure_preimage(
+                threshold=Fraction(11),
+                base_income=Fraction(2),
+                increment=Fraction(increment),
+                child_age=Fraction(1),
+            )
+        ),
+    )
+
+
+# Each case: the model kind and its parameter. The wage-grid cases keep the
+# source grid `(0, 2, 4)`; the income cases keep the source age 0.
 _CASES = {
-    "grid-unchanged": ("grid", 4.0, (10.0, 12.0)),
-    "grid-top-6": ("grid", 6.0, (8.0, 11.0)),
-    "grid-top-8": ("grid", 8.0, (10.0, 14.0)),
-    "income-age-invariant": ("income", 0.0, (9.0,)),
-    "income-rising-with-age": ("income", 3.0, (6.0,)),
+    "grid-unchanged": ("grid", 4.0),
+    "grid-top-6": ("grid", 6.0),
+    "grid-top-8": ("grid", 8.0),
+    "income-age-invariant": ("income", 0.0),
+    "income-rising-with-age": ("income", 3.0),
 }
 
 
 @pytest.fixture(scope="module", params=tuple(_CASES), ids=tuple(_CASES))
 def seam(request: pytest.FixtureRequest) -> dict[str, Any]:
-    kind, parameter, centres = _CASES[request.param]
+    kind, parameter = _CASES[request.param]
+    centres = (
+        _grid_centres(child_top=parameter)
+        if kind == "grid"
+        else _income_centres(increment=parameter)
+    )
     model, params = (
         _wage_grid_model(child_top=parameter)
         if kind == "grid"
@@ -182,6 +218,7 @@ def seam(request: pytest.FixtureRequest) -> dict[str, Any]:
     return {
         "kernel": kernel,
         "context": context,
+        "child": child_period_context(model=model, context=context),
         "kwargs": kwargs,
         "cell": cell,
         "dtype": dtype,
@@ -251,14 +288,13 @@ def test_oracle_cliff_targets_bracket_the_child_periods_cliffs(
     *, seam: dict[str, Any]
 ) -> None:
     """The scalar oracle's cliff targets straddle exactly the child's centres."""
-    kernel, kwargs = seam["kernel"], seam["kwargs"]
+    kernel = seam["kernel"]
     raw = oracle_targets(
         plan=kernel.continuation_plan,
         regime_name="alive",
         combo_pool=_combo_pool(seam=seam),
-        statics=kernel.statics,
-        child_kwargs=child_period_kwargs(kwargs=kwargs, context=seam["context"]),
-        liquid_grid=np.asarray(kwargs[kernel.statics.liquid_name], dtype=np.float64),
+        kwargs=seam["kwargs"],
+        child=seam["child"],
         savings_grid=np.asarray(kernel.savings_grid, dtype=np.float64),
         dtype=seam["dtype"],
     )
@@ -271,4 +307,55 @@ def test_oracle_cliff_targets_bracket_the_child_periods_cliffs(
 
 def test_period_kernel_agrees_with_the_oracle(*, seam: dict[str, Any]) -> None:
     """Value, carry and consumption match the oracle reading the child period."""
-    assert_kernel_agrees_with_oracle(kernel=seam["kernel"], context=seam["context"])
+    assert_kernel_agrees_with_oracle(
+        kernel=seam["kernel"], context=seam["context"], child=seam["child"]
+    )
+
+
+def test_reference_centres_are_the_child_periods() -> None:
+    """The exact reference reproduces the hand-derived child cliff centres."""
+    assert (
+        _grid_centres(child_top=4.0),
+        _grid_centres(child_top=6.0),
+        _grid_centres(child_top=8.0),
+        _income_centres(increment=0.0),
+        _income_centres(increment=3.0),
+    ) == ((10.0, 12.0), (8.0, 11.0), (10.0, 14.0), (9.0,), (6.0,))
+
+
+def test_oracle_reading_the_source_period_misses_moved_cliffs(
+    *, seam: dict[str, Any], request: pytest.FixtureRequest
+) -> None:
+    """Handing the oracle the source period as the child moves the cliffs.
+
+    The positive control of the oracle's child context: on the source's grids
+    and functions the oracle brackets the source's centres, which differ from
+    the child's exactly when the child's grid or age-closed function moved.
+    """
+    kernel, kwargs, context = seam["kernel"], seam["kwargs"], seam["context"]
+    source_as_child = dataclasses.replace(
+        seam["child"],
+        statics=kernel.statics,
+        grids={
+            name: np.asarray(nodes)
+            for name, nodes in context["state_action_space"].states.items()
+        },
+        period=int(context["period"]),
+        age=context["ages"].values[int(context["period"])],
+    )
+    rows = _live_rows(
+        oracle_targets(
+            plan=kernel.continuation_plan,
+            regime_name="alive",
+            combo_pool=_combo_pool(seam=seam),
+            kwargs=kwargs,
+            child=source_as_child,
+            savings_grid=np.asarray(kernel.savings_grid, dtype=np.float64),
+            dtype=seam["dtype"],
+        )
+    )
+    unchanged = request.node.callspec.id in {"grid-unchanged", "income-age-invariant"}
+    assert (
+        _brackets_exactly(rows=rows, centres=seam["centres"], dtype=seam["dtype"])
+        == unchanged
+    ), rows

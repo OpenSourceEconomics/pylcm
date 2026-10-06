@@ -1,8 +1,9 @@
 """A DC-EGM child's resources map is the one its own age resolves to.
 
-The child's resources DAG reads `available_wealth`, an age-specialized function
-`available_wealth_a(x) = (1 + slope * a) * x + transfer * a` that closes over its
-age rather than reading `age` as an argument. The parent at period `t` reads the
+The child's resources map is `R_a(x) = (1 + slope * a) * x + transfer * a`, an
+age-specialized function closing over its age rather than reading `age` as an
+argument. It is declared either as `resources` itself or as `available_wealth`,
+a function the resources DAG reads. The parent at period `t` reads the
 child at period `t + 1`, so the carry is queried at the resources the child's age
 produces, and the savings derivative of that query is the child's slope.
 
@@ -51,21 +52,42 @@ def _available_wealth_factory(*, slope: float, transfer: float) -> Any:
     return build
 
 
-def _model(*, slope: float, transfer: float) -> Model:
+def _resources_factory(*, slope: float, transfer: float) -> Any:
+    def build(age: float) -> Any:
+        def resources(*, liquid: ContinuousState) -> FloatND:
+            return (1.0 + slope * age) * liquid + transfer * age
+
+        return resources
+
+    return build
+
+
+def _model(*, slope: float, transfer: float, declared_as: str) -> Model:
+    def signature(age: float) -> tuple[float, float]:
+        return (slope * age, transfer * age)
+
+    specialized = (
+        {
+            "resources": AgeSpecializedFunction(
+                build=_resources_factory(slope=slope, transfer=transfer),
+                signature=signature,
+            )
+        }
+        if declared_as == "resources"
+        else {
+            "resources": resources,
+            "available_wealth": AgeSpecializedFunction(
+                build=_available_wealth_factory(slope=slope, transfer=transfer),
+                signature=signature,
+            ),
+        }
+    )
     return make_alive_dead_model(
         n_periods=4,
         n_liquid=9,
         liquid_max=60.0,
         n_consumption=9,
-        alive_functions={
-            "utility": utility,
-            "savings": savings,
-            "resources": resources,
-            "available_wealth": AgeSpecializedFunction(
-                build=_available_wealth_factory(slope=slope, transfer=transfer),
-                signature=lambda age: (slope * age, transfer * age),
-            ),
-        },
+        alive_functions={"utility": utility, "savings": savings, **specialized},
         liquid_law=identity_liquid,
         alive_solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=8)
@@ -83,10 +105,19 @@ _CASES = {
 }
 
 
-@pytest.fixture(scope="module", params=tuple(_CASES), ids=tuple(_CASES))
+@pytest.fixture(
+    scope="module",
+    params=[(case, where) for case in _CASES for where in ("resources", "dependency")],
+    ids=lambda param: f"{param[0]}-as-{param[1]}",
+)
 def resources_case(request: pytest.FixtureRequest) -> tuple[Model, float, float]:
-    slope, transfer = _CASES[request.param]
-    return _model(slope=slope, transfer=transfer), slope, transfer
+    case, declared_as = request.param
+    slope, transfer = _CASES[case]
+    return (
+        _model(slope=slope, transfer=transfer, declared_as=declared_as),
+        slope,
+        transfer,
+    )
 
 
 def _child_read(*, model: Model, period: int) -> Any:
@@ -126,3 +157,12 @@ def test_child_resources_and_slope_are_the_child_ages(
         dtype=actual.dtype,
     )
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_periods_share_a_child_read_exactly_when_the_child_maps_agree(
+    *, resources_case: tuple[Model, float, float]
+) -> None:
+    """Periods 0 and 1 share one child read iff the child's map is age-invariant."""
+    model, slope, transfer = resources_case
+    shared = _child_read(model=model, period=0) is _child_read(model=model, period=1)
+    assert shared == (not slope and not transfer)

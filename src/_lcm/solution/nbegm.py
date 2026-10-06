@@ -5124,8 +5124,9 @@ def _build_nbegm_continuation_plan(
         if _aggregates_nonlinearly(context.certainty_equivalent)
         else None
     )
+    # A target's resources map is the child's own, read at its period `t + 1`.
     return build_continuation_plan(
-        user_regimes=context.user_regimes,
+        user_regimes=context.user_regimes_at(period=period + 1),
         functions=context.functions,
         transitions=context.transitions,
         transition_plans=context.transition_plans,
