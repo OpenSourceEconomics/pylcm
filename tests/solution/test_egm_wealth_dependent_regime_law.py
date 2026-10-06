@@ -73,8 +73,12 @@ def _per_target_wealth_law() -> ByAge:
     )
 
 
-def _build_model(*, edges: object) -> Model:
-    """Build the EGM lifecycle that saves at ages 0 and 1 and stops at age 2."""
+def _build_model(*, edges: object, reads_last_age: bool = True) -> Model:
+    """Build the EGM lifecycle that saves at ages 0 and 1 and stops at age 2.
+
+    `reads_last_age` fixes the `last_age` parameter the wealth laws read; a
+    graph-only lifecycle declares no law and so reads no such parameter.
+    """
     wealth_grid = LinSpacedGrid(start=2.0, stop=60.0, n_points=8)
     saving = ConsumptionSavingsRegime(
         states={"wealth": wealth_grid},
@@ -101,7 +105,7 @@ def _build_model(*, edges: object) -> Model:
         regimes={"saving": saving, "done": done},
         regime_id_class=egm_toy.RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        fixed_params={"last_age": 3.0},
+        fixed_params={"last_age": 3.0} if reads_last_age else {},
         initial_nodes={0: "saving"},
         edges=edges,
     )
@@ -161,7 +165,9 @@ def test_one_row_wealth_law_matches_the_graph_only_lifecycle() -> None:
             )
         }
     )
-    graph_only = _build_model(edges={"saving": {"saving": (0, 1), "done": 2}})
+    graph_only = _build_model(
+        edges={"saving": {"saving": (0, 1), "done": 2}}, reads_last_age=False
+    )
     np.testing.assert_array_max_ulp(
         _saving_values(with_law), _saving_values(graph_only), maxulp=8
     )
