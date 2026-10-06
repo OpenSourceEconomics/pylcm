@@ -167,7 +167,7 @@ from _lcm.utils.logging import (
     log_non_finite_values,
     log_period_header,
     log_period_timing,
-    log_regime_transitions,
+    log_regime_transition_counts,
     non_finite_by_regime,
     raise_or_warn,
     validation_enabled,
@@ -1068,7 +1068,7 @@ def _simulate_subject_chunk(
         subject_regime_ids = new_subject_regime_ids
         own_stakeholder = new_own_stakeholder
 
-        log_regime_transitions(
+        log_regime_transition_counts(
             logger=logger,
             prev_regime_ids=prev_regime_ids,
             new_regime_ids=subject_regime_ids,

@@ -60,11 +60,13 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
     errors: list[str] = []
 
     sequence = _definition(tree=tree, name="_validate_transition_sequence")
-    calls = _calls(node=sequence, name="validate_regime_transitions_all_periods")
+    calls = _calls(node=sequence, name="validate_regime_transition_probs_all_periods")
     if len(calls) != 1 or _keyword(call=calls[0], name="memory") != "memory":
         errors.append("transition sequence must forward memory to regime validation")
 
-    all_periods = _definition(tree=tree, name="validate_regime_transitions_all_periods")
+    all_periods = _definition(
+        tree=tree, name="validate_regime_transition_probs_all_periods"
+    )
     calls = _calls(node=all_periods, name="_validate_regime_transition_single")
     if len(calls) != 1 or _keyword(call=calls[0], name="memory") != "memory":
         errors.append("period sweep must forward memory to each regime law")
@@ -277,7 +279,7 @@ def test_regime_transition_admission_contract_is_complete() -> None:
             "transition sequence must forward memory to regime validation",
         ),
         (
-            "validate_regime_transitions_all_periods",
+            "validate_regime_transition_probs_all_periods",
             "                        process_grid_resolver=process_grid_resolver,\n                        memory=memory,",
             "                        process_grid_resolver=process_grid_resolver,\n                        memory=None,",
             "period sweep must forward memory to each regime law",
