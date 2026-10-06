@@ -70,7 +70,6 @@ from _lcm.typing import (
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import (
-    relative_scales,
     scaled_joint_weight,
     zero_safe_weighted_term,
 )
@@ -2597,12 +2596,9 @@ class _ComputeCE:
                         dimension=axis,
                     )
                 if continuation.reader_weight_names:
-                    # The reader has already weighted every slice term by its
-                    # full joint probability; only the sums are left.
-                    numerators, masses, shifts = next_V_at_stochastic_states_arr
-                    next_V_expected_arr = _mean_of_scaled_partial_sums(
-                        numerators=numerators, masses=masses, shifts=shifts
-                    )
+                    # The reader weights every term by its full joint
+                    # probability and returns the expectation itself.
+                    next_V_expected_arr = next_V_at_stochastic_states_arr
                 else:
                     next_V_expected_arr = _expected_continuation_over_nodes(
                         values=next_V_at_stochastic_states_arr,
@@ -2724,9 +2720,8 @@ class _TargetContinuation:
     A declared entry gets no axis: its one value is interpolated on the target's
     nodes inside the interpolator, so the surface carries genuine draws only.
     Neither does a slice draw: it is summed inside the reader, which takes
-    every marginal named in `reader_weight_names` and returns, per coordinate
-    node, a scaled numerator, its mass, and their common scale rather than a
-    value.
+    every marginal named in `reader_weight_names` and returns the expectation
+    over every joint node rather than a value per coordinate node.
     """
 
     slice_weight_names: tuple[str, ...] = ()
@@ -3349,36 +3344,17 @@ def _build_target_continuation(
     coordinate_weight_names = tuple(
         f"weight_{target_regime_name}__{name}" for name in coordinate_draws
     )
+    next_V: Callable[..., Any] = productmap(
+        func=mapped_interpolator,
+        variables=coordinate_draws,
+        batch_sizes=dict.fromkeys(coordinate_draws, 0),
+    )
     if slice_draws:
-        position_names = tuple(f"{name}__position" for name in coordinate_draws)
-        next_V: Callable[..., Any] = _SliceReaderOverCoordinateNodes(
-            reader=productmap(
-                func=_ExpectationOverSliceDraws(  # ty: ignore[invalid-argument-type]
-                    interpolator=mapped_interpolator,
-                    slice_draws=slice_draws,
-                    joint_weights=productmap(
-                        func=_OuterJointWeights(
-                            arg_names=(*coordinate_weight_names, *slice_weight_names)
-                        ),
-                        variables=slice_weight_names,
-                        batch_sizes=dict.fromkeys(slice_weight_names, 0),
-                    ),
-                    weight_names=slice_weight_names,
-                    coordinate_draws=coordinate_draws,
-                    coordinate_weight_names=coordinate_weight_names,
-                    position_names=position_names,
-                ),
-                variables=position_names,
-                batch_sizes=dict.fromkeys(position_names, 0),
-            ),
-            coordinate_draws=coordinate_draws,
-            position_names=position_names,
-        )
-    else:
-        next_V = productmap(
-            func=mapped_interpolator,
-            variables=coordinate_draws,
-            batch_sizes=dict.fromkeys(coordinate_draws, 0),
+        next_V = _ExpectationOverSliceDraws(
+            interpolator=next_V,
+            slice_draws=slice_draws,
+            weight_names=slice_weight_names,
+            coordinate_weight_names=coordinate_weight_names,
         )
 
     return _TargetContinuation(
@@ -3496,92 +3472,46 @@ def _slice_draws(
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _SliceReaderOverCoordinateNodes:
-    """Map the slice-draw reader over every node of the coordinate-moving draws.
-
-    The reader is mapped over node positions rather than over the coordinates
-    themselves, so it can read each coordinate draw's code and marginal at the
-    same position. The published signature is the reader's without the
-    positions, which this wrapper supplies.
-    """
-
-    reader: Callable[..., tuple[FloatND, FloatND, IntND]]
-    """`_ExpectationOverSliceDraws`, product-mapped over `position_names`."""
-    coordinate_draws: tuple[TransitionFunctionName, ...]
-    """The coordinate-moving draws, in node-axis order."""
-    position_names: tuple[str, ...]
-    """The reader's position argument per coordinate draw."""
-
-    def __post_init__(self) -> None:
-        _publish_signature(
-            target=self,
-            arg_names=tuple(
-                arg
-                for arg in inspect.signature(self.reader).parameters
-                if arg not in self.position_names
-            ),
-            return_annotation=inspect.Signature.empty,
-            name="expect_over_slice_draws_at_coordinate_nodes",
-        )
-
-    @no_type_check
-    def __call__(self, **kwargs: Any) -> tuple[FloatND, FloatND, IntND]:  # noqa: ANN401
-        # A coordinate given as a single value is one node, as `productmap`
-        # treats it.
-        nodes = {name: jnp.atleast_1d(kwargs[name]) for name in self.coordinate_draws}
-        positions = {
-            position: jnp.arange(jnp.shape(nodes[name])[0])
-            for name, position in zip(
-                self.coordinate_draws, self.position_names, strict=True
-            )
-        }
-        return self.reader(**(kwargs | nodes), **positions)
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
 class _ExpectationOverSliceDraws:
-    """Sum a target's value over the draws that only select its value slice.
+    """Expect a target's value over every joint node, looping over the slice draws.
 
-    Evaluated at one node of the coordinate-moving draws, it reads the value
-    once per joint node of the slice draws and folds each read into a running
-    weighted sum. The loop keeps every intermediate at the shape of a single
-    read, so the continuation never holds an array spanning all joint nodes.
+    The coordinate-moving draws stay on axes: the interpolator is product-mapped
+    over them, so one step of the loop reads the value at every coordinate node
+    for one joint node of the slice draws. Every intermediate — the read, its
+    weights, and the running sums — is one read wide, so the continuation never
+    holds an array spanning all joint nodes.
 
-    Each slice node is weighted by its FULL joint probability — the coordinate
-    node's marginals times the slice marginals, formed by the same scaled
-    product as the joint route's node weights — before it enters the sum, and
-    contributes the same scaled, zero-safe term as `zero_safe_average` forms
-    for it. A node of zero probability drops out even where its read is not
-    finite.
+    Each read is weighted by its FULL joint probability before it is added into
+    the running sum: the coordinate marginals, broadcast along the coordinate
+    axis, times the slice node's marginals, formed per joint node by the same
+    scaled product as the joint route's node weights. Every term is the same
+    scaled, zero-safe term `zero_safe_average` forms for its node, so a node of
+    zero probability drops out even where its read is not finite. The running
+    numerator and mass keep the coordinate axis; both are summed over it once at
+    the end and divided, without any further weighting.
 
-    Finite-range invariant: every partial sum is a sum of terms `w v` whose
-    weights together carry at most this coordinate node's share of the
-    probability — raised by its scale only where that share lies below the
-    normal range — so its magnitude is bounded by that share times the largest
-    `|v|`, up to one rounding per term and addition. It can leave the finite
-    range only where the joint expectation itself lies within that rounding
-    of the largest finite value, the bound the joint contraction has.
+    All terms are put on the scale of the largest joint node, which a first,
+    weights-only loop finds; a second loop reads the values.
 
-    It returns the coordinate node's numerator and mass, both on the scale of
-    its own largest slice node, together with that scale. Neither is
-    normalized here: the caller brings every coordinate node onto one scale,
-    sums numerators and masses, and divides once.
+    Finite-range invariant: at every coordinate node the running numerator is a
+    sum of terms `w v` whose weights are joint probabilities — raised by the
+    common scale only where the largest joint node lies below the normal range
+    — so its magnitude is bounded by that node's share of the probability times
+    the largest `|v|`, up to one rounding per term and addition. The final sum
+    over the coordinate axis is bounded the same way by the total mass. It can
+    leave the finite range only where the joint expectation itself lies within
+    that rounding of the largest finite value, the bound the joint contraction
+    has.
     """
 
     interpolator: Callable[..., FloatND]
-    """The target's value reader at one node."""
+    """The target's value reader, product-mapped over the coordinate draws."""
     slice_draws: tuple[TransitionFunctionName, ...]
     """The `next_<state>` names of the slice draws."""
-    joint_weights: Callable[..., tuple[FloatND, IntND]]
-    """Scaled product of the coordinate node's marginals and the slice marginals."""
     weight_names: tuple[str, ...]
     """The slice marginal-weight argument names, one per slice draw."""
-    coordinate_draws: tuple[TransitionFunctionName, ...]
-    """The `next_<state>` names of the coordinate-moving draws."""
     coordinate_weight_names: tuple[str, ...]
-    """The coordinate marginal-weight argument names, one per coordinate draw."""
-    position_names: tuple[str, ...]
-    """The node-position argument names, one per coordinate draw."""
+    """The coordinate marginal-weight argument names, in node-axis order."""
     interpolator_args: frozenset[str] = field(init=False)
     """Every argument the interpolator reads."""
 
@@ -3594,10 +3524,8 @@ class _ExpectationOverSliceDraws:
                 dict.fromkeys(
                     (
                         *interpolator_args,
-                        *self.coordinate_draws,
                         *self.weight_names,
                         *self.coordinate_weight_names,
-                        *self.position_names,
                     )
                 )
             ),
@@ -3606,87 +3534,140 @@ class _ExpectationOverSliceDraws:
         )
 
     @no_type_check
-    def __call__(self, **kwargs: Any) -> tuple[FloatND, FloatND, IntND]:  # noqa: ANN401
-        positions = dict(
-            zip(
-                self.coordinate_draws,
-                (kwargs[name] for name in self.position_names),
-                strict=True,
-            )
-        )
-        coefficients, shifts = self.joint_weights(
-            **{
-                weight_name: jnp.atleast_1d(kwargs[weight_name])[positions[name]]
-                for name, weight_name in zip(
-                    self.coordinate_draws, self.coordinate_weight_names, strict=True
-                )
-            },
-            **{name: kwargs[name] for name in self.weight_names},
-        )
-        coefficients = jnp.ravel(coefficients)
-        shifts = jnp.ravel(shifts)
-        scale = relative_scales(shifts=shifts)
-        mass = jnp.sum(scaled_down_by_power_of_two(values=coefficients, shift=scale))
-        # The same split of each node's scale between its weight and its term
-        # as `scaled_weighted_terms`: the weight takes what it can while
-        # staying normal, the product takes the rest.
-        on_the_weight = jnp.maximum(scale, -binades_above_smallest_normal(coefficients))
-        weights = scaled_down_by_power_of_two(values=coefficients, shift=on_the_weight)
-        codes = tuple(
+    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        # Flattened in the order the product-mapped read lays out its axes; a
+        # coordinate given as a single value is one node, as `productmap`
+        # treats it.
+        coordinate_factors = tuple(
             jnp.ravel(grid)
             for grid in jnp.meshgrid(
-                *(jnp.asarray(kwargs[name]) for name in self.slice_draws),
+                *(
+                    jnp.atleast_1d(kwargs[name])
+                    for name in self.coordinate_weight_names
+                ),
                 indexing="ij",
             )
         )
+        slice_nodes = tuple(
+            tuple(jnp.ravel(grid) for grid in jnp.meshgrid(*arrays, indexing="ij"))
+            for arrays in (
+                tuple(jnp.asarray(kwargs[name]) for name in self.slice_draws),
+                tuple(jnp.asarray(kwargs[name]) for name in self.weight_names),
+            )
+        )
         fixed = {
-            name: value
-            for name, value in kwargs.items()
-            if name in self.interpolator_args
-            and name not in self.slice_draws
-            and name not in positions
-        } | {
-            name: kwargs[name][position]
-            for name, position in positions.items()
-            if name in self.interpolator_args
+            name: kwargs[name]
+            for name in self.interpolator_args
+            if name not in self.slice_draws
         }
+        first = jax.tree_util.tree_map(operator.itemgetter(0), slice_nodes)
+        lower_shift = functools.partial(
+            _lower_shift_at_slice_node, coordinate_factors=coordinate_factors
+        )
+        common_shift, _ = jax.lax.scan(
+            lower_shift, lower_shift(None, first)[0], slice_nodes
+        )
         add_node = functools.partial(
             _add_slice_node,
             interpolator=self.interpolator,
             fixed=fixed,
             slice_draws=self.slice_draws,
+            coordinate_factors=coordinate_factors,
+            common_shift=common_shift,
         )
-        nodes = (codes, weights, scale - on_the_weight)
-        # The sum starts at a zero shaped like one node's term, so it carries
+        # The sums start at zeros shaped like one step's terms, so they carry
         # the type every term has — including how it varies across a mapped
-        # device axis. Only the term's type is read; its value is discarded.
-        first, _ = add_node(None, jax.tree_util.tree_map(operator.itemgetter(0), nodes))
-        numerator, _ = jax.lax.scan(add_node, jnp.zeros_like(first), nodes)
-        return numerator, mass, jnp.min(shifts)
+        # device axis. Only the terms' type is read; their values are discarded.
+        first_sums, _ = add_node(None, first)
+        (numerator, mass), _ = jax.lax.scan(
+            add_node, jax.tree_util.tree_map(jnp.zeros_like, first_sums), slice_nodes
+        )
+        return jnp.sum(numerator) / jnp.sum(mass)
+
+
+def _joint_weights_at_slice_node(
+    *, coordinate_factors: tuple[FloatND, ...], slice_factors: tuple[FloatND, ...]
+) -> tuple[FloatND, IntND]:
+    """Return every coordinate node's joint weight with one slice node's.
+
+    Each joint node gets its own scaled product of all its marginals, as the
+    joint route's node weights do, laid out along the flattened coordinate axis.
+    """
+    n_coordinate_nodes = coordinate_factors[0].shape[0] if coordinate_factors else 1
+    factors = jnp.stack(
+        [
+            *coordinate_factors,
+            *(
+                jnp.broadcast_to(factor, (n_coordinate_nodes,))
+                for factor in slice_factors
+            ),
+        ]
+    )
+    return jax.vmap(scaled_joint_weight, in_axes=1)(factors)
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _lower_shift_at_slice_node(
+    smallest: IntND | None,
+    node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
+    *,
+    coordinate_factors: tuple[FloatND, ...],
+) -> tuple[IntND, None]:
+    """Lower the running smallest scale to that of one slice node's joint nodes.
+
+    A `None` running value starts it at this slice node's smallest scale.
+    """
+    _, slice_factors = node
+    _, shifts = _joint_weights_at_slice_node(
+        coordinate_factors=coordinate_factors, slice_factors=slice_factors
+    )
+    lowest = jnp.min(shifts)
+    return (lowest if smallest is None else jnp.minimum(smallest, lowest)), None
 
 
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _add_slice_node(
-    numerator: FloatND | None,
-    node: tuple[tuple[IntND, ...], FloatND, IntND],
+    sums: tuple[FloatND, FloatND] | None,
+    node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
     *,
     interpolator: Callable[..., FloatND],
     fixed: Mapping[str, Any],
     slice_draws: tuple[TransitionFunctionName, ...],
-) -> tuple[FloatND, None]:
-    """Add one slice node's scaled, zero-safe term to the running sum.
+    coordinate_factors: tuple[FloatND, ...],
+    common_shift: IntND,
+) -> tuple[tuple[FloatND, FloatND], None]:
+    """Add one slice node's weighted reads and masses to the running sums.
 
-    A `None` running sum starts it at this node's term.
+    Both sums keep the flattened coordinate axis. A `None` running value starts
+    them at this slice node's terms.
     """
-    codes, weight, remainder = node
-    value = interpolator(**fixed, **dict(zip(slice_draws, codes, strict=True)))
+    codes, slice_factors = node
+    coefficients, shifts = _joint_weights_at_slice_node(
+        coordinate_factors=coordinate_factors, slice_factors=slice_factors
+    )
+    scale = (common_shift - shifts).astype(jnp.int32)
+    # The same split of each node's scale between its weight and its term as
+    # `scaled_weighted_terms`: the weight takes what it can while staying
+    # normal, the product takes the rest.
+    on_the_weight = jnp.maximum(scale, -binades_above_smallest_normal(coefficients))
+    value = jnp.ravel(
+        interpolator(**fixed, **dict(zip(slice_draws, codes, strict=True)))
+    )
     term = scaled_down_by_power_of_two(
         values=zero_safe_weighted_term(
-            weight=weight, value=value, subnormal_is_accounted_for=False
+            weight=scaled_down_by_power_of_two(
+                values=coefficients, shift=on_the_weight
+            ),
+            value=value,
+            subnormal_is_accounted_for=False,
         ),
-        shift=remainder,
+        shift=scale - on_the_weight,
     )
-    return (term if numerator is None else numerator + term), None
+    mass = scaled_down_by_power_of_two(values=coefficients, shift=scale)
+    if sums is None:
+        return (term, mass), None
+    numerator, total = sums
+    return (numerator + term, total + mass), None
 
 
 def _scalar_target_contribution(
@@ -3806,31 +3787,6 @@ def _value_shaped_zero(*, zero: FloatND, n_stakeholders: int | None) -> FloatND:
         return zero
     zero_arr = jnp.asarray(zero)
     return jnp.zeros((*zero_arr.shape, n_stakeholders), dtype=zero_arr.dtype)
-
-
-def _mean_of_scaled_partial_sums(
-    *, numerators: FloatND, masses: FloatND, shifts: IntND
-) -> FloatND:
-    """Divide the summed coordinate-node numerators by their summed mass.
-
-    Each coordinate node's numerator and mass already carry their full joint
-    weights, on the scale of that node's own largest weight. Both are lowered
-    onto the scale of the largest node overall — a downscale, so it cannot
-    overflow — and summed without any further weighting.
-
-    Args:
-        numerators: Per coordinate node, the weighted sum over its slice nodes.
-        masses: Per coordinate node, the probability mass of those terms.
-        shifts: Per coordinate node, the base-two scale both are held at.
-
-    Returns:
-        The expectation over every joint node.
-
-    """
-    scale = relative_scales(shifts=shifts)
-    numerator = jnp.sum(scaled_down_by_power_of_two(values=numerators, shift=scale))
-    mass = jnp.sum(scaled_down_by_power_of_two(values=masses, shift=scale))
-    return numerator / mass
 
 
 def _expected_continuation_over_nodes(
