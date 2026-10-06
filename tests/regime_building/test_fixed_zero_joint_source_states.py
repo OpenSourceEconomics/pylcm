@@ -1,4 +1,4 @@
-"""A fixed-zero joint edge must not take its source state's validity with it.
+"""A fixed-zero joint edge gives exactly the model declared without that edge.
 
 The source `source` moves to `low` with probability `1 - p_high` and to `high`
 with probability `p_high`. `low` is terminal and worth 2. `high` is terminal and
@@ -13,10 +13,15 @@ probability 3/4. Two source layouts share this graph:
   value of `source` is `2 + p_high / 2 + p_high * driver`.
 
 Removing the `high` edge when `p_high` is fixed at exactly zero gives the model
-the author would get by declaring no `high` edge at all, where wealth's law is
-an empty per-target mapping: the model stays valid and keeps its source states.
+the author would get by declaring no `high` edge at all. Pruning removes as much
+as it can up front:
+
+- wealth keeps the empty per-target law `{}` and the model stays valid;
+- `driver` is read only across the removed edge, so it is unused and the model
+  is rejected, exactly as the edge-free model is.
 """
 
+from collections.abc import Callable
 from fractions import Fraction
 
 import jax.numpy as jnp
@@ -202,10 +207,20 @@ def _expected_source_value(*, source_kind: str, probability: float) -> np.ndarra
     return np.asarray([float(value) for value in values])
 
 
+_VALUED_CASES = [
+    pytest.param(
+        source_kind, fixed, probability, id=f"{source_kind}-{fixed}-{probability}"
+    )
+    for source_kind in ("wealth_source", "driver_source")
+    for fixed in (False, True)
+    for probability in (0.0, 0.5, 1.0)
+    # The fixed-zero driver model is rejected; see the unused-driver test.
+    if not (source_kind == "driver_source" and fixed and probability == 0.0)
+]
+
+
 @pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("probability", [0.0, 0.5, 1.0])
-@pytest.mark.parametrize("fixed", [False, True])
-@pytest.mark.parametrize("source_kind", ["wealth_source", "driver_source"])
+@pytest.mark.parametrize(("source_kind", "fixed", "probability"), _VALUED_CASES)
 def test_source_value_matches_enumeration(
     *, source_kind: str, fixed: bool, probability: float, enable_jit: bool
 ) -> None:
@@ -225,16 +240,10 @@ def test_source_value_matches_enumeration(
     )
 
 
-@pytest.mark.parametrize(
-    ("source_kind", "state_name"),
-    [("wealth_source", "wealth"), ("driver_source", "driver")],
-)
-def test_fixed_zero_edge_is_removed_and_source_state_kept(
-    *, source_kind: str, state_name: str
-) -> None:
-    """A zero `high` edge leaves the effective graph; the source state stays."""
+def test_fixed_zero_edge_is_removed_and_wealth_kept() -> None:
+    """A zero `high` edge leaves the effective graph; the wealth state stays."""
     model = _model(
-        source_kind=source_kind, fixed=True, probability=0.0, enable_jit=False
+        source_kind="wealth_source", fixed=True, probability=0.0, enable_jit=False
     )
     assert (
         model.state_names(regime_name="source"),
@@ -243,7 +252,7 @@ def test_fixed_zero_edge_is_removed_and_source_state_kept(
         set(model.graph.edges.solve["source"]),
         dict(model.graph.pruned_edges["solve"]),
     ) == (
-        (state_name,),
+        ("wealth",),
         ("low",),
         ("low",),
         {"low", "high"},
@@ -365,3 +374,56 @@ def test_fixed_zero_wealth_model_equals_the_edge_free_model() -> None:
         source_kind="wealth_source", fixed=True, probability=0.0, enable_jit=False
     )
     assert _outcome(model=fixed_zero) == _outcome(model=_edge_free_wealth_model())
+
+
+def _edge_free_driver_model() -> Model:
+    """The driver source as authored without the `high` edge and its lottery."""
+    regimes = {
+        "source": Regime(
+            regime_transitions={"low": StochasticTransition(func=_certain)},
+            states={"driver": DiscreteGrid(category_class=_Driver)},
+            state_transitions={"driver": fixed_transition(state_name="driver")},
+            functions={"utility": _zero},
+        ),
+        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "high": Regime(
+            regime_transitions=None,
+            states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
+            functions={"utility": _wealth_utility},
+        ),
+    }
+    return Model(
+        regimes=regimes,
+        regime_id_class=_RegimeId,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"low": 0}},
+        initial_nodes=((0, "source"),),
+        enable_jit=False,
+    )
+
+
+def _initialization_error(build: Callable[[], object]) -> str:
+    """Return the message of the `ModelInitializationError` building raises."""
+    with pytest.raises(ModelInitializationError) as raised:
+        build()
+    return str(raised.value)
+
+
+def test_driver_read_only_across_the_zero_edge_is_unused_like_without_the_edge() -> (
+    None
+):
+    """Both driver models are rejected for the same unused `driver`.
+
+    The fixed-zero model's message extends the edge-free one by naming the
+    removed edge the only reader of `driver` sat on.
+    """
+    fixed_zero = _initialization_error(
+        lambda: _model(
+            source_kind="driver_source", fixed=True, probability=0.0, enable_jit=False
+        )
+    )
+    edge_free = _initialization_error(_edge_free_driver_model)
+    assert (
+        fixed_zero.startswith(edge_free),
+        "'driver' is read only across the edge(s) 'source' -> 'high'" in fixed_zero,
+    ) == (True, True)

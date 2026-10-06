@@ -10,8 +10,9 @@ Removing an edge changes the effective graph, never the authored model's validit
 - a source state whose only authored law was such a kernel gets the empty
   per-target law `{}`, so the pruned regime is the one an author would write
   without the removed edge: the state is covered and no target cell is produced;
-- the states and actions those removed declarations read are recorded, so a
-  variable used only across a removed edge still counts as used.
+- the states and actions those removed declarations read are recorded only to
+  explain an error: pruning removes as much as it can up front, so a variable
+  read only across a removed edge is unused, exactly as without that edge.
 """
 
 import inspect
@@ -51,9 +52,11 @@ class FixedRegimeSupport:
     consumed_param_keys: frozenset[str]
     """Supplied flat keys used to prove a removed cell constant and zero."""
 
-    removed_reads: MappingProxyType[RegimeName, frozenset[str]]
-    """Per regime, the states and actions read by declarations removed with
-    their zero edges."""
+    removed_edge_reads: MappingProxyType[
+        RegimeName, MappingProxyType[str, tuple[RegimeName, ...]]
+    ]
+    """Per regime, each state or action read by a declaration removed with its
+    zero edge, and the targets of those edges; used only in error messages."""
 
 
 def prune_fixed_regime_support(
@@ -74,7 +77,9 @@ def prune_fixed_regime_support(
     consumed: set[str] = set()
     errors: list[str] = []
     result: dict[RegimeName, UserRegime] = {}
-    removed_reads: dict[RegimeName, frozenset[str]] = {}
+    removed_edge_reads: dict[
+        RegimeName, MappingProxyType[str, tuple[RegimeName, ...]]
+    ] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
             regime_name=name, regime=regime, fixed_flat=fixed_flat
@@ -84,7 +89,7 @@ def prune_fixed_regime_support(
         errors += _removed_joint_ownership_errors(
             removed=removed_in_both, regime_name=name, user_regimes=user_regimes
         )
-        reads: set[str] = set()
+        reads: dict[RegimeName, set[str]] = {}
         joint_transitions = _trim_joint_transitions(
             removed=removed_in_both,
             regime_name=name,
@@ -114,8 +119,14 @@ def prune_fixed_regime_support(
             ),
             MappingProxyType({}),
         )
-        removed_reads[name] = frozenset(
-            reads & (set(regime.states) | set(regime.actions))
+        variables = set(regime.states) | set(regime.actions)
+        removed_edge_reads[name] = MappingProxyType(
+            {
+                variable: tuple(
+                    sorted(target for target, read in reads.items() if variable in read)
+                )
+                for variable in sorted(variables & set().union(*reads.values()))
+            }
         )
         result[name] = regime.replace(
             regime_transitions=transition,
@@ -127,7 +138,7 @@ def prune_fixed_regime_support(
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),
         consumed_param_keys=frozenset(consumed),
-        removed_reads=MappingProxyType(removed_reads),
+        removed_edge_reads=MappingProxyType(removed_edge_reads),
     )
 
 
@@ -265,7 +276,7 @@ def _trim_joint_transitions(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
-    reads: set[str],
+    reads: dict[RegimeName, set[str]],
 ) -> MappingProxyType[str, object]:
     """Omit joint kernels toward targets removed in both phases at every age."""
     node_names = frozenset(
@@ -295,7 +306,7 @@ def _trim_joint_transitions(
                             fixed_flat=fixed_flat,
                             ancestors=(),
                             non_params=node_names,
-                            reads=reads,
+                            reads=reads.setdefault(target, set()),
                         )
                     )
     return MappingProxyType(
@@ -551,7 +562,7 @@ def _trim_state_law(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
-    reads: set[str],
+    reads: dict[RegimeName, set[str]],
 ) -> object:
     """Omit explicit laws toward targets removed from the relevant phase."""
     if isinstance(law, Phased):
@@ -611,7 +622,7 @@ def _record_removed_state_keys(
     regime: UserRegime,
     fixed_flat: Mapping[str, object],
     consumed: set[str],
-    reads: set[str],
+    reads: dict[RegimeName, set[str]],
 ) -> None:
     """Keep fixed keys and reads of handoff cells omitted with their zero edges."""
     if not isinstance(law, Mapping):
@@ -627,7 +638,7 @@ def _record_removed_state_keys(
                     regime=regime,
                     fixed_flat=fixed_flat,
                     ancestors=(),
-                    reads=reads,
+                    reads=reads.setdefault(target, set()),
                 )
             )
 

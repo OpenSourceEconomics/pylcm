@@ -204,12 +204,14 @@ Runtime zeros cannot change topology. Positive subnormals remain live; invalid a
 all-zero laws retain validation. Pruning never renormalizes probability mass, and the
 declared graph retains removed edges for inspection.
 
-State laws and joint lotteries that hand states across a removed edge leave with it, but
-the authored model keeps its meaning. A removed joint lottery is still checked for its
-target-state ownership. A source state whose only law was that lottery stays a valid
-state of the source with the empty per-target law `{}`, exactly as in the model declared
-without the removed edge, and a state or action read only by a removed law still counts
-as used. Every target that keeps an edge must still receive each state it carries.
+Pruning removes as much as it can up front: the pruned model is the model declared
+without the removed edges. State laws and joint lotteries that hand states across a
+removed edge leave with it. A removed joint lottery is still checked for its
+target-state ownership. A source state whose only law was that lottery stays a state of
+the source with the empty per-target law `{}`, exactly as an author would declare it
+without the edge. A state or action read only across a removed edge is unused, and the
+model is rejected just as the edge-free model would be; the error names the removed
+edge. Every target that keeps an edge must still receive each state it carries.
 
 Large applications can build regimes and the matching edge mapping from one internal
 edge catalog, then reuse that topology across policy variants that change only economic
