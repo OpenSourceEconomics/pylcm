@@ -3335,7 +3335,6 @@ def _build_target_continuation(
                 regime_name=target_regime_name, variables=slice_draws
             ),
             weight_names=slice_weight_names,
-            V_arr_name=V_arr_name,
         )
         if slice_draws
         else mapped_interpolator
@@ -3440,6 +3439,8 @@ def _slice_draws(
         The slice draws, in `lottery_variables` order.
 
     """
+    if not lottery_variables:
+        return ()
     moves_a_coordinate = frozenset().union(*dependencies_by_law.values())
     lotteries = transition_plans[target_regime_name].lotteries
     return tuple(
@@ -3476,8 +3477,6 @@ class _ExpectationOverSliceDraws:
     """Outer product of the slice draws' marginals, with each node's scale."""
     weight_names: tuple[str, ...]
     """The marginal-weight argument names, one per slice draw."""
-    V_arr_name: str
-    """Name of the value-array argument."""
     interpolator_args: frozenset[str] = field(init=False)
     """Every argument the interpolator reads."""
 
@@ -3516,29 +3515,38 @@ class _ExpectationOverSliceDraws:
             for name, value in kwargs.items()
             if name in self.interpolator_args and name not in self.slice_draws
         }
+        add_node = functools.partial(
+            _add_slice_node,
+            interpolator=self.interpolator,
+            fixed=fixed,
+            slice_draws=self.slice_draws,
+        )
+        nodes = (codes, weights, scale - on_the_weight)
+        # The first node's term seeds the sum, so the running total carries
+        # exactly the type every later term has — including how it varies
+        # across a mapped device axis — rather than a zero's.
+        first, _ = add_node(None, jax.tree_util.tree_map(operator.itemgetter(0), nodes))
         numerator, _ = jax.lax.scan(
-            functools.partial(
-                _add_slice_node,
-                interpolator=self.interpolator,
-                fixed=fixed,
-                slice_draws=self.slice_draws,
-            ),
-            jnp.zeros((), dtype=jnp.result_type(weights, kwargs[self.V_arr_name])),
-            (codes, weights, scale - on_the_weight),
+            add_node,
+            first,
+            jax.tree_util.tree_map(operator.itemgetter(slice(1, None)), nodes),
         )
         return numerator / mass
 
 
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _add_slice_node(
-    numerator: FloatND,
+    numerator: FloatND | None,
     node: tuple[tuple[IntND, ...], FloatND, IntND],
     *,
     interpolator: Callable[..., FloatND],
     fixed: Mapping[str, Any],
     slice_draws: tuple[TransitionFunctionName, ...],
 ) -> tuple[FloatND, None]:
-    """Add one slice node's scaled, zero-safe term to the running sum."""
+    """Add one slice node's scaled, zero-safe term to the running sum.
+
+    A `None` running sum starts it at this node's term.
+    """
     codes, weight, remainder = node
     value = interpolator(**fixed, **dict(zip(slice_draws, codes, strict=True)))
     term = scaled_down_by_power_of_two(
@@ -3547,7 +3555,7 @@ def _add_slice_node(
         ),
         shift=remainder,
     )
-    return numerator + term, None
+    return (term if numerator is None else numerator + term), None
 
 
 def _scalar_target_contribution(

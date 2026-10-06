@@ -555,6 +555,7 @@ def _array_shapes_of_the_pointwise_Q(
         },
     }
     next_regime_to_V_arr = MappingProxyType(dict(solution.values[1]))
+    age = jnp.asarray(model.ages.period_to_age(0))
 
     def pointwise_Q() -> Any:
         return regime.simulation.Q_and_F[0](
@@ -562,7 +563,7 @@ def _array_shapes_of_the_pointwise_Q(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **flat_params,
             period=jnp.int32(0),
-            age=jnp.asarray(model.ages.period_to_age(0)),
+            age=age,
         )
 
     text = str(jax.make_jaxpr(pointwise_Q)())
