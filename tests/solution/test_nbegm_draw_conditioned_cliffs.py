@@ -15,6 +15,7 @@ the scalar direct oracle, which reads each node's cliffs off the solved child
 carry rather than re-evaluating the threshold declarations.
 """
 
+import dataclasses
 from collections.abc import Callable
 from fractions import Fraction
 from typing import Any
@@ -41,6 +42,7 @@ from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_nbegm_direct_oracle import (
     _assert_kernel_agrees_with_oracle as assert_kernel_agrees_with_oracle,
 )
+from tests.test_models import nbegm_continuous_ride_along_toy
 from tests.test_models.nbegm_common import (
     make_alive_dead_model,
     resolve_solver,
@@ -180,40 +182,49 @@ def _solved_seam(*, model: Model, params: dict[str, Any]) -> dict[str, Any]:
     kwargs = dict(materialized.arguments)
     kwargs.update(getattr(replay.function, "keywords", None) or {})
     assert kernel.cliff_candidates
-    assert tuple(kernel.statics.ride_names) == ("kind",)
-    return {"kernel": kernel, "kwargs": kwargs}
+    child_carry = context["next_regime_to_continuation"]["alive"]
+    return {"kernel": kernel, "kwargs": kwargs, "child_carry": child_carry}
+
+
+def _kind(code: int) -> dict[str, Any]:
+    return {"kind": jnp.asarray(code, dtype=jnp.int32)}
 
 
 def _targets(
     *,
     seam: dict[str, Any],
-    source_kind: int,
+    cell: dict[str, Any],
     overrides: dict[str, Any] | None = None,
+    child_breakpoints: FloatND | None = None,
     jit: bool = False,
 ) -> np.ndarray:
-    """Return the save-to-cliff targets of one source cell, one row per node."""
+    """Return the save-to-cliff targets of one source cell, one row per child row.
+
+    `child_breakpoints` replaces the jump rows the solved child carry publishes;
+    `overrides` replaces flat params (the liquid law's among them).
+    """
     kernel = seam["kernel"]
     statics = kernel.statics
     kwargs = {**seam["kwargs"], **(overrides or {})}
-    liquid_grid = jnp.asarray(kwargs[statics.liquid_name])
-    cell = {"kind": jnp.asarray(source_kind, dtype=jnp.int32)}
+    child_carry = seam["child_carry"]
+    if child_breakpoints is not None:
+        child_carry = dataclasses.replace(child_carry, breakpoints=child_breakpoints)
     param_pool = {
         key: value
         for key, value in kwargs.items()
         if key not in statics.state_names and key != "next_regime_to_continuation"
     }
+    dtype = jnp.asarray(kwargs[statics.liquid_name]).dtype
 
     def evaluate() -> FloatND:
         return _cliff_savings_targets(
             continuation_plan=kernel.continuation_plan,
             regime_name="alive",
             statics=statics,
-            kwargs=kwargs,
-            cell=cell,
+            child_carry=child_carry,
             combo_pool={**param_pool, **cell},
-            liquid_grid=liquid_grid,
             savings_grid=jnp.asarray(kernel.savings_grid),
-            dtype=liquid_grid.dtype,
+            dtype=dtype,
         )
 
     raw = jax.jit(evaluate)() if jit else evaluate()
@@ -251,11 +262,11 @@ def _exact(value: float | np.floating) -> Fraction:
 def _brackets_each_child_preimage(
     *,
     rows: np.ndarray,
-    cutoffs: tuple[np.floating, np.floating],
+    cutoffs: tuple[np.floating, ...],
     slope: np.floating,
-    offsets: tuple[np.floating, np.floating],
+    offsets: tuple[np.floating, ...],
 ) -> bool:
-    """Whether row `j` tightly straddles child kind `j`'s exact preimage.
+    """Whether target row `j` tightly straddles child row `j`'s exact preimage.
 
     The preimage is computed exactly from the stored (rounded) inputs, so the
     check is a structural predicate at either precision: the lower target lies
@@ -282,7 +293,7 @@ def test_draw_reading_law_targets_each_child_rows_cliff(
     *, reading_draw_seam: dict[str, Any], source_kind: int, jit: bool
 ) -> None:
     """With cutoffs (9, 6) and offsets (0, 0.1), the targets straddle 9 and 5.9."""
-    rows = _targets(seam=reading_draw_seam, source_kind=source_kind, jit=jit)
+    rows = _targets(seam=reading_draw_seam, cell=_kind(source_kind), jit=jit)
     dtype = rows.dtype
     assert _brackets_each_child_preimage(
         rows=rows,
@@ -297,7 +308,7 @@ def test_draw_free_law_targets_each_child_rows_cliff(
     *, draw_free_seam: dict[str, Any], source_kind: int
 ) -> None:
     """A law not reading the draw still targets cutoff 9 and cutoff 6."""
-    rows = _targets(seam=draw_free_seam, source_kind=source_kind)
+    rows = _targets(seam=draw_free_seam, cell=_kind(source_kind))
     dtype = rows.dtype
     assert _brackets_each_child_preimage(
         rows=rows,
@@ -329,24 +340,21 @@ def test_targets_follow_child_rows_across_scales_and_translations(
 ) -> None:
     """Every slope, translation and cutoff order lands each node on its own cutoff."""
     dtype = np.asarray(reading_draw_seam["kwargs"]["subsidy__fpl_cliff"]).dtype
-    fpl_cliff = np.asarray([c + shift + BASE_INCOME for c in cuts], dtype=dtype)
+    cutoffs = np.asarray([[c + shift] for c in cuts], dtype=dtype)
     offsets = np.asarray([shift, shift + 0.1], dtype=dtype)
     rows = _targets(
         seam=reading_draw_seam,
-        source_kind=source_kind,
+        cell=_kind(source_kind),
         overrides=_overrides(
             seam=reading_draw_seam,
-            fpl_cliff=jnp.asarray(fpl_cliff),
             law_slope=jnp.asarray(slope, dtype=dtype),
             law_offset=jnp.asarray(offsets),
         ),
+        child_breakpoints=jnp.asarray(cutoffs),
     )
-    # The child's liquid cutoff is where `liquid + base_income` meets `fpl_cliff`,
-    # so it is exactly `fpl_cliff - base_income` in the stored precision's terms.
-    base = dtype.type(BASE_INCOME)
     assert _brackets_each_child_preimage(
         rows=rows,
-        cutoffs=(fpl_cliff[0] - base, fpl_cliff[1] - base),
+        cutoffs=(cutoffs[0, 0], cutoffs[1, 0]),
         slope=dtype.type(slope),
         offsets=(offsets[0], offsets[1]),
     ), rows
@@ -356,17 +364,19 @@ def test_targets_follow_child_rows_across_scales_and_translations(
 def test_relabelling_kinds_permutes_the_node_targets(
     *, reading_draw_seam: dict[str, Any], source_kind: int
 ) -> None:
-    """Swapping both kinds' cutoffs and offsets swaps the per-node target rows."""
+    """Swapping both kinds' child cliff rows and offsets swaps the target rows."""
     kwargs = reading_draw_seam["kwargs"]
-    original = _targets(seam=reading_draw_seam, source_kind=source_kind)
+    original = _targets(seam=reading_draw_seam, cell=_kind(source_kind))
     relabelled = _targets(
         seam=reading_draw_seam,
-        source_kind=1 - source_kind,
+        cell=_kind(1 - source_kind),
         overrides=_overrides(
             seam=reading_draw_seam,
-            fpl_cliff=jnp.asarray(kwargs["subsidy__fpl_cliff"])[::-1],
             law_offset=jnp.asarray(kwargs["alive__next_liquid__law_offset"])[::-1],
         ),
+        child_breakpoints=jnp.asarray(reading_draw_seam["child_carry"].breakpoints)[
+            ::-1
+        ],
     )
     np.testing.assert_array_equal(relabelled[::-1], original)
 
@@ -382,8 +392,8 @@ def test_kind_invariant_cliff_targets_agree_in_every_source_cell() -> None:
             fpl_cliff=9.0 + BASE_INCOME, law_slope=1.0, law_offset=(0.0, 0.1)
         ),
     )
-    rows = _targets(seam=seam, source_kind=0)
-    np.testing.assert_array_equal(rows, _targets(seam=seam, source_kind=1))
+    rows = _targets(seam=seam, cell=_kind(0))
+    np.testing.assert_array_equal(rows, _targets(seam=seam, cell=_kind(1)))
     dtype = rows.dtype
     assert _brackets_each_child_preimage(
         rows=rows,
@@ -437,6 +447,193 @@ def test_period_kernel_agrees_with_the_child_carry_oracle(
     kernel, context = ride_along_kernel(
         model=_build_model(liquid_law=liquid_law, subsidy=kind_indexed_subsidy),
         params=_indexed_params(cutoffs=(9.0, 6.0)),
+        regime_name="alive",
+        period=0,
+    )
+    assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+
+
+def next_kind_flipped(*, kind: DiscreteState) -> DiscreteState:
+    """The kind switches every period."""
+    return 1 - kind
+
+
+def gross_income_rising_with_age(
+    *, liquid: ContinuousState, base_income: float, age_income: float, age: float
+) -> FloatND:
+    """Pre-tax income: liquid wealth plus a base income that grows with age."""
+    return liquid + base_income + age_income * age
+
+
+def _build_deterministic_model(
+    *,
+    kind_law: Callable[..., object],
+    subsidy: Callable[..., object],
+    gross_income_func: Callable[..., object] = gross_income,
+) -> Model:
+    """The two-kind model whose kind moves by a deterministic law."""
+    return make_alive_dead_model(
+        n_periods=3,
+        n_liquid=31,
+        liquid_max=30.0,
+        n_consumption=31,
+        liquid_grid=LinSpacedGrid(start=0.0, stop=30.0, n_points=31),
+        alive_functions={
+            "utility": utility,
+            "gross_income": gross_income_func,
+            "subsidy": subsidy,
+            "resources": resources,
+            "savings": savings,
+        },
+        liquid_law=next_liquid_draw_free,
+        alive_solver=resolve_solver(
+            variant="nbegm",
+            savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=16),
+        ),
+        constraints={},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
+        extra_state_transitions={"kind": {"alive": kind_law}},
+        dead_functions={"utility": zero_bequest},
+    )
+
+
+def _deterministic_params(*, fpl_cliff: float | FloatND) -> dict[str, Any]:
+    return _params(fpl_cliff=fpl_cliff, law_slope=1.0, law_offset=(0.0, 0.0))
+
+
+@pytest.fixture(scope="module")
+def flipped_kind_seam() -> dict[str, Any]:
+    model = _build_deterministic_model(
+        kind_law=next_kind_flipped, subsidy=kind_indexed_subsidy
+    )
+    return _solved_seam(
+        model=model,
+        params=_deterministic_params(fpl_cliff=jnp.asarray([9.0, 6.0]) + BASE_INCOME),
+    )
+
+
+@pytest.fixture(scope="module")
+def age_seam() -> dict[str, Any]:
+    model = _build_deterministic_model(
+        kind_law=lcm.fixed_transition("kind"),
+        subsidy=kind_indexed_subsidy,
+        gross_income_func=gross_income_rising_with_age,
+    )
+    params = _deterministic_params(fpl_cliff=jnp.asarray([9.0, 9.0]) + BASE_INCOME)
+    params["alive"]["gross_income"]["age_income"] = 3.0
+    return _solved_seam(model=model, params=params)
+
+
+@pytest.mark.parametrize("source_kind", [0, 1])
+def test_deterministic_kind_law_targets_the_next_kinds_cliff(
+    *, flipped_kind_seam: dict[str, Any], source_kind: int
+) -> None:
+    """With `next_kind = 1 - kind` and cutoffs (9, 6), kind 0 targets 6, kind 1 9."""
+    rows = _targets(seam=flipped_kind_seam, cell=_kind(source_kind))
+    dtype = rows.dtype
+    child_cutoff = (dtype.type(6.0), dtype.type(9.0))[source_kind]
+    assert _brackets_each_child_preimage(
+        rows=rows,
+        cutoffs=(child_cutoff,),
+        slope=dtype.type(1.0),
+        offsets=(dtype.type(0.0),),
+    ), rows
+
+
+def test_age_reading_schedule_targets_the_childs_age_cliff(
+    *, age_seam: dict[str, Any]
+) -> None:
+    """Income `liquid + 2 + 3 * age` crosses 11 at liquid 6 at the child's age 1.
+
+    At the source age 0 the same cliff sits at liquid 9; the child's value
+    jumps where its own age puts the cliff.
+    """
+    rows = _targets(seam=age_seam, cell=_kind(0))
+    dtype = rows.dtype
+    assert _brackets_each_child_preimage(
+        rows=rows,
+        cutoffs=(dtype.type(6.0),),
+        slope=dtype.type(1.0),
+        offsets=(dtype.type(0.0),),
+    ), rows
+
+
+@pytest.fixture(scope="module")
+def wage_seam() -> dict[str, Any]:
+    model = nbegm_continuous_ride_along_toy.build_model(
+        variant="nbegm", n_periods=3, n_liquid=24, n_savings=16, n_consumption=24
+    )
+    params = nbegm_continuous_ride_along_toy.build_params(
+        final_age_alive=2.0, return_liquid=0.0, income=0.0
+    )
+    return _solved_seam(model=model, params=params)
+
+
+def test_continuous_co_state_targets_both_rows_the_child_blends(
+    *, wage_seam: dict[str, Any]
+) -> None:
+    """A source wage 3.8 moves to 0.9 * 3.8 = 3.42, between wage nodes 2.7 and 3.8.
+
+    The child value blends the 2.7 and 3.8 rows, so it jumps at both rows' cliffs
+    `liquid = 15 - wage`: the targets straddle 12.3 and 11.2.
+    """
+    wage_grid = np.asarray(wage_seam["kwargs"]["wage"])
+    source = 3
+    rows = _targets(seam=wage_seam, cell={"wage": jnp.asarray(wage_grid[source])})
+    dtype = rows.dtype
+    fpl_cliff = dtype.type(15.0)
+    assert _brackets_each_child_preimage(
+        rows=rows,
+        cutoffs=(fpl_cliff - wage_grid[source - 1], fpl_cliff - wage_grid[source]),
+        slope=dtype.type(1.0),
+        offsets=(dtype.type(0.0), dtype.type(0.0)),
+    ), rows
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: (
+            _build_deterministic_model(
+                kind_law=next_kind_flipped, subsidy=kind_indexed_subsidy
+            ),
+            _deterministic_params(fpl_cliff=jnp.asarray([9.0, 6.0]) + BASE_INCOME),
+        ),
+        lambda: (
+            nbegm_continuous_ride_along_toy.build_model(
+                variant="nbegm",
+                n_periods=3,
+                n_liquid=24,
+                n_savings=16,
+                n_consumption=24,
+            ),
+            nbegm_continuous_ride_along_toy.build_params(final_age_alive=2.0),
+        ),
+    ],
+    ids=["flipped_kind", "continuous_wage"],
+)
+def test_child_row_kernels_agree_with_the_oracle(
+    build: Callable[[], tuple[Model, dict[str, Any]]],
+) -> None:
+    """Value, carry and consumption match the oracle on the child's own rows."""
+    model, params = build()
+    kernel, context = ride_along_kernel(
+        model=model, params=params, regime_name="alive", period=0
+    )
+    assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+
+
+def test_age_reading_kernel_agrees_with_the_oracle() -> None:
+    """Value, carry and consumption match the oracle at the child's age."""
+    params = _deterministic_params(fpl_cliff=jnp.asarray([9.0, 9.0]) + BASE_INCOME)
+    params["alive"]["gross_income"]["age_income"] = 3.0
+    kernel, context = ride_along_kernel(
+        model=_build_deterministic_model(
+            kind_law=lcm.fixed_transition("kind"),
+            subsidy=kind_indexed_subsidy,
+            gross_income_func=gross_income_rising_with_age,
+        ),
+        params=params,
         regime_name="alive",
         period=0,
     )

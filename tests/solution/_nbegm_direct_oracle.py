@@ -243,6 +243,17 @@ def direct_oracle_period(  # noqa: PLR0915
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
+    # The self-read child is next period: its breakpoints read its own age.
+    child_period = int(context["period"]) + 1
+    child_kwargs = (
+        {
+            **kwargs,
+            "period": jnp.int32(child_period),
+            "age": context["ages"].values[child_period],
+        }
+        if child_period < len(context["ages"].values)
+        else kwargs
+    )
     ride_grids = [jnp.asarray(kwargs[name]) for name in statics.ride_names]
     ride_shape = tuple(len(grid) for grid in ride_grids)
     savings_grid = np.asarray(kernel.savings_grid, dtype=np.float64)
@@ -322,7 +333,7 @@ def direct_oracle_period(  # noqa: PLR0915
                 plan=plan,
                 combo_pool=combo_pool,
                 carries=carries,
-                source_positions=dict(zip(statics.ride_names, index, strict=True)),
+                child_kwargs=child_kwargs,
                 breakpoints=branch_geometry.breakpoints,
                 liquid_grid=liquid_grid,
                 savings_grid=savings_grid,
@@ -616,7 +627,7 @@ def _cell_continuation(
     plan: Any,
     combo_pool: Mapping[str, Any],
     carries: Mapping[str, HostCarry],
-    source_positions: Mapping[str, int],
+    child_kwargs: Mapping[str, Any],
     breakpoints: np.ndarray,
     liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
@@ -646,9 +657,9 @@ def _cell_continuation(
                 plan=plan,
                 regime_name=kernel.regime_name,
                 combo_pool=pool,
-                child_carry=carries[kernel.regime_name],
-                ride_names=statics.ride_names,
-                source_positions=source_positions,
+                statics=statics,
+                child_kwargs=child_kwargs,
+                liquid_grid=liquid_grid,
                 savings_grid=savings_grid,
                 dtype=dtype,
             )
@@ -687,73 +698,83 @@ def _cliff_savings_targets(
     plan: Any,
     regime_name: str,
     combo_pool: Mapping[str, Any],
-    child_carry: HostCarry,
-    ride_names: tuple[str, ...],
-    source_positions: Mapping[str, int],
+    statics: Any,
+    child_kwargs: Mapping[str, Any],
+    liquid_grid: np.ndarray,
     savings_grid: np.ndarray,
     dtype: Any,
 ) -> np.ndarray:
     """Savings targets a few float steps inside each side of every child jump.
 
-    The jumps are read off the solved child carry, row by row: every combination
-    of the child's stochastic nodes and the edge's local draws the liquid law
-    reads reaches one child row, at the deterministic next-state codes, and that
-    row's published jump preimages are inverted through the liquid law at that
-    combination. A passive (continuous, non-stochastic) ride axis stays at the
-    source cell's node. Each jump's savings preimage is offered from both sides,
-    displaced by four units of the law's rounding (in savings units) but never
-    more than a quarter of the distance to the nearest other preimage. Targets
-    off the savings grid, or under a non-increasing law, are NaN; a target pair
-    repeated by a node that moves neither the law nor the child row is offered
-    once.
+    Every child row the continuation reads with positive weight is enumerated
+    and its jumps are evaluated from the breakpoint declarations at that row's
+    state values and the child's age and period:
+    - each node of every stochastic state the child carries;
+    - the next-state code of each deterministic discrete state;
+    - both grid nodes of the segment a passive continuous state's next value
+      falls in, since the child's value is blended from the two rows.
+
+    Each row's jumps are inverted through the liquid law at the node of every
+    draw the law reads, offered from both sides, displaced by four units of the
+    law's rounding (in savings units) but never more than a quarter of the
+    distance to the nearest other preimage. Targets off the savings grid, or
+    under a non-increasing law, are NaN; a target set repeated by another row or
+    node is offered once.
     """
     read = plan.child_reads[regime_name]
-    if child_carry.breakpoints is None:
-        return np.zeros(0)
     next_states = read.next_state_func(
         **combo_pool, **{plan.post_decision_name: jnp.asarray(0.0, dtype=dtype)}
     )
-    deterministic_codes = {
-        name: int(np.asarray(next_states[f"next_{name}"]))
-        for name, is_stochastic in zip(
-            read.discrete_state_names, read.stochastic_flags, strict=True
-        )
-        if not is_stochastic
-    }
-    carried = {
-        f"next_{name}": list(values)
-        for name, values in zip(
-            read.stochastic_state_names, read.stochastic_node_values, strict=True
-        )
-    }
-    local = _euler_draw_nodes(read=read, combo_pool=combo_pool)
-    local = {name: values for name, values in local.items() if name not in carried}
-    axes = {**carried, **local}
+    grids = {name: np.asarray(child_kwargs[name]) for name in statics.ride_names}
+    choices: dict[str, list[Any]] = {}
+    for name in statics.ride_names:
+        grid = grids[name]
+        if name in read.stochastic_state_names:
+            choices[name] = list(range(len(grid)))
+        elif name in read.passive_state_names:
+            key = f"next_{name}"
+            value = _scalar(next_states[key] if key in next_states else combo_pool[key])
+            upper = int(
+                np.clip(np.searchsorted(grid, value, side="right"), 1, len(grid) - 1)
+            )
+            choices[name] = [upper - 1, upper]
+        else:
+            choices[name] = [int(np.asarray(next_states[f"next_{name}"]))]
+    law_nodes = _euler_draw_nodes(read=read, combo_pool=combo_pool)
     rows: list[np.ndarray] = []
     seen: set[bytes] = set()
-    for positions in itertools.product(*(range(len(v)) for v in axes.values())):
-        node = dict(zip(axes, positions, strict=True))
-        draws = {name: axes[name][position] for name, position in node.items()}
-        child_row = tuple(
-            node[f"next_{name}"]
-            if f"next_{name}" in carried
-            else deterministic_codes.get(name, source_positions[name])
-            for name in ride_names
-        )
-        targets = _cliff_targets_at_node(
-            read=read,
-            pool={
-                **combo_pool,
-                **{name: draws[name] for name in read.euler_draw_names},
-            },
-            post_decision_name=plan.post_decision_name,
-            jumps=child_carry.breakpoints[child_row],
-            savings_grid=savings_grid,
+    for positions in itertools.product(*choices.values()):
+        child_cell = {
+            name: jnp.asarray(grids[name][position])
+            for name, position in zip(choices, positions, strict=True)
+        }
+        jumps = _cell_geometry(
+            statics=statics,
+            kwargs=child_kwargs,
+            cell=child_cell,
+            liquid_grid=liquid_grid,
             dtype=dtype,
-        )
-        if targets.tobytes() not in seen:
-            seen.add(targets.tobytes())
-            rows.append(targets)
+            action_binding={},
+        ).jumps
+        for draws in itertools.product(*law_nodes.values()):
+            draw_values = dict(zip(law_nodes, draws, strict=True))
+            for name, position in zip(choices, positions, strict=True):
+                if (
+                    f"next_{name}" in draw_values
+                    and name in read.stochastic_state_names
+                ):
+                    draw_values[f"next_{name}"] = law_nodes[f"next_{name}"][position]
+            targets = _cliff_targets_at_node(
+                read=read,
+                pool={**combo_pool, **draw_values},
+                post_decision_name=plan.post_decision_name,
+                jumps=jumps,
+                savings_grid=savings_grid,
+                dtype=dtype,
+            )
+            if targets.tobytes() not in seen:
+                seen.add(targets.tobytes())
+                rows.append(targets)
     return np.concatenate(rows)
 
 
