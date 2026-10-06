@@ -246,25 +246,6 @@ def bind_edge_laws(
         Each regime's bound law, and the edges in the law-free
         `{source: {target: selector}}` form, `Phased` when the input was.
     """
-    if isinstance(edges, GraphEdges):
-        return _validated_laws(
-            regimes=regimes,
-            transitions={
-                name: _combined_law(
-                    laws_by_side={
-                        side: _single_destination_laws(
-                            source=name,
-                            resolved=getattr(edges, side).get(name, {}),
-                            ages=ages,
-                            side=side,
-                        )
-                        for side in ("solve", "simulate")
-                    },
-                    ages=ages,
-                )
-                for name in regimes
-            },
-        ), edges
     declared = (
         {"solve": edges.solve, "simulate": edges.simulate}
         if isinstance(edges, Phased)
@@ -311,18 +292,9 @@ def bind_edge_laws(
         if isinstance(edges, Phased)
         else structural["solve"]
     )
-    return _validated_laws(regimes=regimes, transitions=bound), law_free
-
-
-def _validated_laws(
-    *, regimes: Mapping[RegimeName, Regime], transitions: Mapping[RegimeName, object]
-) -> RegimeLaws:
-    """Bind each source's law and validate its regime against it."""
-    laws = MappingProxyType(
-        {name: bind_regime_law(transitions[name]) for name in regimes}
-    )
+    laws = MappingProxyType({name: bind_regime_law(bound[name]) for name in regimes})
     validate_regimes(regimes=regimes, laws=laws)
-    return laws
+    return laws, law_free
 
 
 def _targets_by_period(
@@ -468,21 +440,8 @@ def resolve_graph_edges(
 ) -> GraphEdges:
     """Validate both phases and snapshot selectors as exact source ages."""
     solve, simulate = (
-        (edges.solve, edges.simulate)
-        if isinstance(edges, Phased | GraphEdges)
-        else (edges, edges)
+        (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges, edges)
     )
-    if isinstance(edges, GraphEdges):
-        solve, simulate = (
-            {
-                source: {
-                    target: tuple(sorted(selected))
-                    for target, selected in destinations.items()
-                }
-                for source, destinations in phase.items()
-            }
-            for phase in (edges.solve, edges.simulate)
-        )
     return GraphEdges(
         solve=_resolve_edges(edges=solve, regimes=regimes, ages=ages),
         simulate=_resolve_edges(edges=simulate, regimes=regimes, ages=ages),

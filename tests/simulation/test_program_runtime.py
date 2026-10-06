@@ -243,7 +243,7 @@ def test_simulate_dispatches_the_declared_program_body(
     """Runtime dispatch executes each declared family on real subjects."""
     model, params, initial = WITNESSES["multi_regime"]()
     model = Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=MultiRegimeId,

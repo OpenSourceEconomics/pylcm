@@ -321,7 +321,7 @@ def test_other_aggregator_refuses_additive_witness_contract() -> None:
     """A nonlinear user declaration cannot acquire the additive error scale."""
     original, params, _ = multi_regime()
     model = Model(
-        edges=original.graph.edges,
+        edges=original.edges,
         regimes={
             name: regime
             if original.graph.laws[name].terminal

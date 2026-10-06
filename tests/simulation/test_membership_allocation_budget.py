@@ -327,7 +327,7 @@ def _assert_public_membership_inventory(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes={
             name: dataclasses.replace(
                 regime,
