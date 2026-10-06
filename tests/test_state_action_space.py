@@ -142,7 +142,7 @@ def test_create_v_interpolation_info():
             "wealth": lambda wealth: wealth,
             "health": lambda health: health,
         },
-    ).replace(regime_transitions=lambda: 0)  # bound non-terminal law
+    )
 
     v_interpolation_info = create_v_interpolation_info(user_regime=regime)
 

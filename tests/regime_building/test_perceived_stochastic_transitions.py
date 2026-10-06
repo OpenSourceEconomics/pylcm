@@ -351,7 +351,7 @@ def test_both_phase_variants_get_their_own_metadata_entry():
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
-    ).replace(regime_transitions=_next_regime)
+    )
     entries = collect_stochastic_state_transitions(
         user_regime=live, user_regimes={"live": live}
     )
@@ -369,7 +369,7 @@ def test_bare_law_keeps_its_unqualified_key_and_no_phase():
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
-    ).replace(regime_transitions=_next_regime)
+    )
     entries = collect_stochastic_state_transitions(
         user_regime=live, user_regimes={"live": live}
     )

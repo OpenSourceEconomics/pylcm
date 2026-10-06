@@ -45,6 +45,7 @@ values for the contested name (`_SRC_SHIFT` != `_TARGET_SHIFT`, `_REF_POINTS`
 != `_SRC_POINTS`) and asserts the disagreement itself.
 """
 
+from collections.abc import Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
@@ -53,7 +54,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
@@ -61,6 +64,7 @@ from _lcm.regime_building.gated_edges import (
     _reached_target_param_leaves,
     _reject_gate_operand_state_name_collision,
 )
+from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
     _REF_STATE_PREFIX,
     EDGE_CHANNELS_ARG,
@@ -98,6 +102,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -107,7 +112,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.regime_building.test_collective_regime_simulate import _solve_and_process
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.regime_building.test_simulate_gate_param_and_leg_selection import (
     exposed_param_name,
 )
@@ -148,9 +153,49 @@ def _u_identity(x: ContinuousState) -> FloatND:
     return x
 
 
-def _solve_fixture(*, regimes_dict, flat_params):
-    regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+# A topology's regimes and the law `Model(edges=...)` binds for each.
+type _Spec = tuple[dict[str, Regime], dict[str, object]]
+
+
+def _split(bound: Mapping[str, tuple[Regime, object]]) -> _Spec:
+    """Separate each regime from its law between regimes (`None` if terminal)."""
+    return (
+        {name: regime for name, (regime, _) in bound.items()},
+        {name: law for name, (_, law) in bound.items()},
+    )
+
+
+def _process(
+    *, regimes_dict: Mapping[str, Regime], laws: Mapping[str, object], ages: AgeGrid
+):
+    """Finalize and process the regimes under their bound laws."""
+    regime_names_to_ids = MappingProxyType(
+        {name: jnp.int32(i) for i, name in enumerate(regimes_dict)}
+    )
+    bound = bind_laws(laws)
+    finalized = finalize_regimes(
+        user_regimes=regimes_dict,
+        laws=bound,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
+    regimes = process_regimes(
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized, laws=bound, ages=ages
+        ),
+        user_regimes=finalized,
+        ages=ages,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=False,
+    )
+    return regimes, regime_names_to_ids
+
+
+def _solve_fixture(*, spec: _Spec, flat_params):
+    regimes_dict, laws = spec
+    regimes, regime_names_to_ids = _process(
+        regimes_dict=regimes_dict, laws=laws, ages=_AGES
     )
     _bi_result = solve(
         program_fingerprint="test_gated_edge_arg_provenance",
@@ -220,14 +265,15 @@ def _ref_gate(*, V_target: FloatND, ref_v: FloatND) -> BoolND:
     return V_target > ref_v
 
 
-def _make_shift_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_shift_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -248,26 +294,37 @@ def _make_shift_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {
-        "src": src,
-        "target": target,
-        "refregime": refregime,
-        "fallback": fallback,
-    }
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {
+            "src": src,
+            "target": target,
+            "refregime": refregime,
+            "fallback": fallback,
+        }
+    )
 
 
 def _shift_flat_params(*, target_declares_shift: bool = True):
@@ -305,7 +362,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     """
     flat_params = _shift_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        regimes_dict=_make_shift_regimes(), flat_params=flat_params
+        spec=_make_shift_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
@@ -400,7 +457,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
     """
     flat_params = _shift_flat_params(target_declares_shift=False)
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        regimes_dict=_make_shift_regimes(), flat_params=flat_params
+        spec=_make_shift_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
@@ -529,14 +586,15 @@ def _u_fallback_identity(z: ContinuousState) -> FloatND:
     return z
 
 
-def _make_projector_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_projector_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -553,17 +611,23 @@ def _make_projector_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"z": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
-        functions={"utility": _u_fallback_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"z": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+            functions={"utility": _u_fallback_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def _projector_flat_params():
@@ -595,7 +659,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     """
     flat_params = _projector_flat_params()
     regimes, _ids, solution = _solve_fixture(
-        regimes_dict=_make_projector_regimes(), flat_params=flat_params
+        spec=_make_projector_regimes(), flat_params=flat_params
     )
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
@@ -746,7 +810,7 @@ def test_router_writes_the_fold_consistent_fallback_state():
     """
     flat_params = _projector_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        regimes_dict=_make_projector_regimes(), flat_params=flat_params
+        spec=_make_projector_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     mappings = _same_period_mappings(
@@ -809,10 +873,10 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     code alone, this is the missing-argument error such an argument raises on
     all four consumers of the reader.
     """
-    regimes_dict = _make_ref_grid_regimes()
+    regimes_dict, laws = _make_ref_grid_regimes()
     flat_params = _ref_grid_flat_params()
     regimes, _ids, _solution = _solve_fixture(
-        regimes_dict=regimes_dict, flat_params=flat_params
+        spec=(regimes_dict, laws), flat_params=flat_params
     )
 
     interpolator = get_V_interpolator(
@@ -864,16 +928,17 @@ def _project_realized(x: ContinuousState) -> FloatND:
     return jnp.full_like(jnp.asarray(x, dtype=float), _REALIZED_X)
 
 
-def _make_ref_grid_regimes() -> dict[str, Regime]:
+def _make_ref_grid_regimes() -> _Spec:
     """The gate ref's reference regime carries a RUNTIME irregular grid, and the
     source declares an identically named state on a DIFFERENT runtime grid."""
-    src = Regime(
-        states={"x": IrregSpacedGrid(n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"x": IrregSpacedGrid(n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -894,21 +959,32 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": IrregSpacedGrid(n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": IrregSpacedGrid(n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    )
 
 
 def _ref_grid_flat_params():
@@ -943,7 +1019,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
     """
     flat_params = _ref_grid_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        regimes_dict=_make_ref_grid_regimes(), flat_params=flat_params
+        spec=_make_ref_grid_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
@@ -1020,17 +1096,18 @@ def _u_fallback_z(z: ContinuousState) -> FloatND:
     return z
 
 
-def _make_fallback_grid_regimes() -> dict[str, Regime]:
+def _make_fallback_grid_regimes() -> _Spec:
     """The LEG FALLBACK's regime carries a runtime irregular grid — the reader
     `get_edge_fold` builds for the CLOSED branch (a third consumer of
     `_build_same_period_ref_reader`, on the solve side)."""
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1047,17 +1124,23 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"z": IrregSpacedGrid(n_points=3)},
-        functions={"utility": _u_fallback_z},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"z": IrregSpacedGrid(n_points=3)},
+            functions={"utility": _u_fallback_z},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def _identity_x_to_z(x: ContinuousState) -> FloatND:
@@ -1093,7 +1176,7 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
         }
     )
     regimes, _ids, solution = _solve_fixture(
-        regimes_dict=_make_fallback_grid_regimes(), flat_params=flat_params
+        spec=_make_fallback_grid_regimes(), flat_params=flat_params
     )
 
     prefixed = f"{_REF_STATE_PREFIX}z__points"
@@ -1147,53 +1230,62 @@ def _project_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
-    single_f = Regime(
-        states={"wage": IrregSpacedGrid(n_points=2)},
-        functions={"utility": _u_wage},
-    ).replace(regime_transitions=None)
-    married = Regime(
-        states={"wage": IrregSpacedGrid(n_points=2)},
-        state_transitions={"wage": _identity_x_wage},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_married_f, "m": _u_married_m}
-            )
-        },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _project_wage}
-                    )
-                },
-            )
-        },
-    ).replace(
-        regime_transitions=ByAge(
+def _make_e2_ref_grid_regimes() -> _Spec:
+    single_f = (
+        Regime(
+            states={"wage": IrregSpacedGrid(n_points=2)},
+            functions={"utility": _u_wage},
+        ),
+        None,
+    )
+    married = (
+        Regime(
+            states={"wage": IrregSpacedGrid(n_points=2)},
+            state_transitions={"wage": _identity_x_wage},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_married_f, "m": _u_married_m}
+                )
+            },
+            constraints={
+                "ir_f": ValueDependentConstraint(
+                    predicate=_ir_f,
+                    references={
+                        "V_single_f_ref": ProjectedRegimeValue(
+                            regime="single_f", projection={"wage": _project_wage}
+                        )
+                    },
+                )
+            },
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_terminal": StochasticTransition(func=_prob_one)
                 }
             }
-        )
+        ),
     )
-    married_terminal = Regime(
-        states={"wage": IrregSpacedGrid(n_points=2)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_married_m, "m": _u_married_m}
-            )
-        },
-    ).replace(regime_transitions=None)
-    return {
-        "single_f": single_f,
-        "married": married,
-        "married_terminal": married_terminal,
-    }
+    married_terminal = (
+        Regime(
+            states={"wage": IrregSpacedGrid(n_points=2)},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_married_m, "m": _u_married_m}
+                )
+            },
+        ),
+        None,
+    )
+    return _split(
+        {
+            "single_f": single_f,
+            "married": married,
+            "married_terminal": married_terminal,
+        }
+    )
 
 
 def _identity_x_wage(wage: ContinuousState) -> ContinuousState:
@@ -1217,7 +1309,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     the difference between a feasible cell and a dissolved household).
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _make_e2_ref_grid_regimes()
+    regimes_dict, laws = _make_e2_ref_grid_regimes()
     flat_params = MappingProxyType(
         {
             "single_f": MappingProxyType({"wage__points": jnp.asarray(_SINGLE_POINTS)}),
@@ -1238,9 +1330,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
         np.asarray(flat_params["married"]["wage__points"]),
     )
 
-    regimes, _ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
-    )
+    regimes, _ids = _process(regimes_dict=regimes_dict, laws=laws, ages=ages)
     _bi_result = solve(
         program_fingerprint="test_gated_edge_arg_provenance",
         flat_params=flat_params,
@@ -1333,14 +1423,15 @@ def _gate_reads_target_helper(*, V_target: FloatND, target_scaled_x: FloatND) ->
     return V_target > target_scaled_x
 
 
-def _make_target_helper_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_target_helper_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1356,17 +1447,23 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
@@ -1388,9 +1485,7 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
         ModelInitializationError,
         match=r"target_scale.*introduced by the TARGET regime's own functions",
     ):
-        _solve_fixture(
-            regimes_dict=_make_target_helper_regimes(), flat_params=flat_params
-        )
+        _solve_fixture(spec=_make_target_helper_regimes(), flat_params=flat_params)
 
 
 # A fence covering only the concatenated gate predicate, keyed on GLOBAL
@@ -1423,14 +1518,15 @@ def _gate_ref_value_only(*, V_target: FloatND, scaled_ref: FloatND) -> BoolND:
     return V_target > scaled_ref
 
 
-def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_gate_ref_target_helper_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1452,21 +1548,32 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    )
 
 
 def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
@@ -1495,7 +1602,7 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
         match=r"target_scale.*introduced by the TARGET regime's own functions",
     ):
         _solve_fixture(
-            regimes_dict=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
+            spec=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
         )
 
 
@@ -1567,14 +1674,15 @@ def _gate_reads_outside(*, V_target: FloatND, outside: FloatND) -> BoolND:
     return V_target > outside
 
 
-def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_gate_ref_name_collision_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1599,21 +1707,32 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity, "outside": _target_outside},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "outside": _target_outside},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    )
 
 
 def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
@@ -1640,7 +1759,7 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
         match=r"outside.*collide",
     ):
         _solve_fixture(
-            regimes_dict=_make_gate_ref_name_collision_regimes(),
+            spec=_make_gate_ref_name_collision_regimes(),
             flat_params=flat_params,
         )
 
@@ -1670,14 +1789,15 @@ def _gate_reads_shadowed_threshold(*, V_target: FloatND, threshold: FloatND) -> 
     return V_target > threshold
 
 
-def _make_threshold_shadow_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_threshold_shadow_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1693,17 +1813,23 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity, "threshold": _target_threshold},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "threshold": _target_threshold},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
@@ -1731,23 +1857,22 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
         ModelInitializationError,
         match=r"threshold.*TARGET regime's own function",
     ):
-        _solve_fixture(
-            regimes_dict=_make_threshold_shadow_regimes(), flat_params=flat_params
-        )
+        _solve_fixture(spec=_make_threshold_shadow_regimes(), flat_params=flat_params)
 
 
 def _gate_uses_v_target(V_target: FloatND) -> BoolND:
     return V_target > 0.5
 
 
-def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_gate_ref_v_target_alias_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1769,21 +1894,32 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    )
 
 
 def test_gate_ref_key_aliasing_v_target_is_rejected():
@@ -1808,7 +1944,7 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
         match=r"V_target.*alias a built-in injected gate operand",
     ):
         _solve_fixture(
-            regimes_dict=_make_gate_ref_v_target_alias_regimes(),
+            spec=_make_gate_ref_v_target_alias_regimes(),
             flat_params=flat_params,
         )
 
@@ -1870,14 +2006,15 @@ def _gate_reads_x_operand(*, V_target: FloatND, x: FloatND) -> BoolND:
     return V_target > x
 
 
-def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
-    src = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+def _make_gate_ref_key_aliases_target_state_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -1900,21 +2037,32 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    refregime = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    refregime = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split(
+        {"src": src, "target": target, "refregime": refregime, "fallback": fallback}
+    )
 
 
 def test_gate_ref_key_aliasing_a_target_state_is_rejected():
@@ -1941,7 +2089,7 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         match=r"alias a gate-ref key",
     ):
         _solve_fixture(
-            regimes_dict=_make_gate_ref_key_aliases_target_state_regimes(),
+            spec=_make_gate_ref_key_aliases_target_state_regimes(),
             flat_params=flat_params,
         )
 
@@ -1992,7 +2140,7 @@ def _gate_reads_x(*, V_target: FloatND, x: FloatND) -> BoolND:
 
 def _make_gate_param_aliases_target_state_regimes(
     *, source_supplies_x_param: bool
-) -> dict[str, Regime]:
+) -> _Spec:
     """Source `y`-regime; target state is `x`; the gate reads `x`.
 
     With `source_supplies_x_param=True` the source utility also reads param `x`,
@@ -2000,17 +2148,18 @@ def _make_gate_param_aliases_target_state_regimes(
     `False` the source never supplies `x`, so `gate(x)` is an unambiguous direct
     read of the target state (the legitimate case that must still solve).
     """
-    src = Regime(
-        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": _u_src_reads_x_param
-            if source_supplies_x_param
-            else _u_src_no_param
-        },
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={
+                "utility": _u_src_reads_x_param
+                if source_supplies_x_param
+                else _u_src_no_param
+            },
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -2026,17 +2175,23 @@ def _make_gate_param_aliases_target_state_regimes(
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
@@ -2067,7 +2222,7 @@ def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
         match=r"simultaneously a TARGET state.*and a source parameter",
     ):
         _solve_fixture(
-            regimes_dict=_make_gate_param_aliases_target_state_regimes(
+            spec=_make_gate_param_aliases_target_state_regimes(
                 source_supplies_x_param=True
             ),
             flat_params=flat_params,
@@ -2089,7 +2244,7 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
     )
     # Must not raise.
     _solve_fixture(
-        regimes_dict=_make_gate_param_aliases_target_state_regimes(
+        spec=_make_gate_param_aliases_target_state_regimes(
             source_supplies_x_param=False
         ),
         flat_params=flat_params,
@@ -2118,20 +2273,21 @@ def _gate_reads_period_engine_arg(*, V_target: FloatND, period: ScalarInt) -> Bo
     return V_target > period
 
 
-def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
+def _make_source_param_aliases_regimes(gate: UserFunction) -> _Spec:
     """A source whose edge into `target` is gated by `gate`.
 
     The source supplies a bare param in `flat_params['src']` spelled exactly like
     one of the fold's own arguments, so `gate` decides which collision the fixture
     exercises.
     """
-    src = Regime(
-        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src_no_param},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src_no_param},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -2147,27 +2303,33 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
+def _make_source_param_aliases_engine_params_regimes() -> _Spec:
     """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
     supplied in `flat_params['src']` -- so it is both a source param and the fold's
     engine reference-params leaf."""
     return _make_source_param_aliases_regimes(_gate_reads_params_engine_arg)
 
 
-def _make_source_param_aliases_period_context_regimes() -> dict[str, Regime]:
+def _make_source_param_aliases_period_context_regimes() -> _Spec:
     """Source gate reads `period`, the fold's own context argument, as a bare
     param supplied in `flat_params['src']`."""
     return _make_source_param_aliases_regimes(_gate_reads_period_engine_arg)
@@ -2183,17 +2345,18 @@ def _gate_v_only(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
-def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
+def _make_source_param_aliases_engine_v_regimes() -> _Spec:
     """Source utility reads a bare param spelled exactly `SAME_PERIOD_V_ARG`,
     supplied in `flat_params['src']`. `SAME_PERIOD_V_ARG` is ALWAYS in the fold
     signature, so the source scalar overwrites the solve-side value MAPPING."""
-    src = Regime(
-        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src_reads_v_arg_param},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src_reads_v_arg_param},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -2209,17 +2372,23 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_identity},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def _u_id_v_arg_state(same_period_regime_to_V_arr: ContinuousState) -> FloatND:
@@ -2238,16 +2407,17 @@ def _gate_reads_v_arg_state(
     return V_target > same_period_regime_to_V_arr
 
 
-def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
+def _make_target_state_aliases_engine_v_regimes() -> _Spec:
     """Target STATE named exactly `SAME_PERIOD_V_ARG`; the gate reads it. It shares
     one fold leaf with the engine value mapping."""
-    src = Regime(
-        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src_no_param},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src_no_param},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -2266,17 +2436,23 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
+        ),
     )
-    target = Regime(
-        states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_id_v_arg_state},
-    ).replace(regime_transitions=None)
-    fallback = Regime(
-        states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_id_v_arg_state},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    target = (
+        Regime(
+            states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_id_v_arg_state},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={SAME_PERIOD_V_ARG: LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_id_v_arg_state},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
 def test_source_param_aliasing_the_engine_params_arg_is_rejected():
@@ -2299,7 +2475,7 @@ def test_source_param_aliasing_the_engine_params_arg_is_rejected():
         match=r"(?i)engine|same_period_regime_to_params|reserved",
     ):
         _solve_fixture(
-            regimes_dict=_make_source_param_aliases_engine_params_regimes(),
+            spec=_make_source_param_aliases_engine_params_regimes(),
             flat_params=flat_params,
         )
 
@@ -2323,7 +2499,7 @@ def test_source_param_aliasing_edge_period_context_is_rejected():
         match=r"(?i)engine|period|reserved",
     ):
         _solve_fixture(
-            regimes_dict=_make_source_param_aliases_period_context_regimes(),
+            spec=_make_source_param_aliases_period_context_regimes(),
             flat_params=flat_params,
         )
 
@@ -2348,7 +2524,7 @@ def test_source_param_aliasing_the_engine_v_arg_is_rejected():
         match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
     ):
         _solve_fixture(
-            regimes_dict=_make_source_param_aliases_engine_v_regimes(),
+            spec=_make_source_param_aliases_engine_v_regimes(),
             flat_params=flat_params,
         )
 
@@ -2370,7 +2546,7 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
         match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
     ):
         _solve_fixture(
-            regimes_dict=_make_target_state_aliases_engine_v_regimes(),
+            spec=_make_target_state_aliases_engine_v_regimes(),
             flat_params=flat_params,
         )
 
@@ -2399,15 +2575,16 @@ def test_source_param_near_engine_name_still_solves():
     ) -> BoolND:
         return V_target > same_period_regime_to_params_user
 
-    regimes = _make_source_param_aliases_engine_params_regimes()
+    regimes, laws = _make_source_param_aliases_engine_params_regimes()
     # swap the gate to read the near-miss (non-engine) name
-    regimes["src"] = Regime(
-        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src_no_param},
-    ).replace(
-        regime_transitions=ByAge(
+    regimes["src"], laws["src"] = (
+        Regime(
+            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src_no_param},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -2423,7 +2600,7 @@ def test_source_param_near_engine_name_still_solves():
                     )
                 }
             }
-        )
+        ),
     )
     # Must not raise.
-    _solve_fixture(regimes_dict=regimes, flat_params=flat_params)
+    _solve_fixture(spec=(regimes, laws), flat_params=flat_params)

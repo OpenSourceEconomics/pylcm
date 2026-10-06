@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import UNBOUND_LAW
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -295,6 +296,7 @@ def test_finalized_specialization_rejects_a_missing_broadcastable_function():
     with pytest.raises(RegimeInitializationError, match="resources 'resources'"):
         finalize_regimes(
             user_regimes={"working": regime},
+            laws={"working": UNBOUND_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -334,6 +336,7 @@ def test_composed_resources_are_injected_only_at_model_finalization():
 
     finalized = finalize_regimes(
         user_regimes={"working": regime},
+        laws={"working": UNBOUND_LAW},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -368,6 +371,7 @@ def test_composition_exclusion_reports_the_complete_rule():
     ):
         finalize_regimes(
             user_regimes={"working": regime},
+            laws={"working": UNBOUND_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),

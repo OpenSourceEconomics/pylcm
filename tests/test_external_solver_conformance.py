@@ -997,6 +997,7 @@ def test_opaque_solver_marker_cannot_hide_a_distinct_accepted_core() -> None:
         ages=stateless.ages,
         regimes=stateless._regimes,
         user_regimes=stateless.user_regimes,
+        laws=stateless.graph.laws,
         regime_names_to_ids=stateless.regime_names_to_ids,
         flat_params=stateless_flat_params,
     )

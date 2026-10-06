@@ -181,7 +181,7 @@ def candidate_targets_from_transition(
     if transition is None:
         return ()
     if isinstance(transition, Mapping):
-        # `regime_transitions` is deliberately `object` — the slot holds any of the
+        # A regime law is deliberately `object` — the slot holds any of the
         # transition forms. A mapping is the per-target form, whose keys are
         # regime names by construction.
         per_target = cast("Mapping[RegimeName, object]", transition)

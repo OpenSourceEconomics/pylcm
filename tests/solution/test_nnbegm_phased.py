@@ -61,7 +61,7 @@ def _structural_phase_variations(model) -> tuple[str, ...]:
     capability from ``NNBEGMPolicyRead``.
     """
     regime = model.user_regimes["alive"]
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=model.graph.laws["alive"])
     solve = spec.solution
     simulate = spec.simulation
     varied: list[str] = []

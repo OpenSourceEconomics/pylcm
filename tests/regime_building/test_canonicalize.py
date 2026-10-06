@@ -29,6 +29,7 @@ from _lcm.regime_building.canonicalize import (
 )
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_all_regime_phases
+from _lcm.regime_law import RegimeLaws
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -41,6 +42,7 @@ from lcm import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.conftest import bind_laws
 
 
 @categorical(ordered=True)
@@ -77,26 +79,40 @@ def _base_regime_kwargs() -> dict[str, Any]:
     }
 
 
-def _regime(*, law: object = _next_regime, **overrides: Any) -> UserRegime:
+# A regime together with the law `Model(edges=...)` would bind for it.
+type _Declared = tuple[UserRegime, object]
+
+
+def _regime(*, law: object = _next_regime, **overrides: Any) -> _Declared:
     spec: dict[str, Any] = _base_regime_kwargs()
     spec.update(overrides)
-    return UserRegime(**spec).replace(regime_transitions=law)
+    return UserRegime(**spec), law
 
 
-def _dead() -> UserRegime:
-    return UserRegime(functions={"utility": lambda: 0.0}).replace(
-        regime_transitions=None
-    )
+def _dead() -> _Declared:
+    return UserRegime(functions={"utility": lambda: 0.0}), None
 
 
-def _canonicalize(regimes: dict[str, UserRegime]) -> Mapping:
+def _split(
+    declared: Mapping[str, _Declared],
+) -> tuple[dict[str, UserRegime], RegimeLaws]:
+    """Separate the regimes from their laws, binding each law."""
+    regimes = {name: regime for name, (regime, _) in declared.items()}
+    laws = bind_laws({name: law for name, (_, law) in declared.items()})
+    return regimes, laws
+
+
+def _canonicalize(declared: dict[str, _Declared]) -> Mapping:
+    regimes, laws = _split(declared)
     return canonicalize_regimes(
         user_regimes=finalize_regimes(
             user_regimes=regimes,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
-        )
+            laws=laws,
+        ),
+        laws=laws,
     )
 
 
@@ -251,18 +267,21 @@ def test_coarse_deterministic_regime_transition_canonicalizes_to_shared_cells() 
 
 def test_temporal_graph_limits_canonical_transition_bundles() -> None:
     """Only the graph's declared targets create canonical transition bundles."""
-    regimes = {
-        "work": _regime(state_transitions={"wealth": _next_wealth}),
-        "retire": _regime(state_transitions={"wealth": _next_wealth}),
-        "dead": _dead(),
-    }
+    regimes, laws = _split(
+        {
+            "work": _regime(state_transitions={"wealth": _next_wealth}),
+            "retire": _regime(state_transitions={"wealth": _next_wealth}),
+            "dead": _dead(),
+        }
+    )
     finalized = finalize_regimes(
         user_regimes=regimes,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
+        laws=laws,
     )
-    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized, laws=laws)
     graph = build_phase_reachability(
         n_periods=2,
         active_periods_by_regime={"work": {0}, "retire": {1}, "dead": {1}},
@@ -316,20 +335,24 @@ def test_two_step_seam_matches_wrapper() -> None:
     step and a canonicalization step so that model-level age normalization can
     sit between them. The split must not change the end result.
     """
-    finalized = finalize_regimes(
-        user_regimes={
+    regimes, laws = _split(
+        {
             "work": _regime(state_transitions={"wealth": _next_wealth}),
             "retire": _regime(state_transitions={"wealth": _next_wealth}),
             "dead": _dead(),
-        },
+        }
+    )
+    finalized = finalize_regimes(
+        user_regimes=regimes,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
+        laws=laws,
     )
 
-    wrapper = canonicalize_regimes(user_regimes=finalized)
+    wrapper = canonicalize_regimes(user_regimes=finalized, laws=laws)
 
-    raw_specs = normalize_all_regime_phases(user_regimes=finalized)
+    raw_specs = normalize_all_regime_phases(user_regimes=finalized, laws=laws)
     two_step = canonicalize_phased_regimes(
         raw_specs=raw_specs,
         all_regime_names=frozenset(finalized),

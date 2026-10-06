@@ -48,6 +48,7 @@ from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
@@ -215,6 +216,7 @@ def _build_regimes_and_template_with_fixed_params(
 def validate_model_inputs(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     regime_id_class: type,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
@@ -254,12 +256,13 @@ def validate_model_inputs(
     # type-filtered collection of continuous states, rejecting a valid model.
     solver_validation_regimes = _representative_for_validation(
         user_regimes=user_regimes,
+        laws=laws,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
         visited_periods_by_regime=visited_periods_by_regime,
     )
     solver_validation_phase_specs = normalize_all_regime_phases(
-        user_regimes=solver_validation_regimes
+        user_regimes=solver_validation_regimes, laws=laws
     )
     for regime_name, user_regime in solver_validation_regimes.items():
         fail_if_solver_is_not_shipped(
@@ -269,10 +272,13 @@ def validate_model_inputs(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=solver_validation_regimes,
+                laws=laws,
                 solve_functions=solver_validation_phase_specs[
                     regime_name
                 ].solution.functions,
-                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
+                phase_variation_paths=phase_variation_paths(
+                    user_regime=user_regime, law=laws[regime_name]
+                ),
             )
         )
 
@@ -290,7 +296,7 @@ def validate_model_inputs(
         )
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
-    terminal_regimes = [name for name, r in user_regimes.items() if r.terminal]
+    terminal_regimes = [name for name in user_regimes if laws[name].terminal]
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
@@ -307,6 +313,7 @@ def validate_model_inputs(
     error_messages.extend(
         _validate_all_variables_used(
             user_regimes=user_regimes,
+            laws=laws,
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
@@ -317,6 +324,7 @@ def validate_model_inputs(
     error_messages.extend(
         _validate_constraint_phase_invariance(
             user_regimes=user_regimes,
+            laws=laws,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
         )
@@ -340,6 +348,7 @@ def validate_model_inputs(
 def _representative_for_validation(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -356,7 +365,7 @@ def _representative_for_validation(
     """
     if not any(_regime_has_markers(regime) for regime in user_regimes.values()):
         return user_regimes
-    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     return normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=phased_specs,
@@ -393,6 +402,7 @@ def _model_wide_conditioning_names(
 def _validate_all_variables_used(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
@@ -433,6 +443,7 @@ def _validate_all_variables_used(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
         removed_edge_reads: Per regime, each state or action read by a
@@ -449,23 +460,19 @@ def _validate_all_variables_used(
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
         variable_names -= broadcast_variables.get(regime_name, frozenset())
-        user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        user_functions = dict(
+            user_regime.get_all_functions(phase="solve", law=laws[regime_name])
+        )
         # `root_functions` is the single definition of what a root computation
         # is, shared with the broadcast pruning walk so the two cannot disagree
         # about what counts as a read. It also supplies the reads no per-regime
         # walk can see: a gated edge declared on another regime whose gate,
         # gate references and fallbacks are evaluated on *this* regime's grid.
         solve_roots = root_functions(
-            regime_name=regime_name,
-            regime=user_regime,
-            all_regimes=user_regimes,
-            phase="solve",
+            regime_name=regime_name, regime=user_regime, laws=laws, phase="solve"
         )
         simulate_roots = root_functions(
-            regime_name=regime_name,
-            regime=user_regime,
-            all_regimes=user_regimes,
-            phase="simulate",
+            regime_name=regime_name, regime=user_regime, laws=laws, phase="simulate"
         )
         # A `Phased` slot may consume a variable in only one phase, and the
         # variable is used either way, so a simulate variant that is a different
@@ -647,6 +654,7 @@ def _is_solve_proved_post_decision_lower_bound(
 def _validate_constraint_phase_invariance(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> list[str]:
@@ -675,6 +683,7 @@ def _validate_constraint_phase_invariance(
 
     Args:
         user_regimes: Mapping of finalized regime names to `Regime` instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         ages: The model's age grid.
         active_periods_by_regime: Immutable mapping of regime names to their
             active periods, as resolved from the declarations.
@@ -685,8 +694,9 @@ def _validate_constraint_phase_invariance(
     """
     error_messages = []
     for regime_name, user_regime in user_regimes.items():
-        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
-        sim_funcs = user_regime.get_all_functions(phase="simulate")
+        law = laws[regime_name]
+        solve_funcs = dict(user_regime.get_all_functions(phase="solve", law=law))
+        sim_funcs = user_regime.get_all_functions(phase="simulate", law=law)
         phase_varying = frozenset(
             name
             for name in solve_funcs

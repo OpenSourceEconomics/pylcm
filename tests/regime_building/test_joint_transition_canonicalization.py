@@ -18,6 +18,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import FloatND
+from tests.conftest import bind_laws
 
 
 def _probability() -> FloatND:
@@ -50,18 +51,22 @@ def _specs(
         functions={"utility": lambda: jnp.asarray(0.0)},
         state_transitions=state_transitions or {},  # ty: ignore[invalid-argument-type]
         joint_transitions=joint_transitions,
-    ).replace(regime_transitions={"target": StochasticTransition(func=_probability)})
+    )
     target = Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
         functions={"utility": lambda wealth: wealth},
-    ).replace(regime_transitions=None)
+    )
+    laws = bind_laws(
+        {"source": {"target": StochasticTransition(func=_probability)}, "target": None}
+    )
     finalized = finalize_regimes(
         user_regimes={"source": source, "target": target},
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
-    return canonicalize_regimes(user_regimes=finalized)
+    return canonicalize_regimes(user_regimes=finalized, laws=laws)
 
 
 def test_joint_kernel_survives_canonicalization_on_its_explicit_target() -> None:

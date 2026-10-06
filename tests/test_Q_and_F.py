@@ -54,7 +54,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
@@ -68,28 +68,30 @@ from tests.test_models.deterministic.regression import (
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
-    user_regimes = {
-        "working_life": working_life.replace(
-            regime_transitions=graph_bound_working_life_transitions(last_age=4)
-        ),
-        "dead": dead,
-    }
+    user_regimes = {"working_life": working_life, "dead": dead}
+    laws = bind_laws(
+        {
+            "working_life": graph_bound_working_life_transitions(last_age=4),
+            "dead": None,
+        }
+    )
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
 

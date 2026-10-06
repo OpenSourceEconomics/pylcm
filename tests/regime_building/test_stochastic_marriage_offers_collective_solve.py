@@ -52,6 +52,7 @@ import pytest
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -78,7 +79,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
 # with a spouse-type draw feeding the mutual-consent gated edge.
@@ -240,15 +241,11 @@ def _single_f_law() -> ByAge:
     )
 
 
-def _bound_offer_regimes() -> dict[str, Regime]:
-    """The offer regimes with their laws bound, for the kernel-level path."""
-    regimes = _make_offer_regimes()
-    return {
-        name: regime.replace(
-            regime_transitions=_single_f_law() if name == "single_f" else None
-        )
-        for name, regime in regimes.items()
-    }
+def _offer_laws(regimes: dict[str, Regime]) -> RegimeLaws:
+    """The offer regimes' laws, bound as a model would bind them."""
+    return bind_laws(
+        {name: _single_f_law() if name == "single_f" else None for name in regimes}
+    )
 
 
 # Hand computation (see module docstring for the mechanism).
@@ -287,29 +284,23 @@ _EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([2.7575, 5.42])
 
 def _solve_offer_regimes(*, enable_jit: bool = False):
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regime_names = list(_bound_offer_regimes())
+    user_regimes = _make_offer_regimes()
+    laws = _offer_laws(user_regimes)
+    finalized = finalize_regimes(
+        user_regimes=user_regimes,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_bound_offer_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+            user_regimes=finalized, laws=laws, ages=ages
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=_bound_offer_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
-        ),
+        user_regimes=finalized,
         ages=ages,
         regime_names_to_ids=MappingProxyType(
-            {name: jnp.int32(i) for i, name in enumerate(regime_names)}
+            {name: jnp.int32(i) for i, name in enumerate(user_regimes)}
         ),
         enable_jit=enable_jit,
     )
@@ -500,7 +491,7 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     "endogenous offer distribution" is unrepresentable through this
     primitive — confirmed, not merely asserted, by this failure mode.
     """
-    regimes = _bound_offer_regimes()
+    regimes = _make_offer_regimes()
     regimes["single_f"] = regimes["single_f"].replace(
         state_transitions={
             "education": fixed_transition("education"),
@@ -513,25 +504,19 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
     )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     # Build succeeds — the ill-formed argument is not caught until solve.
+    laws = _offer_laws(regimes)
+    finalized = finalize_regimes(
+        user_regimes=regimes,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+            user_regimes=finalized, laws=laws, ages=ages
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=regimes,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
-        ),
+        user_regimes=finalized,
         ages=ages,
         regime_names_to_ids=MappingProxyType(
             {n: jnp.int32(i) for i, n in enumerate(regimes)}

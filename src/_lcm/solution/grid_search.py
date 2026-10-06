@@ -596,10 +596,10 @@ def _edge_reference_regimes_for_targets(
     target_regimes: tuple[RegimeName, ...],
 ) -> tuple[RegimeName, ...]:
     """Return only edge references read by targets reachable this period."""
-    source = context.user_regimes[context.regime_name]
+    law = context.laws[context.regime_name]
     references: list[RegimeName] = []
     for target in target_regimes:
-        edge = source.gated_edges.get(target)
+        edge = law.gated_edges.get(target)
         if edge is None:
             continue
         references.extend(ref.regime for ref in edge.gate_refs.values())

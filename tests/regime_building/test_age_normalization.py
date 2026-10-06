@@ -34,6 +34,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
+from tests.conftest import bind_laws
 
 
 def _ages() -> AgeGrid:
@@ -63,17 +64,16 @@ def _normalized(
 
     `"work"` moves to regime code 0 every period; `"dead"` is terminal.
     """
-    laws = {"work": _next_regime, "dead": None}
+    declared = {"work": _next_regime, "dead": None}
+    laws = bind_laws({name: declared[name] for name in regimes})
     finalized = finalize_regimes(
-        user_regimes={
-            name: regime.replace(regime_transitions=laws[name])
-            for name, regime in regimes.items()
-        },
+        user_regimes=regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
-    phased = normalize_all_regime_phases(user_regimes=finalized)
+    phased = normalize_all_regime_phases(user_regimes=finalized, laws=laws)
     active_periods_by_regime = {
         regime_name: tuple(range(ages.n_periods)) for regime_name in finalized
     } | dict(coverage or {})

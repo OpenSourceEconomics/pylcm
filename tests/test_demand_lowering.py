@@ -206,11 +206,7 @@ def test_zero_node_regime_builds_no_transition_programs() -> None:
 
 def test_zero_node_regime_keeps_a_declared_law_without_period_dispatch() -> None:
     """An undemanded schedule is not lowered into a period-dispatched union."""
-    law = (
-        _model(initial_nodes={45: "dead"})
-        ._engine_user_regimes["working"]
-        .regime_transitions
-    )
+    law = _model(initial_nodes={45: "dead"}).graph.laws["working"].regime_transitions
     assert isinstance(law, Mapping)
     cell = law["working"]
     assert isinstance(cell, StochasticTransition)

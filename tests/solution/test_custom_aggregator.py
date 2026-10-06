@@ -35,6 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import bind_laws
 
 
 @categorical(ordered=False)
@@ -238,11 +239,10 @@ def test_custom_ces_aggregator_differs_from_default():
 
 def test_default_H_injected_for_non_terminal():
     """The model-level aggregator is injected on the non-terminal finalized regime."""
-    regime = UserRegime(functions={"utility": lambda: 0.0}).replace(
-        regime_transitions=lambda: {"a": 1.0}
-    )
+    regime = UserRegime(functions={"utility": lambda: 0.0})
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
+        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -252,9 +252,10 @@ def test_default_H_injected_for_non_terminal():
 
 def test_default_W_not_injected_for_terminal():
     """Terminal regimes have no continuation, so they get no aggregator."""
-    r = UserRegime(functions={"utility": lambda: 0.0}).replace(regime_transitions=None)
+    r = UserRegime(functions={"utility": lambda: 0.0})
     finalized = finalize_regimes(
         user_regimes={"regime": r},
+        laws=bind_laws({"regime": None}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -271,9 +272,10 @@ def test_custom_W_not_overwritten():
     r = UserRegime(
         functions={"utility": lambda: 0.0},
         koopmans_aggregator=my_W,
-    ).replace(regime_transitions=lambda: {"a": 1.0})
+    )
     finalized = finalize_regimes(
         user_regimes={"regime": r},
+        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),

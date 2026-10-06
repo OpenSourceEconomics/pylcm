@@ -68,6 +68,7 @@ from _lcm.regime_building.Q_and_F import (
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_law import RegimeLaws
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -586,6 +587,7 @@ class _BoundContinuation:
 def build_continuation_plan(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
@@ -612,6 +614,7 @@ def build_continuation_plan(
     """
     child_reads = _build_child_reads(
         user_regimes=user_regimes,
+        laws=laws,
         functions=functions,
         transitions=transitions,
         transition_plans=transition_plans,
@@ -2252,6 +2255,7 @@ def _collapse_stacked_candidates(
 def _build_child_reads(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
@@ -2375,11 +2379,11 @@ def _build_child_reads(
         else:
             action_names, action_values = (), ()
         resources_func = _get_child_resources_function(
-            regime_name=target, user_regime=target_regime
+            regime_name=target, user_regime=target_regime, law=laws[target]
         )
         resources_arg_names = frozenset(
             _get_child_resources_arg_names(
-                regime_name=target, user_regime=target_regime
+                regime_name=target, user_regime=target_regime, law=laws[target]
             )
         )
         # Everything the resources function reads beyond the child's own

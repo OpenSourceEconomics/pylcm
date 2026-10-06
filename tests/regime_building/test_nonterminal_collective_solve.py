@@ -42,6 +42,7 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -66,7 +67,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -118,7 +119,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
 
     The regimes carry no law: a model declares the single edge in
     `Model(edges=...)`, and kernel-level tests bind the graph-bound law through
-    `_bound_couple_regimes`.
+    `_couple_laws`.
     """
     couple = Regime(
         states={"wage": _WAGE_GRID},
@@ -138,40 +139,38 @@ def _make_couple_regimes() -> dict[str, Regime]:
     return {"couple": couple, "couple_terminal": couple_terminal}
 
 
-def _bound_couple_regimes() -> dict[str, Regime]:
-    """The couple regimes with their laws bound, as a model binds them."""
-    regimes = _make_couple_regimes()
-    return {
-        "couple": regimes["couple"].replace(
-            regime_transitions=ByAge(
-                cases={AgeRange(exclusive_stop=1): _GRAPH_BOUND_LAW}
-            )
-        ),
-        "couple_terminal": regimes["couple_terminal"].replace(regime_transitions=None),
-    }
+def _couple_laws() -> RegimeLaws:
+    """The couple regimes' laws, bound as a model binds them."""
+    return bind_laws(
+        {
+            "couple": ByAge(cases={AgeRange(exclusive_stop=1): _GRAPH_BOUND_LAW}),
+            "couple_terminal": None,
+        }
+    )
 
 
 def test_nonterminal_collective_regime_solves_with_continuation():
     """Kernel-level: finalize -> process -> backward induction, two periods."""
+    laws = _couple_laws()
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
-                user_regimes=_bound_couple_regimes(),
+                user_regimes=_make_couple_regimes(),
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
+                laws=laws,
             ),
             ages=ages,
+            laws=laws,
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=_bound_couple_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+        user_regimes=finalize_regimes(
+            user_regimes=_make_couple_regimes(),
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+            laws=laws,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -288,14 +287,18 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
                 utilities={"f": _utility_f_mood, "m": _utility_m}
             )
         },
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("couple_terminal",)
-                )
-            }
-        )
+    )
+    laws = bind_laws(
+        {
+            "couple": ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                        func=_next_regime, targets=("couple_terminal",)
+                    )
+                }
+            ),
+            "couple_terminal": None,
+        }
     )
     couple_terminal = Regime(
         states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
@@ -305,7 +308,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
                 utilities={"f": _utility_f_mood, "m": _utility_m}
             )
         },
-    ).replace(regime_transitions=None)
+    )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -314,17 +317,17 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
+                laws=laws,
             ),
             ages=ages,
+            laws=laws,
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes={"couple": couple, "couple_terminal": couple_terminal},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+        user_regimes=finalize_regimes(
+            user_regimes={"couple": couple, "couple_terminal": couple_terminal},
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+            laws=laws,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType(
@@ -423,19 +426,23 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("single_terminal",)
-                )
-            }
-        )
+    )
+    laws = bind_laws(
+        {
+            "couple": ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                        func=_next_regime, targets=("single_terminal",)
+                    )
+                }
+            ),
+            "single_terminal": None,
+        }
     )
     single_terminal = Regime(
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_single},
-    ).replace(regime_transitions=None)
+    )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
     with pytest.raises(NotImplementedError, match="identical `stakeholders`"):
@@ -446,17 +453,17 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
                     derived_categoricals={},
                     koopmans_aggregator=LinearAggregator(),
                     certainty_equivalent=LinearExpectation(),
+                    laws=laws,
                 ),
                 ages=ages,
+                laws=laws,
             ),
-            user_regimes=lower_declarations(
-                finalize_regimes(
-                    user_regimes={"couple": couple, "single_terminal": single_terminal},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=ages,
+            user_regimes=finalize_regimes(
+                user_regimes={"couple": couple, "single_terminal": single_terminal},
+                derived_categoricals={},
+                koopmans_aggregator=LinearAggregator(),
+                certainty_equivalent=LinearExpectation(),
+                laws=laws,
             ),
             ages=ages,
             regime_names_to_ids=MappingProxyType(
@@ -479,7 +486,7 @@ def test_collective_regime_with_taste_shocks_is_rejected():
                     utilities={"f": _utility_f, "m": _utility_m}
                 )
             },
-        ).replace(regime_transitions=_next_regime)
+        )
 
 
 def test_collective_regime_with_certainty_equivalent_is_rejected():
@@ -495,4 +502,4 @@ def test_collective_regime_with_certainty_equivalent_is_rejected():
                     utilities={"f": _utility_f, "m": _utility_m}
                 )
             },
-        ).replace(regime_transitions=_next_regime)
+        )

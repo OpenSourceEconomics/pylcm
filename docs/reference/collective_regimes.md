@@ -514,17 +514,19 @@ mixing values across it.
 ## Derived engine views
 
 Each declaration above stays in the raw slot where the author wrote it. `Regime`
-construction derives stored, read-only fields from those declarations; the fields
-derived from a `ValueDependentTransition` are filled when `Model` binds the source's
-edge law. The `decomposed_*` properties separately compute engine-facing views from the
-current raw slots whenever they are read. Neither kind of output is a declaration route:
-none can be passed to `Regime(...)` or to `Regime.replace`.
+construction derives stored, read-only fields from the declarations in `functions` and
+`constraints`. A `ValueDependentTransition` lives in a `Model(edges=...)` law, so its
+derived fields belong to the law `Model` binds for the source, published as
+`model.graph.laws[source]`. The `decomposed_*` properties separately compute
+engine-facing views from the current raw declarations whenever they are read. Neither
+kind of output is a declaration route: none can be passed to `Regime(...)` or to
+`Regime.replace`.
 
 | Declaration                | Construction-derived fields                              | On-access engine view                                                                                          |
 | -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `CollectiveUtility`        | `stakeholders`, `pareto_objective`                       | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
 | `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference]` | `decomposed_constraints`: ordinary constraints only                                                            |
-| `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
+| `ValueDependentTransition` | `model.graph.laws[source].gated_edges[target]`           | `model.graph.laws[source].decomposed_transition[target]`: the selection `probability`                          |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
 `constraints` and the `Model(edges=...)` law. The engine reads the decomposed views

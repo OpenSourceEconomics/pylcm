@@ -8,8 +8,6 @@ model build.
 
 """
 
-import contextvars
-import copy
 import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -21,19 +19,11 @@ from beartype import beartype
 import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
-from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
-from _lcm.regime_building.phases import normalize_regime_phases
-from _lcm.regime_building.schedules import declaration_view, uses_declaration_vocabulary
 from _lcm.regime_building.transitions import collect_state_transitions
+from _lcm.regime_law import UNBOUND_LAW, RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
-from _lcm.user_regime_validation import (
-    _validate_collective_regime,
-    _validate_fold_declarations,
-    _validate_gated_edges,
-    _validate_logical_consistency,
-    _validate_mapping_contents,
-)
+from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import (
@@ -41,46 +31,16 @@ from lcm.collective import (
     ParetoObjective,
     ProjectedRegimeValue,
     ValueDependentConstraint,
-    ValueDependentTransition,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import (
     AgeSpecializedGrid,
-    ByAge,
-    DeterministicTransition,
     JointTransition,
     StochasticTransition,
-    fail_if_phased_wraps_a_schedule,
 )
 from lcm.typing import UserFunction
-
-
-class _UnboundLaw:
-    """The regime law of a regime that no `Model` has bound from its edges."""
-
-    def __repr__(self) -> str:
-        return "UNBOUND"
-
-
-UNBOUND = _UnboundLaw()
-
-# The law `Regime.replace` hands to the regime it constructs. Every other
-# construction sees `UNBOUND`.
-_LAW_TO_BIND: contextvars.ContextVar[object] = contextvars.ContextVar(
-    "_LAW_TO_BIND", default=UNBOUND
-)
-
-
-def _unbound_law_view() -> int:
-    """Stand in for the law of an unbound regime while it is validated.
-
-    A callable names no target and reads no variable, so construction-time
-    checks that depend on the law's targets or inputs are left to the model,
-    which validates the regime again once it binds the law from its edges.
-    """
-    return 0
 
 
 @beartype(conf=REGIME_CONF)
@@ -106,62 +66,6 @@ class Regime:
     """
 
     _accepts_margin_solver: ClassVar[bool] = False
-
-    # `UserFunction`/`Phased` inside the per-target dict pass the type check
-    # so the validator can reject them with an explanation.
-    regime_transitions: (
-        RegimeName
-        | DeterministicTransition
-        | ByAge
-        | UserFunction
-        | StochasticTransition
-        | Phased
-        | Mapping[
-            RegimeName,
-            StochasticTransition | UserFunction | Phased | ValueDependentTransition,
-        ]
-        | ValueDependentTransition
-        | _UnboundLaw
-        | None
-    ) = field(init=False, default=UNBOUND, repr=False)
-    """The regime law a `Model` binds from its edges; never declared on a regime.
-
-    `UNBOUND` on a regime no model has bound. Inside a model, `None` marks a
-    terminal regime (no outgoing edges); nonterminal forms are the law of the
-    source's `Transition`, or the single destination of each source age:
-
-    - a regime name specifies a deterministic destination;
-    - a plain function or `DeterministicTransition(func=func)` returns its global
-      regime code;
-    - `StochasticTransition(func=func)` returns a probability vector in the full
-      global regime-code order;
-    - a per-target mapping supplies scalar `StochasticTransition` probability
-      laws or `ValueDependentTransition` declarations;
-    - `ByAge(cases=..., default=...)` selects complete laws by source age.
-
-    The targetless decorator factories `deterministic_transition()` and
-    `stochastic_transition()` construct the corresponding shared state/regime
-    wrappers. A deterministic selector must choose a graph-supported destination;
-    a vector law must be zero outside graph support. Per-target probability cells
-    supply the declared edges and do not define topology themselves.
-
-    Every demanded target needs a value at the next grid age and a valid state
-    handoff. Runtime-zero probabilities do not narrow topology. Ordinary scalar
-    per-target probabilities can be pruned when their complete dependency DAG
-    uses only construction-fixed leaves and yields exactly zero. Dynamic and
-    coordinate-indexed dependencies retain their edges; invalid or all-zero laws
-    retain validation, and pruning never renormalizes mass. `model.graph` exposes
-    both the immutable declared edges and the effective phase graphs.
-
-    `Phased` gives each phase its own variant with matching transition forms;
-    ordinary per-target mappings may have different target sets and handoffs.
-    Decisions follow perceived solve edges; histories follow realized simulate
-    edges. Every visited node is solved with its perceived dependencies, while
-    value-only nodes create no realized visits. A value-dependent target must be
-    value-dependent in both phases or neither. Its two declarations share the
-    identical gate and equal routes, references, and off-grid contract; only
-    their probabilities may differ.
-    """
 
     # `None` masks a model-level entry of the same name.
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None] = field(
@@ -353,7 +257,8 @@ class Regime:
     per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes goes through `gated_edges`. EV1 taste shocks, nonlinear certainty
+    regimes goes through a `ValueDependentTransition` in the source's
+    `Transition` law. EV1 taste shocks, nonlinear certainty
     equivalents, and non-GridSearch solvers on a collective regime raise
     `NotImplementedError`.
 
@@ -440,29 +345,6 @@ class Regime:
     predicates read `Q_<s>`, which a singleton regime does not carry.
     """
 
-    gated_edges: Mapping[RegimeName, GatedEdge] = field(
-        init=False, default_factory=lambda: MappingProxyType({})
-    )
-    """Gated edges routing this regime's continuation into a target regime.
-
-    Derived from the `ValueDependentTransition` entries of the source's
-    `Transition` law in `Model(edges=...)`, which is where a model declares
-    them, so that target selection and
-    value-dependent routing are one declaration rather than two.
-
-    Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
-    reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
-    collective one for mutual-consent marriage, or a collective regime into
-    singleton regimes for dissolution) — the only way to cross the mixed-topology
-    fence. When declared, the engine folds a gated continuation object
-    `Wbar^s = jnp.where(gate, V_target, V_fallback)` on the target regime's
-    grid at each period's end, and this regime's continuation reads `Wbar` in
-    place of the raw target V. See `GatedEdge`. Only meaningful together
-    with the corresponding graph edge and `state_transitions` into the target's
-    state space; a target reached by a gated edge is exempt from the mixed-
-    stakeholder rejection.
-    """
-
     same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
         init=False, default_factory=lambda: MappingProxyType({})
     )
@@ -491,88 +373,19 @@ class Regime:
             )
         return super().__new__(cls)
 
-    @property
-    def terminal(self) -> bool:
-        """Whether the model-bound law marks this regime terminal (no out-edges)."""
-        return self.regime_transitions is None
-
     def _make_field_immutable(self, *, name: str) -> None:
         """Replace the named mapping field with its immutable form."""
         value = ensure_containers_are_immutable(getattr(self, name))
         object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
-        transition = _LAW_TO_BIND.get()
-        # A regime constructed while this one validates binds no law of its own.
-        _LAW_TO_BIND.set(UNBOUND)
-        object.__setattr__(self, "regime_transitions", transition)
-        fail_if_phased_wraps_a_schedule(transition)
-        unbound = isinstance(transition, _UnboundLaw)
-        if not unbound and not uses_declaration_vocabulary(transition):
-            self._post_init_engine_view()
-            return
-        # Validate a copy that holds the declaration's period-independent
-        # engine view, then take over every field it derived except the
-        # transition: this regime keeps the declaration for the model to resolve.
-        view = copy.copy(self)
-        object.__setattr__(
-            view,
-            "regime_transitions",
-            _unbound_law_view if unbound else declaration_view(transition),
-        )
-        view._post_init_engine_view()  # noqa: SLF001
-
-        vars(self).update(
-            {
-                name: value
-                for name, value in vars(view).items()
-                if name != "regime_transitions"
-            }
-        )
-
-    def _post_init_engine_view(self) -> None:
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
-        # A collective regime's own declaration is validated here (the
-        # `stakeholders` tuple, `weights`, the value-constraint grammar;
-        # out-of-scope features — taste shocks, nonlinear certainty
-        # equivalents, non-GridSearch solvers — are rejected). What a
-        # model-level slot may still supply — the per-stakeholder
-        # `utility_<s>` functions — is checked when the model finalizes its
-        # regimes. The default `None`
-        # (singleton) path never enters this branch.
-        if self.gated_edges:
-            _validate_gated_edges(self)
-        if self.stakeholders is not None:
-            _validate_collective_regime(self)
-        elif self.pareto_objective is not None:
-            raise RegimeInitializationError(
-                "`pareto_objective` declares how a collective regime's "
-                "household weighs its stakeholders; it is only meaningful "
-                "together with `stakeholders`. Omit it for a singleton regime."
-            )
-        elif self.value_constraints:
-            raise RegimeInitializationError(
-                "`value_constraints` are value-aware feasibility predicates for "
-                "a collective regime; they read the per-stakeholder action "
-                "values `Q_<s>`, which only exist when `stakeholders` is set. "
-                "Use ordinary `constraints` for a singleton regime."
-            )
-        elif self.same_period_refs:
-            raise RegimeInitializationError(
-                "`same_period_refs` declares same-period reference values for a "
-                "collective regime's `value_constraints`; it is only "
-                "meaningful together with `stakeholders`. Omit it for a "
-                "singleton regime."
-            )
-
-        _validate_mapping_contents(self)
-        _validate_logical_consistency(self)
-        _validate_fold_declarations(self)
-
-        # Completeness (a `utility` entry, aggregator injection, transition
-        # coverage) is validated when the model finalizes its regimes
-        # — model-level slots may still satisfy it after merging.
+        # The model validates the regime again once it binds the regime's law
+        # from `Model(edges=...)`; completeness (a `utility` entry, aggregator
+        # injection, transition coverage) is validated when the model finalizes
+        # its regimes, since model-level slots may still satisfy it.
+        validate_regime(self, law=UNBOUND_LAW)
         self._make_field_immutable(name="functions")
         self._make_field_immutable(name="states")
         self._make_field_immutable(name="state_transitions")
@@ -581,31 +394,23 @@ class Regime:
         self._make_field_immutable(name="constraints")
         self._make_field_immutable(name="derived_categoricals")
         self._make_field_immutable(name="value_constraints")
-        self._make_field_immutable(name="gated_edges")
         self._make_field_immutable(name="same_period_refs")
-
-        # The phase grammar (states matrix, carried laws, regime-transition
-        # variants) is validated by the normalizer; the per-phase spec it
-        # builds is consumed during model processing.
-        normalize_regime_phases(self)
 
     def _lower_value_dependent_declarations(self) -> None:
         """Derive the engine-facing views of the collective declarations.
 
-        `CollectiveUtility`, `ValueDependentConstraint` and
-        `ValueDependentTransition` are declared inside the slots a regime
-        already has — `functions`, `constraints` and `regime_transitions` — and each
-        one carries several engine-side facts at once. Deriving those facts
-        here, without replacing the raw declarations, lets every later stage
-        read the fields and decomposed views it needs.
+        `CollectiveUtility` and `ValueDependentConstraint` are declared inside
+        the slots a regime
+        already have — `functions` and `constraints` — and each one carries
+        several engine-side facts at once. Deriving those facts here, without
+        replacing the raw declarations, lets every later stage read the fields
+        and decomposed views it needs.
 
-        Nothing is derived for a regime that declares none of the three, so a
-        regime spelled out the long way passes through untouched.
+        Nothing is derived for a regime that declares neither, so a regime
+        spelled out the long way passes through untouched.
         """
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
-        self._lower_value_dependent_transitions()
-        self._fail_if_a_gated_edge_has_no_target()
 
     @property
     def decomposed_functions(
@@ -640,37 +445,6 @@ class Regime:
         Deterministic and idempotent, like the other two views.
         """
         return decompose_constraints(self.constraints)
-
-    @property
-    def decomposed_transition(
-        self,
-    ) -> (
-        UserFunction
-        | StochasticTransition
-        | Phased
-        | ByAge
-        | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
-        | None
-    ):
-        """`regime_transitions` with every `ValueDependentTransition` taken apart.
-
-        A value-dependent transition carries two facts at once: which target
-        the regime selects, and how the household is routed once there. The
-        second belongs to `gated_edges`; what stays here is the selection
-        probability, in the per-target cell the canonical pipeline reads. A
-        bare probability callable is wrapped, because that cell's grammar takes
-        a `StochasticTransition`. A declaration the engine cannot read directly (a
-        `ByAge` schedule, a regime name, a `DeterministicTransition`) is read
-        through its period-independent `declaration_view` first.
-
-        Deterministic and idempotent, like the other two views.
-        """
-        transition = self.regime_transitions
-        if isinstance(transition, _UnboundLaw):
-            return None
-        if uses_declaration_vocabulary(transition):
-            transition = declaration_view(transition)
-        return decompose_transition(transition)
 
     def _lower_collective_utility(self) -> None:
         """Derive stakeholder metadata from `functions["utility"]`."""
@@ -721,104 +495,6 @@ class Regime:
         object.__setattr__(self, "value_constraints", value_constraints)
         object.__setattr__(self, "same_period_refs", same_period_refs)
 
-    def _fail_if_a_gated_edge_has_no_target(self) -> None:
-        """Refuse a gated edge on a transition that names no target.
-
-        A gate is a route: it says where a household goes when consent fails,
-        and the fallback belongs to the route. A terminal regime has no next
-        period for a route to reach, and a coarse transition — a bare callable
-        or a `StochasticTransition` — names no target for the gate to be keyed by.
-        """
-        if not self.gated_edges:
-            return
-        transition = self.regime_transitions
-        sides = (
-            (transition.solve, transition.simulate)
-            if isinstance(transition, Phased)
-            else (transition,)
-        )
-        if all(isinstance(side, Mapping) for side in sides):
-            return
-        where = "a terminal regime" if transition is None else "a coarse transition"
-        raise RegimeInitializationError(
-            f"This regime carries a gated edge into "
-            f"{min(self.gated_edges)!r} on {where}. A gate is a route, so "
-            "it needs a target to route to: declare it in a per-target "
-            "`Transition` law, keyed by the regime the gate opens onto."
-        )
-
-    def _lower_value_dependent_transitions(self) -> None:
-        """Derive target-local edges from value-dependent transitions."""
-        transition = self.regime_transitions
-        if isinstance(transition, ValueDependentTransition):
-            raise RegimeInitializationError(
-                "This regime declares a `ValueDependentTransition` as its whole "
-                "transition. A gate is a route — it says where a household goes "
-                "when consent fails — so it belongs to one target and is written "
-                "in a per-target `Transition` law, keyed by the regime the gate "
-                "opens onto: `Transition(targets=..., law={'<target>': "
-                "ValueDependentTransition(...)})`."
-            )
-        if isinstance(transition, Phased):
-            self._lower_phased_value_dependent_transitions(transition)
-            return
-        if not isinstance(transition, Mapping):
-            return
-        edges = _declared_gated_edges(transition=transition)
-        if edges:
-            object.__setattr__(self, "gated_edges", edges)
-
-    def _lower_phased_value_dependent_transitions(self, transition: Phased) -> None:
-        """Derive the one edge a per-phase pair of declarations describes.
-
-        The probability may differ between the phases — a perceived meeting
-        rate and a realized one are a legitimate wedge. Everything else is the
-        same edge written twice, so the two sides must agree: identical gate
-        callables, and routes, references and off-grid contract that compare
-        equal.
-        """
-        sides = {}
-        for phase in ("solve", "simulate"):
-            side = getattr(transition, phase)
-            if not isinstance(side, Mapping):
-                return
-            sides[phase] = _declared_gated_edges(transition=side)
-        if not any(sides.values()):
-            return
-
-        one_sided = set(sides["solve"]) ^ set(sides["simulate"])
-        if one_sided:
-            raise RegimeInitializationError(
-                f"The transition into {min(one_sided)!r} is declared as a "
-                "`ValueDependentTransition` in one phase and as an ordinary "
-                "probability in the other. A target is value-dependent in both "
-                "phases or in neither: the gate is what the household consents "
-                "to, and it cannot consent only while being solved."
-            )
-
-        solve_edges = sides["solve"]
-        simulate_edges = sides["simulate"]
-        for target, solve_edge in solve_edges.items():
-            simulate_edge = simulate_edges[target]
-            if solve_edge.gate is not simulate_edge.gate:
-                raise RegimeInitializationError(
-                    f"The two phases of the transition into {target!r} declare "
-                    "different gate callables. A gate is one predicate the "
-                    "household is held to, so the two phases must name the "
-                    "very same function. A difference the model needs goes in "
-                    "a route's `fallback`, which is `Phased` in its own right."
-                )
-            if solve_edge != simulate_edge:
-                raise RegimeInitializationError(
-                    f"The two phases of the transition into {target!r} declare "
-                    "the same gate but disagree elsewhere — on the routes, the "
-                    "gate references or the off-grid contract. An edge is all "
-                    "of those together, so the two phases must describe one "
-                    "edge. Only `probability` may differ between them."
-                )
-
-        object.__setattr__(self, "gated_edges", solve_edges)
-
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
             return
@@ -856,9 +532,12 @@ class Regime:
             return cast("UserFunction", variant)
         return self.koopmans_aggregator
 
+    # keyword-only-exempt: primary-argument=phase
     def get_all_functions(
         self,
         phase: Literal["solve", "simulate"] = "solve",
+        *,
+        law: RegimeLaw | None = None,
     ) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
@@ -867,7 +546,8 @@ class Regime:
         - `self.functions` (utility and helpers)
         - `self.constraints`
         - state transitions from `self.state_transitions`
-        - the regime transition (`self.transition`, keyed as `"next_regime"`)
+        - the regime transition (`law`, keyed as `"next_regime"`, or
+          `"next_regime__<target>"` per target)
 
         For `Phased` entries, the variant matching `phase` is used. A
         carried-state declaration in `states` (`Phased(solve=...,
@@ -877,6 +557,9 @@ class Regime:
 
         Args:
             phase: Which variant to use for phase-variant entries.
+            law: The law the model binds for this regime from its edges. Without
+                one the regime's state laws are collected and no regime
+                transition; a terminal law contributes neither.
 
         Returns:
             Read-only mapping of all regime functions.
@@ -894,9 +577,7 @@ class Regime:
                 # `state_transitions` entry, collected below.
                 result[name] = cast("UserFunction", spec.solve)
         result |= cast("Mapping[str, UserFunction]", self.decomposed_constraints)
-        decomposed_transition = self.decomposed_transition
-        # An unbound regime still carries its state laws; it has no regime law.
-        if decomposed_transition is not None or not self.terminal:
+        if law is None or not law.terminal:
             joint_output_names = {
                 state_name
                 for kernels in self.joint_transitions.values()
@@ -918,7 +599,7 @@ class Regime:
                 name: _resolve_phase_variant(value=func, phase=phase)
                 for name, func in collected.items()
             }
-            transition = decomposed_transition
+            transition = None if law is None else law.decomposed_transition
             if isinstance(transition, Phased):
                 transition = (
                     transition.solve if phase == "solve" else transition.simulate
@@ -1018,16 +699,12 @@ class Regime:
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
 
-        The model-bound law is carried over; `regime_transitions` names the law
-        to bind instead, which only `Model` does.
-
-        Replacing a slot that carries a `CollectiveUtility`,
-        `ValueDependentConstraint` or `ValueDependentTransition` replaces the
-        declaration itself, and the stakeholders, value constraints and gated
-        edges are derived again from what the new slot says. `stakeholders`,
-        `pareto_objective`, `value_constraints`, `same_period_refs` and
-        `gated_edges` are those derived values, so naming one here is an error:
-        they are read off a regime, never written to it.
+        Replacing a slot that carries a `CollectiveUtility` or
+        `ValueDependentConstraint` replaces the declaration itself, and the
+        stakeholders and value constraints are derived again from what the new
+        slot says. `stakeholders`, `pareto_objective`, `value_constraints` and
+        `same_period_refs` are those derived values, so naming one here is an
+        error: they are read off a regime, never written to it.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the regime.
@@ -1036,17 +713,12 @@ class Regime:
             A new regime with the replaced attributes.
 
         """
-        token = _LAW_TO_BIND.set(
-            kwargs.pop("regime_transitions", self.regime_transitions)
-        )
         try:
             return dataclasses.replace(self, **kwargs)
         except (TypeError, ValueError) as e:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
-        finally:
-            _LAW_TO_BIND.reset(token)
 
 
 def decompose_functions(
@@ -1114,114 +786,6 @@ def decompose_constraints(
             if not isinstance(constraint, ValueDependentConstraint)
         }
     )
-
-
-def _declared_gated_edges(
-    *, transition: Mapping[RegimeName, object]
-) -> dict[RegimeName, GatedEdge]:
-    """Return the edge each value-dependent cell of one phase declares."""
-    return {
-        target: GatedEdge(
-            gate=cell.gate,
-            legs=cell.routes,
-            gate_refs=cell.gate_references,
-            off_grid=cell.off_grid,
-        )
-        for target, cell in transition.items()
-        if isinstance(cell, ValueDependentTransition)
-    }
-
-
-def decompose_transition(
-    transition: object,
-) -> (
-    UserFunction
-    | StochasticTransition
-    | Phased
-    | ByAge
-    | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
-    | None
-):
-    """Replace every `ValueDependentTransition` by the probability it declares.
-
-    Args:
-        transition: A regime's `regime_transitions` as declared, including the `Phased`
-            form.
-
-    Returns:
-        The same transition with each value-dependent cell replaced by its
-        selection probability. The routing half of the declaration belongs to
-        `gated_edges` and does not appear here.
-    """
-    if isinstance(transition, Phased):
-        solve = _decomposed_transition_side(transition.solve)
-        simulate = _decomposed_transition_side(transition.simulate)
-        if solve is transition.solve and simulate is transition.simulate:
-            return transition
-        return Phased(solve=solve, simulate=simulate)
-    return _decomposed_transition_side(transition)
-
-
-def _decomposed_transition_side(
-    transition: object,
-) -> (
-    UserFunction
-    | StochasticTransition
-    | Phased
-    | ByAge
-    | Mapping[RegimeName, StochasticTransition | UserFunction | Phased]
-    | None
-):
-    """Replace one phase's `ValueDependentTransition` cells by their probabilities.
-
-    Args:
-        transition: One phase's regime transition — a per-target mapping, a
-            coarse callable or `StochasticTransition`, an age schedule, or `None`
-            for a terminal regime.
-
-    Returns:
-        The same transition with every `ValueDependentTransition` cell replaced
-        by the selection probability it declares, wrapped in a
-        `StochasticTransition` where the declaration gave a bare callable. An age
-        schedule has each of its laws taken apart. Anything else that is not a
-        per-target mapping is returned unchanged.
-    """
-    if isinstance(transition, ByAge):
-        return transition.with_mapped_laws(func=decompose_transition)
-    if not isinstance(transition, Mapping):
-        return cast(
-            "UserFunction | StochasticTransition | Phased | ByAge | None",
-            transition,
-        )
-    if not any(
-        isinstance(cell, ValueDependentTransition) for cell in transition.values()
-    ):
-        # Nothing to take apart. Returning the very same mapping keeps the
-        # phase-variation scan able to ask whether the author wrote one object
-        # for both phases, which a freshly built copy would always deny.
-        return cast(
-            "Mapping[RegimeName, StochasticTransition | UserFunction | Phased]",
-            transition,
-        )
-    return MappingProxyType(
-        {
-            target: (
-                _as_markov_transition(cell.probability)
-                if isinstance(cell, ValueDependentTransition)
-                else cast("StochasticTransition | UserFunction | Phased", cell)
-            )
-            for target, cell in transition.items()
-        }
-    )
-
-
-def _as_markov_transition(
-    probability: UserFunction | StochasticTransition,
-) -> StochasticTransition:
-    """Wrap a bare probability callable in the cell grammar's `StochasticTransition`."""
-    if isinstance(probability, StochasticTransition):
-        return probability
-    return StochasticTransition(func=probability)
 
 
 def _resolve_phase_variant(

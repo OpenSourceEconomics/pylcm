@@ -41,6 +41,13 @@ class _RegimeId:
     done: ScalarInt
 
 
+@categorical(ordered=False)
+class _LotteryRegimeId:
+    alive: ScalarInt
+    done: ScalarInt
+    gone: ScalarInt
+
+
 # Both edges leave age 0, so the regime law chooses between them. Every law here
 # gives `alive` zero mass, so `alive` at age 1 is reachable but empty.
 _ALIVE_TARGETS = {"alive": 0, "done": 0}
@@ -148,29 +155,40 @@ def _done_payoff() -> ScalarFloat:
     return jnp.asarray(6, dtype=_FLOAT_DTYPE)
 
 
-def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
-    return jnp.stack((jnp.zeros_like(done_probability), done_probability))
+def _done_probability(done_probability: float) -> FloatND:
+    return jnp.asarray(done_probability, dtype=_FLOAT_DTYPE)
+
+
+def _never() -> FloatND:
+    return jnp.asarray(0, dtype=_FLOAT_DTYPE)
 
 
 def _numerical_inputs(
     *, budget: int | None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6."""
+    """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6.
+
+    `alive` draws between two terminal regimes. The draw into `gone` is a fixed
+    zero, so every subject lands in `done` and only the parameterized `done`
+    probability is left to admit and validate.
+    """
     model = Model(
         regimes={
             "alive": Regime(functions={"utility": _alive_payoff}),
-            "done": Regime(
-                functions={"utility": _done_payoff},
-            ),
+            "done": Regime(functions={"utility": _done_payoff}),
+            "gone": Regime(functions={"utility": _done_payoff}),
         },
-        regime_id_class=_RegimeId,
+        regime_id_class=_LotteryRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
         edges={
             "alive": Transition(
-                targets=_ALIVE_TARGETS,
-                law=StochasticTransition(func=_parameterized_regime_probabilities),
+                targets={"done": 0, "gone": 0},
+                law={
+                    "done": StochasticTransition(func=_done_probability),
+                    "gone": StochasticTransition(func=_never),
+                },
             )
         },
     )
@@ -179,13 +197,14 @@ def _numerical_inputs(
         {
             "alive": {
                 "koopmans_aggregator": {"discount_factor": 0.5},
-                "next_regime": {"done_probability": 1.0},
+                "done": {"next_regime": {"done_probability": 1.0}},
             },
             "done": {},
+            "gone": {},
         },
         {
             "age": jnp.zeros(3),
-            "regime_id": jnp.full(3, _RegimeId.alive),
+            "regime_id": jnp.full(3, _LotteryRegimeId.alive),
         },
     )
 
@@ -222,15 +241,12 @@ def test_admitted_regime_probability_pytree_completes() -> None:
     )
     assert result.n_subjects == expected.n_subjects == 3
     assert set(result.raw_results) == {"alive", "done"}
-    assert set(result.raw_results["alive"]) == {0, 1}
+    assert set(result.raw_results["alive"]) == {0}
     assert set(result.raw_results["done"]) == {1}
     for regime, period, value in (("alive", 0, 5), ("done", 1, 6)):
         data = result.raw_results[regime][period]
         np.testing.assert_array_equal(data.V_arr, np.full(3, value))
         np.testing.assert_array_equal(data.in_regime, np.ones(3, dtype=bool))
-    np.testing.assert_array_equal(
-        result.raw_results["alive"][1].in_regime, np.zeros(3, dtype=bool)
-    )
     _assert_same_raw_results(actual=result, expected=expected)
     for name, value in initial.items():
         assert isinstance(value, jax.Array)
@@ -253,7 +269,9 @@ def test_invalid_regime_diagnostic_matches_unbudgeted_and_recovers() -> None:
         assert isinstance(invalid, dict)
         alive_params = invalid["alive"]
         assert isinstance(alive_params, dict)
-        law_params = alive_params["next_regime"]
+        done_params = alive_params["done"]
+        assert isinstance(done_params, dict)
+        law_params = done_params["next_regime"]
         assert isinstance(law_params, dict)
         law_params["done_probability"] = 0.5
         with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as error:

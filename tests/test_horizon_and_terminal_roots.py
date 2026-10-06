@@ -213,8 +213,8 @@ def test_named_terminal_exit_keeps_terminality() -> None:
         initial_nodes={25: "working"},
     )
     assert (
-        model._engine_user_regimes["working"].terminal,
-        model._engine_user_regimes["dead"].terminal,
+        model.graph.laws["working"].terminal,
+        model.graph.laws["dead"].terminal,
     ) == (False, True)
 
 

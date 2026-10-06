@@ -19,6 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -259,24 +261,27 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
     change, so a conditioner with a law of motion is refused.
     """
     with pytest.raises(RegimeInitializationError, match="conditioning state"):
-        Regime(
-            states={
-                "risk_type": DiscreteGrid(category_class=RiskType),
-                "wage_shock": _shock(
-                    sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
-                ),
-            },
-            state_transitions={"risk_type": _next_risk_type},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _utility},
-        ).replace(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): DeterministicTransition(
-                        func=_next_regime
-                    )
-                }
-            )
+        validate_regime(
+            Regime(
+                states={
+                    "risk_type": DiscreteGrid(category_class=RiskType),
+                    "wage_shock": _shock(
+                        sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+                    ),
+                },
+                state_transitions={"risk_type": _next_risk_type},
+                actions={"work": DiscreteGrid(category_class=Work)},
+                functions={"utility": _utility},
+            ),
+            law=bind_regime_law(
+                ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): DeterministicTransition(
+                            func=_next_regime
+                        )
+                    }
+                )
+            ),
         )
 
 

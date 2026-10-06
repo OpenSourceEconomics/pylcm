@@ -1,9 +1,10 @@
 """Validation helpers for the user-facing `Regime`.
 
-These functions back `Regime.__post_init__`. They raise nothing themselves —
-instead they collect error messages, which `__post_init__` aggregates into a
-single `RegimeInitializationError`. Splitting the validators out of the
-public module keeps `lcm.regime` to class definitions.
+`validate_regime` backs `Regime.__post_init__` and the model's binding of each
+regime's law. The helpers raise nothing themselves — instead they collect error
+messages, which are aggregated into a single `RegimeInitializationError`.
+Splitting the validators out of the public module keeps `lcm.regime` to class
+definitions.
 
 """
 
@@ -22,6 +23,8 @@ from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
+from _lcm.regime_building.phases import normalize_regime_phases
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -98,6 +101,64 @@ def _callable_mapping_errors(
                 f"{attr_name} value {v!r} must be a Condition or a callable."
             )
     return error_messages
+
+
+def validate_regimes(
+    *, regimes: Mapping[RegimeName, lcm.regime.Regime], laws: RegimeLaws
+) -> None:
+    """Validate every regime against the law its model binds for it."""
+    for name, regime in regimes.items():
+        validate_regime(regime, law=laws[name].validation_view)
+
+
+# keyword-only-exempt: primary-argument=regime
+def validate_regime(regime: lcm.regime.Regime, *, law: RegimeLaw) -> None:
+    """Validate a regime's own declarations against the law that moves it.
+
+    A `Regime` is validated against `UNBOUND_LAW` when it is constructed, and
+    against the law its model binds from `Model(edges=...)` once it has one.
+    The checks that depend on the law (terminality, targets, the variables the
+    law reads) only bite in the second pass.
+
+    Args:
+        regime: The regime to validate.
+        law: The law the regime is validated against, in the vocabulary of its
+            `validation_view`.
+
+    Raises:
+        RegimeInitializationError: On the first group of violated declarations.
+    """
+    if law.gated_edges:
+        _validate_gated_edges(regime=regime, law=law)
+    if regime.stakeholders is not None:
+        _validate_collective_regime(regime)
+    elif regime.pareto_objective is not None:
+        raise RegimeInitializationError(
+            "`pareto_objective` declares how a collective regime's "
+            "household weighs its stakeholders; it is only meaningful "
+            "together with `stakeholders`. Omit it for a singleton regime."
+        )
+    elif regime.value_constraints:
+        raise RegimeInitializationError(
+            "`value_constraints` are value-aware feasibility predicates for "
+            "a collective regime; they read the per-stakeholder action "
+            "values `Q_<s>`, which only exist when `stakeholders` is set. "
+            "Use ordinary `constraints` for a singleton regime."
+        )
+    elif regime.same_period_refs:
+        raise RegimeInitializationError(
+            "`same_period_refs` declares same-period reference values for a "
+            "collective regime's `value_constraints`; it is only "
+            "meaningful together with `stakeholders`. Omit it for a "
+            "singleton regime."
+        )
+
+    _validate_mapping_contents(regime)
+    _validate_logical_consistency(regime, law=law)
+    _validate_fold_declarations(regime, law=law)
+    # The phase grammar (states matrix, carried laws, regime-transition
+    # variants) is validated by the normalizer.
+    normalize_regime_phases(regime, law=law)
 
 
 def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
@@ -346,8 +407,8 @@ def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[s
     ]
 
 
-def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
-    """Validate a regime's `gated_edges` declarations (regime-local part).
+def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
+    """Validate the gated edges a regime's law declares (regime-local part).
 
     Checks the properties knowable without the other
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
@@ -363,16 +424,16 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     the grid-search continuation machinery, which no DC-EGM, taste-shock, or
     certainty-equivalent source has.
 
-    Called from `Regime.__post_init__` only when `gated_edges` is non-empty, so
-    the default path never reaches it.
+    Called only for a law with gated edges, so the default path never reaches
+    it.
     """
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    transition_targets = _regime_transition_target_names(regime.regime_transitions)
+    transition_targets = _regime_transition_target_names(law.regime_transitions)
     source_stakeholders = regime.stakeholders
 
-    for target_name, edge in regime.gated_edges.items():
+    for target_name, edge in law.gated_edges.items():
         prefix = f"the value-dependent transition into {target_name!r}: "
         if isinstance(edge.gate, StochasticTransition):
             error_messages.append(
@@ -480,7 +541,8 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
         raise RegimeInitializationError(msg)
 
 
-def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
+# keyword-only-exempt: primary-argument=regime
+def _validate_logical_consistency(regime: lcm.regime.Regime, *, law: RegimeLaw) -> None:
     """Validate the local, value-shape consistency of a regime.
 
     Completeness properties (a `utility` entry, state-transition coverage,
@@ -524,17 +586,15 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
         )
 
     error_messages.extend(_state_transition_grammar_errors(regime))
-    error_messages.extend(_joint_transition_grammar_errors(regime))
-    error_messages.extend(
-        _regime_transition_grammar_errors(regime.decomposed_transition)
-    )
+    error_messages.extend(_joint_transition_grammar_errors(regime, law=law))
+    error_messages.extend(_regime_transition_grammar_errors(law.decomposed_transition))
     error_messages.extend(
         _age_specialized_scope_errors(
-            transition=regime.decomposed_transition,
+            transition=law.decomposed_transition,
             state_transitions=regime.state_transitions,
             functions=regime.decomposed_functions,
             constraints=regime.decomposed_constraints,
-            terminal=regime.terminal,
+            terminal=law.terminal,
         )
     )
 
@@ -649,7 +709,7 @@ def _age_specialized_scope_errors(
     non-terminal regimes only. Rejected — loudly, before any per-period program
     is built:
 
-    - a `regime_transitions` declaration that is (or contains) an
+    - a regime law that is (or contains) an
       `AgeSpecializedFunction` — a policy-specialized *regime* transition;
     - a `StochasticTransition` wrapping an `AgeSpecializedFunction` in a state
       transition — a policy-specialized *stochastic* transition;
@@ -711,7 +771,7 @@ def _age_specialized_scope_errors(
 
 
 def _regime_transition_grammar_errors(transition: object) -> list[str]:
-    """Validate the vocabulary of a regime's `regime_transitions`.
+    """Validate the vocabulary of a regime's law between regimes.
 
     A `Phased` container's sides are each held to the bare vocabulary
     (callable, `StochasticTransition`, or a per-target dict); per-target cells
@@ -759,12 +819,16 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
 
 
 def _validate_completeness(
-    *, regime: lcm.regime.Regime, reserved_value_columns: frozenset[str]
+    *,
+    regime: lcm.regime.Regime,
+    law: RegimeLaw,
+    reserved_value_columns: frozenset[str],
 ) -> list[str]:
     """Collect completeness errors for a finalized (post-merge) regime.
 
     Args:
         regime: The finalized regime to check.
+        law: The regime's law, which says whether it is terminal.
         reserved_value_columns: The `value_<stakeholder>` names published by
             the model's collective regimes — the whole model's, not this
             regime's, because the published frame is one table over all of
@@ -810,10 +874,10 @@ def _validate_completeness(
             regime=regime, reserved_value_columns=reserved_value_columns
         )
     )
-    error_messages.extend(_state_transition_coverage_errors(regime))
-    error_messages.extend(_validate_function_output_grid_indexing(regime))
-    error_messages.extend(_koopmans_aggregator_errors(regime))
-    error_messages.extend(_certainty_equivalent_errors(regime))
+    error_messages.extend(_state_transition_coverage_errors(regime, law=law))
+    error_messages.extend(_validate_function_output_grid_indexing(regime, law=law))
+    error_messages.extend(_koopmans_aggregator_errors(regime, law=law))
+    error_messages.extend(_certainty_equivalent_errors(regime, law=law))
     error_messages.extend(_expected_utility_aggregator_errors(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
@@ -860,7 +924,10 @@ def _published_value_column_errors(
     ]
 
 
-def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
+# keyword-only-exempt: primary-argument=regime
+def _koopmans_aggregator_errors(
+    regime: lcm.regime.Regime, *, law: RegimeLaw
+) -> list[str]:
     """Collect errors for a regime's Koopmans aggregator declaration.
 
     - `CE` is the reserved name the aggregator receives the continuation under,
@@ -888,7 +955,7 @@ def _koopmans_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
             "of that name would be shadowed inside the aggregator only. Rename "
             "it (`certainty_equivalent_value`, say)."
         )
-    if regime.terminal and regime.koopmans_aggregator is not None:
+    if law.terminal and regime.koopmans_aggregator is not None:
         error_messages.append(
             "A terminal regime cannot declare `koopmans_aggregator`: there is "
             "no continuation value to aggregate."
@@ -923,7 +990,10 @@ def _expected_utility_aggregator_errors(regime: lcm.regime.Regime) -> list[str]:
     return [msg]
 
 
-def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
+# keyword-only-exempt: primary-argument=regime
+def _certainty_equivalent_errors(
+    regime: lcm.regime.Regime, *, law: RegimeLaw
+) -> list[str]:
     """Collect errors for a regime's `certainty_equivalent` declaration.
 
     - terminal regimes have no continuation value to aggregate
@@ -949,7 +1019,7 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     # would otherwise skip the very gate written to catch it.
     error_messages: list[str] = []
     error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
-    if regime.terminal:
+    if law.terminal:
         error_messages.append(
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
@@ -1003,8 +1073,9 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+# keyword-only-exempt: primary-argument=regime
 def _validate_function_output_grid_indexing(
-    regime: lcm.regime.Regime,
+    regime: lcm.regime.Regime, *, law: RegimeLaw
 ) -> list[str]:
     """Detect the regime-function-output / discrete-grid-indexed-input name clash.
 
@@ -1047,7 +1118,7 @@ def _validate_function_output_grid_indexing(
             if func is not None
         }
     )
-    consumers = _collect_indexing_consumers(regime)
+    consumers = _collect_indexing_consumers(regime, law=law)
 
     errors: list[str] = []
     for consumer_name, func in consumers:
@@ -1092,8 +1163,9 @@ def _function_input_names(
     return result
 
 
+# keyword-only-exempt: primary-argument=regime
 def _collect_indexing_consumers(
-    regime: lcm.regime.Regime,
+    regime: lcm.regime.Regime, *, law: RegimeLaw
 ) -> list[tuple[str, Callable]]:
     """Return `(name, callable)` pairs whose bodies are scanned for the clash.
 
@@ -1109,8 +1181,8 @@ def _collect_indexing_consumers(
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
-    if callable(regime.regime_transitions):
-        consumers.append(("regime_transition", regime.regime_transitions))
+    if callable(law.regime_transitions):
+        consumers.append(("regime_transition", law.regime_transitions))
     return consumers
 
 
@@ -1169,17 +1241,18 @@ def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+# keyword-only-exempt: primary-argument=regime
 def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
-    regime: lcm.regime.Regime,
+    regime: lcm.regime.Regime, *, law: RegimeLaw
 ) -> list[str]:
     """Validate locally knowable joint-kernel grammar and edge scope."""
     if not regime.joint_transitions:
         return []
-    if regime.terminal:
+    if law.terminal:
         return ["Terminal regimes must have empty joint_transitions."]
 
     error_messages: list[str] = []
-    reachable = _regime_transition_target_names(regime.regime_transitions)
+    reachable = _regime_transition_target_names(law.regime_transitions)
     # A joint node's name may not clash with anything already spoken for,
     # and that is both what the author wrote and what the engine binds: a
     # value constraint's own key is a live name, and so is each
@@ -1255,7 +1328,10 @@ def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
     return error_messages
 
 
-def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
+# keyword-only-exempt: primary-argument=regime
+def _state_transition_coverage_errors(
+    regime: lcm.regime.Regime, *, law: RegimeLaw
+) -> list[str]:
     """Validate that ordinary or joint laws cover the regime's states."""
     error_messages: list[str] = []
 
@@ -1286,7 +1362,7 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
             f"appear in state_transitions: {process_in_transitions}.",
         )
 
-    if regime.terminal:
+    if law.terminal:
         if regime.state_transitions:
             error_messages.append(
                 "Terminal regimes must have empty state_transitions.",
@@ -1545,7 +1621,8 @@ def _fold_dependency_closure(
     return seen_names
 
 
-def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
+# keyword-only-exempt: primary-argument=regime
+def _validate_fold_declarations(regime: lcm.regime.Regime, *, law: RegimeLaw) -> None:
     """Reject `fold=True` IID-process declarations the fold machinery can't support.
 
     A fold integrates a shock's node axis into the stored value by quadrature
@@ -1588,7 +1665,7 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     error_messages = [
         *_fold_scope_errors(regime=regime, fold_names=fold_names),
         *_fold_same_period_read_errors(regime=regime, fold_names=fold_names),
-        *_fold_transition_read_errors(regime=regime, fold_names=fold_names),
+        *_fold_transition_read_errors(regime=regime, law=law, fold_names=fold_names),
     ]
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
@@ -1644,7 +1721,7 @@ def _fail_if_collective_regime_folds(
 
 
 def _fail_if_a_folded_conditioner_can_move(
-    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime], laws: RegimeLaws
 ) -> None:
     """Reject a folded conditioned shock whose conditioner moves on the way in.
 
@@ -1673,7 +1750,9 @@ def _fail_if_a_folded_conditioner_can_move(
                 source_name
                 for source_name, source in user_regimes.items()
                 if regime_name
-                in _reachable_regime_targets(regime=source, user_regimes=user_regimes)
+                in _reachable_regime_targets(
+                    law=laws[source_name], user_regimes=user_regimes
+                )
                 and _state_law_can_move(
                     regime=source, state_name=conditioned.on, toward=regime_name
                 )
@@ -1726,7 +1805,7 @@ def _state_law_can_move(
 
 
 def _reachable_regime_targets(
-    *, regime: lcm.regime.Regime, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+    *, law: RegimeLaw, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
 ) -> frozenset[RegimeName]:
     """The regimes this one's transition can structurally reach.
 
@@ -1734,7 +1813,7 @@ def _reachable_regime_targets(
     the union of its two variants for checks that apply to the entire regime.
     Every remaining form is coarse and reaches every regime in the model.
     """
-    transition = regime.regime_transitions
+    transition = law.regime_transitions
     if transition is None:
         return frozenset()
     if isinstance(transition, Phased):
@@ -1921,13 +2000,13 @@ def _fold_same_period_read_errors(
 
 
 def _fold_transition_read_errors(
-    *, regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+    *, regime: lcm.regime.Regime, law: RegimeLaw, fold_names: tuple[StateName, ...]
 ) -> list[str]:
     """Reject a fold name read by a next-period state / regime transition."""
     transition_roots: list[Callable] = []
     for value in regime.state_transitions.values():
         transition_roots.extend(_flatten_transition_callables(value))
-    transition_roots.extend(_flatten_transition_callables(regime.decomposed_transition))
+    transition_roots.extend(_flatten_transition_callables(law.decomposed_transition))
 
     resolution_table = _fold_resolution_table(regime)
     transition_hit: set[str] = set()

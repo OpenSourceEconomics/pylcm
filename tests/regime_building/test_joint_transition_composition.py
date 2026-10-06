@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from _lcm.regime_building.processing import regime_declares_phased
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -337,9 +338,10 @@ def test_regime_declares_phased_sees_nested_joint_transition_variants() -> None:
                 )
             }
         },
-    ).replace(regime_transitions={"target": StochasticTransition(func=_certain_target)})
+    )
+    law = bind_regime_law({"target": StochasticTransition(func=_certain_target)})
 
-    assert regime_declares_phased(regime)
+    assert regime_declares_phased(regime, law=law)
 
 
 def test_identity_invariant_nested_joint_transition_is_not_phased() -> None:
@@ -348,9 +350,10 @@ def test_identity_invariant_nested_joint_transition_is_not_phased() -> None:
     regime = Regime(
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={"target": {"match": Phased(solve=kernel, simulate=kernel)}},
-    ).replace(regime_transitions={"target": StochasticTransition(func=_certain_target)})
+    )
+    law = bind_regime_law({"target": StochasticTransition(func=_certain_target)})
 
-    assert not regime_declares_phased(regime)
+    assert not regime_declares_phased(regime, law=law)
 
 
 def _support_reading_wealth(wealth: FloatND) -> FloatND:

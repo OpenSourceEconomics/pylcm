@@ -27,7 +27,7 @@ from lcm.result import (
     SimulationResult,
     _collect_array_tree_leaf_sizes,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -50,27 +50,33 @@ def simulate_inputs():
             **working_life.actions,
             "consumption": working_life.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        regime_transitions=graph_bound_working_life_transitions(
-            last_age=final_age_alive + 1
-        ),
     )
     user_regimes = {"working_life": updated_working_life, "dead": dead}
+    laws = bind_laws(
+        {
+            "working_life": graph_bound_working_life_transitions(
+                last_age=final_age_alive + 1
+            ),
+            "dead": None,
+        }
+    )
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
 
@@ -81,6 +87,7 @@ def simulate_inputs():
         "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=finalize_regimes(
                 user_regimes=user_regimes,
+                laws=laws,
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),

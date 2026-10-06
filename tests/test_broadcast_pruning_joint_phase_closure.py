@@ -499,9 +499,8 @@ def test_an_alternating_dependency_chain_is_closed_to_its_end(
 
 def _closure_arguments() -> dict[str, Any]:
     """Assemble the arguments the joint closure takes for the chain model."""
-    regimes, _ = bind_edge_laws(
-        edges=_CHAIN_EDGES, regimes=_chain_regimes(), ages=_CHAIN_AGES
-    )
+    regimes = _chain_regimes()
+    laws, _ = bind_edge_laws(edges=_CHAIN_EDGES, regimes=regimes, ages=_CHAIN_AGES)
     model_slots: dict[str, Mapping[str, Any]] = {
         "functions": {},
         "constraints": {},
@@ -510,7 +509,7 @@ def _closure_arguments() -> dict[str, Any]:
         "actions": {},
     }
     merged_regimes, broadcast_variables = merge_model_slots(
-        user_regimes=regimes, model_slots=model_slots
+        user_regimes=regimes, laws=laws, model_slots=model_slots
     )
     seed = {
         regime_name: frozenset(
@@ -521,17 +520,18 @@ def _closure_arguments() -> dict[str, Any]:
     }
     return {
         "specs": {
-            regime_name: normalize_regime_phases(regime)
+            regime_name: normalize_regime_phases(regime, law=laws[regime_name])
             for regime_name, regime in merged_regimes.items()
         },
         "user_regimes": merged_regimes,
+        "laws": laws,
         "broadcast_variables": broadcast_variables,
         "koopmans_aggregator": LinearAggregator(),
         "kept": seed,
         "all_regime_names": frozenset(merged_regimes),
         "ages": _CHAIN_AGES,
         "active_periods_by_regime": resolve_regime_schedules(
-            user_regimes=regimes, ages=_CHAIN_AGES
+            laws=laws, ages=_CHAIN_AGES
         ).coverage_by_regime,
     }
 

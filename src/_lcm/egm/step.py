@@ -183,6 +183,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.dcegm import EGMStepBuild, ExactEnvelope, _BoundDCEGM
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
@@ -217,6 +218,7 @@ def build_egm_step_functions(
     solver: _BoundDCEGM,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
@@ -255,6 +257,7 @@ def build_egm_step_functions(
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances (the carry targets' resources functions are read from
             here).
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         functions: The regime's processed functions (params renamed to
             qualified names).
         constraints: Immutable mapping of the regime's constraint names to
@@ -308,7 +311,7 @@ def build_egm_step_functions(
     # single-post-state kernel has no defined Euler value at the savings
     # stage, so dispatching it would be silently wrong.
     asset_row_mode = savings_stage_reads_euler_state(
-        user_regime=user_regimes[regime_name], solver=solver
+        user_regime=user_regimes[regime_name], law=laws[regime_name], solver=solver
     )
     # The persisted carry length is split from the envelope-workspace length
     # `n_pad`: in asset-row mode the stored row holds one published point per
@@ -435,6 +438,7 @@ def build_egm_step_functions(
             solver=solver,
             regime_name=regime_name,
             user_regimes=user_regimes,
+            laws=laws,
             functions=group_functions,
             constraints=group_constraints,
             processed_constraints=processed_constraints,
@@ -463,6 +467,7 @@ def build_egm_step_functions(
         kernel = _get_egm_step(
             solver=solver,
             user_regimes=child_user_regimes,
+            laws=laws,
             functions=group_functions,
             koopmans_aggregator=koopmans_aggregator,
             constraints=group_constraints,
@@ -546,6 +551,7 @@ def _get_egm_step(
     *,
     solver: _BoundDCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
@@ -586,6 +592,7 @@ def _get_egm_step(
     pieces = _build_kernel_pieces(
         solver=solver,
         user_regimes=user_regimes,
+        laws=laws,
         functions=functions,
         koopmans_aggregator=koopmans_aggregator,
         constraints=constraints,
@@ -954,6 +961,7 @@ def _build_kernel_pieces(
     *,
     solver: _BoundDCEGM,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     koopmans_aggregator: EconFunction,
     constraints: ConstraintFunctionsMapping,
@@ -978,6 +986,7 @@ def _build_kernel_pieces(
     n_constrained = solver.n_constrained_points
     continuation_plan = build_continuation_plan(
         user_regimes=user_regimes,
+        laws=laws,
         functions=functions,
         transitions=transitions,
         transition_plans=transition_plans,

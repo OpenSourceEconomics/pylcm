@@ -5128,6 +5128,7 @@ def _build_nbegm_continuation_plan(
     # A target's resources map is the child's own, read at its period `t + 1`.
     return build_continuation_plan(
         user_regimes=context.user_regimes_at(period=period + 1),
+        laws=context.laws,
         functions=context.functions,
         transitions=context.transitions,
         transition_plans=context.transition_plans,

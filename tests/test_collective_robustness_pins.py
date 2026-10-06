@@ -84,9 +84,9 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     assert objective.weights == {"f": 0.25, "m": 0.75}
 
 
-def test_mock_regime_carries_an_empty_gated_edges_mapping():
-    """A regime-shaped object with no edges declared reads as declaring none."""
-    assert dict(MockRegime().gated_edges) == {}
+def test_mock_regime_carries_no_gated_edges():
+    """A regime-shaped object carries no gated edges: they live on the source's law."""
+    assert not hasattr(MockRegime(), "gated_edges")
 
 
 def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(

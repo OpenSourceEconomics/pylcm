@@ -122,6 +122,9 @@ from lcm.typing import Float1D, FloatND, UserFunction
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
+    from _lcm.regime_law import RegimeLaw
+
+    RegimeLawsMapping: TypeAlias = Mapping[RegimeName, RegimeLaw]  # noqa: UP040
 
     UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
         RegimeName, FinalizedUserRegime
@@ -134,6 +137,7 @@ else:
     # which re-exports `Solver` from this module. ty reads the precise types
     # above; the beartype claw checks only the outer container at runtime.
     UserRegimesMapping = Mapping
+    RegimeLawsMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
 
 
@@ -146,6 +150,9 @@ class SolverModelContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of every finalized user regime in the model."""
+
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized solve-phase declarations for this regime.
@@ -224,6 +231,9 @@ class SolverBuildContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
+
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
 
     continuation_specs: MappingProxyType[RegimeName, ContinuationSpec] = (
         MappingProxyType({})

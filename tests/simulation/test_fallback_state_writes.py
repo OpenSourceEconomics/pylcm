@@ -61,8 +61,8 @@ from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import (
     DECIMAL_PRECISION,
+    bind_laws,
     build_prepared_structure,
-    lower_declarations,
 )
 
 _BETA = 0.95
@@ -269,25 +269,24 @@ def _simulate_three_households():
 
 def _solve_kernel_level(*, carrying_fallback: bool):
     """Compile and solve the model, returning the pieces the router needs."""
-    laws = _make_laws(carrying_fallback=carrying_fallback)
-    regimes_dict = {
-        name: regime.replace(regime_transitions=laws[name])
-        for name, regime in _make_regimes(carrying_fallback=carrying_fallback).items()
-    }
+    regimes_dict = _make_regimes(carrying_fallback=carrying_fallback)
+    declared = _make_laws(carrying_fallback=carrying_fallback)
+    laws = bind_laws({name: declared[name] for name in regimes_dict})
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(index) for index, name in enumerate(regimes_dict)}
     )
     user_regimes = finalize_regimes(
         user_regimes=regimes_dict,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=user_regimes, ages=_AGES
+            user_regimes=user_regimes, laws=laws, ages=_AGES
         ),
-        user_regimes=lower_declarations(user_regimes, ages=_AGES),
+        user_regimes=user_regimes,
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,
@@ -296,10 +295,10 @@ def _solve_kernel_level(*, carrying_fallback: bool):
         {
             name: MappingProxyType(
                 {}
-                if regime.terminal
+                if law.terminal
                 else {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             )
-            for name, regime in regimes_dict.items()
+            for name, law in laws.items()
         }
     )
     bi_result = solve(

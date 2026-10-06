@@ -33,6 +33,7 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
@@ -49,7 +50,10 @@ class FixedRegimeSupport:
     """Keep the reduced declarations and exact consumed fixed-key provenance."""
 
     user_regimes: MappingProxyType[RegimeName, UserRegime]
-    """Regimes with constant-zero ordinary transition cells removed."""
+    """Regimes without the declarations toward removed edges."""
+
+    laws: RegimeLaws
+    """Laws with constant-zero ordinary transition cells removed."""
 
     consumed_param_keys: frozenset[str]
     """Supplied flat keys used to prove a removed cell constant and zero."""
@@ -62,7 +66,10 @@ class FixedRegimeSupport:
 
 
 def prune_fixed_regime_support(
-    *, user_regimes: Mapping[RegimeName, UserRegime], fixed_params: UserParams
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    fixed_params: UserParams,
 ) -> FixedRegimeSupport:
     """Remove exactly zero cells whose entire dependency graph is fixed.
 
@@ -74,12 +81,13 @@ def prune_fixed_regime_support(
     fixed_flat = flatten_regime_namespace(fixed_params)
     consumed: set[str] = set()
     result: dict[RegimeName, UserRegime] = {}
+    pruned_laws: dict[RegimeName, RegimeLaw] = {}
     removed_edge_reads: dict[
         RegimeName, MappingProxyType[str, tuple[RegimeName, ...]]
     ] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
-            regime_name=name, regime=regime, fixed_flat=fixed_flat
+            regime_name=name, regime=regime, law=laws[name], fixed_flat=fixed_flat
         )
         consumed.update(law_keys)
         removed_in_both = removed["solve"] & removed["simulate"]
@@ -123,12 +131,13 @@ def prune_fixed_regime_support(
             }
         )
         result[name] = regime.replace(
-            regime_transitions=transition,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
         )
+        pruned_laws[name] = bind_regime_law(transition)
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),
+        laws=MappingProxyType(pruned_laws),
         consumed_param_keys=frozenset(consumed),
         removed_edge_reads=MappingProxyType(removed_edge_reads),
     )
@@ -138,6 +147,7 @@ def _prune_regime_transition(
     *,
     regime_name: RegimeName,
     regime: UserRegime,
+    law: RegimeLaw,
     fixed_flat: Mapping[str, object],
 ) -> tuple[object, dict[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
@@ -154,7 +164,7 @@ def _prune_regime_transition(
     while True:
         consumed: set[str] = set()
         transition = _prune_law(
-            law=regime.regime_transitions,
+            law=law.regime_transitions,
             side=None,
             regime_name=regime_name,
             regime=regime,
@@ -163,7 +173,7 @@ def _prune_regime_transition(
             protected=protected,
         )
         removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=regime.regime_transitions, side=side)
+            side: _targets(law=law.regime_transitions, side=side)
             - _targets(law=transition, side=side)
             for side in ("solve", "simulate")
         }

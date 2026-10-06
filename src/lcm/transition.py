@@ -572,7 +572,8 @@ class ByAge:
 
     Cases may not overlap. A law available at the last age is legal while no
     nonterminal problem is required there.
-    `None` — terminality — is only ever the top-level `Regime.regime_transitions`.
+    `None` — terminality — is never a case: a terminal regime is a source
+    without outgoing edges in `Model(edges=...)`.
     """
 
     def __init__(
@@ -783,7 +784,7 @@ def _fail_if_not_a_nonterminal_law(law: object) -> None:
         if side is None:
             raise RegimeInitializationError(
                 "`None` marks a terminal regime only as the top-level "
-                "`Regime.regime_transitions`; a schedule case must be a "
+                "law of a source without outgoing edges; a schedule case must be a "
                 "nonterminal law. "
                 'Name the terminal regime to exit into it, e.g. `then="dead"`.'
             )

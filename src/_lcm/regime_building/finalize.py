@@ -26,6 +26,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
+from _lcm.regime_law import RegimeLaws
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import (
     _fail_if_a_folded_conditioner_can_move,
@@ -55,6 +56,7 @@ type FinalizedUserRegime = UserRegime
 def finalize_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     derived_categoricals: Mapping[FunctionName, DiscreteGrid],
     koopmans_aggregator: UserFunction,
     certainty_equivalent: CertaintyEquivalent,
@@ -70,6 +72,7 @@ def finalize_regimes(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, which says whether it is terminal.
         derived_categoricals: Model-level categorical grids to broadcast.
         koopmans_aggregator: Model-level Bellman aggregator, given to every
             non-terminal regime that declares none of its own.
@@ -89,10 +92,10 @@ def finalize_regimes(
     """
     _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
-        user_regimes=user_regimes, slot="koopmans_aggregator"
+        user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
     )
     _fail_if_continuation_slot_is_mixed(
-        user_regimes=user_regimes, slot="certainty_equivalent"
+        user_regimes=user_regimes, laws=laws, slot="certainty_equivalent"
     )
     # The published frame is one table over every regime, so the names its
     # collective regimes claim are reserved for all of them.
@@ -120,7 +123,7 @@ def finalize_regimes(
         # aggregator (Q = U directly) nor a certainty equivalent. Their slots
         # are carried through untouched so that a declared one still reaches
         # the completeness check below rather than being silently discarded.
-        if user_regime.terminal:
+        if laws[regime_name].terminal:
             regime_koopmans_aggregator = user_regime.koopmans_aggregator
             regime_certainty_equivalent = user_regime.certainty_equivalent
         else:
@@ -144,7 +147,9 @@ def finalize_regimes(
             certainty_equivalent=regime_certainty_equivalent,
         )
         error_messages = _validate_completeness(
-            regime=finalized, reserved_value_columns=reserved_value_columns
+            regime=finalized,
+            law=laws[regime_name],
+            reserved_value_columns=reserved_value_columns,
         )
         if error_messages:
             raise RegimeInitializationError(
@@ -155,7 +160,9 @@ def finalize_regimes(
     # Runs on the finalized regimes: a conditioner's law may arrive as a
     # model-level broadcast, so whether it can move is only settled once the
     # merge is done.
-    _fail_if_a_folded_conditioner_can_move(user_regimes=MappingProxyType(result))
+    _fail_if_a_folded_conditioner_can_move(
+        user_regimes=MappingProxyType(result), laws=laws
+    )
     return MappingProxyType(result)
 
 
@@ -521,7 +528,7 @@ def _merge_derived_categoricals(
 
 
 def _fail_if_continuation_slot_is_mixed(
-    *, user_regimes: Mapping[RegimeName, UserRegime], slot: str
+    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws, slot: str
 ) -> None:
     """Reject a model that declares a continuation slot at both levels.
 
@@ -531,9 +538,7 @@ def _fail_if_continuation_slot_is_mixed(
     out of something they never saw, when in fact they are still taking the
     model-level value.
     """
-    with_continuation = {
-        name for name, regime in user_regimes.items() if not regime.terminal
-    }
+    with_continuation = {name for name in user_regimes if not laws[name].terminal}
     declaring = {
         name
         for name in with_continuation

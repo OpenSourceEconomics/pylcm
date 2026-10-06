@@ -179,8 +179,25 @@ def _make_f2_regimes() -> dict[str, Regime]:
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+    )
+    target = Regime(
+        states={"x": IrregSpacedGrid(n_points=2)},
+        functions={"utility": _u_target},
+    )
+    # Fixed grid: the fallback's V is read by the solve-side fold through the
+    # SOURCE's params, so a runtime-points fallback grid would confound this
+    # repro with a second (solve-side) namespace question.
+    fallback = Regime(
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        functions={"utility": _u_fallback},
+    )
+    return {"src": src, "target": target, "fallback": fallback}
+
+
+def _make_f2_laws() -> dict[str, object]:
+    """`src` routes into `target` through a gated edge falling back to `fallback`."""
+    return {
+        "src": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -196,26 +213,19 @@ def _make_f2_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
-    )
-    target = Regime(
-        states={"x": IrregSpacedGrid(n_points=2)},
-        functions={"utility": _u_target},
-    ).replace(regime_transitions=None)
-    # Fixed grid: the fallback's V is read by the solve-side fold through the
-    # SOURCE's params, so a runtime-points fallback grid would confound this
-    # repro with a second (solve-side) namespace question.
-    fallback = Regime(
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        functions={"utility": _u_fallback},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+        ),
+        "target": None,
+        "fallback": None,
+    }
 
 
 def _solve_f2_fixture():
     regimes_dict = _make_f2_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_make_f2_laws(),
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -504,8 +514,24 @@ def _make_f3_regimes() -> dict[str, Regime]:
         state_transitions={"x": _identity_x},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+    )
+    stateless_target = Regime(
+        functions={"utility": _u_stateless_target},
+    )
+    stateless_fallback = Regime(
+        functions={"utility": _u_stateless_fallback},
+    )
+    return {
+        "src": src,
+        "stateless_target": stateless_target,
+        "stateless_fallback": stateless_fallback,
+    }
+
+
+def _make_f3_laws() -> dict[str, object]:
+    """`src` routes into the stateless target, falling back to a stateless regime."""
+    return {
+        "src": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "stateless_target": ValueDependentTransition(
@@ -521,25 +547,19 @@ def _make_f3_regimes() -> dict[str, Regime]:
                     )
                 }
             }
-        )
-    )
-    stateless_target = Regime(
-        functions={"utility": _u_stateless_target},
-    ).replace(regime_transitions=None)
-    stateless_fallback = Regime(
-        functions={"utility": _u_stateless_fallback},
-    ).replace(regime_transitions=None)
-    return {
-        "src": src,
-        "stateless_target": stateless_target,
-        "stateless_fallback": stateless_fallback,
+        ),
+        "stateless_target": None,
+        "stateless_fallback": None,
     }
 
 
 def _solve_f3_fixture():
     regimes_dict = _make_f3_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_make_f3_laws(),
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {

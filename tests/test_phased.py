@@ -17,6 +17,8 @@ from dags import rename_arguments
 import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
+from _lcm.regime_law import RegimeLaw, bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -109,8 +111,13 @@ def _pension_grid() -> LinSpacedGrid:
     return LinSpacedGrid(start=0.0, stop=20.0, n_points=4)
 
 
-def _build_regime(*, law: object = _next_regime, **overrides: Any) -> UserRegime:
-    """A small valid regime bound to `law`; tests override individual slots."""
+def _build_regime(
+    *, law: object = _next_regime, **overrides: Any
+) -> tuple[UserRegime, RegimeLaw]:
+    """A small valid regime validated under `law`; tests override individual slots.
+
+    Returns the regime together with `law` bound as `Model(edges=...)` binds it.
+    """
     spec: dict[str, Any] = {
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
@@ -120,7 +127,10 @@ def _build_regime(*, law: object = _next_regime, **overrides: Any) -> UserRegime
         "functions": {"utility": _utility},
     }
     spec.update(overrides)
-    return UserRegime(**spec).replace(regime_transitions=law)
+    regime = UserRegime(**spec)
+    bound = bind_regime_law(law)
+    validate_regime(regime, law=bound)
+    return regime, bound
 
 
 def _carried_states() -> dict[str, Any]:
@@ -143,7 +153,8 @@ def _carried_state_transitions() -> dict[str, Any]:
 
 def test_bare_slot_values_broadcast_to_both_phases() -> None:
     """A regime without `Phased` values normalizes to two identical phase specs."""
-    spec = normalize_regime_phases(_build_regime())
+    regime, law = _build_regime()
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.functions["utility"] is _utility
     assert spec.simulation.functions["utility"] is _utility
     assert dict(spec.solution.grid_states) == dict(spec.simulation.grid_states)
@@ -156,13 +167,13 @@ def test_bare_slot_values_broadcast_to_both_phases() -> None:
 
 def test_phased_function_splits_into_phase_variants() -> None:
     """`Phased` in `functions` assigns each variant to its phase."""
-    regime = _build_regime(
+    regime, law = _build_regime(
         functions={
             "utility": _utility,
             "bonus": Phased(solve=_solve_variant, simulate=_simulate_variant),
         }
     )
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.functions["bonus"] is _solve_variant
     assert spec.simulation.functions["bonus"] is _simulate_variant
 
@@ -174,11 +185,11 @@ def test_carried_state_derivation() -> None:
     the simulate phase carries it as a genuine state whose law of motion is
     the regular `state_transitions` entry, consumed only in simulation.
     """
-    regime = _build_regime(
+    regime, law = _build_regime(
         states=_carried_states(),
         state_transitions=_carried_state_transitions(),
     )
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.carried_only_state_names == frozenset({"pension_wealth"})
     assert spec.solution.functions["pension_wealth"] is _impute_pension_wealth
     assert "pension_wealth" not in spec.solution.grid_states
@@ -197,10 +208,10 @@ def test_phased_state_transition_splits_into_phase_variants() -> None:
     def _true_law(wealth: float) -> float:
         return wealth * 1.01
 
-    regime = _build_regime(
+    regime, law = _build_regime(
         state_transitions={"wealth": Phased(solve=_belief_law, simulate=_true_law)}
     )
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.state_transitions["wealth"] is _belief_law
     assert spec.simulation.state_transitions["wealth"] is _true_law
 
@@ -211,8 +222,8 @@ def test_phased_regime_transition_splits_into_phase_variants() -> None:
     def _planned(age: float) -> ScalarInt:  # noqa: ARG001
         return jnp.asarray(0, dtype=jnp.int32)
 
-    regime = _build_regime(law=Phased(solve=_planned, simulate=_next_regime))
-    spec = normalize_regime_phases(regime)
+    regime, law = _build_regime(law=Phased(solve=_planned, simulate=_next_regime))
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.regime_transition is _planned
     assert spec.simulation.regime_transition is _next_regime
     assert spec.solution.stochastic_regime_transition is False
@@ -222,13 +233,13 @@ def test_phased_regime_transition_splits_into_phase_variants() -> None:
 
 def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
     """Markov variants on both sides mark both phases stochastic."""
-    regime = _build_regime(
+    regime, law = _build_regime(
         law=Phased(
             solve=StochasticTransition(func=_next_regime_probs),
             simulate=StochasticTransition(func=_next_regime_probs),
         )
     )
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.stochastic_regime_transition is True
     assert spec.simulation.stochastic_regime_transition is True
 
@@ -293,13 +304,14 @@ def test_carried_state_without_law_of_motion_is_rejected() -> None:
     """A carried state is a genuine simulate-phase state and needs a
     `state_transitions` entry like any other state. Coverage is validated
     when the model finalizes its regimes."""
-    regime = _build_regime(
+    regime, law = _build_regime(
         states=_carried_states(),
         state_transitions={"wealth": _next_wealth, "aime": lambda aime: aime},
     )
     with pytest.raises(RegimeInitializationError, match="state_transitions"):
         finalize_regimes(
             user_regimes={"regime": regime},
+            laws={"regime": law},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -337,14 +349,17 @@ def test_carried_state_name_colliding_with_function_is_rejected() -> None:
 def test_terminal_regime_with_carried_state_is_rejected() -> None:
     """Terminal regimes have no next period to carry a state into."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
-        UserRegime(
-            states={
-                "pension_wealth": Phased(
-                    solve=_impute_pension_wealth, simulate=_pension_grid()
-                ),
-            },
-            functions={"utility": lambda pension_wealth: pension_wealth},
-        ).replace(regime_transitions=None)
+        validate_regime(
+            UserRegime(
+                states={
+                    "pension_wealth": Phased(
+                        solve=_impute_pension_wealth, simulate=_pension_grid()
+                    ),
+                },
+                functions={"utility": lambda pension_wealth: pension_wealth},
+            ),
+            law=bind_regime_law(None),
+        )
 
 
 def test_phased_in_constraints_is_rejected() -> None:
@@ -811,7 +826,7 @@ def test_bare_solve_per_target_simulate_is_accepted() -> None:
 
 def test_per_target_dicts_with_different_targets_are_phase_local() -> None:
     """Keep each phase's state handoffs under its declared target names."""
-    regime = _build_regime(
+    regime, law = _build_regime(
         state_transitions={
             "wealth": Phased(
                 solve={"working": _next_wealth},
@@ -819,7 +834,7 @@ def test_per_target_dicts_with_different_targets_are_phase_local() -> None:
             )
         }
     )
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=law)
     assert spec.solution.state_transitions["wealth"] == {"working": _next_wealth}
     assert spec.simulation.state_transitions["wealth"] == {"retired": _next_wealth}
 

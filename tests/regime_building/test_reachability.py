@@ -14,6 +14,7 @@ from _lcm.reachability import (
     build_phase_reachability,
 )
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -404,18 +405,21 @@ def test_fixed_probability_support_uses_exact_zero(
 ) -> None:
     """Signed zero removes an edge, while a representable positive mass retains it."""
 
-    regime = Regime(
-        functions={"utility": lambda: 0.0},
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            functions={"utility": lambda: 0.0},
+        ),
+        {
             "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
             "high": StochasticTransition(func=lambda probability: probability),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
-        user_regimes={"source": regime}, fixed_params={"probability": probability_value}
+        user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
+        fixed_params={"probability": probability_value},
     )
-    transition = reduced.user_regimes["source"].regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Mapping)
     assert set(transition) == ({"low"} if removes_edge else {"low", "high"})
     assert reduced.consumed_param_keys == (
@@ -467,21 +471,24 @@ def test_fixed_probability_retains_runtime_dependencies_without_evaluating(
         helpers["helper"] = with_signature(
             args={ancestor_name: "float"}, return_annotation="float"
         )(forbidden_probability)
-    regime = Regime(
-        states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        actions={"choice": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"wealth": lambda wealth: wealth},
-        functions={"utility": lambda wealth: wealth, **helpers},
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            actions={"choice": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"wealth": lambda wealth: wealth},
+            functions={"utility": lambda wealth: wealth, **helpers},
+        ),
+        {
             "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
             "high": StochasticTransition(func=probability),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
-        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+        user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
+        fixed_params={"probability": 0.0},
     )
-    transition = reduced.user_regimes["source"].regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -491,19 +498,24 @@ def test_fixed_probability_retains_runtime_dependencies_without_evaluating(
 def test_fixed_probability_can_follow_constant_function_ancestors() -> None:
     """A constant helper DAG proves zero with its own fixed-parameter namespace."""
 
-    regime = Regime(
-        functions={"utility": lambda: 0.0, "helper": lambda probability: probability},
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            functions={
+                "utility": lambda: 0.0,
+                "helper": lambda probability: probability,
+            },
+        ),
+        {
             "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
             "high": StochasticTransition(func=lambda helper: helper),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
         user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
         fixed_params={"source": {"helper": {"probability": 0.0}}},
     )
-    transition = reduced.user_regimes["source"].regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low"}
     assert reduced.consumed_param_keys == frozenset({"source__helper__probability"})
@@ -512,21 +524,23 @@ def test_fixed_probability_can_follow_constant_function_ancestors() -> None:
 def test_fixed_series_probability_retains_coordinate_dependent_support() -> None:
     """A fixed Series remains conditional because its entries depend on coordinates."""
 
-    regime = Regime(
-        functions={"utility": lambda: 0.0},
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            functions={"utility": lambda: 0.0},
+        ),
+        {
             "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
             "high": StochasticTransition(func=lambda probability: probability),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
         user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
         fixed_params={
             "probability": pd.Series([0.0, 1.0], index=pd.Index([0, 1], name="age"))
         },
     )
-    transition = reduced.user_regimes["source"].regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -535,16 +549,17 @@ def test_fixed_series_probability_retains_coordinate_dependent_support() -> None
 def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> None:
     """Each phase drops only its zero destination and that destination's handoff."""
 
-    regime = Regime(
-        functions={"utility": lambda: 0.0},
-        state_transitions={
-            "wealth": {
-                "low": lambda low_entry: low_entry,
-                "high": lambda high_entry: high_entry,
-            }
-        },
-    ).replace(
-        regime_transitions=Phased(
+    regime, law = (
+        Regime(
+            functions={"utility": lambda: 0.0},
+            state_transitions={
+                "wealth": {
+                    "low": lambda low_entry: low_entry,
+                    "high": lambda high_entry: high_entry,
+                }
+            },
+        ),
+        Phased(
             solve={
                 "low": StochasticTransition(func=lambda: jnp.asarray(1.0)),
                 "high": StochasticTransition(
@@ -557,10 +572,11 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
                     func=lambda realized_probability: realized_probability
                 ),
             },
-        )
+        ),
     )
     reduced = prune_fixed_regime_support(
         user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
         fixed_params={
             "perceived_probability": 0.0,
             "realized_probability": 1.0,
@@ -569,7 +585,7 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
         },
     )
     source = reduced.user_regimes["source"]
-    transition = source.regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     state_law = source.state_transitions["wealth"]
     assert isinstance(transition, Phased)
     assert isinstance(state_law, Phased)
@@ -585,20 +601,22 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
 def test_fixed_zero_mass_row_stays_available_to_probability_validation() -> None:
     """An invalid all-zero distribution keeps its cells and nonterminal status."""
 
-    regime = Regime(
-        functions={"utility": lambda: 0.0},
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            functions={"utility": lambda: 0.0},
+        ),
+        {
             "low": StochasticTransition(func=lambda: jnp.asarray(0.0)),
             "high": StochasticTransition(func=lambda probability: probability),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
-        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+        user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
+        fixed_params={"probability": 0.0},
     )
-    source = reduced.user_regimes["source"]
-    assert not source.terminal
-    transition = source.regime_transitions
+    assert not reduced.laws["source"].terminal
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Mapping)
     assert set(transition) == {"low", "high"}
     assert reduced.consumed_param_keys == frozenset()
@@ -606,24 +624,27 @@ def test_fixed_zero_mass_row_stays_available_to_probability_validation() -> None
 
 def test_shared_probability_cell_follows_each_phases_helper_dag() -> None:
     """One shared law retains different targets when its helper differs by phase."""
-    regime = Regime(
-        functions={
-            "utility": lambda: 0.0,
-            "helper": Phased(
-                solve=lambda probability: probability,
-                simulate=lambda probability: 1.0 - probability,
-            ),
-        },
-    ).replace(
-        regime_transitions={
+    regime, law = (
+        Regime(
+            functions={
+                "utility": lambda: 0.0,
+                "helper": Phased(
+                    solve=lambda probability: probability,
+                    simulate=lambda probability: 1.0 - probability,
+                ),
+            },
+        ),
+        {
             "low": StochasticTransition(func=lambda helper: 1.0 - helper),
             "high": StochasticTransition(func=lambda helper: helper),
-        }
+        },
     )
     reduced = prune_fixed_regime_support(
-        user_regimes={"source": regime}, fixed_params={"probability": 0.0}
+        user_regimes={"source": regime},
+        laws={"source": bind_regime_law(law)},
+        fixed_params={"probability": 0.0},
     )
-    transition = reduced.user_regimes["source"].regime_transitions
+    transition = reduced.laws["source"].regime_transitions
     assert isinstance(transition, Phased)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}

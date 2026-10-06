@@ -17,6 +17,7 @@ The cases mutate the valid kinked-toy NEGM regime one rule at a time:
 """
 
 import dataclasses
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import UNBOUND_LAW
 from _lcm.solution.negm import _BoundNEGM
 from lcm import (
     DiscreteGrid,
@@ -55,11 +57,13 @@ from lcm.typing import (
 from tests.test_models import negm_kinked_toy
 
 _VALID = negm_kinked_toy.build_alive_regime()
+# The single regime's law: one no model has bound.
+_LAWS = MappingProxyType({"alive": UNBOUND_LAW})
 
 
 def _validate(regime: UserRegime) -> None:
     """Run the NEGM contract check on a single-regime mapping."""
-    validate_negm_regimes(user_regimes={"alive": regime})
+    validate_negm_regimes(user_regimes={"alive": regime}, laws=_LAWS)
 
 
 def test_valid_kinked_toy_negm_regime_passes_validation():
@@ -359,6 +363,7 @@ def test_negm_regime_rejects_nonlinear_certainty_equivalent():
     with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -382,6 +387,7 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
     with pytest.raises(ModelInitializationError, match="pylcm composes"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -400,6 +406,7 @@ def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
     with pytest.raises(ModelInitializationError, match="resources_before_outer_cost"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -426,6 +433,7 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
 
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
+        laws=_LAWS,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -458,6 +466,7 @@ def test_finalize_composes_resources_with_a_phased_base():
 
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
+        laws=_LAWS,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),

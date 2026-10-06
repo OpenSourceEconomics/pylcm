@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 
 import lcm
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -174,10 +176,9 @@ def test_template_has_per_target_regime_transition_keys() -> None:
 def test_plain_callable_cell_is_rejected() -> None:
     """Granular cells must be `StochasticTransition`-wrapped."""
     with pytest.raises(RegimeInitializationError, match=r"StochasticTransition"):
-        _build_regime().replace(
-            regime_transitions={
-                "work": lambda age: 1.0,  # noqa: ARG005
-            },
+        validate_regime(
+            _build_regime(),
+            law=bind_regime_law({"work": lambda age: 1.0}),  # noqa: ARG005
         )
 
 
@@ -187,7 +188,7 @@ def test_empty_granular_dict_is_rejected() -> None:
     with pytest.raises(
         RegimeInitializationError, match=r"without outgoing edges.*is terminal"
     ):
-        _build_regime().replace(regime_transitions={})
+        validate_regime(_build_regime(), law=bind_regime_law({}))
 
 
 def test_unknown_target_in_granular_dict_raises() -> None:
@@ -246,9 +247,35 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
         enable_jit=False,
-        edges=Phased(solve={"work": {"dead": 0}}, simulate={"work": {"retired": 0}}),
+        edges=Phased(
+            solve={
+                "work": Transition(
+                    targets={"dead": 0, "retired": 0},
+                    law={
+                        "dead": StochasticTransition(
+                            func=lambda perceived_mass: perceived_mass
+                        ),
+                        "retired": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                    },
+                )
+            },
+            simulate={
+                "work": Transition(
+                    targets={"dead": 0, "retired": 0},
+                    law={
+                        "dead": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                        "retired": StochasticTransition(
+                            func=lambda realized_mass: realized_mass
+                        ),
+                    },
+                )
+            },
+        ),
     )
-    params = {"discount_factor": 1.0}
+    template = model.get_params_template()["work"]
+    assert "perceived_mass" in template["dead"]["next_regime"]
+    assert "realized_mass" in template["retired"]["next_regime"]
+    params = {"discount_factor": 1.0, "perceived_mass": 1.0, "realized_mass": 1.0}
     if phase_local_handoffs:
         params |= {"perceived_scale": 1.0, "realized_scale": 1.0}
     solution = model.solve(params=params, log_level="debug")
@@ -297,7 +324,7 @@ def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
 
 
 def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() -> None:
-    """Refuse zero total probability after retaining an all-zero transition law."""
+    """Retain every edge of an all-zero law and refuse its zero total probability."""
     terminal = UserRegime(functions={"utility": lambda: 0.0})
     zero = StochasticTransition(func=lambda probability: probability)
     model = Model(
@@ -314,10 +341,10 @@ def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() ->
             )
         },
     )
-    assert set(model.reachability.solution.targets(period=0, source="work")) == {
-        "retired",
+    assert model.reachability.solution.targets(period=0, source="work") == (
         "dead",
-    }
+        "retired",
+    )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 1.0}, log_level="off")
 

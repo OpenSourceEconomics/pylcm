@@ -1,8 +1,8 @@
 """Lower age-indexed regime declarations into demand, support and engine laws.
 
-A regime's model-bound law (`Regime.regime_transitions`, bound from
-`Model(edges=...)`) declares where a local problem is available and where it may
-go. This module is the single place that reads it for that purpose:
+A regime's law (bound from `Model(edges=...)` and kept on the model graph)
+declares where a local problem is available and where it may go.
+This module is the single place that reads it for that purpose:
 
 - `None` (no outgoing edges) is terminal and available at every age;
 - a plain nonterminal law — a regime name, a `DeterministicTransition`, a vector
@@ -160,7 +160,7 @@ def declaration_view(transition: object) -> object:
 
 def resolve_regime_schedules(
     *,
-    user_regimes: Mapping[RegimeName, Any],
+    laws: Mapping[RegimeName, Any],
     ages: AgeGrid,
     source_ages_by_phase: Mapping[str, Mapping[str, Mapping[str, frozenset[object]]]]
     | None = None,
@@ -168,7 +168,7 @@ def resolve_regime_schedules(
     """Resolve every regime's available periods, support and value reads.
 
     Nothing is lowered here: `lower_demanded_transitions` lowers only the laws
-    demand selects.
+    demand selects. `laws` maps each regime to its graph-bound `RegimeLaw`.
     """
     all_periods = tuple(range(ages.n_periods))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
@@ -179,9 +179,11 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
-    laws: dict[RegimeName, MappingProxyType[int, NonterminalLaw]] = {}
-    for name, regime in user_regimes.items():
-        transition = regime.regime_transitions
+    law_by_period_by_regime: dict[
+        RegimeName, MappingProxyType[int, NonterminalLaw]
+    ] = {}
+    for name, regime_law in laws.items():
+        transition = regime_law.regime_transitions
         if transition is None:
             coverage[name] = all_periods
             continue
@@ -222,7 +224,7 @@ def resolve_regime_schedules(
                         source=name,
                         period=period,
                         ages=ages,
-                        regime_names=tuple(user_regimes),
+                        regime_names=tuple(laws),
                         source_ages=None
                         if source_ages_by_phase is None
                         else source_ages_by_phase[phase],
@@ -260,7 +262,9 @@ def resolve_regime_schedules(
             }
         )
         # The support check above rejected every other form.
-        laws[name] = MappingProxyType(cast("dict[int, NonterminalLaw]", law_by_period))
+        law_by_period_by_regime[name] = MappingProxyType(
+            cast("dict[int, NonterminalLaw]", law_by_period)
+        )
 
     return RegimeSchedules(
         coverage_by_regime=MappingProxyType(coverage),
@@ -274,7 +278,7 @@ def resolve_regime_schedules(
             }
         ),
         landings_by_regime=MappingProxyType(landings),
-        law_by_period_by_regime=MappingProxyType(laws),
+        law_by_period_by_regime=MappingProxyType(law_by_period_by_regime),
     )
 
 

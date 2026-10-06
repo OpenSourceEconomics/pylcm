@@ -65,7 +65,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _BETA = 0.95
@@ -177,34 +177,24 @@ def _make_regimes() -> dict[str, Regime]:
 
 def _solve_and_simulate():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    laws = {"src": _src_law(), "src_exit": None, "src_fallback": None}
-    regimes_dict = {
-        name: regime.replace(regime_transitions=laws[name])
-        for name, regime in _make_regimes().items()
-    }
+    laws = bind_laws({"src": _src_law(), "src_exit": None, "src_fallback": None})
+    regimes_dict = _make_regimes()
     regime_names = list(regimes_dict)
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
+    finalized = finalize_regimes(
+        user_regimes=regimes_dict,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=regimes_dict,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+            user_regimes=finalized, laws=laws, ages=ages
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=regimes_dict,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
-        ),
+        user_regimes=finalized,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,

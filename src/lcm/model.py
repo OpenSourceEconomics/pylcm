@@ -103,6 +103,7 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_initial_nodes,
 )
+from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -221,6 +222,7 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StateName,
 )
+from _lcm.user_regime_validation import validate_regimes
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -248,7 +250,6 @@ from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
-from lcm.regime import UNBOUND
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -683,7 +684,7 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self.edges = edges
-        regimes, edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        laws, edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (
@@ -695,6 +696,7 @@ class Model:
             self._fixed_component_splits,
         ) = factor_fixed_components(
             regimes=regimes,
+            laws=laws,
             fixed_params=self.fixed_params,
             states=states,
             state_transitions=state_transitions,
@@ -751,10 +753,13 @@ class Model:
         validate_model_slots(model_slots=model_slots)
         merged_regimes, broadcast_variables = merge_model_slots(
             user_regimes=regimes,
+            laws=laws,
             model_slots=model_slots,
         )
+        validate_regimes(regimes=merged_regimes, laws=laws)
         prepared_graph = prepare_graph(
             regimes=merged_regimes,
+            laws=laws,
             edges=graph_edges,
             ages=ages,
             initial_nodes=resolved_initial_nodes,
@@ -769,6 +774,12 @@ class Model:
             declared_transitions=prepared_graph.declarations,
             code_by_name=regime_names_to_ids,
         )
+        laws = MappingProxyType(
+            {
+                name: bind_regime_law(transition)
+                for name, transition in demanded_transitions.items()
+            }
+        )
         # A regime no subject visits owes its backward problem only, so none of
         # its simulate-side declarations is required.
         merged_regimes = {
@@ -776,11 +787,12 @@ class Model:
                 regime
                 if schedules.visited_periods_by_regime[name]
                 else project_onto_solve_phase(regime)
-            ).replace(regime_transitions=demanded_transitions[name])
+            )
             for name, regime in merged_regimes.items()
         }
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
+            laws=laws,
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=ages,
@@ -788,6 +800,7 @@ class Model:
         )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
+            laws=laws,
             derived_categoricals=derived_categoricals,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
@@ -806,8 +819,10 @@ class Model:
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
+        validate_regimes(regimes=self._engine_user_regimes, laws=laws)
         validate_model_inputs(
             user_regimes=self._engine_user_regimes,
+            laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
@@ -842,6 +857,7 @@ class Model:
         )
         continuous_sharded_state = _validate_sharded_state_capability(
             user_regimes=self._engine_user_regimes,
+            laws=laws,
             model_states=states,
             sharded_states=self._execution.sharded_states,
         )
@@ -850,15 +866,17 @@ class Model:
         )
         fail_if_invariant_blocking_route_is_unsupported(
             user_regimes=self._engine_user_regimes,
+            laws=laws,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
             schedule=self._execution.invariant_block_schedule,
         )
         self._execution = _with_action_partition_ceilings(
-            execution=self._execution, user_regimes=self._engine_user_regimes
+            execution=self._execution, user_regimes=self._engine_user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
             user_regimes=self._engine_user_regimes,
+            laws=laws,
             ages=self.ages,
             active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
@@ -881,15 +899,10 @@ class Model:
             initial_nodes=resolved_initial_nodes,
             reachability=self.reachability,
             pruned_edges=prepared_graph.pruned_edges,
+            laws=laws,
         )
-        # Public regimes carry no law, as declared: the graph holds it. The
-        # engine copy holds the lowered law every internal consumer reads.
-        self.user_regimes = MappingProxyType(
-            {
-                name: regime.replace(regime_transitions=UNBOUND)
-                for name, regime in self._engine_user_regimes.items()
-            }
-        )
+        # Regimes carry no law: the graph holds it.
+        self.user_regimes = self._engine_user_regimes
         self.initial_nodes = resolved_initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
@@ -906,6 +919,7 @@ class Model:
         self._regimes = admit_invariant_blocking(
             user_regimes=self._engine_user_regimes,
             regimes=self._regimes,
+            laws=laws,
             reachability=self.reachability,
             initial_nodes=self.initial_nodes,
             ages=self.ages,
@@ -979,6 +993,7 @@ class Model:
                 ages=self.ages,
                 regimes=self._regimes,
                 user_regimes=self._engine_user_regimes,
+                laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
             )
@@ -1108,6 +1123,7 @@ class Model:
             ages=self.ages,
             regimes=self._regimes,
             user_regimes=self._engine_user_regimes,
+            laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
@@ -1126,6 +1142,7 @@ class Model:
             ages=self.ages,
             regimes=self._regimes,
             user_regimes=self._engine_user_regimes,
+            laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
@@ -4067,6 +4084,7 @@ def _readable_template(value: object) -> object:
 def _validate_sharded_state_capability(
     *,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     model_states: Mapping[str, object],
     sharded_states: frozenset[StateName],
 ) -> StateName | None:
@@ -4114,7 +4132,7 @@ def _validate_sharded_state_capability(
             )
             or type(regime.solver) is not GridSearch
             or regime.stakeholders is not None
-            or regime.gated_edges
+            or laws[regime_name].gated_edges
             or regime.value_constraints
             or regime.same_period_refs
             or regime.taste_shocks is not None
@@ -4184,6 +4202,7 @@ def _with_action_partition_ceilings(
     *,
     execution: ResolvedExecution,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
 ) -> ResolvedExecution:
     """Admit an `action_partitions` request and record its width ceilings.
 
@@ -4202,6 +4221,7 @@ def _with_action_partition_ceilings(
     )
     fail_if_action_partition_route_is_unsupported(
         user_regimes=user_regimes,
+        laws=laws,
         action_partitions=execution.action_partitions,
         sharded_states=execution.sharded_states,
         continuous_sharded_state=execution.continuous_sharded_state,

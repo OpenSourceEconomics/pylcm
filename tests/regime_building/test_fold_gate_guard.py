@@ -50,7 +50,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -89,23 +89,30 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
+def _solve_kwargs(
+    *,
+    regimes_and_laws: tuple[dict[str, Regime], dict[str, object]],
+    ages: AgeGrid,
+) -> dict:
+    regimes, declared_laws = regimes_and_laws
+    laws = bind_laws(declared_laws)
     names = list(regimes)
     finalized = finalize_regimes(
         user_regimes=regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     return {
-        "user_regimes": lower_declarations(finalized, ages=ages),
+        "user_regimes": finalized,
         "ages": ages,
         "regime_names_to_ids": MappingProxyType(
             {name: jnp.int32(i) for i, name in enumerate(names)}
         ),
         "enable_jit": False,
         "prepared_structure": build_prepared_structure(
-            user_regimes=finalized, ages=ages
+            user_regimes=finalized, laws=laws, ages=ages
         ),
     }
 
@@ -113,13 +120,25 @@ def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
 _AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
-def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
+def _make_gated_target_regimes(
+    *, fold: bool
+) -> tuple[dict[str, Regime], dict[str, object]]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
-    ).replace(
-        regime_transitions=ByAge(
+    )
+    source_terminal = Regime(
+        functions={"utility": _u_zero},
+    )
+    target = Regime(
+        states={"wage_shock": _shock(fold=fold)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
+    )
+    regimes = {"source": source, "source_terminal": source_terminal, "target": target}
+    laws = {
+        "source": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -136,17 +155,11 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
                     )
                 }
             }
-        )
-    )
-    source_terminal = Regime(
-        functions={"utility": _u_zero},
-    ).replace(regime_transitions=None)
-    target = Regime(
-        states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
-    ).replace(regime_transitions=None)
-    return {"source": source, "source_terminal": source_terminal, "target": target}
+        ),
+        "source_terminal": None,
+        "target": None,
+    }
+    return regimes, laws
 
 
 def test_unfolded_collective_gated_edge_target_still_constructs():
@@ -156,7 +169,9 @@ def test_unfolded_collective_gated_edge_target_still_constructs():
     guard protects is not at stake and the topology is built as declared.
     """
     process_regimes(
-        **_solve_kwargs(regimes=_make_gated_target_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(
+            regimes_and_laws=_make_gated_target_regimes(fold=False), ages=_AGES_2P
+        )
     )
 
 
@@ -164,13 +179,15 @@ def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
     return Q_f >= V_ref - 100.0
 
 
-def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
+def _make_same_period_ref_regimes(
+    *, fold: bool
+) -> tuple[dict[str, Regime], dict[str, object]]:
     """`reader` (collective) --same_period_refs--> `ref_target` (collective, folded)."""
     ref_target = Regime(
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
-    ).replace(regime_transitions=None)
+    )
     reader = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -188,26 +205,30 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "reader_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        )
     )
     reader_terminal = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
-    ).replace(regime_transitions=None)
-    return {
+    )
+    regimes = {
         "ref_target": ref_target,
         "reader": reader,
         "reader_terminal": reader_terminal,
     }
+    laws = {
+        "ref_target": None,
+        "reader": ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "reader_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        "reader_terminal": None,
+    }
+    return regimes, laws
 
 
 def test_unfolded_collective_same_period_reference_still_constructs():
@@ -218,12 +239,14 @@ def test_unfolded_collective_same_period_reference_still_constructs():
     """
     process_regimes(
         **_solve_kwargs(
-            regimes=_make_same_period_ref_regimes(fold=False), ages=_AGES_2P
+            regimes_and_laws=_make_same_period_ref_regimes(fold=False), ages=_AGES_2P
         )
     )
 
 
-def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
+def _make_gate_refs_regimes(
+    *, fold: bool
+) -> tuple[dict[str, Regime], dict[str, object]]:
     """`source`'s gate reads `gate_refs['V_ref']` -> `ref_target` (singleton, folded).
 
     `target` (the gated-edge TARGET) is a plain, unfolded collective regime, so
@@ -233,8 +256,29 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     source = Regime(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
-    ).replace(
-        regime_transitions=ByAge(
+    )
+    source_terminal = Regime(
+        functions={"utility": _u_zero},
+    )
+    target = Regime(
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
+    )
+    ref_target = Regime(
+        states={"wage_shock": _shock(fold=fold)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _u_work},
+    )
+    regimes = {
+        "source": source,
+        "source_terminal": source_terminal,
+        "target": target,
+        "ref_target": ref_target,
+    }
+    laws = {
+        "source": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
@@ -257,28 +301,12 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
                     )
                 }
             }
-        )
-    )
-    source_terminal = Regime(
-        functions={"utility": _u_zero},
-    ).replace(regime_transitions=None)
-    target = Regime(
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
-        },
-    ).replace(regime_transitions=None)
-    ref_target = Regime(
-        states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_work},
-    ).replace(regime_transitions=None)
-    return {
-        "source": source,
-        "source_terminal": source_terminal,
-        "target": target,
-        "ref_target": ref_target,
+        ),
+        "source_terminal": None,
+        "target": None,
+        "ref_target": None,
     }
+    return regimes, laws
 
 
 def test_folded_gate_ref_reference_is_rejected():
@@ -290,7 +318,9 @@ def test_folded_gate_ref_reference_is_rejected():
     """
     with pytest.raises(ModelInitializationError, match=r"gate_refs|same_period_refs"):
         process_regimes(
-            **_solve_kwargs(regimes=_make_gate_refs_regimes(fold=True), ages=_AGES_2P)
+            **_solve_kwargs(
+                regimes_and_laws=_make_gate_refs_regimes(fold=True), ages=_AGES_2P
+            )
         )
 
 
@@ -301,5 +331,7 @@ def test_unfolded_gate_ref_reference_still_constructs():
     topology is built as declared.
     """
     process_regimes(
-        **_solve_kwargs(regimes=_make_gate_refs_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(
+            regimes_and_laws=_make_gate_refs_regimes(fold=False), ages=_AGES_2P
+        )
     )

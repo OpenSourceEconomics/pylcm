@@ -42,6 +42,8 @@ from _lcm.regime_building.ndimage import (
 )
 from _lcm.regime_building.Q_and_F import _sum_regime_mixture
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm import (
     CollectiveUtility,
@@ -849,6 +851,8 @@ def _utility_m(labor_supply_f: DiscreteAction) -> FloatND:
 def _build_terminal_regime(**kwargs: object) -> Regime:
     """Build the two-stakeholder terminal regime, overriding one slot by keyword.
 
+    The regime is validated against the law of a regime without outgoing edges.
+
     `utilities` and `objective` reach the `CollectiveUtility` the regime
     declares; every other keyword is a `Regime` slot.
     """
@@ -865,9 +869,9 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
         },
     }
     base.update(kwargs)
-    return Regime(**base).replace(  # ty: ignore[invalid-argument-type]
-        regime_transitions=None
-    )
+    regime = Regime(**base)  # ty: ignore[invalid-argument-type]
+    validate_regime(regime, law=bind_regime_law(None))
+    return regime
 
 
 def test_a_household_with_no_stakeholders_is_rejected():

@@ -202,10 +202,10 @@ def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
     assert _reaches_public_model(source=source) is expected
 
 
-#: What a regime's three declarations decompose into. A model author never
-#: writes one: `stakeholders`, `pareto_objective`, `value_constraints`,
-#: `same_period_refs` and `gated_edges` are read off a regime, and `GatedEdge`
-#: is the engine's own form of an edge.
+#: What a regime's declarations and its law decompose into. A model author never
+#: writes one: `stakeholders`, `pareto_objective`, `value_constraints` and
+#: `same_period_refs` are read off a regime, `gated_edges` off the law the model
+#: binds for it, and `GatedEdge` is the engine's own form of an edge.
 _DECOMPOSED_NAMES = (
     "stakeholders",
     "pareto_objective",

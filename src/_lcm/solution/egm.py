@@ -204,7 +204,7 @@ class EGM(OneMarginSolver):
             user_regime=user_regime,
             solver_name="EGM",
         )
-        if user_regime.terminal:
+        if context.laws[regime_name].terminal:
             msg = (
                 f"Regime '{regime_name}' is terminal but configured with EGM. "
                 "Terminal regimes have no optimization problem; remove the "
@@ -451,7 +451,7 @@ class EGM(OneMarginSolver):
             raise ModelInitializationError(msg)
         for target in set(period_to_continuation_target(context=context).values()):
             target_user_regime = context.user_regimes[target]
-            if target_user_regime.terminal and target_user_regime.actions:
+            if context.laws[target].terminal and target_user_regime.actions:
                 msg = (
                     f"EGM regime '{context.regime_name}' continues into terminal "
                     f"regime '{target}', which has actions "

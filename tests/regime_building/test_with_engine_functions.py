@@ -13,12 +13,7 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
-    AgeRange,
-    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -38,14 +33,6 @@ class Work:
 
     leisure: ScalarInt
     work: ScalarInt
-
-
-@categorical(ordered=False)
-class RegimeId:
-    """Regime ids of the miniature."""
-
-    couple: ScalarInt
-    couple_terminal: ScalarInt
 
 
 def _u_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
@@ -75,14 +62,6 @@ def _couple(*, functions: Mapping[str, object]) -> Regime:
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=functions,  # ty: ignore[invalid-argument-type]
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=lambda: RegimeId.couple_terminal, targets=("couple_terminal",)
-                )
-            }
-        )
     )
 
 

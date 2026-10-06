@@ -27,6 +27,7 @@ from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building import schedules
+from _lcm.regime_law import UNBOUND_LAW, bind_regime_law
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -951,9 +952,8 @@ def _phased_regime_declaration(
     elif slot != "regime_transitions":
         raise AssertionError(slot)
     return fingerprints._project_user_regime_declaration(
-        UserRegime(**slots).replace(  # ty: ignore[invalid-argument-type]
-            regime_transitions=law
-        )
+        UserRegime(**slots),  # ty: ignore[invalid-argument-type]
+        law=bind_regime_law(law),
     )
 
 
@@ -993,9 +993,9 @@ def test_regime_description_is_not_mathematical_identity() -> None:
     reworded = dataclasses.replace(regime, description="second wording")
 
     assert fingerprints._semantic_fingerprint(
-        fingerprints._project_user_regime_declaration(regime)
+        fingerprints._project_user_regime_declaration(regime, law=UNBOUND_LAW)
     ) == fingerprints._semantic_fingerprint(
-        fingerprints._project_user_regime_declaration(reworded)
+        fingerprints._project_user_regime_declaration(reworded, law=UNBOUND_LAW)
     )
 
 
@@ -1149,6 +1149,7 @@ def test_default_model_declaration_has_a_closed_fingerprint() -> None:
         ages=model.ages,
         regimes=model._regimes,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         regime_names_to_ids=model.regime_names_to_ids,
         flat_params=flat_params,
     )
@@ -1712,6 +1713,10 @@ def _fingerprint_space(
     )
 
 
+_ALIVE_LAWS = MappingProxyType({"alive": UNBOUND_LAW})
+_ALIVE_AND_DEAD_LAWS = MappingProxyType({"alive": UNBOUND_LAW, "dead": UNBOUND_LAW})
+
+
 def _fingerprint_regime(
     *,
     second_period_nodes: tuple[float, ...],
@@ -1768,6 +1773,7 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
             {"alive": _fingerprint_regime(second_period_nodes=(2.0, 3.0))},
         ),
         user_regimes=cast("dict", user_regimes),
+        laws=_ALIVE_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
         ),
@@ -1780,6 +1786,7 @@ def test_model_fingerprint_binds_each_periods_age_specialized_support() -> None:
             {"alive": _fingerprint_regime(second_period_nodes=(2.0, 4.0))},
         ),
         user_regimes=cast("dict", user_regimes),
+        laws=_ALIVE_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds", MappingProxyType({"alive": jnp.int32(0)})
         ),
@@ -1818,6 +1825,7 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
             },
         ),
         user_regimes=cast("dict", user_regimes),
+        laws=_ALIVE_LAWS,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
     )
@@ -1836,6 +1844,7 @@ def test_model_fingerprint_treats_artifact_authorities_as_keyed_mapping() -> Non
             },
         ),
         user_regimes=cast("dict", user_regimes),
+        laws=_ALIVE_LAWS,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
     )
@@ -1867,6 +1876,7 @@ def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
         ages=ages,
         regimes=regimes,
         user_regimes=user_regimes,
+        laws=_ALIVE_AND_DEAD_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds",
             MappingProxyType({"alive": jnp.int32(0), "dead": jnp.int32(1)}),
@@ -1877,6 +1887,7 @@ def test_model_fingerprint_binds_exact_regime_name_to_id_mapping() -> None:
         ages=ages,
         regimes=regimes,
         user_regimes=user_regimes,
+        laws=_ALIVE_AND_DEAD_LAWS,
         regime_names_to_ids=cast(
             "RegimeNamesToIds",
             MappingProxyType({"alive": jnp.int32(1), "dead": jnp.int32(0)}),
@@ -1974,6 +1985,7 @@ def test_parameter_vectors_that_differ_carry_different_model_fingerprints() -> N
             ages=model.ages,
             regimes=model._regimes,
             user_regimes=model.user_regimes,
+            laws=model.graph.laws,
             regime_names_to_ids=model.regime_names_to_ids,
             flat_params=model._process_params(get_toy_params(scale=scale)),
         )
@@ -1990,6 +2002,7 @@ def test_the_structure_digest_participates_in_the_model_fingerprint() -> None:
         "ages": model.ages,
         "regimes": model._regimes,
         "user_regimes": model.user_regimes,
+        "laws": model.graph.laws,
         "regime_names_to_ids": model.regime_names_to_ids,
         "flat_params": model._process_params(get_toy_params(scale=1.0)),
     }

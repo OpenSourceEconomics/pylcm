@@ -68,9 +68,11 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.regime_building.test_collective_regime_simulate import (
-    _solve_and_process,
-    _solve_consent,
+from tests.regime_building.test_collective_regime_simulate import _solve_consent
+from tests.regime_building.test_gated_edge_arg_provenance import (
+    _process,
+    _Spec,
+    _split,
 )
 
 _BETA = 0.95
@@ -269,7 +271,7 @@ def _u_fallback_b(wage: ContinuousState) -> FloatND:
     return wage + 2.0
 
 
-def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]:
+def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
     """A singleton source with TWO gated edges (targets `a`/`b`), each with its
     own fallback. `edge_order` controls the order in which the two edges are
     declared in `transition` -- both orderings must yield the identical,
@@ -299,49 +301,63 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
             },
         ),
     }
-    src = Regime(
-        states={"wage": _WAGE_2},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
+    src = (
+        Regime(
+            states={"wage": _WAGE_2},
+            state_transitions={"wage": fixed_transition("wage")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
             }
-        )
+        ),
     )
-    target_a = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_target_a},
-    ).replace(regime_transitions=None)
-    target_b = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_target_b},
-    ).replace(regime_transitions=None)
-    fallback_a = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_fallback_a},
-    ).replace(regime_transitions=None)
-    fallback_b = Regime(
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_fallback_b},
-    ).replace(regime_transitions=None)
-    return {
-        "src": src,
-        "target_a": target_a,
-        "target_b": target_b,
-        "fallback_a": fallback_a,
-        "fallback_b": fallback_b,
-    }
+    target_a = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_target_a},
+        ),
+        None,
+    )
+    target_b = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_target_b},
+        ),
+        None,
+    )
+    fallback_a = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_fallback_a},
+        ),
+        None,
+    )
+    fallback_b = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_fallback_b},
+        ),
+        None,
+    )
+    return _split(
+        {
+            "src": src,
+            "target_a": target_a,
+            "target_b": target_b,
+            "fallback_a": fallback_a,
+            "fallback_b": fallback_b,
+        }
+    )
 
 
 def _solve_dual_edge(*, edge_order: tuple[str, str]):
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regime_names = ["src", "target_a", "target_b", "fallback_a", "fallback_b"]
-    regimes_dict = _make_dual_edge_regimes(edge_order=edge_order)
-    regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=regime_names
+    regimes_dict, laws = _make_dual_edge_regimes(edge_order=edge_order)
+    regimes, regime_names_to_ids = _process(
+        regimes_dict=regimes_dict, laws=laws, ages=ages
     )
     flat_params = MappingProxyType(
         {

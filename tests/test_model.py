@@ -2,6 +2,8 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -29,6 +31,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import bind_laws
 
 
 def test_regime_invalid_states():
@@ -120,13 +123,14 @@ def test_regime_overlapping_states_actions(binary_category_class):
         state_transitions={"health": fixed_transition("health")},
         actions={"health": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda: 0},
-    ).replace(regime_transitions=lambda: 0)
+    )
     with pytest.raises(
         RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
         finalize_regimes(
             user_regimes={"regime": regime},
+            laws=bind_laws({"regime": lambda: 0}),
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -137,7 +141,7 @@ def test_regime_transition_must_be_callable():
     """Binding a non-callable regime transition law is rejected."""
     regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
     with pytest.raises(RegimeInitializationError, match="transition"):
-        regime.replace(regime_transitions=42)
+        validate_regime(regime, law=bind_regime_law(42))
 
 
 def test_model_requires_terminal_regime(binary_category_class):

@@ -134,7 +134,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
 def assert_additive_witness(*, model: Model, flat_params: FlatParams) -> None:
     """Refuse to apply the additive scale without its exact declared assumptions."""
     for name, regime in model._engine_user_regimes.items():
-        if not regime.terminal:
+        if not model.graph.laws[name].terminal:
             assert type(regime.koopmans_aggregator) is LinearAggregator
             np.testing.assert_array_equal(
                 flat_params[name]["koopmans_aggregator__discount_factor"], 1
@@ -324,7 +324,7 @@ def test_other_aggregator_refuses_additive_witness_contract() -> None:
         edges=original.graph.edges,
         regimes={
             name: regime
-            if original._engine_user_regimes[name].terminal
+            if original.graph.laws[name].terminal
             else replace(regime, koopmans_aggregator=CESAggregator())
             for name, regime in original.user_regimes.items()
         },

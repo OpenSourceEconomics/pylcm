@@ -168,55 +168,59 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
     return V_target > V_ref
 
 
-def _make_regimes() -> dict[str, Regime]:
+def _make_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+    """The fixture regimes and their laws, `None` for a terminal regime."""
     src = Regime(
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_value_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
+    )
+    src_law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "target": ValueDependentTransition(
+                    probability=StochasticTransition(func=_prob_one),
+                    gate=_value_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
                             )
-                        },
-                        gate_references={
-                            "V_ref": ProjectedRegimeValue(
-                                regime="ref", projection={"x": _identity_x}
-                            )
-                        },
-                    )
-                }
+                        )
+                    },
+                    gate_references={
+                        "V_ref": ProjectedRegimeValue(
+                            regime="ref", projection={"x": _identity_x}
+                        )
+                    },
+                )
             }
-        )
+        }
     )
     target = Regime(
         states={"x": _X2},
         functions={"utility": _u_target},
-    ).replace(regime_transitions=None)
+    )
     ref = Regime(
         states={"x": _X2},
         functions={"utility": _u_ref},
-    ).replace(regime_transitions=None)
+    )
     fallback = Regime(
         states={"x": _X2},
         functions={"utility": _u_fallback},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "ref": ref, "fallback": fallback}
+    )
+    laws = {"src": src_law, "target": None, "ref": None, "fallback": None}
+    return {"src": src, "target": target, "ref": ref, "fallback": fallback}, laws
 
 
 def _solve_fixture():
-    regimes_dict = _make_regimes()
+    regimes_dict, laws = _make_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=laws,
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -380,47 +384,51 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
     return V_target > gate_threshold
 
 
-def _make_curved_regimes() -> dict[str, Regime]:
+def _make_curved_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+    """The curved-target regimes and their laws, `None` for a terminal regime."""
     src = Regime(
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
-    ).replace(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_threshold_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
+    )
+    src_law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "target": ValueDependentTransition(
+                    probability=StochasticTransition(func=_prob_one),
+                    gate=_threshold_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
                             )
-                        },
-                    )
-                }
+                        )
+                    },
+                )
             }
-        )
+        }
     )
     target = Regime(
         states={"x": _X2},
         actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
-    ).replace(regime_transitions=None)
+    )
     fallback = Regime(
         states={"x": _X2},
         functions={"utility": _u_fallback},
-    ).replace(regime_transitions=None)
-    return {"src": src, "target": target, "fallback": fallback}
+    )
+    laws = {"src": src_law, "target": None, "fallback": None}
+    return {"src": src, "target": target, "fallback": fallback}, laws
 
 
 def _solve_curved_fixture(*, gate_threshold: float):
-    regimes_dict = _make_curved_regimes()
+    regimes_dict, laws = _make_curved_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=laws,
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {

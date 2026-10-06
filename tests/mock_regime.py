@@ -3,14 +3,11 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.grids import Grid
+from _lcm.regime_law import RegimeLaw
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import UserFunction
-
-
-def _noop() -> None:
-    """Stand-in regime transition while collecting a transition-less mock."""
 
 
 class MockRegime(UserRegime):
@@ -21,9 +18,10 @@ class MockRegime(UserRegime):
     and friends, but bypasses `UserRegime.__init__`'s validation by
     writing fields directly via `object.__setattr__`. Tests use this to
     supply partial / loosely-typed configurations that the real
-    constructor would reject. `regime_transitions` writes the model-bound
-    law slot directly, as `Model(edges=...)` would bind it; `None` marks a
-    terminal regime.
+    constructor would reject. A mock carries no law between regimes, as
+    no regime does; `terminal` only decides whether the model-level
+    aggregator is injected, as `finalize_regimes` does for a regime without
+    outgoing edges.
 
     """
 
@@ -35,7 +33,7 @@ class MockRegime(UserRegime):
         states: dict[str, Grid | None] | None = None,
         state_transitions: dict[str, UserFunction | None] | None = None,
         constraints: dict[str, UserFunction] | None = None,
-        regime_transitions: UserFunction | None = None,
+        terminal: bool = False,
         # Loosely typed on purpose: tests pass markers (`AgeSpecializedFunction`,
         # `Phased`) alongside plain callables.
         functions: Mapping[str, object] | None = None,
@@ -53,7 +51,6 @@ class MockRegime(UserRegime):
         object.__setattr__(
             self, "constraints", constraints if constraints is not None else {}
         )
-        object.__setattr__(self, "regime_transitions", regime_transitions)
         object.__setattr__(
             self, "functions", functions if functions is not None else {}
         )
@@ -63,7 +60,7 @@ class MockRegime(UserRegime):
             self,
             "koopmans_aggregator",
             koopmans_aggregator
-            if koopmans_aggregator is not None or self.regime_transitions is None
+            if koopmans_aggregator is not None or terminal
             else LinearAggregator(),
         )
         object.__setattr__(
@@ -73,27 +70,28 @@ class MockRegime(UserRegime):
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "joint_transitions", MappingProxyType({}))
         object.__setattr__(self, "description", "")
-        # `value_constraints` / `same_period_refs` / `gated_edges` use
+        # `value_constraints` / `same_period_refs` use
         # default_factory on the real dataclass, so no class-level fallback
         # exists — set them here.
         object.__setattr__(self, "value_constraints", MappingProxyType({}))
         object.__setattr__(self, "same_period_refs", MappingProxyType({}))
-        object.__setattr__(self, "gated_edges", MappingProxyType({}))
 
-    @property
-    def terminal(self) -> bool:
-        return self.regime_transitions is None
-
+    # keyword-only-exempt: primary-argument=phase
     def get_all_functions(
-        self, phase: Literal["solve", "simulate"] = "solve"
+        self,
+        phase: Literal["solve", "simulate"] = "solve",
+        *,
+        law: RegimeLaw | None = None,
     ) -> MappingProxyType[str, UserFunction]:
         """Delegate to the real method, tolerating the mock's loose fields.
 
         Mocks may carry `None`-valued states (partial configurations the
         real constructor would reject) and rely on state transitions being
-        collected even without a regime transition. Normalize both, then
-        reuse `Regime.get_all_functions` so the key set can never drift
-        from the real regime's.
+        collected even under a law that is not a single callable — a terminal
+        or a per-target law. Drop the `None` states and collect such a mock's
+        state laws without a regime transition, then reuse
+        `Regime.get_all_functions` so the key set can never drift from the
+        real regime's.
         """
         normalized = MockRegime(
             states=cast(
@@ -104,12 +102,9 @@ class MockRegime(UserRegime):
                 "dict[str, UserFunction | None]", self.state_transitions
             ),
             constraints=cast("dict[str, UserFunction]", self.constraints),
-            regime_transitions=self.regime_transitions
-            if callable(self.regime_transitions)
-            else _noop,
             functions=cast("dict[str, UserFunction]", self.functions),
         )
-        result = dict(UserRegime.get_all_functions(normalized, phase))
-        if not callable(self.regime_transitions):
-            del result["next_regime"]
-        return MappingProxyType(result)
+        callable_law = (
+            law if law is not None and callable(law.regime_transitions) else None
+        )
+        return UserRegime.get_all_functions(normalized, phase, law=callable_law)

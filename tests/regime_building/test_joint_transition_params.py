@@ -5,6 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 
 from _lcm.params.regime_template import create_regime_params_template
+from _lcm.regime_law import bind_regime_law
 from lcm import JointTransition, Phased, StochasticTransition
 from lcm.regime import Regime
 from lcm.typing import FloatND
@@ -51,11 +52,10 @@ def test_joint_kernel_params_follow_role_and_output_ownership() -> None:
                 )
             }
         },
-    ).replace(
-        regime_transitions={"target": StochasticTransition(func=_target_probability)}
     )
+    law = bind_regime_law({"target": StochasticTransition(func=_target_probability)})
 
-    template = cast("Any", create_regime_params_template(user_regime=regime))
+    template = cast("Any", create_regime_params_template(user_regime=regime, law=law))
 
     assert template["target"]["match"]["support"] == {"match_location": "float"}
     assert template["target"]["match"]["probabilities"] == {

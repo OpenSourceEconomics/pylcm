@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regimes
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -208,7 +210,7 @@ def _phased(*, schedule_side: str, law: object) -> Phased:
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
 @pytest.mark.parametrize("schedule_side", ["solve", "simulate", "both"])
-def test_regime_rejects_a_schedule_inside_a_top_level_phased(
+def test_law_rejects_a_schedule_inside_a_top_level_phased(
     *, schedule_side: str, law_form: str
 ) -> None:
     """A top-level `Phased` may not wrap a `ByAge` on either side."""
@@ -222,19 +224,19 @@ def test_regime_rejects_a_schedule_inside_a_top_level_phased(
         RegimeInitializationError,
         match=rf"`ByAge` cannot be nested inside `ByAge` or `Phased`.*{side_pattern}",
     ):
-        Regime(functions={"utility": lambda: 0.0}).replace(
-            regime_transitions=transition
-        )
+        bind_regime_law(transition)
 
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
-def test_regime_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
-    """A top-level `Phased` whose sides are plain laws constructs."""
+def test_law_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
+    """A top-level `Phased` whose sides are plain laws binds and validates."""
     transition = Phased(solve=_LAWS[law_form](), simulate=_LAWS[law_form]())
-    regime = Regime(functions={"utility": lambda: 0.0}).replace(
-        regime_transitions=transition
+    law = bind_regime_law(transition)
+    validate_regimes(
+        regimes={"regime": Regime(functions={"utility": lambda: 0.0})},
+        laws={"regime": law},
     )
-    assert regime.regime_transitions is transition
+    assert law.regime_transitions is transition
 
 
 def test_until_rejects_a_stop_age_without_a_predecessor() -> None:

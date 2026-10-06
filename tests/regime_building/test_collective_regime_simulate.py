@@ -83,7 +83,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
@@ -104,20 +104,20 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _bind_laws(
-    *, regimes: dict[str, Regime], laws: dict[str, object]
-) -> dict[str, Regime]:
-    """Bind each regime's law as `Model(edges=...)` would; `None` is terminal."""
-    return {
-        name: regime.replace(regime_transitions=laws[name])
-        for name, regime in regimes.items()
-    }
-
-
 def _solve_and_process(
-    *, regimes_dict: dict[str, Regime], ages: AgeGrid, regime_names: list[str]
+    *,
+    regimes_dict: dict[str, Regime],
+    laws: dict[str, object],
+    ages: AgeGrid,
+    regime_names: list[str],
 ):
-    """Shared build+solve harness (kernel-level, mirrors the solve-side tests)."""
+    """Shared build+solve harness (kernel-level, mirrors the solve-side tests).
+
+    `laws` maps each regime to its law as `Model(edges=...)` would bind it;
+    `None` is terminal.
+    """
+    # Regime codes follow `regimes_dict`, so the laws are bound in its order.
+    bound_laws = bind_laws({name: laws[name] for name in regimes_dict})
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
@@ -128,17 +128,17 @@ def _solve_and_process(
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
+                laws=bound_laws,
             ),
             ages=ages,
+            laws=bound_laws,
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=regimes_dict,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+        user_regimes=finalize_regimes(
+            user_regimes=regimes_dict,
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+            laws=bound_laws,
         ),
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
@@ -226,9 +226,12 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
     both.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _bind_laws(regimes=_make_couple_regimes(), laws=_couple_laws())
+    regimes_dict = _make_couple_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_couple_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -298,9 +301,12 @@ def test_couple_simulate_with_runtime_validation_enabled():
     the strictest level, which raises on any validation failure.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _bind_laws(regimes=_make_couple_regimes(), laws=_couple_laws())
+    regimes_dict = _make_couple_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_couple_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -462,9 +468,12 @@ def _make_consent_regimes() -> dict[str, Regime]:
 
 def _solve_consent():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _bind_laws(regimes=_make_consent_regimes(), laws=_consent_laws())
+    regimes_dict = _make_consent_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_consent_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -758,11 +767,12 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
 
 def _solve_dissolution():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _bind_laws(
-        regimes=_make_dissolution_regimes(), laws=_dissolution_laws()
-    )
+    regimes_dict = _make_dissolution_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_dissolution_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -1107,12 +1117,12 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
 
 def _solve_consent_discrete_axis():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _bind_laws(
-        regimes=_make_consent_regimes_with_discrete_target_axis(),
-        laws=_consent_discrete_axis_laws(),
-    )
+    regimes_dict = _make_consent_regimes_with_discrete_target_axis()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_consent_discrete_axis_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -1560,9 +1570,12 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
     singleton path is untouched by the fix.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict = _bind_laws(regimes=_make_solo_regimes(), laws=_solo_laws())
+    regimes_dict = _make_solo_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_solo_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -1735,11 +1748,12 @@ def test_repeating_self_loop_gated_edge_simulates_past_the_sources_last_covered_
       own value `V_0(2) = 2 + beta * 2.95 = 4.8025`.
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _bind_laws(
-        regimes=_make_repeating_self_loop_regimes(), laws=_repeating_self_loop_laws()
-    )
+    regimes_dict = _make_repeating_self_loop_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_repeating_self_loop_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {

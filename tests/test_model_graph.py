@@ -247,7 +247,7 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
         initial_nodes=((1, "work"),),
         edges={
             "work": Transition(
-                targets={"perceived": 0, "realized": 1, "work": 1},
+                targets={"perceived": 0, "realized": (0, 1)},
                 law=(
                     StochasticTransition(func=lambda: jnp.array([0.0, 1.0, 0.0]))
                     if stochastic
@@ -257,7 +257,7 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
         },
         enable_jit=False,
     )
-    assert "perceived" not in model.graph.solution.targets(period=1, source="work")
+    assert model.graph.solution.targets(period=1, source="work") == ("realized",)
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 1.0}, log_level=log_level)
 

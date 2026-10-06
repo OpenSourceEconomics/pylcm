@@ -23,6 +23,7 @@ from _lcm.egm.regime_introspection import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.continuation_target import _namespace_target_param_names
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.transition_plans import TargetTransitionPlans
@@ -44,6 +45,7 @@ def _find_unsupported_feature(
     solver: _BoundDCEGM,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     processed_constraints: ProcessedConstraintsMapping,
@@ -68,6 +70,7 @@ def _find_unsupported_feature(
         message = _find_unsupported_target_feature(
             target=target,
             user_regimes=user_regimes,
+            laws=laws,
             functions=functions,
             transitions=transitions,
             transition_plans=transition_plans,
@@ -114,6 +117,7 @@ def _find_unsupported_target_feature(
     *,
     target: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
@@ -133,7 +137,7 @@ def _find_unsupported_target_feature(
     """
     target_info = regime_to_v_interpolation_info[target]
     target_process_states = _get_process_state_names(v_interpolation_info=target_info)
-    if user_regimes[target].terminal:
+    if laws[target].terminal:
         terminal_message = _find_unsupported_terminal_target_feature(
             target=target,
             user_regime=user_regimes[target],
@@ -160,7 +164,7 @@ def _find_unsupported_target_feature(
             )
     child_state_name = _get_child_state_name(user_regime=user_regimes[target])
     resources_arg_names = _get_child_resources_arg_names(
-        regime_name=target, user_regime=user_regimes[target]
+        regime_name=target, user_regime=user_regimes[target], law=laws[target]
     )
     child_action_names, _ = _get_child_discrete_actions(
         user_regime=user_regimes[target]

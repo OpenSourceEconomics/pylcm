@@ -16,6 +16,7 @@ import pytest
 
 from _lcm import model_processing
 from _lcm.regime_building import broadcast
+from _lcm.regime_law import RegimeLaws
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -45,6 +46,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
+from tests.conftest import bind_laws
 
 # Which regime is asked for its roots, in which phase.
 type RootCallKey = tuple[str, str]
@@ -128,7 +130,20 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
     roots = broadcast.root_functions(
         regime_name="couple_ir",
         regime=_make_regimes()["couple_ir"],
-        all_regimes=_make_regimes(),
+        laws=bind_laws(
+            {
+                "couple": _couple_law(),
+                "couple_ir": ByAge(
+                    cases={
+                        AgeRange(start=1, exclusive_stop=2): {
+                            "couple_terminal": StochasticTransition(
+                                func=_probability_one
+                            )
+                        }
+                    }
+                ),
+            }
+        ),
         phase="solve",
     )
 
@@ -169,14 +184,14 @@ def _record_root_calls(
             *,
             regime_name: RegimeName,
             regime: Regime,
-            all_regimes: Mapping[RegimeName, Regime],
+            laws: RegimeLaws,
             phase: Literal["solve", "simulate"],
             koopmans_aggregator: UserFunction | None = None,
         ) -> MappingProxyType[str, UserFunction]:
             roots = original(
                 regime_name=regime_name,
                 regime=regime,
-                all_regimes=all_regimes,
+                laws=laws,
                 phase=phase,
                 koopmans_aggregator=koopmans_aggregator,
             )

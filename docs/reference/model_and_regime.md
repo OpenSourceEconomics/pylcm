@@ -52,8 +52,11 @@ Public inspection attributes include:
 - `user_regimes`, the finalized declarations in user vocabulary;
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, immutable admissible age–regime pairs;
-- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes and
-  pruning reasons;
+- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
+  pruning reasons and `laws`, each regime's law as the model binds it from its edges
+  (`laws[name].terminal` is true for a regime without outgoing edges,
+  `laws[name].gated_edges` holds the edges its `ValueDependentTransition` cells
+  declare);
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 

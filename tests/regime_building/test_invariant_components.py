@@ -302,6 +302,7 @@ def _components(model: Model) -> dict[str, InvariantComponent]:
     return dict(
         analyze_invariant_components(
             user_regimes=model._engine_user_regimes,
+            laws=model.graph.laws,
             regimes=model._regimes,
             reachability=model.reachability,
             initial_nodes=model.initial_nodes,
