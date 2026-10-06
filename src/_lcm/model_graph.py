@@ -399,23 +399,41 @@ def _resolve_edges(
                 raise ModelInitializationError(
                     f"Terminal regime '{source}' cannot declare outgoing graph edges."
                 )
-            try:
-                _fail_if_invalid_age_selector(selector)
-                periods = _select_periods(
-                    selector=selector, ages=ages, period_by_age=period_by_age
-                )
-            except RegimeInitializationError as error:
-                raise ModelInitializationError(str(error)) from error
-            if not periods:
-                raise ModelInitializationError(
-                    f"Graph selector {selector!r} for '{source}' → '{target}' "
-                    "selects no model age."
-                )
-            selected[target] = frozenset(
-                ages.exact_values[period] for period in periods
+            selected[target] = _selected_source_ages(
+                selector=selector,
+                edge=f"'{source}' → '{target}'",
+                ages=ages,
+                period_by_age=period_by_age,
             )
         resolved[source] = MappingProxyType(selected)
     return MappingProxyType(resolved)
+
+
+def _selected_source_ages(
+    *,
+    selector: object,
+    edge: str,
+    ages: AgeGrid,
+    period_by_age: Mapping[object, int],
+) -> frozenset[UserAge]:
+    """Resolve one edge's selector to the source ages at which it can fire."""
+    try:
+        _fail_if_invalid_age_selector(selector)
+        periods = _select_periods(
+            selector=selector, ages=ages, period_by_age=period_by_age
+        )
+    except RegimeInitializationError as error:
+        raise ModelInitializationError(str(error)) from error
+    if not periods:
+        raise ModelInitializationError(
+            f"Graph selector {selector!r} for {edge} selects no model age."
+        )
+    if set(periods) == {ages.n_periods - 1}:
+        raise ModelInitializationError(
+            f"Graph selector {selector!r} for {edge} selects only the final age "
+            f"{ages.exact_values[-1]}, where no transition happens."
+        )
+    return frozenset(ages.exact_values[period] for period in periods)
 
 
 def _bind_law(
