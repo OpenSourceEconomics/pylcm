@@ -17,10 +17,11 @@ and the plain values of the raw fields the tests check analytically.
 """
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -114,11 +115,10 @@ def reload(*, directory: Path) -> dict[str, object]:
 def _describe(
     *, simulation: SimulationResult, values: Mapping[int, Mapping[str, jax.Array]]
 ) -> dict[str, object]:
-    leaves, _ = jax.tree.flatten_with_path(simulation.raw_results)
     raw = simulation.raw_results
     return {
         "raw": {
-            jax.tree_util.keystr(path): {
+            path: {
                 "devices": sorted(
                     [device.platform, device.id] for device in leaf.devices()
                 ),
@@ -128,7 +128,7 @@ def _describe(
                 "shape": list(leaf.shape),
                 "sha256": _digest(array=leaf),
             }
-            for path, leaf in leaves
+            for path, leaf in _named_leaves(tree=raw, path="")
         },
         "default_memory_kinds": {
             f"{device.platform}:{device.id}": device.default_memory().kind
@@ -150,6 +150,24 @@ def _describe(
             "dead_value": np.asarray(raw["dead"][1].V_arr).tolist(),
         },
     }
+
+
+def _named_leaves(*, tree: object, path: str) -> Iterator[tuple[str, jax.Array]]:
+    """Yield every array leaf under a path of mapping keys and field names.
+
+    The path names each leaf by regime, period, field and variable, so a leaf is
+    matched by what it is, whatever order the mappings above it iterate in.
+    """
+    if isinstance(tree, Mapping):
+        for key, subtree in tree.items():
+            yield from _named_leaves(tree=subtree, path=f"{path}[{key!r}]")
+    elif dataclasses.is_dataclass(tree):
+        for field in dataclasses.fields(tree):
+            yield from _named_leaves(
+                tree=getattr(tree, field.name), path=f"{path}.{field.name}"
+            )
+    else:
+        yield path, cast("jax.Array", tree)
 
 
 def _digest(*, array: jax.Array) -> str:
