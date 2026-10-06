@@ -939,11 +939,13 @@ class NBEGM(OneMarginSolver):
                     and context.regime_name in plan.child_reads
                 )
                 if cliff_candidates:
+                    child_read = plan.child_reads[context.regime_name]
                     _fail_if_cliffs_move_with_euler_draws(
                         sources=group_spec.sources,
-                        euler_draw_names=plan.child_reads[
-                            context.regime_name
-                        ].euler_draw_names,
+                        euler_draw_names=child_read.euler_draw_names,
+                        stochastic_state_names=frozenset(
+                            child_read.stochastic_state_names
+                        ),
                         regime_name=context.regime_name,
                     )
                 envelope_build = _build_nbegm_envelope_core(
@@ -4694,46 +4696,53 @@ def _fail_if_cliffs_move_with_euler_draws(
     *,
     sources: tuple[_NBEGMSource, ...],
     euler_draw_names: frozenset[str],
+    stochastic_state_names: frozenset[str],
     regime_name: RegimeName,
 ) -> None:
-    """Reject save-to-cliff candidates whose child cliffs depend on a drawn state.
+    """Reject save-to-cliff candidates whose child cliffs vary across child nodes.
 
     The save-to-cliff candidates invert the regime's own liquid law at every node
-    of the draws it reads, against the jump breakpoints of the source cell. When a
-    jump's threshold is indexed by, or its schedule variable reads, a state whose
-    draw `next_<state>` the liquid law reads, each node lands on a child row with
-    its own breakpoints, which the source cell's breakpoints do not represent.
+    of the draws it reads, against the jump breakpoints of the source cell. The
+    expectation runs over every stochastic state the child carries, so when the
+    liquid law reads any draw and a jump's threshold is indexed by, or its
+    schedule variable reads (directly or through derived functions), any of
+    those states, child rows carry breakpoints the source cell's do not
+    represent. A state carried by a fixed law is one node and keeps the source
+    cell's breakpoints.
 
     Args:
         sources: The regime's breakpoint sources.
         euler_draw_names: The draws the regime's own liquid law reads.
+        stochastic_state_names: The stochastic states the regime's child carries
+            as node axes.
         regime_name: Name of the regime, for the message.
 
     Raises:
-        RegimeInitializationError: If a jump breakpoint depends on a state whose
-            draw the liquid law reads.
+        RegimeInitializationError: If the liquid law reads a draw and a jump
+            breakpoint depends on a stochastic state of the child.
 
     """
-    drawn_states = {
-        name.removeprefix("next_"): name
-        for name in euler_draw_names
-        if name.startswith("next_")
+    if not euler_draw_names:
+        return
+    varying = stochastic_state_names | {
+        name.removeprefix("next_") for name in euler_draw_names
     }
+    draws = ", ".join(f"'{name}'" for name in sorted(euler_draw_names))
     for source in sources:
         if source.kind != "jump":
             continue
         for state in (source.threshold_index_state, *source.derived_state_names):
-            if state in drawn_states:
+            if state in varying:
                 msg = (
                     f"Regime '{regime_name}' has a jump breakpoint "
-                    f"'{source.threshold_param_name}' that varies with the state "
-                    f"'{state}', and its liquid law reads the draw "
-                    f"'{drawn_states[state]}'. NBEGM save-to-cliff candidates for "
-                    "a liquid law reading a draw whose child cliff breakpoints vary "
-                    "across the draw's nodes are not supported yet. Make the "
-                    "liquid law independent of the draw, make the breakpoint "
-                    f"independent of '{state}', or use GridSearch() for this "
-                    "regime."
+                    f"'{source.threshold_param_name}' that varies with the "
+                    f"stochastic state '{state}', and its liquid law reads the "
+                    f"draw {draws}. NBEGM save-to-cliff candidates for a liquid "
+                    "law reading a draw, when the child cliff breakpoints vary "
+                    "across the child's stochastic nodes, are not supported yet. "
+                    "Make the liquid law independent of the draw, make the "
+                    f"breakpoint independent of '{state}', or use GridSearch() "
+                    "for this regime."
                 )
                 raise RegimeInitializationError(msg)
 
