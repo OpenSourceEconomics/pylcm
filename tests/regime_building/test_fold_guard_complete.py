@@ -175,7 +175,7 @@ def _make_singleton_gated_target_regimes(
 def test_folded_singleton_gated_edge_target_is_rejected():
     """A SINGLETON, folded gated-edge TARGET is rejected at model
     processing — gate-then-integrate does not depend on stakeholder count."""
-    with pytest.raises(ModelInitializationError, match="gated_edges"):
+    with pytest.raises(ModelInitializationError, match="gated edge"):
         process_regimes(
             **_solve_kwargs(
                 regimes=_make_singleton_gated_target_regimes(fold=True), ages=_AGES_2P
