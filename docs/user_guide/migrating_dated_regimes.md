@@ -35,7 +35,8 @@ model = Model(
 )
 ```
 
-Public `DeterministicTransition` and `StochasticTransition` no longer accept `targets`.
+Public `DeterministicTransition` and `StochasticTransition` refuse `targets` with an
+error that points to `Model(edges=...)`, the only place regime transitions are declared.
 Their targetless decorator factories are `@deterministic_transition()` and
 `@stochastic_transition()`. Plain functions remain deterministic for both state and
 regime laws. Full-vector stochastic laws retain global regime-code ordering;

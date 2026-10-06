@@ -7,6 +7,9 @@ title: Age-indexed regime graphs
 A model separates three declarations: admissible initial nodes, graph edges, and
 numerical transition laws. `Model` requires `initial_nodes` and `edges`. Neither is
 inferred from probability functions or from the availability of an age-indexed law.
+`Model(edges=...)` is the only place regime transitions are declared: a regime law
+supplies numbers for the destinations the graph declares and never names destinations of
+its own.
 
 ## Declare starts and edges
 
@@ -144,7 +147,8 @@ A deterministic regime function returns a global regime code supported at that s
 age. A full-vector `StochasticTransition(func=...)` returns probabilities in full global
 regime-code order and must be zero outside graph support. Per-target scalar probability
 mappings provide the probabilities for graph-selected destinations. Their keys do not
-independently define edges. Public wrappers and decorators have no `targets` argument.
+independently define edges. Public wrappers and decorators take no `targets` argument;
+passing one raises an error that points to `Model(edges=...)`.
 
 Source-age selectors can be exact ages, nonempty tuples, integer ranges, or
 `AgeRange(start=..., exclusive_stop=...)`. A half-open selector excludes its stop:

@@ -97,6 +97,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   source to destinations and their source-age selectors, optionally through `Phased`.
   `model.graph` provides immutable declared edges, effective reachability and
   fixed-zero pruning reasons.
+- `Model(edges=...)` is the only place regime transitions are declared. Passing
+  `targets=` to `DeterministicTransition` or `StochasticTransition`, or handing
+  `Model` a regime law tagged with its destinations, raises an error that points to
+  `Model(edges=...)`.
 - Probability mass validation is shared by the solver consumers. Compiled validation
   now reliably rejects negative subnormal probabilities at both precisions.
 
