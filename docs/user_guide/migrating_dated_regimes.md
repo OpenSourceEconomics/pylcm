@@ -39,6 +39,10 @@ This replaces laws such as `"dead"`, `ByAge.until(law="working", then="retired")
 selector that only ever returns the one available destination. A regime that declared
 `regime_transitions=None` simply has no outgoing edges.
 
+Code that read a regime's law back reads it from the model graph:
+`model.graph.laws[name].terminal` replaces `regime.terminal`, and
+`model.graph.laws[name].gated_edges` replaces `regime.gated_edges`.
+
 Where a source age has several destinations, move the former `regime_transitions` value
 unchanged into a `Transition` that replaces the source's destination mapping:
 
