@@ -552,8 +552,6 @@ def _array_shapes_of_the_pointwise_Q(
     )
     params = _params(power_mean=power_mean)
     solution = model.solve(params=params, log_level="off")
-    regime = model._regimes["alive"]
-    flat_params = model._process_params(params)["alive"]
     rng = np.random.default_rng(seed=0)
     subjects = {
         "wealth": jnp.asarray(rng.uniform(0.0, 4.0, _N_SUBJECTS)),
@@ -563,6 +561,20 @@ def _array_shapes_of_the_pointwise_Q(
             for name, n in _N_NODES.items()
         },
     }
+    text = _traced_pointwise_Q(
+        model=model, params=params, solution=solution, subjects=subjects
+    )
+    return [
+        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
+    ]
+
+
+def _traced_pointwise_Q(
+    *, model: Model, params: Any, solution: Any, subjects: dict[str, Any]
+) -> str:
+    """Return the jaxpr text of the period-0 pointwise `Q` of `alive`."""
+    regime = model._regimes["alive"]
+    flat_params = model._process_params(params)["alive"]
     next_regime_to_V_arr = MappingProxyType(dict(solution.values[1]))
     age = jnp.asarray(model.ages.period_to_age(0))
 
@@ -575,10 +587,7 @@ def _array_shapes_of_the_pointwise_Q(
             age=age,
         )
 
-    text = str(jax.make_jaxpr(pointwise_Q)())
-    return [
-        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
-    ]
+    return str(jax.make_jaxpr(pointwise_Q)())
 
 
 def _carries_the_joint_node_extent(shape: tuple[int, ...]) -> bool:
@@ -697,8 +706,9 @@ def _next_landing_with_choice(
     return jnp.where(choice == 0, next_z, jnp.int32(2))
 
 
-def _zero_utility() -> FloatND:
-    return jnp.asarray(0.0)
+def _zero_utility(*, landing: DiscreteState, h: DiscreteState) -> FloatND:
+    # Reading both states makes them used in `alive`; the flow value stays zero.
+    return jnp.where((landing >= 0) & (h >= 0), 0.0, 0.0)
 
 
 def _peak_at_the_first_landing(
@@ -721,7 +731,8 @@ def _finite_range_model(
     """A coordinate draw `z` (one half each) and an 18-node slice draw `h`.
 
     `landing` copies the `z` draw, so `z` moves the landing coordinate while
-    `h` only selects the value slice read there.
+    `h` only selects the value slice read there. The flow utility of `alive`
+    reads `landing` and `h` and is zero.
     """
     row = _UNIT_SLICE_ROWS[dtype.name]
     if reverse:
@@ -786,6 +797,38 @@ def _peak(*, dtype: np.dtype, level: str) -> np.floating:
         "one-step-below-max": np.nextafter(largest, dtype.type(0.0)),
         "negative-max": -largest,
     }[level]
+
+
+_N_SLICE_NODES = len(_UNIT_SLICE_ROWS["float64"])
+
+
+@pytest.mark.parametrize("with_choice", [False, True], ids=["lottery", "choice"])
+def test_finite_range_witness_sums_its_slice_draw_in_a_loop(
+    *, with_choice: bool, x64_enabled: None
+) -> None:
+    """The pointwise `Q` loops over the 18 slice nodes of `h` rather than mapping them.
+
+    This is the nested route the finite-range witnesses below are about.
+    """
+    del x64_enabled
+    model = _finite_range_model(
+        dtype=np.dtype("float64"),
+        enable_jit=True,
+        reverse=False,
+        with_choice=with_choice,
+    )
+    params = _finite_range_params(model=model, peak=np.float64(16.0))
+    solution = model.solve(params=params, log_level="off")
+    subjects = {
+        "z": jnp.zeros(2, dtype=jnp.int32),
+        "h": jnp.zeros(2, dtype=jnp.int32),
+        "landing": jnp.zeros(2, dtype=jnp.int32),
+        **({"choice": jnp.zeros(2, dtype=jnp.int32)} if with_choice else {}),
+    }
+    text = _traced_pointwise_Q(
+        model=model, params=params, solution=solution, subjects=subjects
+    )
+    assert re.search(rf"\blength={_N_SLICE_NODES}\b", text) is not None
 
 
 @pytest.mark.parametrize(
