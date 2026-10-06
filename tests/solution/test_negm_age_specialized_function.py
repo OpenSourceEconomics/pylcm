@@ -18,7 +18,7 @@ The same oracle isolates a NEGM *child's* keeper resources. An age-invariant
 durable by age, and `late` is active only at its last age. The parent's read of
 `late` composes `late`'s resources with that keeper, so `early`'s solution at the
 period before must equal the one with `late` pinned to the keeper of `late`'s own
-age — and differ from the one pinned to `early`'s age.
+age — and differ from one whose read alone uses the keeper of `early`'s age.
 """
 
 from dataclasses import replace
@@ -28,6 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm import regime_introspection
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -378,16 +379,40 @@ def _early_late_model(*, late_keep: Any) -> Model:
     )
 
 
-def _early_continuation(*, late_keep: Any) -> Any:
-    """`early`'s published continuation at its last period, before `late`."""
-    result = _early_late_model(late_keep=late_keep).solve(
-        params=_EARLY_LATE_PARAMS,
-        log_level="off",
-        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
-    )
+def _early_continuation(*, late_keep: Any, read_keep: Any = None) -> Any:
+    """`early`'s published continuation at its last period, before `late`.
+
+    `read_keep`, if given, replaces `late`'s keeper in the parent's read of `late`
+    only; `late`'s own solve keeps `late_keep`.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        if read_keep is not None:
+            patch.setattr(
+                regime_introspection,
+                "_keeper_no_adjustment_function",
+                _with_read_keep(read_keep),
+            )
+        result = _early_late_model(late_keep=late_keep).solve(
+            params=_EARLY_LATE_PARAMS,
+            log_level="off",
+            retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+        )
     return result.retained_continuations[
         ArtifactRef(period=_EARLY_LAST_PERIOD, regime="early", key=EGM_CONTINUATION)
     ]
+
+
+def _with_read_keep(read_keep: Any) -> Any:
+    """The parent-read keeper builder with a declared keeper swapped for `read_keep`."""
+    build = regime_introspection._keeper_no_adjustment_function
+
+    def build_with_read_keep(*, no_adjustment_func: Any, **kwargs: Any) -> Any:
+        return build(
+            no_adjustment_func=None if no_adjustment_func is None else read_keep,
+            **kwargs,
+        )
+
+    return build_with_read_keep
 
 
 @pytest.fixture(scope="module")
@@ -398,8 +423,9 @@ def early_continuations() -> dict[str, Any]:
         "pinned-to-child-age": _early_continuation(
             late_keep=_make_depreciating_keep(_LATE_AGE)
         ),
-        "pinned-to-source-age": _early_continuation(
-            late_keep=_make_depreciating_keep(_LATE_AGE - _AGE_STEP)
+        "read-at-source-age": _early_continuation(
+            late_keep=_make_depreciating_keep(_LATE_AGE),
+            read_keep=_make_depreciating_keep(_LATE_AGE - _AGE_STEP),
         ),
     }
 
@@ -422,11 +448,20 @@ def test_parent_reads_a_negm_childs_keeper_at_the_childs_age(
 def test_parent_value_moves_when_the_childs_keeper_is_the_sources_age(
     *, early_continuations: dict[str, Any]
 ) -> None:
-    """Pinning `late`'s keeper to `early`'s age changes `early`'s value.
+    """Reading `late`'s keeper at `early`'s age changes `early`'s value.
 
-    Without this, the agreement above would also hold if the parent read the
-    child's keeper at the source's age.
+    `late` publishes its continuation on its keeper's cash-on-hand axis,
+    `wealth + 5 - credited(illiquid, keep(illiquid))`. Its own keeper retains
+    `0.8` of the durable, which puts a durable `z` at cash `wealth + 5 + 0.18 z`;
+    a read with `early`'s keeper (retaining `0.9`) queries `wealth + 5 + 0.09 z`,
+    `0.09 z` lower on a value strictly increasing in cash. Every cell whose
+    continuation carries a positive durable into `late` therefore moves.
+
+    Pinning both `late`'s solve and the read to one keeper cannot show this:
+    `late` is solved only at its last age, where withdrawing the whole durable
+    dominates keeping any of it, so its value is the same under every keeper and
+    the parent's value with it.
     """
     specialized = np.asarray(early_continuations["specialized"].value)
-    source_age = np.asarray(early_continuations["pinned-to-source-age"].value)
+    source_age = np.asarray(early_continuations["read-at-source-age"].value)
     assert not np.allclose(specialized, source_age, equal_nan=True)
