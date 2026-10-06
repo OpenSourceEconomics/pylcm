@@ -221,7 +221,8 @@ def bind_edge_laws(
 
     - the only destination, where the age has exactly one outgoing edge and the
       source is a plain `{target: selector}` mapping or its `Transition` law
-      selects nothing there;
+      selects nothing there, as a probability-one cell where the other phase's
+      law at that age is a per-target probability mapping;
     - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise.
 
     A source age with several outgoing edges and no law is rejected, and so is
@@ -423,7 +424,10 @@ def _combined_law(
             continue
         key = (id(solve_law), id(simulate_law))
         if key not in pairs:
-            pairs[key] = Phased(solve=solve_law, simulate=simulate_law)
+            pairs[key] = Phased(
+                solve=_lottery_if_paired(law=solve_law, other=simulate_law),
+                simulate=_lottery_if_paired(law=simulate_law, other=solve_law),
+            )
         combined[period] = pairs[key]
     laws = list(combined.values())
     first = laws[0]
@@ -432,6 +436,17 @@ def _combined_law(
     return ByAge(
         cases={ages.exact_values[period]: law for period, law in combined.items()}
     )
+
+
+def _lottery_if_paired(*, law: object, other: object) -> object:
+    """A lone edge as a probability-one cell when the other phase has a mapping.
+
+    The graph is the law of a lone edge; across phases it takes the form of the
+    other phase's per-target probability mapping so the two sides match.
+    """
+    if isinstance(law, str) and isinstance(other, Mapping):
+        return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
+    return law
 
 
 def resolve_graph_edges(

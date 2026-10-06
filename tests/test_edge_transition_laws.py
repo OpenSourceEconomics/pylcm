@@ -243,6 +243,50 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
     )
 
 
+LOTTERY_EDGES = {
+    "working": Transition(
+        targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+    ),
+    "retired": RETIRED_EDGES,
+}
+
+
+@pytest.mark.parametrize(
+    ("solve", "simulate"),
+    [(LAW_FREE_EDGES, LOTTERY_EDGES), (LOTTERY_EDGES, LAW_FREE_EDGES)],
+    ids=["lone_solve", "lone_simulate"],
+)
+def test_phased_lone_edge_pairs_with_a_probability_mapping(
+    *, solve: dict[str, object], simulate: dict[str, object]
+) -> None:
+    """A lone edge in one phase is a probability-one lottery; solve uses its law."""
+    phased_values = _values(_model(edges=Phased(solve=solve, simulate=simulate)))
+    solve_values = _values(_model(edges=solve))
+    keys = sorted(solve_values)
+    np.testing.assert_array_equal(
+        [phased_values[key] for key in keys], [solve_values[key] for key in keys]
+    )
+
+
+def _mortality_vector() -> FloatND:
+    return jnp.asarray([0.95, 0.0, 0.05])
+
+
+def test_phased_mapping_and_regime_vector_laws_are_rejected() -> None:
+    """A per-target mapping and a regime-code vector are mismatched phase forms."""
+    vector_edges = {
+        "working": Transition(
+            targets=MORTAL_TARGETS,
+            law=ByAge(cases={(60, 61): StochasticTransition(func=_mortality_vector)}),
+        ),
+        "retired": RETIRED_EDGES,
+    }
+    with pytest.raises(
+        (ModelInitializationError, RegimeInitializationError), match="matching forms"
+    ):
+        _model(edges=Phased(solve=LOTTERY_EDGES, simulate=vector_edges))
+
+
 def test_regime_rejects_regime_transitions() -> None:
     """Regime laws are declared on the graph, never on the regime."""
     declaration: dict[str, Any] = {
