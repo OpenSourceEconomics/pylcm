@@ -886,7 +886,7 @@ class _GridSearchPeriodKernel:
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
         regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
-        a regime declaring `gated_edges` (substituted into
+        a regime with gated edges (substituted into
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
 

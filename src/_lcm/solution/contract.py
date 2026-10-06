@@ -457,8 +457,8 @@ class SolverBuildContext:
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`. The grid-search kernel then substitutes each such target's
+    Non-empty only for a source regime with
+    gated edges. The grid-search kernel then substitutes each such target's
     gated continuation object `Wbar` (supplied by the solve loop under
     `edge_regime_to_V_arr`) for the raw target V in the `next_regime_to_V_arr`
     mapping it reads and lowers against. Empty for every other regime.

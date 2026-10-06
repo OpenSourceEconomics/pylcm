@@ -3,7 +3,7 @@
 The forward-simulation counterpart to the solve-side gated-edge fold
 (`_lcm.regime_building.gated_edges`). pylcm's forward simulation recomputes
 argmaxes against the stored solution rather than storing policies; a source
-regime declaring `gated_edges` needs two things this module provides, both
+regime with gated edges needs two things this module provides, both
 built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
 
 1. **Value substitution** (`substitute_gated_edge_continuations`) — exactly

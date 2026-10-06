@@ -1477,7 +1477,7 @@ def _attach_gated_edge_folds(
 ) -> dict[RegimeName, Regime]:
     """Resolve and compile each source regime's gated-edge folds.
 
-    For every source regime declaring `gated_edges`, resolve each user
+    For every source regime with gated edges, resolve each user
     `GatedEdge` to its engine form and build the `Wbar` producer on the target
     regime's grid (reading the target's processed functions), plus one per-leg
     FALLBACK state projector and a gate evaluator for simulate routing (see
@@ -3337,7 +3337,7 @@ def _build_solution_phase(  # noqa: PLR0915
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
 
     Returns:
         The complete solve functions container beside the solver, kernels and
@@ -4076,8 +4076,8 @@ def _edge_and_same_period_kwargs(
 ) -> dict[str, object]:
     """Relay only the optional kernel arguments the caller actually supplied.
 
-    The solve loop passes `edge_regime_to_V_arr` to a source declaring
-    `gated_edges` and `same_period_regime_to_V_arr` to one declaring
+    The solve loop passes `edge_regime_to_V_arr` to a source with
+    gated edges and `same_period_regime_to_V_arr` to one declaring
     `same_period_refs`, and neither to any other regime. A decorator around a
     period kernel forwards what it was handed rather than always naming both,
     so a base kernel whose signature declares neither is called exactly as the
@@ -4430,7 +4430,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
         invariant_bindings: Blocked states the regime carries. When non-empty,
             the regime also declares a type-local decision whose continuation
             reads drop each such state's axis, for forward simulation grouped
@@ -8306,7 +8306,7 @@ def _build_Q_and_F_per_period(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.

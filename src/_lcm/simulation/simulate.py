@@ -1952,7 +1952,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # RECOMPUTES the gate at those candidate states
         # and OVERRIDES both — the target when open, a leg's fallback (with
         # its own projected states) when closed — for every subject in this
-        # regime. No-op for a regime without `gated_edges`.
+        # regime. No-op for a regime without gated edges.
         if period in regime.simulation.programs.gate_route:
             route_values, route_flags = acquire_gate_inputs(
                 reads=tuple(
