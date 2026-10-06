@@ -207,8 +207,9 @@ declared graph retains removed edges for inspection.
 State laws and joint lotteries that hand states across a removed edge leave with it, but
 the authored model keeps its meaning. A removed joint lottery is still checked for its
 target-state ownership. A source state whose only law was that lottery stays a valid
-state of the source, and a state or action read only by a removed law still counts as
-used. Every target that keeps an edge must still receive each state it carries.
+state of the source with the empty per-target law `{}`, exactly as in the model declared
+without the removed edge, and a state or action read only by a removed law still counts
+as used. Every target that keeps an edge must still receive each state it carries.
 
 Large applications can build regimes and the matching edge mapping from one internal
 edge catalog, then reuse that topology across policy variants that change only economic

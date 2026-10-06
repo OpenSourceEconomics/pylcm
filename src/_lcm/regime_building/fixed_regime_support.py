@@ -7,8 +7,9 @@ edge conditional; no state probes or runtime values narrow the graph.
 Removing an edge changes the effective graph, never the authored model's validity:
 
 - joint kernels leaving with an edge are checked for output ownership first;
-- a source state whose only authored law was such a kernel keeps an empty
-  per-target law, so it stays covered while no target cell is produced;
+- a source state whose only authored law was such a kernel gets the empty
+  per-target law `{}`, so the pruned regime is the one an author would write
+  without the removed edge: the state is covered and no target cell is produced;
 - the states and actions those removed declarations read are recorded, so a
   variable used only across a removed edge still counts as used.
 """
@@ -105,6 +106,8 @@ def prune_fixed_regime_support(
             )
             for state, law in regime.state_transitions.items()
         }
+        # The pruned model equals the edge-free model, in which the author
+        # declares these states' laws as empty per-target mappings.
         state_transitions |= dict.fromkeys(
             _states_covered_only_by_removed_joints(
                 regime=regime, joint_transitions=joint_transitions
@@ -229,7 +232,11 @@ def _removed_joint_ownership_errors(
 def _states_covered_only_by_removed_joints(
     *, regime: UserRegime, joint_transitions: Mapping[str, object]
 ) -> tuple[StateName, ...]:
-    """Source states whose only authored law is a removed joint kernel's output."""
+    """Source states whose only authored law is a removed joint kernel's output.
+
+    Without the removed edge, an author would declare each of these states with
+    the empty per-target law `{}`; pruning gives them exactly that.
+    """
 
     def outputs(joints: Mapping[str, object]) -> set[str]:
         return {

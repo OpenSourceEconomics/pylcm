@@ -12,8 +12,9 @@ probability 3/4. Two source layouts share this graph:
   only reader is the joint lottery, which shifts drawn wealth by `driver`. The
   value of `source` is `2 + p_high / 2 + p_high * driver`.
 
-Removing the `high` edge when `p_high` is fixed at exactly zero changes the
-effective graph only; the authored model stays valid and keeps its source states.
+Removing the `high` edge when `p_high` is fixed at exactly zero gives the model
+the author would get by declaring no `high` edge at all, where wealth's law is
+an empty per-target mapping: the model stays valid and keeps its source states.
 """
 
 from fractions import Fraction
@@ -45,6 +46,14 @@ class _RegimeId:
 
 
 @categorical(ordered=False)
+class _RegimeIdWithMid:
+    source: ScalarInt
+    low: ScalarInt
+    mid: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
 class _Driver:
     low: ScalarInt
     high: ScalarInt
@@ -52,6 +61,18 @@ class _Driver:
 
 def _low_mass(*, p_high: ScalarFloat) -> FloatND:
     return 1.0 - p_high
+
+
+def _low_mass_beside_mid(*, p_high: ScalarFloat) -> FloatND:
+    return 0.5 - p_high
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _certain() -> FloatND:
+    return jnp.asarray(1.0)
 
 
 def _high_mass(*, p_high: ScalarFloat) -> FloatND:
@@ -94,6 +115,7 @@ def _model(
     omit_driver_read: bool = False,
     high_wealth_law: bool = False,
     joint_output: str = "wealth",
+    with_mid: bool = False,
 ) -> Model:
     if source_kind == "wealth_source":
         states = {"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)}
@@ -121,12 +143,16 @@ def _model(
             }
         }
     )
+    mid_transition = {"mid": StochasticTransition(func=_half)} if with_mid else {}
     regimes = {
         "source": Regime(
             regime_transitions={
-                "low": StochasticTransition(func=_low_mass),
+                "low": StochasticTransition(
+                    func=_low_mass_beside_mid if with_mid else _low_mass
+                ),
                 "high": StochasticTransition(func=_high_mass),
-            },
+            }
+            | mid_transition,
             states=states,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
@@ -139,11 +165,17 @@ def _model(
             functions={"utility": _wealth_utility},
         ),
     }
+    if with_mid:
+        regimes["mid"] = Regime(
+            regime_transitions=None,
+            states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
+            functions={"utility": _wealth_utility},
+        )
     return Model(
         regimes=regimes,
-        regime_id_class=_RegimeId,
+        regime_id_class=_RegimeIdWithMid if with_mid else _RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": {"low": 0, "high": 0}},
+        edges={"source": {"low": 0, "high": 0} | ({"mid": 0} if with_mid else {})},
         initial_nodes=((0, "source"),),
         fixed_params={"p_high": probability} if fixed else {},
         enable_jit=enable_jit,
@@ -262,3 +294,74 @@ def test_malformed_joint_kernel_on_a_fixed_zero_edge_is_rejected(
             enable_jit=False,
             **overrides,
         )
+
+
+def test_kept_target_needing_a_state_only_a_removed_lottery_produced_is_rejected() -> (
+    None
+):
+    """A target that keeps its edge and carries wealth still needs a wealth law.
+
+    `mid` carries wealth and keeps a positive edge; the only declared wealth law
+    is the joint lottery toward `high`, which leaves with the zero edge.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"does not cover reachable target\(s\) \['mid'\]",
+    ):
+        _model(
+            source_kind="wealth_source",
+            fixed=True,
+            probability=0.0,
+            enable_jit=False,
+            with_mid=True,
+        )
+
+
+def _edge_free_wealth_model() -> Model:
+    """The wealth source as authored without the `high` edge and its lottery."""
+    regimes = {
+        "source": Regime(
+            regime_transitions={"low": StochasticTransition(func=_certain)},
+            states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
+            state_transitions={"wealth": {}},
+            functions={"utility": _wealth_utility},
+        ),
+        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "high": Regime(
+            regime_transitions=None,
+            states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
+            functions={"utility": _wealth_utility},
+        ),
+    }
+    return Model(
+        regimes=regimes,
+        regime_id_class=_RegimeId,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"source": {"low": 0}},
+        initial_nodes=((0, "source"),),
+        enable_jit=False,
+    )
+
+
+def _outcome(*, model: Model) -> tuple[object, ...]:
+    """The source's states, pruned variables, effective targets and values."""
+    values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
+    return (
+        model.state_names(regime_name="source"),
+        dict(model.pruned_variables),
+        model.graph.solution.targets(period=0, source="source"),
+        np.asarray(values[0]["source"]).tolist(),
+    )
+
+
+def test_fixed_zero_wealth_model_equals_the_edge_free_model() -> None:
+    """A weight-0 edge gives exactly the model without that edge.
+
+    The edge-free author writes wealth's law as the empty per-target mapping
+    `{"wealth": {}}`; both models carry wealth, prune nothing, reach only `low`
+    and value the source at `[3, 4, 5]`.
+    """
+    fixed_zero = _model(
+        source_kind="wealth_source", fixed=True, probability=0.0, enable_jit=False
+    )
+    assert _outcome(model=fixed_zero) == _outcome(model=_edge_free_wealth_model())
