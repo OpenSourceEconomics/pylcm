@@ -53,7 +53,6 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
-    AgeSelector,
     ByAge,
     DeterministicTransition,
     StochasticTransition,
@@ -170,7 +169,6 @@ def resolve_regime_schedules(
     Nothing is lowered here: `lower_demanded_transitions` lowers only the laws
     demand selects.
     """
-    _fail_if_support_is_undeclared(user_regimes=user_regimes)
     all_periods = tuple(range(ages.n_periods))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
     support: dict[
@@ -194,9 +192,19 @@ def resolve_regime_schedules(
             }
         else:
             law_by_period = dict.fromkeys(all_periods[:-1], transition)
-        law_by_period = _resolve_target_age_support(
-            law_by_period=law_by_period, ages=ages, regime_name=name
-        )
+        if source_ages_by_phase is not None:
+            # A source supplies a local problem only at ages with an edge.
+            edge_ages = {
+                age
+                for by_source in source_ages_by_phase.values()
+                for selected in by_source.get(name, {}).values()
+                for age in selected
+            }
+            law_by_period = {
+                period: law
+                for period, law in law_by_period.items()
+                if ages.exact_values[period] in edge_ages
+            }
         coverage[name] = tuple(law_by_period)
         side_by_phase = {
             phase: {
@@ -267,109 +275,6 @@ def resolve_regime_schedules(
         landings_by_regime=MappingProxyType(landings),
         law_by_period_by_regime=MappingProxyType(laws),
     )
-
-
-def _resolve_target_age_support(
-    *,
-    law_by_period: Mapping[int, object],
-    ages: AgeGrid,
-    regime_name: RegimeName,
-) -> dict[int, object]:
-    """Resolve destination-to-source-age restrictions without changing outputs."""
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
-    periods_by_target_by_law: dict[int, dict[str, frozenset[int]]] = {}
-    resolved_by_support: dict[tuple[int, tuple[str, ...]], object] = {}
-    for law in _distinct(law_by_period.values()):
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        for side in sides:
-            if not isinstance(
-                side, _SupportedDeterministicTransition | _SupportedStochasticTransition
-            ) or not isinstance(side.targets, Mapping):
-                continue
-            periods_by_target_by_law[id(side)] = _target_periods(
-                targets=side.targets,
-                ages=ages,
-                regime_name=regime_name,
-                period_by_age=period_by_age,
-            )
-
-    resolved: dict[int, object] = {}
-    for period, law in law_by_period.items():
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        selected_sides = [
-            _restrict_target_support(
-                side=side,
-                period=period,
-                by_target=periods_by_target_by_law.get(id(side)),
-                resolved_by_support=resolved_by_support,
-            )
-            for side in sides
-        ]
-        if isinstance(law, Phased):
-            solve, simulate = selected_sides
-            if (solve is None) != (simulate is None):
-                raise ModelInitializationError(
-                    f"Regime '{regime_name}' has different solve and simulate "
-                    f"source-age availability at age {ages.exact_values[period]}. "
-                    "Both phases must declare a local problem at the same ages; "
-                    "their target names may differ."
-                )
-            if solve is not None:
-                resolved[period] = Phased(solve=solve, simulate=simulate)
-        elif selected_sides[0] is not None:
-            resolved[period] = selected_sides[0]
-    return resolved
-
-
-def _restrict_target_support(
-    *,
-    side: object,
-    period: int,
-    by_target: Mapping[str, frozenset[int]] | None,
-    resolved_by_support: dict[tuple[int, tuple[str, ...]], object],
-) -> object | None:
-    """Reuse a transition with the support declared at one source period."""
-    if by_target is None:
-        return side
-    targets = tuple(
-        target for target, periods in by_target.items() if period in periods
-    )
-    if not targets:
-        return None
-    key = (id(side), targets)
-    if key not in resolved_by_support:
-        resolved_by_support[key] = dataclasses.replace(
-            cast(
-                "_SupportedDeterministicTransition | _SupportedStochasticTransition",
-                side,
-            ),
-            targets=targets,
-        )
-    return resolved_by_support[key]
-
-
-def _target_periods(
-    *,
-    targets: Mapping[str, AgeSelector],
-    ages: AgeGrid,
-    regime_name: RegimeName,
-    period_by_age: dict[object, int],
-) -> dict[str, frozenset[int]]:
-    """Validate and resolve one transition's destination age selectors."""
-    selected: dict[str, frozenset[int]] = {}
-    for target, selector in targets.items():
-        periods = _select_periods(
-            selector=selector, ages=ages, period_by_age=period_by_age
-        )
-        if not periods:
-            raise ModelInitializationError(
-                f"The source-age selector {selector!r} for target '{target}' "
-                f"of regime '{regime_name}' selects no model age."
-            )
-        selected[target] = frozenset(periods)
-    return selected
 
 
 def lower_demanded_transitions(
@@ -1376,9 +1281,8 @@ def _law_cells(
         }
     raise ModelInitializationError(
         f"A schedule case {law!r} is not a nonterminal regime law. Use a regime "
-        "name, `DeterministicTransition(func=func, targets=...)`, "
-        "`StochasticTransition(func=func, targets=...)` "
-        "or a per-target mapping."
+        "name, a `DeterministicTransition` or a per-target mapping, and declare "
+        "its destinations in `Model(edges=...)`."
     )
 
 
@@ -1404,47 +1308,3 @@ def _code(*, name: str, code_by_name: Mapping[str, int]) -> int:
 def _distinct[T](values: Iterable[T]) -> tuple[T, ...]:
     """Distinct objects by identity, in first-seen order."""
     return tuple({id(value): value for value in values}.values())
-
-
-def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) -> None:
-    """Every nonterminal law names the regimes it may select."""
-    errors = []
-    for name, regime in user_regimes.items():
-        transition = regime.regime_transitions
-        if transition is None:
-            continue
-        laws = transition.laws if isinstance(transition, ByAge) else (transition,)
-
-        for law in laws:
-            for side in (
-                (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-            ):
-                if isinstance(
-                    side, DeterministicTransition | StochasticTransition
-                ) and not isinstance(
-                    side,
-                    _SupportedDeterministicTransition | _SupportedStochasticTransition,
-                ):
-                    errors.append(
-                        f"Regime '{name}' declares a `{type(side).__name__}` "
-                        "without `targets`. Name its support: "
-                        "`StochasticTransition(func=func, targets=('a', 'b'))`."
-                    )
-                elif isinstance(
-                    side,
-                    _SupportedDeterministicTransition | _SupportedStochasticTransition,
-                ):
-                    _fail_if_unknown_targets(
-                        targets=tuple(side.targets or ()),
-                        regime_names=tuple(user_regimes),
-                    )
-                elif callable(side) and not isinstance(
-                    side, DeterministicTransition | StochasticTransition | Mapping
-                ):
-                    errors.append(
-                        f"Regime '{name}' declares a bare deterministic "
-                        "transition. Name its support: "
-                        "`DeterministicTransition(func=func, targets=('a', 'b'))`."
-                    )
-    if errors:
-        raise ModelInitializationError("\n".join(errors))

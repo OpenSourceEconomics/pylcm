@@ -337,7 +337,7 @@ def bind_graph_support(
             if cases
             else _SupportedStochasticTransition(
                 func=_Constant(value=(0.0,) * len(regimes)),
-                targets=MappingProxyType({}),
+                targets=(),
             )
         )
         result[source] = regime.replace(regime_transitions=bound)
