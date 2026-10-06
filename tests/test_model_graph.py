@@ -17,6 +17,7 @@ from lcm import (
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
+    RegimeInitializationError,
 )
 from lcm.regime import Regime
 from lcm.typing import ScalarInt
@@ -131,7 +132,7 @@ def test_transition_kernel_rejects_embedded_topology(
     wrapper: type[DeterministicTransition | StochasticTransition],
 ) -> None:
     """A kernel cannot declare a second source of model edges."""
-    with pytest.raises(TypeError, match="targets"):
+    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
         wrapper(
             func=lambda: _GraphRegimeId.realized,
             targets=("realized",),  # ty: ignore[unknown-argument] -- obsolete topology

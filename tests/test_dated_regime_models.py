@@ -28,7 +28,6 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
-    RegimeInitializationError,
 )
 from lcm.regime import Regime
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
@@ -754,17 +753,6 @@ def test_off_grid_monthly_start_raises_at_every_log_level(
             log_level=log_level,
             initial_nodes={0: "end", Fraction(1, 12): "end"},
         )
-
-
-@pytest.mark.parametrize(
-    "wrapper", [DeterministicTransition, StochasticTransition], ids=lambda w: w.__name__
-)
-def test_a_regime_law_naming_its_targets_is_refused_at_construction(
-    *, wrapper: Any
-) -> None:
-    """Destinations belong to `Model(edges=...)`; a law cannot name them."""
-    with pytest.raises(RegimeInitializationError, match=r"Model\(edges=\.\.\.\)"):
-        wrapper(func=lambda: RegimeId.dead, targets=("dead",))
 
 
 @pytest.mark.parametrize(
