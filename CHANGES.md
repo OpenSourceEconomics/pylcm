@@ -98,8 +98,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `model.graph` provides immutable declared edges, effective reachability and
   fixed-zero pruning reasons.
 - `Model(edges=...)` is the only place regime transitions are declared, structure
-  and law alike. Breaking API: `Regime` takes no `regime_transitions`; passing it
-  raises an error that points to `Model(edges=...)` and `Transition`.
+  and law alike. Breaking API: `Regime` has no `regime_transitions` field.
   - A source with exactly one outgoing edge at every source age is declared as a
     plain `{target: source_ages}` mapping: the graph is the law. Deterministic
     schedules such as `"dead"` or `ByAge.until(law="working", then="retired")`
@@ -114,8 +113,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     rejected as redundant, unless its law carries a `ValueDependentTransition`.
   - A regime with no outgoing edges is terminal.
   - `Phased` edges carry each phase's law in that phase's `Transition`.
-  - Passing `targets=` to `DeterministicTransition` or `StochasticTransition`
-    raises an error that points to `Model(edges=...)`.
+  - `DeterministicTransition` and `StochasticTransition` have no `targets` field.
   - `Regime` carries no law, so `Regime.terminal`, `Regime.gated_edges` and
     `Regime.decomposed_transition` are gone. `model.graph.laws[name]` holds each
     regime's law as the model binds it, with `terminal` (no outgoing edges),

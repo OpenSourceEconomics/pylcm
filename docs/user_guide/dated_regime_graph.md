@@ -7,9 +7,9 @@ title: Age-indexed regime graphs
 A model declares its admissible initial nodes and its graph. `Model` requires
 `initial_nodes` and `edges`. `Model(edges=...)` is the only place regime transitions are
 declared, structure and law alike: a source with one destination per age needs no law,
-and a `Transition` carries the law wherever a source age has several destinations.
-`Regime` takes no `regime_transitions`; `model.graph.laws` holds each regime's law as
-the model binds it from its edges.
+and a `Transition` carries the law wherever a source age has several destinations. A
+`Regime` carries no law; `model.graph.laws` holds each regime's law as the model binds
+it from its edges.
 
 ## Declare starts and edges
 

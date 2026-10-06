@@ -31,8 +31,8 @@ errors.
 
 ## Regime transitions and graph support
 
-`Model(edges=...)` declares every regime transition, structure and law. `Regime` takes
-no `regime_transitions`. A source maps to either
+`Model(edges=...)` declares every regime transition, structure and law; a `Regime`
+declares none. A source maps to either
 
 - a plain `{target: source_ages}` mapping, when it has exactly one outgoing edge at
   every source age — the graph is the law; or
