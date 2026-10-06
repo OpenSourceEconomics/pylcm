@@ -186,9 +186,9 @@ def _model(
 def _refusal(*, geometry_state: str, law_state: str) -> str:
     """The part of the refusal naming the regime, the geometry state and the draw."""
     return (
-        f"Regime 'alive' has a jump breakpoint 'fpl_cliff' that varies with the "
-        f"stochastic state '{geometry_state}', and its liquid law reads the draw "
-        f"'next_{law_state}'."
+        "Regime 'alive' has a jump breakpoint 'subsidy__fpl_cliff' that varies "
+        f"with the stochastic state '{geometry_state}', and its liquid law reads "
+        f"the draw 'next_{law_state}'."
     )
 
 
