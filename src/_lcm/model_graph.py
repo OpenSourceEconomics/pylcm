@@ -11,7 +11,9 @@ from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
 from _lcm.regime_building.schedules import (
     RegimeSchedules,
     _Constant,
+    _edge_support,
     _fallbacks,
+    _phase_side,
     resolve_demand,
     resolve_regime_schedules,
 )
@@ -176,9 +178,6 @@ def prepare_graph(
         {name: regime.regime_transitions for name, regime in bound.items()}
     )
     source_ages = {"solution": edges.solve, "simulation": edges.simulate}
-    before = resolve_regime_schedules(
-        user_regimes=bound, ages=ages, source_ages_by_phase=source_ages
-    )
     fixed_support = prune_fixed_regime_support(
         user_regimes=bound, fixed_params=fixed_params
     )
@@ -205,7 +204,9 @@ def prepare_graph(
         declarations=declarations,
         consumed_param_keys=fixed_support.consumed_param_keys,
         removed_edge_reads=fixed_support.removed_edge_reads,
-        pruned_edges=fixed_zero_edge_reasons(before=before, after=after, ages=ages),
+        pruned_edges=fixed_zero_edge_reasons(
+            bound=bound, edges=edges, after=after, ages=ages
+        ),
         cells_without_edges=cells_without_edges,
     )
 
@@ -343,28 +344,45 @@ def bind_graph_support(
 
 
 def fixed_zero_edge_reasons(
-    *, before: RegimeSchedules, after: RegimeSchedules, ages: AgeGrid
+    *,
+    bound: Mapping[RegimeName, Regime],
+    edges: GraphEdges,
+    after: RegimeSchedules,
+    ages: AgeGrid,
 ) -> MappingProxyType[str, MappingProxyType[Edge, str]]:
-    """Record only support removed by the fixed-probability proof stage."""
-    return MappingProxyType(
-        {
-            side: MappingProxyType(
-                {
-                    (
-                        ages.exact_values[period],
-                        source,
-                        target,
-                    ): "fixed_zero_probability"
-                    for source, by_period in before.support_by_phase[phase].items()
-                    for period, targets in by_period.items()
-                    for target in targets
-                    if target
-                    not in after.support_by_phase[phase].get(source, {}).get(period, ())
+    """Record only support removed by the fixed-probability proof stage.
+
+    `bound` holds the graph-bound laws before the proof and `after` the
+    schedules resolved from the pruned laws. A bound law is a `ByAge` with one
+    case per source age that has an edge, so each case's edge support is
+    compared directly with what survives in `after`.
+    """
+    names = tuple(bound)
+    reasons: dict[str, MappingProxyType[Edge, str]] = {}
+    for side, phase in (("solve", "solution"), ("simulate", "simulation")):
+        removed: dict[Edge, str] = {}
+        for source, regime in bound.items():
+            transition = regime.regime_transitions
+            if not isinstance(transition, ByAge):
+                continue
+            kept = after.support_by_phase[phase].get(source, {})
+            for period, law in transition.resolve(ages).law_by_period.items():
+                removed |= {
+                    (ages.exact_values[period], source, target): (
+                        "fixed_zero_probability"
+                    )
+                    for target in _edge_support(
+                        law=_phase_side(law=law, side=side),
+                        source=source,
+                        period=period,
+                        ages=ages,
+                        regime_names=names,
+                        source_ages=getattr(edges, side),
+                    )
+                    if target not in kept.get(period, ())
                 }
-            )
-            for side, phase in (("solve", "solution"), ("simulate", "simulation"))
-        }
-    )
+        reasons[side] = MappingProxyType(removed)
+    return MappingProxyType(reasons)
 
 
 def _resolve_edges(
@@ -399,23 +417,41 @@ def _resolve_edges(
                 raise ModelInitializationError(
                     f"Terminal regime '{source}' cannot declare outgoing graph edges."
                 )
-            try:
-                _fail_if_invalid_age_selector(selector)
-                periods = _select_periods(
-                    selector=selector, ages=ages, period_by_age=period_by_age
-                )
-            except RegimeInitializationError as error:
-                raise ModelInitializationError(str(error)) from error
-            if not periods:
-                raise ModelInitializationError(
-                    f"Graph selector {selector!r} for '{source}' → '{target}' "
-                    "selects no model age."
-                )
-            selected[target] = frozenset(
-                ages.exact_values[period] for period in periods
+            selected[target] = _selected_source_ages(
+                selector=selector,
+                edge=f"'{source}' → '{target}'",
+                ages=ages,
+                period_by_age=period_by_age,
             )
         resolved[source] = MappingProxyType(selected)
     return MappingProxyType(resolved)
+
+
+def _selected_source_ages(
+    *,
+    selector: object,
+    edge: str,
+    ages: AgeGrid,
+    period_by_age: Mapping[object, int],
+) -> frozenset[UserAge]:
+    """Resolve one edge's selector to the source ages at which it can fire."""
+    try:
+        _fail_if_invalid_age_selector(selector)
+        periods = _select_periods(
+            selector=selector, ages=ages, period_by_age=period_by_age
+        )
+    except RegimeInitializationError as error:
+        raise ModelInitializationError(str(error)) from error
+    if not periods:
+        raise ModelInitializationError(
+            f"Graph selector {selector!r} for {edge} selects no model age."
+        )
+    if set(periods) == {ages.n_periods - 1}:
+        raise ModelInitializationError(
+            f"Graph selector {selector!r} for {edge} selects only the final age "
+            f"{ages.exact_values[-1]}, where no transition happens."
+        )
+    return frozenset(ages.exact_values[period] for period in periods)
 
 
 def _bind_law(

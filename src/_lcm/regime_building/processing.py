@@ -2921,10 +2921,8 @@ def _state_handoff_errors(
 def _fail_if_a_law_reads_a_draw_the_edge_lacks(
     *,
     source_regime_name: RegimeName,
-    flat_nested_transitions: Mapping[str, UserFunction],
-    functions: Mapping[str, UserFunction],
+    reads_by_law: Mapping[str, frozenset[str]],
     state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
-    continuation_targets: Collection[RegimeName],
     source_draws: Collection[tuple[RegimeName, StateName]],
 ) -> None:
     """Refuse a state law that reads `next_<state>` where the edge has none.
@@ -2940,11 +2938,8 @@ def _fail_if_a_law_reads_a_draw_the_edge_lacks(
     """
     state_names = sorted({name for grids in state_grids.values() for name in grids})
     errors = []
-    for qname, law in flat_nested_transitions.items():
+    for qname, reads in reads_by_law.items():
         target, *_, law_name = tree_path_from_qname(qname)
-        if target not in continuation_targets:
-            continue
-        reads = _names_read_by(roots=(law,), functions=functions)
         errors += [
             f"The state law '{law_name}' from '{source_regime_name}' to '{target}' "
             f"reads 'next_{state}', but '{target}' does not carry '{state}' and no "
@@ -5086,8 +5081,9 @@ def _fail_if_solver_cannot_consume_transition_local_lotteries(
         for target, plan in transition_plans.items()
         for lottery in plan.lotteries.values()
         if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL
+        and lottery.support_origin not in solver.transition_local_lottery_origins
     )
-    if not lotteries or solver.supports_transition_local_lotteries:
+    if not lotteries:
         return
     rendered = ", ".join(
         f"{regime_name} -> {target}: {name!r}" for target, name in lotteries
@@ -5592,9 +5588,14 @@ def _process_regime_core(
     # then exists only inside the transition: it is taken from the source's law
     # at the source's current value, consumed by the target's laws, and not
     # persisted, because the target has no axis to store it on.
-    source_draw_grids = _source_draws_read_by_target_laws(
+    reads_by_law = _reads_by_target_law(
         flat_nested_transitions=flat_nested_transitions,
         functions=processed_functions,
+        continuation_targets=continuation_targets,
+    )
+    source_draw_grids = _source_draws_read_by_target_laws(
+        flat_nested_transitions=flat_nested_transitions,
+        reads_by_law=reads_by_law,
         source_random_grids={
             state: grid
             for state, grid in state_grids[source_regime_name].items()
@@ -5605,14 +5606,11 @@ def _process_regime_core(
             or state in markov_draw_laws
         },
         state_grids=state_grids,
-        continuation_targets=continuation_targets,
     )
     _fail_if_a_law_reads_a_draw_the_edge_lacks(
         source_regime_name=source_regime_name,
-        flat_nested_transitions=flat_nested_transitions,
-        functions=processed_functions,
+        reads_by_law=reads_by_law,
         state_grids=state_grids,
-        continuation_targets=continuation_targets,
         source_draws=frozenset(source_draw_grids),
     )
     source_draw_keys = _add_source_draw_functions(
@@ -5785,10 +5783,9 @@ def _process_joint_transitions(
 def _source_draws_read_by_target_laws(
     *,
     flat_nested_transitions: Mapping[str, UserFunction],
-    functions: Mapping[str, UserFunction],
+    reads_by_law: Mapping[str, frozenset[str]],
     source_random_grids: Mapping[StateName, Grid],
     state_grids: Mapping[RegimeName, Mapping[StateName, Grid]],
-    continuation_targets: Collection[RegimeName],
 ) -> dict[tuple[RegimeName, StateName], Grid]:
     """Find the source's random states whose draw a law toward a non-carrier reads.
 
@@ -5802,14 +5799,11 @@ def _source_draws_read_by_target_laws(
         The source state's grid, keyed by `(target, state)`.
 
     """
+    reads_by_target: dict[RegimeName, set[str]] = {}
+    for qname, reads in reads_by_law.items():
+        reads_by_target.setdefault(tree_path_from_qname(qname)[0], set()).update(reads)
     draws: dict[tuple[RegimeName, StateName], Grid] = {}
-    for target in sorted(continuation_targets):
-        laws = {
-            name: law
-            for name, law in flat_nested_transitions.items()
-            if tree_path_from_qname(name)[0] == target
-        }
-        reads = _names_read_by(roots=laws.values(), functions=functions)
+    for target, reads in sorted(reads_by_target.items()):
         for state, grid in source_random_grids.items():
             if (
                 state not in state_grids.get(target, {})
@@ -5868,6 +5862,23 @@ def _add_source_draw_functions(
             )
         keys += [axis_name, support_name]
     return tuple(keys)
+
+
+def _reads_by_target_law(
+    *,
+    flat_nested_transitions: Mapping[str, UserFunction],
+    functions: Mapping[str, UserFunction],
+    continuation_targets: Collection[RegimeName],
+) -> dict[str, frozenset[str]]:
+    """Collect the names each law toward a continuation target reads.
+
+    Keyed by the law's qualified name; reads go through `functions`.
+    """
+    return {
+        qname: _names_read_by(roots=(law,), functions=functions)
+        for qname, law in flat_nested_transitions.items()
+        if tree_path_from_qname(qname)[0] in continuation_targets
+    }
 
 
 def _names_read_by(
