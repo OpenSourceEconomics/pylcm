@@ -706,16 +706,17 @@ def _zero_utility(*, landing: DiscreteState, h: DiscreteState) -> FloatND:
 
 
 def _peak_at_the_first_landing(
-    *, landing: DiscreteState, h: DiscreteState, peak: FloatND
+    *, landing: DiscreteState, h: DiscreteState, z: DiscreteState, peak: FloatND
 ) -> FloatND:
-    # Reading `h` keeps the slice draw on the terminal value's axes.
-    return jnp.where((landing == 0) & (h >= 0), peak, 0.0)
+    # Reading `h` and `z` keeps both draws on the terminal value's axes; both
+    # conditions hold at every code, so the value depends on `landing` alone.
+    return jnp.where((landing == 0) & (h >= 0) & (z >= 0), peak, 0.0)
 
 
 def _peak_or_three_quarters_for_certain(
-    *, landing: DiscreteState, h: DiscreteState, peak: FloatND
+    *, landing: DiscreteState, h: DiscreteState, z: DiscreteState, peak: FloatND
 ) -> FloatND:
-    risky = jnp.where((landing == 0) & (h >= 0), peak, 0.0)
+    risky = jnp.where((landing == 0) & (h >= 0) & (z >= 0), peak, 0.0)
     return jnp.where(landing == 2, 0.75 * peak, risky)
 
 
@@ -726,7 +727,8 @@ def _finite_range_model(
 
     `landing` copies the `z` draw, so `z` moves the landing coordinate while
     `h` only selects the value slice read there. The flow utility of `alive`
-    reads `landing` and `h` and is zero.
+    reads `landing` and `h` and is zero; the terminal utility of `final` reads
+    all three states but varies only with `landing`.
     """
     row = _UNIT_SLICE_ROWS[dtype.name]
     if reverse:
