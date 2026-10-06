@@ -15,7 +15,9 @@ import pytest
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
-from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import (
+    assert_values_agree as assert_agrees_to_ulp,
+)
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -25,6 +27,8 @@ from tests.test_models.processes import (
 
 _N_PERIODS = 6
 _CELL_AXIS = "cell"
+# The leaf whose low-income, bad-health entries are born by cancellation.
+_CANCELLATION_LEAF = (2, "work")
 
 
 def _base_model() -> Model:
@@ -127,16 +131,117 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
     assert set(pinned_values) == set(planned_values)
     for period, by_regime in planned_values.items():
         for regime_name, expected in by_regime.items():
-            # Values near zero are born by cancellation between the flow utility and
-            # the discounted continuation, so the gap is measured at the spacing of
-            # those operands rather than at the compared element's own magnitude.
-            assert_agrees_to_ulp(
-                got=pinned_values[period][regime_name],
-                expected=expected,
-                n_ulp=8,
-                err_msg=f"{regime_name} period {period}",
-                operand_magnitude=float(np.abs(np.asarray(expected)).max()),
+            got = pinned_values[period][regime_name]
+            err_msg = f"{regime_name} period {period}"
+            if (period, regime_name) == _CANCELLATION_LEAF:
+                flow, continuation = _bellman_operands(
+                    values=planned_values, period=period
+                )
+                _assert_within_operand_rounding_bound(
+                    got=got,
+                    expected=expected,
+                    flow=flow,
+                    continuation=continuation,
+                    n_ulp=8,
+                    err_msg=err_msg,
+                )
+            else:
+                assert_agrees_to_ulp(
+                    got=got, expected=expected, n_ulp=8, err_msg=err_msg
+                )
+
+
+def _bellman_operands(*, values: Any, period: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return the two terms whose sum is each work-regime value at `period`.
+
+    The work regime's last period continues into retirement, so its value is
+    `V = u(c*) + E[V_retire(next period)]` with discount factor 1:
+
+    - flow utility `u = log(c*) * (1 - 0.3 * (1 - health))`;
+    - continuation: the next-period retirement value at wealth `wealth - c*`,
+      linear in wealth (extrapolated below the grid), averaged over the
+      Gauss-Hermite income nodes and the two equally likely health states.
+
+    The optimal consumption `c*` is found by enumerating the feasible
+    consumption grid. Arrays are indexed `(income, health, wealth)` like the
+    value leaf. The reconstruction must reproduce the solved leaf and pick a
+    strict maximizer, or the operands are not the ones the solver summed.
+    """
+    leaf = np.asarray(values[period]["work"])
+    following = np.asarray(values[period + 1]["retire"], dtype=np.float64)
+    wealth = np.linspace(1.0, 5.0, 5)
+    consumption = np.linspace(0.1, 2.0, 4)
+    nodes, weights = np.polynomial.hermite_e.hermegauss(5)
+    weights = weights / weights.sum()
+    tolerance = 1e3 * np.finfo(leaf.dtype).eps
+    flow = np.empty(leaf.shape)
+    continuation = np.empty(leaf.shape)
+    for (income, health, wealth_index), solved in np.ndenumerate(leaf):
+        candidates = []
+        for choice in consumption:
+            if wealth[wealth_index] - choice + np.exp(nodes[income]) < 0:
+                continue
+            utility = np.log(choice) * (1.0 - 0.3 * (1.0 - health))
+            expected_next = sum(
+                0.5
+                * weights[node]
+                * _interpolate(
+                    x=wealth[wealth_index] - choice,
+                    grid=wealth,
+                    values=following[node, next_health],
+                )
+                for node in range(len(nodes))
+                for next_health in (0, 1)
             )
+            candidates.append((utility + expected_next, utility, expected_next))
+        candidates.sort(reverse=True)
+        assert abs(candidates[0][0] - solved) <= tolerance
+        assert len(candidates) == 1 or candidates[0][0] - candidates[1][0] > tolerance
+        flow[income, health, wealth_index] = candidates[0][1]
+        continuation[income, health, wealth_index] = candidates[0][2]
+    return flow, continuation
+
+
+def _interpolate(*, x: float, grid: np.ndarray, values: np.ndarray) -> float:
+    """Interpolate linearly on `grid`, extending the end segments beyond it."""
+    segment = int(np.clip(np.searchsorted(grid, x) - 1, 0, len(grid) - 2))
+    weight = (x - grid[segment]) / (grid[segment + 1] - grid[segment])
+    return float(values[segment] * (1 - weight) + values[segment + 1] * weight)
+
+
+def _assert_within_operand_rounding_bound(
+    *,
+    got: Any,
+    expected: Any,
+    flow: np.ndarray,
+    continuation: np.ndarray,
+    n_ulp: int,
+    err_msg: str,
+) -> None:
+    """Hold each element to its own steps or to the rounding of its own operands.
+
+    An element passes if it moved at most `n_ulp` of its own representable steps,
+    or if `|got - expected|` is at most the operand rounding bound
+    `n_ulp * (spacing(|flow|) + spacing(|continuation|))`, with spacings in the
+    leaf's format. Each element's bound uses only that element's two operands; a
+    reordered sum moves a value born by their cancellation by roundings of the
+    operands, not of the value.
+    """
+    actual = np.asarray(got)
+    reference = np.asarray(expected)
+    dtype = reference.dtype
+    bound = n_ulp * (
+        np.spacing(np.abs(flow).astype(dtype)).astype(np.float64)
+        + np.spacing(np.abs(continuation).astype(dtype)).astype(np.float64)
+    )
+    distance = np.abs(actual.astype(np.float64) - reference.astype(np.float64))
+    by_operands = distance <= bound
+    assert_agrees_to_ulp(
+        got=actual[~by_operands],
+        expected=reference[~by_operands],
+        n_ulp=n_ulp,
+        err_msg=err_msg,
+    )
 
 
 def test_a_mapping_and_an_integer_may_share_one_declaration() -> None:

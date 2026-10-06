@@ -22,7 +22,10 @@ from beartype.roar import BeartypeCallHintViolation
 from _lcm.execution.hlo_fusions import UnrecognisedHloError
 from _lcm.solution import backward_induction
 from lcm import ExecutionConfig, Model
-from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
+from tests.conftest import X64_ENABLED
+from tests.simulation._profile_comparison import (
+    assert_values_agree as assert_agrees_to_ulp,
+)
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,

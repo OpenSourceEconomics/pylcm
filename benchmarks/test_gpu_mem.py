@@ -139,6 +139,13 @@ def test_subprocess_env_drops_mem_fraction():
     assert "XLA_PYTHON_CLIENT_MEM_FRACTION" not in env
 
 
+def test_subprocess_env_preallocates_even_when_the_parent_does_not():
+    """The subprocess preallocates its pool, as production does, so pylcm's default
+    device-memory budget is admitted there whatever the ASV parent sets."""
+    env = _subprocess_env({"XLA_PYTHON_CLIENT_PREALLOCATE": "false"})
+    assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
+
+
 def test_gpu_mem_imports_on_a_host_without_resource_module():
     """The harness imports on hosts whose Python has no `resource` module."""
     result = _run_without_resource_module(code="import benchmarks.asv._gpu_mem\n")
@@ -269,7 +276,7 @@ def test_gpu_memory_profile_rejects_reused_child_pid(
         assert text
         assert not check
         assert cwd == _PROJECT_ROOT
-        assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+        assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "true"
         phase = command[command.index("--profile-phase") + 1]
         if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
             archive_path = Path(command[command.index("--archive") + 1])

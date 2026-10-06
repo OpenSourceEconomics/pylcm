@@ -80,6 +80,7 @@ class SimulationResult:
         self._ages = ages
         self._subject_batch_size = subject_batch_size
         self._solution: object | None = None
+        self._durable_identity = True
         self._plan_summary: SimulationPlanSummary | None = None
         # The original rows of a simulation of selected codes, which holds
         # those rows alone; `None` for a simulation of the whole population.
@@ -297,6 +298,13 @@ class SimulationResult:
             for their construction.
 
         """
+        if not self._durable_identity:
+            from lcm.exceptions import IncompatibleSolutionError  # noqa: PLC0415
+
+            raise IncompatibleSolutionError(
+                "An ephemeral simulation result cannot be persisted; "
+                "export its dataframe instead."
+            )
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
 
@@ -428,6 +436,7 @@ class SimulationResult:
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
+        instance._durable_identity = True  # noqa: SLF001
         instance._plan_summary = None  # noqa: SLF001
         return instance
 

@@ -2,7 +2,10 @@
 
 The ExecutionConfig subject width controls how many subjects enter the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
-identical whether subjects run in a single pass (`0`) or in chunks (`> 0`). The model
+structurally exact whether subjects run in one pass or in chunks. Only the published
+`value` and derived targets, which each chunk's independently compiled kernel
+recomputes from exact states and actions, receive eight ordered representable
+steps. The model
 used here has both a categorical `StochasticTransition` (health) and a continuous shock
 process (income), so the per-subject RNG feeds both `jax.random.choice` and
 `draw_shock` — the case that would silently diverge if a subject's draws depended on
@@ -13,10 +16,9 @@ import jax
 import pandas as pd
 import pytest
 from jax import numpy as jnp
-from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import ExecutionConfig, Model
-from tests.conftest import DECIMAL_PRECISION
+from tests.simulation._profile_comparison import assert_public_frames
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
@@ -67,39 +69,31 @@ def _simulate_df(
             initial_conditions=_INITIAL_CONDITIONS,
             seed=42,
         )
-    return (
-        result.to_dataframe(additional_targets=additional_targets)
-        .sort_values(["subject_id", "period"])
-        .reset_index(drop=True)
-    )
+    # Compare delivered row identities/order, not a sorted/reset surrogate.
+    return result.to_dataframe(additional_targets=additional_targets)
 
 
 def _assert_columns_invariant(*, baseline: pd.DataFrame, batched: pd.DataFrame) -> None:
-    assert list(batched.columns) == list(baseline.columns)
-    for column in baseline.columns:
-        if pd.api.types.is_float_dtype(baseline[column]):
-            # `aaae` treats matching NaN positions as equal, so dead-regime rows
-            # (NaN states/actions) compare cleanly.
-            aaae(
-                batched[column].to_numpy(),
-                baseline[column].to_numpy(),
-                decimal=DECIMAL_PRECISION,
-            )
-        else:
-            # NaN-aware exact comparison for discrete/label columns.
-            pd.testing.assert_series_equal(batched[column], baseline[column])
+    """Separate exact structure from independently compiled published values."""
+    assert_public_frames(
+        got=batched,
+        expected=baseline,
+        mode="independently_compiled",
+        n_ulp=8,
+        value_columns=("value", "utility"),
+    )
 
 
 @pytest.mark.parametrize("subject_batch_size", [2, 3, 100])
 def test_simulation_output_is_invariant_to_subject_batch_size(
     subject_batch_size: int,
 ) -> None:
-    """Chunked simulation reproduces the single-pass `to_dataframe()` exactly.
+    """Chunked simulation preserves structure and the published-value budget.
 
     Across an even split (2 over 7 subjects), an uneven one (3 → 3, 3, 1), and a
     chunk larger than the population (100 → single chunk), every discrete column
-    matches the unbatched run exactly and every continuous column to
-    `DECIMAL_PRECISION`.
+    matches the unbatched run exactly, as do continuous states/actions. Only the
+    independently compiled published `value` column receives eight ordered steps.
     """
     baseline = _simulate_df(subject_batch_size=0)
     batched = _simulate_df(subject_batch_size=subject_batch_size)
@@ -113,8 +107,9 @@ def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
     """Eagerly computed `additional_targets` are invariant to the chunk size.
 
     The target DAG (`utility`) is evaluated over the in-regime rows in chunks of
-    `subject_batch_size` when set; an uneven split must still reproduce the
-    single-pass `utility` column for every subject-period.
+    `subject_batch_size` when set; every split reproduces the single-pass
+    `utility` column for every subject-period within the value allowance, and
+    the states and actions it is computed from exactly.
     """
     baseline = _simulate_df(subject_batch_size=0, additional_targets=["utility"])
     batched = _simulate_df(

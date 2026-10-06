@@ -27,6 +27,7 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    AgeSpecializedGrid,
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
@@ -153,7 +154,7 @@ def make_alive_dead_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     constraints: Mapping[str, Callable[..., object]],
     extra_actions: Mapping[str, Grid] | None = None,
-    extra_states: Mapping[str, Grid] | None = None,
+    extra_states: Mapping[str, Grid | AgeSpecializedGrid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,

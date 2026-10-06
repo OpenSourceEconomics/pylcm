@@ -461,11 +461,35 @@ class RetainedComponentValues:
         )
 
     def assemble_value(self, *, period: int, regime: RegimeName) -> jax.Array:
-        """Return one complete value on the layout the period-major solve publishes."""
-        return jax.device_put(
-            self.assemble_host_value(period=period, regime=regime),
-            self._layouts[(period, regime)].sharding,
-        )
+        """Return one complete value on the layout the period-major solve publishes.
+
+        The read is admitted against the budget before anything is assembled. The
+        returned array is uploaded from a host array assembled for this read
+        alone, so it shares no buffer with the retention or with another reader.
+
+        Raises:
+            ExecutionPlanningError: If the value does not fit the budget on a
+                device it is placed on, or the upload leaves the published layout.
+
+        """
+        coordinate = (period, regime)
+        self.admit_full_materialization(coordinates=(coordinate,))
+        layout = self._layouts[coordinate]
+        host = self.assemble_host_value(period=period, regime=regime)
+        value = jax.device_put(host, layout.sharding)
+        if (
+            tuple(value.shape) != layout.shape
+            or np.dtype(value.dtype) != host.dtype
+            or value.sharding != layout.sharding
+        ):
+            msg = (
+                f"Value {coordinate!r} was assembled with shape {value.shape}, "
+                f"dtype {value.dtype} and sharding {value.sharding}, not the "
+                f"published shape {layout.shape}, dtype {host.dtype} and sharding "
+                f"{layout.sharding}."
+            )
+            raise ExecutionPlanningError(msg)
+        return value
 
     def upload(
         self, *, code: int
@@ -502,25 +526,46 @@ class RetainedComponentValues:
         """
         if self._budget_bytes is None:
             return
-        need = _bytes_by_device(
-            layouts=tuple(self._layouts[coordinate] for coordinate in coordinates),
-            item_bytes=self._item_bytes(),
-        )
-        over = {
-            device: count
-            for device, count in need.items()
-            if count > self._budget_bytes
-        }
-        if over:
-            msg = (
-                f"Materializing {len(coordinates)} block-major values at once needs "
-                f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
-                f"{self._budget_bytes} bytes. Read the values one at a time with "
+        over = self._over_budget(coordinates=coordinates)
+        if not over:
+            return
+        if any(self._over_budget(coordinates=(each,)) for each in coordinates):
+            reads = (
+                f"Reading {coordinates[0]!r}"
+                if len(coordinates) == 1
+                else f"Materializing {len(coordinates)} block-major values at once"
+            )
+            remedy = (
+                "At least one of these values alone exceeds the budget, so it "
+                "cannot be read on the devices. Save the result with "
+                "SolutionResult.save, which writes every value from the host, or "
+                "raise ExecutionConfig.device_memory_bytes."
+            )
+        else:
+            reads = f"Materializing {len(coordinates)} block-major values at once"
+            remedy = (
+                "Read the values one at a time with "
                 "SolutionResult.value(period=..., regime=...), save the result "
                 "with SolutionResult.save, or raise "
                 "ExecutionConfig.device_memory_bytes."
             )
-            raise ExecutionPlanningError(msg)
+        msg = (
+            f"{reads} needs {dict(sorted(over.items()))!r} bytes on devices whose "
+            f"budget is {self._budget_bytes} bytes. {remedy}"
+        )
+        raise ExecutionPlanningError(msg)
+
+    def _over_budget(self, *, coordinates: tuple[_Coordinate, ...]) -> dict[int, int]:
+        """Return each device whose bytes for `coordinates` exceed the budget."""
+        need = _bytes_by_device(
+            layouts=tuple(self._layouts[coordinate] for coordinate in coordinates),
+            item_bytes=self._item_bytes(),
+        )
+        return {
+            device: count
+            for device, count in need.items()
+            if self._budget_bytes is not None and count > self._budget_bytes
+        }
 
     def retention_record(self) -> ComponentRetentionRecord:
         """Return what this retention holds on the host and has moved."""
@@ -587,6 +632,10 @@ class _ComponentValueEntry(_LazyEntry):
     def materialize(self, *, template: object | None = None) -> object:
         """Assemble the value on the layout the period-major solve publishes."""
         del template
+        return self.owner.assemble_value(period=self.period, regime=self.regime)
+
+    def fresh_value(self) -> jax.Array:
+        """Assemble the value into a buffer owned by this reader alone."""
         return self.owner.assemble_value(period=self.period, regime=self.regime)
 
     def host_value(self) -> np.ndarray:

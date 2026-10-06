@@ -28,7 +28,12 @@ import pytest
 
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
-from tests.solution._nbegm_direct_oracle import ride_along_kernel, run_production_kernel
+from tests.solution._nbegm_direct_oracle import (
+    ChildPeriodContext,
+    child_period_context,
+    ride_along_kernel,
+    run_production_kernel,
+)
 from tests.solution.test_nbegm_direct_oracle import (
     _assert_kernel_agrees_with_oracle,
 )
@@ -90,21 +95,22 @@ _CONTINUATION_FEEDING: dict[str, _Route] = {
 }
 
 
-def _kernel(route: _Route) -> tuple[Any, Any]:
+def _kernel(route: _Route) -> tuple[Any, Any, ChildPeriodContext | None]:
     build_model, build_params = route
+    model = build_model()
     kernel, context = ride_along_kernel(
-        model=build_model(),
+        model=model,
         params=build_params(),
         regime_name="alive",
         period=_PERIOD,
     )
     assert isinstance(kernel, _RideAlongNBEGMPeriodKernel)
-    return kernel, context
+    return kernel, context, child_period_context(model=model, context=context)
 
 
 @pytest.mark.parametrize("route", list(_BUDGET_ONLY))
 def test_budget_only_actions_share_one_continuation_class(*, route: str):
-    kernel, _ = _kernel(_BUDGET_ONLY[route])
+    kernel, *_ = _kernel(_BUDGET_ONLY[route])
     statics = kernel.statics
 
     assert statics.n_action_branches > 1
@@ -116,7 +122,7 @@ def test_budget_only_actions_share_one_continuation_class(*, route: str):
 
 @pytest.mark.parametrize("route", list(_CONTINUATION_FEEDING))
 def test_an_action_reaching_the_continuation_splits_the_classes(*, route: str):
-    kernel, _ = _kernel(_CONTINUATION_FEEDING[route])
+    kernel, *_ = _kernel(_CONTINUATION_FEEDING[route])
     statics = kernel.statics
 
     assert statics.continuation_action_names == ("buy_private",)
@@ -229,11 +235,11 @@ def test_ignoring_the_channels_makes_the_core_disagree_with_the_oracle(
     monkeypatch.setattr(
         nbegm_module, "_continuation_action_names", lambda **_kwargs: ()
     )
-    kernel, context = _kernel(_CONTINUATION_FEEDING[route])
+    kernel, context, child = _kernel(_CONTINUATION_FEEDING[route])
     assert kernel.statics.n_continuation_classes == 1
 
     with pytest.raises(AssertionError):
-        _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+        _assert_kernel_agrees_with_oracle(kernel=kernel, context=context, child=child)
 
 
 def test_the_discount_factor_binds_per_branch_not_per_cell():
@@ -245,8 +251,8 @@ def test_the_discount_factor_binds_per_branch_not_per_cell():
     whose discount factor is that constant; the branch-bound solve must differ
     from it and agree with the oracle.
     """
-    kernel, context = _kernel(_CONTINUATION_FEEDING["action_in_discount"])
-    shared_kernel, shared_context = _kernel(
+    kernel, context, child = _kernel(_CONTINUATION_FEEDING["action_in_discount"])
+    shared_kernel, shared_context, _ = _kernel(
         (
             lambda: nbegm_ride_discrete_toy.build_model(
                 variant="nbegm", n_periods=3, **_SMALL
@@ -263,21 +269,21 @@ def test_the_discount_factor_binds_per_branch_not_per_cell():
     assert not np.isnan(np.asarray(branch_bound[0])).any()
     assert not np.isnan(np.asarray(cell_shared[0])).any()
     assert not np.allclose(np.asarray(branch_bound[0]), np.asarray(cell_shared[0]))
-    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context, child=child)
 
 
 @pytest.mark.parametrize("route", [*_BUDGET_ONLY, *_CONTINUATION_FEEDING])
 def test_the_factored_read_matches_the_direct_oracle_on_every_branch_route(
     *, route: str
 ):
-    kernel, context = _kernel({**_BUDGET_ONLY, **_CONTINUATION_FEEDING}[route])
+    kernel, context, child = _kernel({**_BUDGET_ONLY, **_CONTINUATION_FEEDING}[route])
 
-    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context, child=child)
 
 
 def test_the_class_partition_is_derived_from_the_continuation_actions_alone():
     """The partition keys each branch by its continuation actions' codes only."""
-    kernel, _ = _kernel(_BUDGET_ONLY["multi_discrete"])
+    kernel, *_ = _kernel(_BUDGET_ONLY["multi_discrete"])
     statics = kernel.statics
     continuation_positions = tuple(
         statics.discrete_action_names.index(name)

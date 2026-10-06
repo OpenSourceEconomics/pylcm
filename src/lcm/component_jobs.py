@@ -48,7 +48,7 @@ import _lcm
 import lcm
 from _lcm import version as _version
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
-from _lcm.engine import PeriodRegimeSimulationData
+from _lcm.engine import PeriodRegimeSimulationData, placed_devices_for_ids
 from _lcm.persistence.solution import (
     _require_exact_dict,
     _require_exact_list,
@@ -56,8 +56,10 @@ from _lcm.persistence.solution import (
     _require_positive_exact_int,
     _require_sha256,
 )
+from _lcm.simulation.chunk_offload import chunk_host_device
 from _lcm.simulation.programs import forward_regimes_by_period
-from _lcm.simulation.subject_groups import group_codes
+from _lcm.simulation.subject_devices import simulation_subject_devices
+from _lcm.simulation.subject_groups import group_codes, group_sizes
 from _lcm.solution.artifacts import fingerprint_flat_params
 from _lcm.solution.block_major import (
     RetainedComponentValues,
@@ -145,6 +147,9 @@ class ComponentJobPlan:
     job_rows_sha256: tuple[str, ...] | None
     """Digest of each job's original rows, or `None` for a solve-only plan."""
 
+    code_counts: tuple[int, ...] | None
+    """Subjects holding each code, in grid order, or `None` for a solve-only plan."""
+
     @property
     def simulates(self) -> bool:
         """Whether the jobs simulate their codes' subjects."""
@@ -228,13 +233,15 @@ def plan_component_jobs(
     if initial_conditions is None:
         flat_params = model._process_params(params)  # noqa: SLF001
         job_rows_sha256 = None
+        code_counts = None
     else:
         canonical, flat_params = model._canonical_feasibility_inputs(  # noqa: SLF001
             initial_conditions=initial_conditions, params=params
         )
-        job_rows_sha256 = _planned_row_checksums(
+        job_rows_sha256, code_counts = _planned_rows(
             model=model,
             jobs=jobs,
+            codes=codes,
             initial_conditions=canonical,
             n_subjects=cast("int", n_subjects),
         )
@@ -258,6 +265,7 @@ def plan_component_jobs(
                     initial_conditions=initial_conditions
                 ),
                 "job_rows_sha256": list(cast("tuple[str, ...]", job_rows_sha256)),
+                "code_counts": list(cast("tuple[int, ...]", code_counts)),
             },
         },
     )
@@ -320,6 +328,31 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
         if job_rows_sha256 is not None and len(job_rows_sha256) != len(jobs):
             msg = "Job row digests do not match the planned code jobs."
             raise SolutionIntegrityError(msg)
+        n_subjects = (
+            None
+            if simulation is None
+            else _require_positive_exact_int(
+                value=simulation["n_subjects"], label="simulation population count"
+            )
+        )
+        code_counts = (
+            None
+            if simulation is None
+            else tuple(
+                _require_nonnegative_exact_int(value=count, label="code population")
+                for count in _require_exact_list(
+                    value=simulation["code_counts"], label="code populations"
+                )
+            )
+        )
+        if code_counts is not None and (
+            len(code_counts) != len(codes) or sum(code_counts) != n_subjects
+        ):
+            msg = (
+                f"Code populations {code_counts!r} do not give one count per code "
+                f"of {codes!r} summing to the population of {n_subjects}."
+            )
+            raise SolutionIntegrityError(msg)
         return ComponentJobPlan(
             directory=directory,
             plan_id=str(plan["plan_id"]),
@@ -331,11 +364,7 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
                 dict(cast("Mapping[str, object]", plan["identity"]))
             ),
             seed=cast("int | None", seed),
-            n_subjects=None
-            if simulation is None
-            else _require_positive_exact_int(
-                value=simulation["n_subjects"], label="simulation population count"
-            ),
+            n_subjects=n_subjects,
             initial_conditions_sha256=None
             if simulation is None
             else _require_sha256(
@@ -343,6 +372,7 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
                 label="initial population digest",
             ),
             job_rows_sha256=job_rows_sha256,
+            code_counts=code_counts,
         )
     except (OSError, KeyError, TypeError, ValueError, ExecutionPlanningError) as error:
         msg = f"{path} cannot be read as a component job plan: {error}"
@@ -388,7 +418,7 @@ def run_component_job(
 
     """
     _fail_if_not_block_major(model=model)
-    model._sealed_bindings.fail_if_moved()  # noqa: SLF001
+    model._check_identity_runtime()  # noqa: SLF001
     plan = load_component_job_plan(directory=directory)
     if type(job) is not int or not 0 <= job < len(plan.jobs):
         msg = (
@@ -498,7 +528,7 @@ def collect_component_jobs(
 
     """
     _fail_if_not_block_major(model=model)
-    model._sealed_bindings.fail_if_moved()  # noqa: SLF001
+    model._check_identity_runtime()  # noqa: SLF001
     plan = load_component_job_plan(directory=directory)
     flat_params = model._process_params(params)  # noqa: SLF001
     _fail_if_identity_differs(
@@ -794,37 +824,49 @@ def _initial_conditions_sha256(
     return digest.hexdigest()
 
 
-def _planned_row_checksums(
+def _planned_rows(
     *,
     model: Model,
     jobs: tuple[tuple[int, ...], ...],
+    codes: tuple[int, ...],
     initial_conditions: InitialConditions,
     n_subjects: int,
-) -> tuple[str, ...]:
-    """Bind each job to the canonical full population's original row positions."""
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """Bind each job to the canonical population's rows; count each code's rows.
+
+    Returns:
+        The digest of each job's original rows, and the number of subjects
+        holding each code, in grid order.
+
+    """
     route = next(iter(model._regimes.values())).simulation.programs.grouping  # noqa: SLF001
     if route is None:
         msg = (
             "Simulating component jobs require the model's invariant subject grouping."
         )
         raise ExecutionPlanningError(msg)
-    keys = group_codes(
-        route=route,
-        codes=(
-            np.asarray(jax.device_get(initial_conditions[route.state_name]))
-            if route.state_name in initial_conditions
-            else None
-        ),
-        n_real=n_subjects,
+    if tuple(route.codes) != codes:
+        msg = (
+            f"The subject grouping orders the codes {tuple(route.codes)!r}, not "
+            f"the grid order {codes!r}."
+        )
+        raise ExecutionPlanningError(msg)
+    population_codes = (
+        np.asarray(jax.device_get(initial_conditions[route.state_name]))
+        if route.state_name in initial_conditions
+        else None
     )
-    return tuple(
+    keys = group_codes(route=route, codes=population_codes, n_real=n_subjects)
+    digests = tuple(
         _job_row_checksum(
             job=job,
-            codes=codes,
-            rows=np.flatnonzero(np.isin(keys, codes)).astype(np.int64),
+            codes=job_codes,
+            rows=np.flatnonzero(np.isin(keys, job_codes)).astype(np.int64),
         )
-        for job, codes in enumerate(jobs)
+        for job, job_codes in enumerate(jobs)
     )
+    counts = group_sizes(route=route, codes=population_codes, n_real=n_subjects)
+    return digests, counts
 
 
 def _job_row_checksum(*, job: int, codes: tuple[int, ...], rows: np.ndarray) -> str:
@@ -927,6 +969,13 @@ def _simulate_job(
         msg = "A selected simulation did not report the rows it simulated."
         raise ExecutionPlanningError(msg)
     raw_results = result.raw_results
+    leaves = {
+        address: leaf
+        for regime, periods in raw_results.items()
+        for period, data in periods.items()
+        for address, leaf in _data_leaves(regime=regime, period=period, data=data)
+    }
+    devices = _selected_devices(model=model)
     return selection.retained, FragmentPanel(
         n_subjects=cast("int", plan.n_subjects),
         subject_batch_size=int(cast("int", result._subject_batch_size)),  # noqa: SLF001
@@ -938,11 +987,13 @@ def _simulate_job(
         leaves=MappingProxyType(
             {
                 address: np.asarray(jax.device_get(leaf))
-                for regime, periods in raw_results.items()
-                for period, data in periods.items()
-                for address, leaf in _data_leaves(
-                    regime=regime, period=period, data=data
-                )
+                for address, leaf in leaves.items()
+            }
+        ),
+        layouts=MappingProxyType(
+            {
+                address: MappingProxyType(_leaf_layout(leaf=leaf, devices=devices))
+                for address, leaf in leaves.items()
             }
         ),
     )
@@ -1152,6 +1203,14 @@ def _collected_simulation(
         ):
             msg = f"Job {fragment.job} holds rows other than its planned original rows."
             raise SolutionIntegrityError(msg)
+        counts = cast("tuple[int, ...]", plan.code_counts)
+        planned = sum(counts[plan.codes.index(code)] for code in fragment.codes)
+        if len(panel.rows) != planned:
+            msg = (
+                f"Job {fragment.job} holds {len(panel.rows)} rows, not the "
+                f"{planned} subjects the plan counts for codes {fragment.codes!r}."
+            )
+            raise SolutionIntegrityError(msg)
     n_subjects = cast("int", plan.n_subjects)
     rows = np.concatenate([panel.rows for panel in panels])
     covered = np.zeros(n_subjects, dtype=np.int64)
@@ -1184,6 +1243,12 @@ def _collected_simulation(
         msg = "The jobs' panels disagree in regimes, periods, leaves or dtypes."
         raise SolutionIntegrityError(msg)
     template = populated[0]
+    shardings = _reference_shardings(
+        model=model,
+        plan=plan,
+        width=next(iter(widths)),
+        populated=populated,
+    )
     fields_by_cell: dict[
         tuple[RegimeName, int], dict[str, dict[str | None, jax.Array]]
     ] = {}
@@ -1194,7 +1259,7 @@ def _collected_simulation(
             full[panel.rows] = panel.leaves[address]
         fields_by_cell.setdefault((regime, period), {}).setdefault(field_name, {})[
             key
-        ] = jax.device_put(full)
+        ] = jax.device_put(full, shardings[address])
     raw_results = MappingProxyType(
         {
             regime: MappingProxyType(
@@ -1225,6 +1290,179 @@ def _collected_simulation(
     )
     result._solution = solution  # noqa: SLF001
     return result
+
+
+def _reference_shardings(
+    *,
+    model: Model,
+    plan: ComponentJobPlan,
+    width: int,
+    populated: list[FragmentPanel],
+) -> dict[LeafAddress, jax.sharding.Sharding]:
+    """Return, per raw leaf, where the single-process simulation leaves it.
+
+    The single-process simulation cuts each code's subjects into chunks of
+    `width`. Several chunks are each moved to the host assembly device as they
+    finish and assembled there; a single chunk stays on the layout it was
+    computed on, which the one job holding every subject recorded.
+
+    Raises:
+        SolutionIntegrityError: A single chunk's recorded layout is missing, not
+            on the selected devices, or does not fit its leaf.
+
+    """
+    n_chunks = sum(
+        -(-count // width) for count in cast("tuple[int, ...]", plan.code_counts)
+    )
+    template = populated[0]
+    if n_chunks > 1:
+        host = chunk_host_device(
+            subject_devices=simulation_subject_devices(
+                regimes=model._regimes,  # noqa: SLF001
+                device_ids=model._execution.device_ids,  # noqa: SLF001
+            )
+        )
+        return {
+            address: jax.sharding.SingleDeviceSharding(host)
+            for address in template.leaves
+        }
+    if len(populated) != 1:
+        msg = (
+            f"{len(populated)} jobs hold subjects of a population the plan "
+            "simulates in one chunk."
+        )
+        raise SolutionIntegrityError(msg)
+    devices = _selected_devices(model=model)
+    n_subjects = cast("int", plan.n_subjects)
+    shardings: dict[LeafAddress, jax.sharding.Sharding] = {}
+    for address, leaf in template.leaves.items():
+        shape = (n_subjects, *leaf.shape[1:])
+        try:
+            sharding = _sharding_from_layout(
+                layout=template.layouts[address], devices=devices
+            )
+            sharding.shard_shape(shape)
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            msg = (
+                f"Raw leaf {address!r} of shape {shape} has no usable recorded "
+                f"layout {dict(template.layouts.get(address, {}))!r}: {error}"
+            )
+            raise SolutionIntegrityError(msg) from error
+        shardings[address] = sharding
+    return shardings
+
+
+def _selected_devices(*, model: Model) -> tuple[jax.Device, ...]:
+    """Return the model's selected devices, in the order positions refer to."""
+    return placed_devices_for_ids(
+        submesh_device_ids=(),
+        visible_device_ids=model._execution.device_ids,  # noqa: SLF001
+    )
+
+
+def _leaf_layout(*, leaf: object, devices: tuple[jax.Device, ...]) -> dict[str, object]:
+    """Describe one raw leaf's layout in positions of the selected devices.
+
+    A layout on devices outside the selection or of an unsupported sharding is
+    described as such; collection refuses it where it would be needed.
+    """
+    if not isinstance(leaf, jax.Array):
+        return {"kind": "unsupported", "sharding": type(leaf).__name__}
+    sharding = leaf.sharding
+    position = {device: index for index, device in enumerate(devices)}
+    if not sharding.device_set <= set(devices):
+        return {"kind": "outside_selection"}
+    if isinstance(sharding, jax.sharding.SingleDeviceSharding):
+        (device,) = sharding.device_set
+        return {
+            "kind": "single_device",
+            "device": position[device],
+            "memory_kind": sharding.memory_kind,
+        }
+    if isinstance(sharding, jax.sharding.NamedSharding):
+        mesh = sharding.mesh
+        spec: list[object] = []
+        for entry in sharding.spec:
+            if entry is None or isinstance(entry, str):
+                spec.append(entry)
+            elif isinstance(entry, tuple) and all(
+                isinstance(name, str) for name in entry
+            ):
+                spec.append(list(entry))
+            else:
+                return {"kind": "unsupported", "sharding": repr(sharding)}
+        return {
+            "kind": "named",
+            "mesh_shape": [int(size) for size in mesh.devices.shape],
+            "mesh_devices": [position[device] for device in mesh.devices.flat],
+            "axis_names": [str(name) for name in mesh.axis_names],
+            "spec": spec,
+            "memory_kind": sharding.memory_kind,
+        }
+    return {"kind": "unsupported", "sharding": type(sharding).__name__}
+
+
+def _sharding_from_layout(
+    *, layout: Mapping[str, object], devices: tuple[jax.Device, ...]
+) -> jax.sharding.Sharding:
+    """Rebuild a recorded layout on the selected devices.
+
+    Raises:
+        ValueError: The layout is not one `_leaf_layout` describes on the
+            selected devices.
+
+    """
+    memory_kind = layout.get("memory_kind")
+    if memory_kind is not None and type(memory_kind) is not str:
+        msg = f"Memory kind {memory_kind!r} is not a string."
+        raise ValueError(msg)
+    if layout.get("kind") == "single_device":
+        return jax.sharding.SingleDeviceSharding(
+            devices[_device_position(value=layout["device"], devices=devices)],
+            memory_kind=memory_kind,
+        )
+    if layout.get("kind") == "named":
+        mesh_devices = [
+            devices[_device_position(value=value, devices=devices)]
+            for value in _require_exact_list(
+                value=layout["mesh_devices"], label="mesh devices"
+            )
+        ]
+        mesh_shape = tuple(
+            _require_positive_exact_int(value=size, label="mesh shape")
+            for size in _require_exact_list(
+                value=layout["mesh_shape"], label="mesh shape"
+            )
+        )
+        mesh = jax.sharding.Mesh(
+            np.asarray(mesh_devices, dtype=object).reshape(mesh_shape),
+            axis_names=tuple(
+                str(name)
+                for name in _require_exact_list(
+                    value=layout["axis_names"], label="mesh axis names"
+                )
+            ),
+        )
+        spec = jax.sharding.PartitionSpec(
+            *(
+                tuple(entry) if type(entry) is list else entry
+                for entry in _require_exact_list(
+                    value=layout["spec"], label="partition spec"
+                )
+            )
+        )
+        return jax.sharding.NamedSharding(mesh, spec, memory_kind=memory_kind)
+    msg = f"Layout {dict(layout)!r} cannot be placed on the selected devices."
+    raise ValueError(msg)
+
+
+def _device_position(*, value: object, devices: tuple[jax.Device, ...]) -> int:
+    """Return a recorded device position after checking it names a selected device."""
+    position = _require_nonnegative_exact_int(value=value, label="device position")
+    if position >= len(devices):
+        msg = f"Device position {position} is not one of {len(devices)} devices."
+        raise ValueError(msg)
+    return position
 
 
 def _validate_raw_fields(

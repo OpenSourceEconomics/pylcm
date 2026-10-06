@@ -56,7 +56,9 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
-from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import (
+    assert_values_agree as assert_agrees_to_ulp,
+)
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
