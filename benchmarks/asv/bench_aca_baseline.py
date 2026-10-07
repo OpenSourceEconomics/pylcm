@@ -29,8 +29,8 @@ ASV wiring notes:
   CPU-memory measurement (`_gpu_mem.measure_combined`): one isolated subprocess
   builds once, runs one cold simulate (compilation time + CPU peak) and one warm
   simulate, and three cheap `track_*` methods read the shared result.
-- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` are separate ASV
-  classes wired to `_gpu_mem.GpuPeakMemProfile`. They run the exact three-phase
+- `AcaBaselineGpuPeakMem` is a separate ASV class wired to
+  `_gpu_mem.GpuPeakMemProfile`. It runs the exact three-phase
   GPU-memory profile (automatic solve+simulate, ALL_PERSISTABLE solve+save,
   load+supplied-solution simulate) sequentially in three fresh isolated
   processes, in a producer independent of the timing subprocess: selecting only
@@ -38,8 +38,8 @@ ASV wiring notes:
   profile no longer pays for the timing subprocess. No reported phase peak is
   summed or subtracted.
 - `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
-  debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
-  likewise gets its own three-phase profile.
+  debug configuration a separate combined subprocess. It has no GPU-memory
+  profile: each profile costs a full cold ACA run.
 - XLA autotuning is disabled and preallocation is on in the measurement
   subprocess, and the model is built without an execution policy, so planning
   and admission follow the production path: aca-model's default policy derives
@@ -255,15 +255,3 @@ class AcaBaselineDebugLog(AcaBaseline):
         # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
-
-
-class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
-    """Three-phase GPU-memory profile for `AcaBaselineDebugLog`."""
-
-    version = "3"
-    timeout = 14400
-    bench_module = "benchmarks.asv.bench_aca_baseline"
-    bench_class = "AcaBaselineDebugLog"
-
-    def setup_cache(self) -> dict[str, int]:
-        return self._measure_profile()
