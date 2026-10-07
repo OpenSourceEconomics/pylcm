@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "e3c5db9a21ec330a0fd6515ad7d32d40566f4220851df9e14db3300478559f64",
+    MODEL_SOURCE: "b8db6f269ce288d8e1e611f68eba9ef8bb3f4a091047dffb93b5831da0268cc5",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "2873874e8b737c209088ebe1d63382b06b76bc7bb9aa8a9b563cef5e6c59b15b",
     PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
@@ -3351,14 +3351,14 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "e8ff02f8ac19d0119ea4e81afb538cd84423f1effee3b7b4db32085cb715ebce",
+            "54a04f7fce0e83eae458ce9fa25540e09cd623429f3c3520f14865919d9282c8",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
                 "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
                 "Model.__init__": "fd428b834e9f2d02a66a779adfb094c4f4cdc993e5731b74c8b71a9cffb19ee8",
                 "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
-                "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
+                "Model.simulate": "21941b40570ff42afc02eb6c30526858896d7005a5acd7464c756eb8f1b7ec3d",
                 # Fixed caller owners flow through both private automatic-solve
                 # boundaries without becoming numerical operands or cache keys.
                 "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
@@ -4004,13 +4004,13 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "e8ff02f8ac19d0119ea4e81afb538cd84423f1effee3b7b4db32085cb715ebce",
+        "54a04f7fce0e83eae458ce9fa25540e09cd623429f3c3520f14865919d9282c8",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
             "Model.__init__": "fd428b834e9f2d02a66a779adfb094c4f4cdc993e5731b74c8b71a9cffb19ee8",
-            "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
+            "Model.simulate": "21941b40570ff42afc02eb6c30526858896d7005a5acd7464c756eb8f1b7ec3d",
         },
     ),
 }
@@ -4378,7 +4378,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "e8ff02f8ac19d0119ea4e81afb538cd84423f1effee3b7b4db32085cb715ebce",
+        "54a04f7fce0e83eae458ce9fa25540e09cd623429f3c3520f14865919d9282c8",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -6693,7 +6693,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "e8ff02f8ac19d0119ea4e81afb538cd84423f1effee3b7b4db32085cb715ebce",
+        "54a04f7fce0e83eae458ce9fa25540e09cd623429f3c3520f14865919d9282c8",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -6709,7 +6709,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
-            "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
+            "Model.simulate": "21941b40570ff42afc02eb6c30526858896d7005a5acd7464c756eb8f1b7ec3d",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
         },
     ),
