@@ -47,7 +47,7 @@ from lcm import (
     fixed_transition,
     load_solution,
 )
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.result import SimulationResult
 from lcm.solver_api import LoadState, SolutionResult, ValueStore
 from lcm.tuning import _array_ulp_gap
@@ -955,6 +955,42 @@ def test_budgeted_block_major_simulation_is_refused_with_a_remedy() -> None:
         _simulate(
             model=model, params=params, initial=life_cycle._initial(), solution=None
         )
+
+
+def _simulate_another_models_result() -> None:
+    """Simulate a block-major result with a budgeted model that did not solve it."""
+    params = life_cycle._params(typed_dead=True)
+    producer = _life_cycle_model(schedule=_BLOCK_MAJOR)
+    consumer = _life_cycle_model(schedule=_BLOCK_MAJOR, budget=2**30)
+    _simulate(
+        model=consumer,
+        params=params,
+        initial=life_cycle._initial(),
+        solution=_solution(model=producer, params=params),
+    )
+
+
+def test_budgeted_simulation_of_another_models_block_major_result_names_the_model() -> (
+    None
+):
+    """A budgeted model refuses another instance's block-major result by its id."""
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match="model_instance_id does not match this Model",
+    ):
+        _simulate_another_models_result()
+
+
+def test_refusing_another_models_block_major_result_assembles_no_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal of another instance's result reads none of its values."""
+    assemblies = _Assemblies(monkeypatch=monkeypatch)
+
+    with pytest.raises(InvalidSimulationInputError):
+        _simulate_another_models_result()
+
+    assert assemblies.calls == []
 
 
 def test_block_major_simulation_without_grouping_is_refused() -> None:
