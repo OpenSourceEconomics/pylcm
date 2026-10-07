@@ -342,7 +342,7 @@
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
-            "sha256": "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be"
+            "sha256": "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0"
           },
           {
             "path": "src/_lcm/solution/continuation_arguments.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "22d3da17ac62588617eaa08bae1c99d5ac9b9ac13cb4552d7a7a75ae473284ae"
+        "source_inventory_sha256": "7f22b22730d9e5126f63566ef521ec3554b1ddbb2b9ebd59ccb51b3fb14f1e38"
       },
       "fast": {
         "candidate_sources": [
@@ -816,7 +816,7 @@
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
-            "sha256": "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be"
+            "sha256": "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0"
           },
           {
             "path": "src/_lcm/solution/continuation_arguments.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "22d3da17ac62588617eaa08bae1c99d5ac9b9ac13cb4552d7a7a75ae473284ae"
+        "source_inventory_sha256": "7f22b22730d9e5126f63566ef521ec3554b1ddbb2b9ebd59ccb51b3fb14f1e38"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "22d3da17ac62588617eaa08bae1c99d5ac9b9ac13cb4552d7a7a75ae473284ae",
+  "source_inventory_sha256": "7f22b22730d9e5126f63566ef521ec3554b1ddbb2b9ebd59ccb51b3fb14f1e38",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1294,7 +1294,7 @@
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
-      "sha256": "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be"
+      "sha256": "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0"
     },
     {
       "path": "src/_lcm/solution/continuation_arguments.py",
