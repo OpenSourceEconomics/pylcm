@@ -141,6 +141,7 @@ from lcm.grids import (  # noqa: E402
     categorical,
 )
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
+from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -221,6 +222,7 @@ __all__ = [
     "LiquidMargin",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
+    "LoweredPeriodCandidate",
     "Model",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
@@ -228,6 +230,7 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
+    "PeriodCandidate",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",

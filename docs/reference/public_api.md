@@ -15,6 +15,8 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
+| [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
@@ -97,6 +99,13 @@ documentation and tests.
 | [`lcm.__version__`](public_api.md)                                              | Installed pylcm version         |
 
 ## Explicit public submodule surfaces
+
+| Public name                                                                         | Canonical documentation             |
+| ----------------------------------------------------------------------------------- | ----------------------------------- |
+| [`lcm.persistence.PeriodCapture`](runtime_and_results.md#api-period-capture)        | Selected production period capture  |
+| [`lcm.persistence.PeriodCaptureRecord`](runtime_and_results.md#api-period-capture)  | Completed or entry-only evidence    |
+| [`lcm.persistence.CapturedPeriodReplay`](runtime_and_results.md#api-period-capture) | Strict replay qualification         |
+| [`lcm.persistence.load_period_capture`](runtime_and_results.md#api-period-capture)  | Inspect verified numerical captures |
 
 Most user-facing names are re-exported from `lcm`. These deliberately public submodule
 surfaces remain outside that top-level namespace:

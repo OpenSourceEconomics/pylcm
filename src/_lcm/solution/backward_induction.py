@@ -190,6 +190,11 @@ from _lcm.solution.period_capture import (
     capture_kernel_inputs,
     resolve_capture_target,
 )
+from _lcm.solution.public_period_capture import (
+    CaptureContext,
+    capture_public_entry,
+    complete_public_capture,
+)
 from _lcm.solution.solve_inputs import (
     SolveInputMappings,
     locate_artifact,
@@ -308,6 +313,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     call_id: CallId | None = None,
     gather_checks: GatherChecks | None = None,
     executable_cache: ExecutableCache | None = None,
+    period_capture: CaptureContext | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
@@ -434,6 +440,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         execution=resolved_execution,
+        capture_periods=()
+        if period_capture is None
+        else period_capture.request.periods,
         retain_replay=retain_replay,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -765,6 +774,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             capture_target=capture_target,
                             run_kernel=functools.partial(
                                 _run_period_kernel,
+                                period_capture=period_capture,
+                                captured_admission=compiled_programs.capture_admission.get(
+                                    (regime_name, period), MappingProxyType({})
+                                ),
                                 regime=regime,
                                 regime_name=regime_name,
                                 period=period,
@@ -1320,6 +1333,8 @@ def _run_period_kernel(
     period_solution: Mapping[RegimeName, FloatND],
     retain_replay: bool,
     selected_artifact_keys: frozenset[ArtifactKey],
+    period_capture: CaptureContext | None = None,
+    captured_admission: Mapping[str, Mapping[str, int | None]] = MappingProxyType({}),
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -1355,26 +1370,35 @@ def _run_period_kernel(
 
     # Captured before the period-specific state axes are substituted below. Replay
     # re-enters this funnel with capture explicitly disabled.
+    kernel_kwargs = {
+        "regime_name": regime_name,
+        "period": period,
+        "state_action_space": state_action_space,
+        "flat_params": flat_params,
+        "ages": ages,
+        "next_regime_to_V_arr": next_regime_to_V_arr,
+        "next_regime_to_continuation": next_regime_to_continuation,
+        "logger": logger,
+        "next_edge_to_V_arr": next_edge_to_V_arr,
+        "period_solution": period_solution,
+        "retain_replay": retain_replay,
+        "selected_artifact_keys": selected_artifact_keys,
+    }
+    entry = capture_public_entry(
+        context=period_capture,
+        regime=regime,
+        period=period,
+        kernel_kwargs=kernel_kwargs,
+        compiled_cores=compiled_cores,
+        admission=captured_admission,
+    )
     capture_kernel_inputs(
         capture_target=capture_target,
         regime=regime,
         regime_name=regime_name,
         period=period,
         compiled_cores=compiled_cores,
-        kernel_kwargs={
-            "regime_name": regime_name,
-            "period": period,
-            "state_action_space": state_action_space,
-            "flat_params": flat_params,
-            "ages": ages,
-            "next_regime_to_V_arr": next_regime_to_V_arr,
-            "next_regime_to_continuation": next_regime_to_continuation,
-            "logger": logger,
-            "next_edge_to_V_arr": next_edge_to_V_arr,
-            "period_solution": period_solution,
-            "retain_replay": retain_replay,
-            "selected_artifact_keys": selected_artifact_keys,
-        },
+        kernel_kwargs=kernel_kwargs,
     )
 
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
@@ -1432,7 +1456,8 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    return period_kernel(
+    started = time.perf_counter() if entry is not None else None
+    output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1443,6 +1468,11 @@ def _run_period_kernel(
         logger=logger,
         **same_period_kwargs,
     )
+    if entry is not None and started is not None:
+        jax.block_until_ready(output.value)
+        seconds = time.perf_counter() - started
+        complete_public_capture(entry=entry, value=output.value, seconds=seconds)
+    return output
 
 
 def _run_dispatch_unit(
@@ -2302,6 +2332,11 @@ class _CompiledPrograms:
         default_factory=lambda: MappingProxyType({})
     )
     """Admitted ordinary alternatives at exactly the selected donating widths."""
+
+    capture_admission: Mapping[
+        tuple[str, int], Mapping[str, Mapping[str, int | None]]
+    ] = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    """Selected non-donating reservation and residency for requested captures."""
 
 
 def _select_runtime_donation_cores(
@@ -3511,7 +3546,7 @@ def _retained_base_space_arrays(*, regime: Regime) -> object:
     return space.states, space.discrete_actions, space.continuous_actions
 
 
-def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
+def _prepare_solve_programs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_fingerprint: str,
@@ -3525,76 +3560,27 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     retain_replay: bool,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
-    max_compilation_workers: int | None,
     logger: logging.Logger,
-    call_id: CallId | None = None,
-    fixed_input_arrays: object = (),
     process_grid_resolver: ProcessGridResolver | None = None,
-    gather_checks: GatherChecks | None = None,
-    executable_cache: ExecutableCache | None = None,
+    call_id: CallId | None = None,
     structural_blueprints: StructuralBlueprintCache | None = None,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
-) -> _CompiledPrograms:
-    """Resolve every solve program and optionally compile unique lowerings.
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
+    _LazyCandidateFrontier,
+    dict[_CoreTriple, CoreProgram],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+]:
+    """Resolve the full production graph and bind its primary and fallback keys.
 
-    Each regime exposes named cores through its period adapter. For every core, the
-    engine first materializes the adapter's exact `CoreProgram`. The program supplies
-    the planner-resolved callable, static choices, and output roles. The program's
-    durable identity, abstract arguments, specialization, and
-    output layout form the lowering key. Each unique program is lowered once
-    (sequentially, because tracing is single-threaded), then the XLA programs compile
-    in parallel via a thread pool. The loop stays free of solver-type forks.
-
-    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
-    without the lowering and compilation steps.
-
-    Args:
-        regimes: The internal regimes containing the period adapters.
-        program_fingerprint: Digest of the model facts every lowered program
-            depends on; opens every program's identity, so two models never
-            share an executable.
-        flat_params: Regime parameters for constructing lowering args.
-        ages: Age grid for the model.
-        next_regime_to_V_arr: Template with consistent keys and V array shapes
-            for constructing lowering arguments.
-        next_regime_to_continuation: Template with consistent keys and carry
-            shapes for constructing lowering arguments.
-        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
-            for constructing a source kernel's gated-edge lowering arguments;
-            empty for models without gated edges.
-        enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        execution: The hardware-local facts the model resolved — its devices,
-            the optional per-device workspace budget, and fixed planner axis
-            widths.
-        retain_replay: Whether the solve retains replay artifacts; with the
-            regime's declared replay route it selects which scoped programs of
-            each kernel's graph are dispatched.
-        retain_all_artifacts: Whether the result keeps every persistable
-            continuation payload, which the ledger retains and never donates.
-        persistable_artifact_refs: Exact model-authoritative addresses whose
-            replay programs are selected for persistence-oriented retention.
-        max_compilation_workers: Maximum threads for parallel compilation.
-            Defaults to `os.cpu_count()`.
-        logger: Logger for compilation progress.
-        fixed_input_arrays: Already-built runtime space arrays retained by solve.
-        gather_checks: Fusion verdicts shared with other solves of the same
-            model; `None` keeps them for this solve only.
-        executable_cache: Executables, labels and compiler reservations shared
-            with other solves whose programs lower to the same keys; a key it
-            already holds is not lowered or compiled again. `None` keeps them
-            for this solve only.
-        structural_blueprints: The model's store of structural blueprints;
-            `None` resolves every program afresh.
-        base_state_action_spaces: This solve's params-completed state-action
-            spaces, whose abstract schema enters the structural key.
-
-    Returns:
-        Executable mappings by regime-period, the resolved metadata used by
-        input liveness, the ledger the executables were lowered against, and the
-        donation decisions each selected executable carries. Eager entries call
-        the resolved functions directly; AOT entries call compiled executables
-        carrying the same plans.
-
+    Return the same mutable frontier-owned maps to each caller. No candidate is
+    lowered or compiled here, and no extra owner survives ordinary solve's unpack.
     """
     # Collect every kernel's native graph, narrowed to the retention's scope.
     with solve_phase(name="program_graphs", logger=logger, call_id=call_id):
@@ -3672,6 +3658,139 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             fallback_donations=fallback_donations,
             argument_keys=fallback_argument_keys,
         )
+
+    return (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        all_programs,
+        fallback_programs,
+    )
+
+
+def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_fingerprint: str,
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    enable_jit: bool,
+    execution: ResolvedExecution,
+    retain_replay: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    max_compilation_workers: int | None,
+    logger: logging.Logger,
+    call_id: CallId | None = None,
+    fixed_input_arrays: object = (),
+    process_grid_resolver: ProcessGridResolver | None = None,
+    gather_checks: GatherChecks | None = None,
+    executable_cache: ExecutableCache | None = None,
+    capture_periods: tuple[tuple[str, int], ...] = (),
+    structural_blueprints: StructuralBlueprintCache | None = None,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace] | None = None,
+) -> _CompiledPrograms:
+    """Resolve every solve program and optionally compile unique lowerings.
+
+    Each regime exposes named cores through its period adapter. For every core, the
+    engine first materializes the adapter's exact `CoreProgram`. The program supplies
+    the planner-resolved callable, static choices, and output roles. The program's
+    durable identity, abstract arguments, specialization, and
+    output layout form the lowering key. Each unique program is lowered once
+    (sequentially, because tracing is single-threaded), then the XLA programs compile
+    in parallel via a thread pool. The loop stays free of solver-type forks.
+
+    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
+    without the lowering and compilation steps.
+
+    Args:
+        regimes: The internal regimes containing the period adapters.
+        program_fingerprint: Digest of the model facts every lowered program
+            depends on; opens every program's identity, so two models never
+            share an executable.
+        flat_params: Regime parameters for constructing lowering args.
+        ages: Age grid for the model.
+        next_regime_to_V_arr: Template with consistent keys and V array shapes
+            for constructing lowering arguments.
+        next_regime_to_continuation: Template with consistent keys and carry
+            shapes for constructing lowering arguments.
+        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
+            for constructing a source kernel's gated-edge lowering arguments;
+            empty for models without gated edges.
+        enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution: The hardware-local facts the model resolved — its devices,
+            the optional per-device workspace budget, and fixed planner axis
+            widths.
+        retain_replay: Whether the solve retains replay artifacts; with the
+            regime's declared replay route it selects which scoped programs of
+            each kernel's graph are dispatched.
+        retain_all_artifacts: Whether the result keeps every persistable
+            continuation payload, which the ledger retains and never donates.
+        persistable_artifact_refs: Exact model-authoritative addresses whose
+            replay programs are selected for persistence-oriented retention.
+        max_compilation_workers: Maximum threads for parallel compilation.
+            Defaults to `os.cpu_count()`.
+        logger: Logger for compilation progress.
+        fixed_input_arrays: Already-built runtime space arrays retained by solve.
+        gather_checks: Fusion verdicts shared with other solves of the same
+            model; `None` keeps them for this solve only.
+        executable_cache: Executables, labels and compiler reservations shared
+            with other solves whose programs lower to the same keys; a key it
+            already holds is not lowered or compiled again. `None` keeps them
+            for this solve only.
+        structural_blueprints: The model's store of structural blueprints;
+            `None` resolves every program afresh.
+        base_state_action_spaces: This solve's params-completed state-action
+            spaces, whose abstract schema enters the structural key.
+
+    Returns:
+        Executable mappings by regime-period, the resolved metadata used by
+        input liveness, the ledger the executables were lowered against, and the
+        donation decisions each selected executable carries. Eager entries call
+        the resolved functions directly; AOT entries call compiled executables
+        carrying the same plans.
+
+    """
+    (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+        representative_metadata,
+        frontier,
+        _all_programs,
+        _fallback_programs,
+    ) = _prepare_solve_programs(
+        regimes=regimes,
+        program_fingerprint=program_fingerprint,
+        flat_params=flat_params,
+        ages=ages,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+        enable_jit=enable_jit,
+        execution=execution,
+        retain_replay=retain_replay,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+        logger=logger,
+        process_grid_resolver=process_grid_resolver,
+        call_id=call_id,
+        structural_blueprints=structural_blueprints,
+        base_state_action_spaces=base_state_action_spaces,
+    )
+    fallback_keys = frontier.fallback_keys
+    fallback_donations = frontier.fallback_donations
 
     # Bound candidates, in rank order, of each core. The frontier appends to these
     # lists as refusals ask for narrower candidates; `frontier_lengths` is the
@@ -4215,8 +4334,38 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                 )
 
+    capture_admission: dict[tuple[str, int], dict[str, Mapping[str, int | None]]] = {}
+    for triple, core in selected_cores.items():
+        if triple[:2] not in capture_periods:
+            continue
+        if core.donated_arguments:
+            raise ValueError("Public period capture does not support donated inputs.")
+        candidate = (triple, _width_key(widths=core.tile_widths))
+        reservation = compiler_memory_reservation(
+            compiled=core.compiled, widths=core.tile_widths
+        )
+        resident = (
+            None
+            if budget_bytes is None
+            else _candidate_resident_bytes(
+                compiled=compiled[lowering_keys[candidate]],
+                program=selected_programs[triple],
+                internal_arguments=internal_templates[candidate],
+                inventory=resident_inventory[triple],
+            )
+        )
+        capture_admission.setdefault(triple[:2], {})[triple[2]] = MappingProxyType(
+            {
+                "budget_bytes": budget_bytes,
+                "resident_bytes": resident,
+                "reservation_bytes": reservation.reservation_bytes,
+                "peak_bytes": reservation.peak_bytes,
+            }
+        )
+
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
+        capture_admission=MappingProxyType(capture_admission),
         metadata=_execution_metadata(programs=selected_programs),
         input_liveness=input_liveness,
         donations=MappingProxyType(
