@@ -11,6 +11,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     ByAge,
     CollectiveUtility,
     Gate,
@@ -92,7 +93,30 @@ def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
 @pytest.mark.parametrize(
     "targets",
     [
+        pytest.param(
+            {"retired": AgeRange(start=0), "dead": AgeRange(start=0)},
+            id="open-ended-range",
+        ),
+        pytest.param({"retired": (0, 1, 2, 3), "dead": (0, 1, 2, 3)}, id="final-age"),
+    ],
+)
+def test_supplied_targets_that_also_select_the_final_age_are_accepted(targets):
+    """No transition leaves the final age, so selecting it changes no destination."""
+    model = _model(Transition(targets=targets, law=_EXIT_LAW))
+    assert dict(model.graph.edges.solve["alive"]) == {
+        "retired": frozenset({0, 1, 2}),
+        "dead": frozenset({0, 1, 2}),
+    }
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
         pytest.param({"retired": (0, 1, 2), "dead": (0, 1)}, id="fewer-ages"),
+        pytest.param(
+            {"retired": (0, 1, 2, 3), "dead": (0, 1, 3)},
+            id="fewer-ages-beside-the-final-age",
+        ),
         pytest.param({"retired": (0, 1, 2)}, id="missing-target"),
         pytest.param(
             {"retired": (0, 1, 2), "dead": (0, 1, 2), "alive": 0}, id="extra-target"
