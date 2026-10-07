@@ -24,9 +24,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DeterministicTransition,
+    Gate,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
+    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -259,6 +262,34 @@ def test_selector_reading_a_function_solves_with_only_declared_parameters(
     np.testing.assert_allclose(
         np.broadcast_to(np.asarray(values[0]["alive"]), (2,)), expected, rtol=1e-6
     )
+
+
+def test_target_state_a_gate_reads_is_no_edge_parameter():
+    """A gate reads the target's state off its grid; only its threshold is a slot."""
+    model = _gated_on_target_state_model()
+    assert _leaf_paths(model.get_params_template()["edges"]) == {
+        ("src", "target", "predicate", "threshold")
+    }
+
+
+def test_gate_on_a_target_state_routes_by_that_state():
+    """Below the threshold the row enters the target, above it the fallback.
+
+    Each regime pays its utility once: 1 + 0.9 * 1 into the target and
+    1 + 0.9 * 0.5 into the fallback.
+    """
+    values = (
+        _gated_on_target_state_model()
+        .solve(
+            params={
+                "discount_factor": 0.9,
+                "edges": {"src": {"target": {"predicate": {"threshold": 0.5}}}},
+            },
+            log_level="debug",
+        )
+        .values
+    )
+    np.testing.assert_allclose(np.asarray(values[0]["src"]), [1.9, 1.45], rtol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -810,6 +841,61 @@ def _dormant_scored_selector_model(*, function_level: str, n_periods: int) -> Mo
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": fixed_transition("x")},
         functions={} if on_regime else {"score": _score},
+    )
+
+
+@categorical(ordered=False)
+class _GatedId:
+    src: ScalarInt
+    target: ScalarInt
+    fallback: ScalarInt
+
+
+def _certain(age: FloatND) -> FloatND:
+    return jnp.ones_like(age, dtype=float)
+
+
+def _half_utility() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _below_threshold(*, y: ContinuousState, threshold: float) -> BoolND:
+    return y < threshold
+
+
+def _gated_on_target_state_model() -> Model:
+    """`src` enters `target` when the model-level state `y` is below a threshold.
+
+    Only the gate reads `y`. Otherwise the row takes its route's fallback.
+    """
+    return Model(
+        regimes={
+            "src": Regime(functions={"utility": _constant_utility}),
+            "target": Regime(functions={"utility": _constant_utility}),
+            "fallback": Regime(functions={"utility": _half_utility}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_GatedId,
+        initial_nodes={0: "src"},
+        states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"y": fixed_transition("y")},
+        edges={
+            "src": Transition(
+                law=ByAge(cases={0: {"target": StochasticTransition(func=_certain)}}),
+                gates={
+                    "target": Gate(
+                        predicate=_below_threshold,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={}
+                                )
+                            )
+                        },
+                    )
+                },
+            ),
+        },
     )
 
 
