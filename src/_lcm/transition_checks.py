@@ -13,8 +13,10 @@ runs. Two families:
 - **State transition probability check** keyed on
   `validate_state_transitions_all_periods`. Sweeps every `StochasticTransition`
   state transition (incl. per-target dict entries), evaluates the user
-  function on the Cartesian product of the function's accepted grid
-  variables, and verifies outcome-axis size, [0, 1] range, and sum-to-1.
+  function on the Cartesian product of the grid variables it reads, directly
+  or through the phase's regime functions, and verifies outcome-axis size,
+  [0, 1] range, and sum-to-1. A simulate-phase law reads each carried state on
+  its simulate grid.
 
 Both checks read their policy off the `logger`: `log_level="off"` skips the
 check, `"warning"` / `"progress"` log each failure and let the run continue,
@@ -42,6 +44,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from dags import concatenate_functions
 from dags.tree import tree_path_from_qname
 
 from _lcm.engine import (
@@ -95,6 +98,8 @@ from lcm.typing import (
 )
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
+_NO_FUNCTIONS: Mapping[str, Callable[..., object]] = MappingProxyType({})
+_NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
 ]
@@ -1167,6 +1172,14 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 )
             )
             age = ages.values[period]  # noqa: PD011
+            # The regime functions a law may read are evaluated as the solve
+            # does: not partialled over fixed params, so bind both.
+            function_params = MappingProxyType(
+                {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat_params, regime_name=regime_name),
+                }
+            )
             for transition in regime.stochastic_state_transitions.values():
                 if _state_transition_unused_in_period(
                     transition=transition,
@@ -1191,6 +1204,13 @@ def validate_state_transitions_all_periods(  # noqa: C901
                         logger=logger,
                         summary=summary,
                         memory=memory,
+                        functions=_phase_functions(
+                            regime=regime, phase=transition.phase, period=period
+                        ),
+                        function_params=function_params,
+                        extra_grids=_phase_extra_grids(
+                            regime=regime, phase=transition.phase
+                        ),
                     )
                 except InvalidStateTransitionProbabilitiesError as error:
                     if summary is not None:
@@ -1795,15 +1815,30 @@ def _validate_state_transition_single(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
+    functions: Mapping[str, Callable[..., object]] = _NO_FUNCTIONS,
+    function_params: FlatRegimeParams = _NO_FUNCTION_PARAMS,
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND] = _NO_EXTRA_GRIDS,
 ) -> None:
     """Evaluate one StochasticTransition on its grid args and validate the output.
+
+    The law is evaluated as the solve evaluates it: an argument naming one of
+    the phase's regime `functions` is that function's output, computed from
+    the grids with `function_params`, and `extra_grids` adds the phase's own
+    grids of states the base space lacks.
 
     A restricted fixed-component law is validated as its declared law over the
     original codes: the full outcome axis, every original source code, and zero
     mass outside each source code's group.
     """
     transition, original_codes, fixed_of_code = _as_declared_law(transition)
-    states = {**state_action_space.states, **original_codes}
+    states = {**state_action_space.states, **extra_grids, **original_codes}
+    transition, regime_params = _through_functions(
+        transition=transition,
+        regime_params=regime_params,
+        functions=functions,
+        function_params=function_params,
+        inputs=frozenset((*states, *state_action_space.actions)),
+    )
     func = transition.func
     sig_params = tuple(inspect.signature(func).parameters)
 
@@ -1894,6 +1929,96 @@ def _validate_state_transition_single(
         fixed_of_code=fixed_of_code,
     )
     _remember_state_probability(summary=summary, binding=binding, shape=probs.shape)
+
+
+_STATE_LAW = "__state_law__"
+
+
+def _through_functions(
+    *,
+    transition: _StochasticStateTransition,
+    regime_params: FlatRegimeParams,
+    functions: Mapping[str, Callable[..., object]],
+    function_params: FlatRegimeParams,
+    inputs: frozenset[str],
+) -> tuple[_StochasticStateTransition, FlatRegimeParams]:
+    """Evaluate a law through the regime functions it reads, with their params."""
+    law = _law_through_functions(
+        law=transition.func,
+        functions=functions,
+        inputs=inputs | frozenset(transition.derived_categorical_codes),
+    )
+    if law is transition.func:
+        return transition, regime_params
+    return (
+        replace(transition, func=law),
+        MappingProxyType({**function_params, **regime_params}),
+    )
+
+
+def _law_through_functions(
+    *,
+    law: Callable[..., FloatND],
+    functions: Mapping[str, Callable[..., object]],
+    inputs: frozenset[str],
+) -> Callable[..., FloatND]:
+    """Compose a state law with the regime functions computing what it reads.
+
+    An argument naming a regime function is that function's output, as in the
+    solve. Grid variables and the derived categoricals the validator sweeps
+    stay inputs. A law reading no regime function is returned unchanged.
+    """
+    pool = {name: func for name, func in functions.items() if name not in inputs}
+    read = _functions_read(func=law, pool=pool)
+    if not read:
+        return law
+    return cast(
+        "Callable[..., FloatND]",
+        concatenate_functions(
+            functions={**{name: pool[name] for name in read}, _STATE_LAW: law},
+            targets=_STATE_LAW,
+        ),
+    )
+
+
+def _functions_read(
+    *, func: Callable[..., object], pool: Mapping[str, Callable[..., object]]
+) -> frozenset[str]:
+    """The pool functions `func` reads, directly or through other pool functions."""
+    read: set[str] = set()
+    pending = [name for name in inspect.signature(func).parameters if name in pool]
+    while pending:
+        name = pending.pop()
+        if name in read:
+            continue
+        read.add(name)
+        pending.extend(
+            arg for arg in inspect.signature(pool[name]).parameters if arg in pool
+        )
+    return frozenset(read)
+
+
+def _phase_functions(
+    *, regime: Regime, phase: str | None, period: int
+) -> Mapping[str, Callable[..., object]]:
+    """The regime functions of a law's phase, resolved at `period`."""
+    owner = regime.simulation if phase == "simulate" else regime.solution
+    pool = owner.feasibility_pools_by_period.get(period)
+    return owner.functions if pool is None else pool[0]
+
+
+def _phase_extra_grids(
+    *, regime: Regime, phase: str | None
+) -> Mapping[StateOrActionName, FloatND | IntND]:
+    """The simulate grids of carried states, which the solve space lacks."""
+    if phase != "simulate":
+        return _NO_EXTRA_GRIDS
+    return MappingProxyType(
+        {
+            name: regime.simulation.grids[name].to_jax()
+            for name in sorted(regime.simulation.carried_only_state_names)
+        }
+    )
 
 
 def _as_declared_law(
