@@ -290,7 +290,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges, TransitionLaw
+from lcm.transition import ModelEdges, PhaseEdges, Transition, TransitionLaw
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -1013,7 +1013,25 @@ class Model:
         A source without a `Transition` in a phase is absent from that phase.
         `model.graph.laws` holds the law as bound to the graph.
         """
-        raise NotImplementedError
+        edges = self._edges
+        phase_edges: dict[Phase, PhaseEdges] = (
+            {"solve": edges.solve, "simulate": edges.simulate}
+            if isinstance(edges, Phased)
+            else {"solve": edges, "simulate": edges}
+        )
+        # `bind_edge_laws` accepted every declared law as a declaration form.
+        return MappingProxyType(
+            {
+                phase: MappingProxyType(
+                    {
+                        source: cast("TransitionLaw", declaration.law)
+                        for source, declaration in declared.items()
+                        if isinstance(declaration, Transition)
+                    }
+                )
+                for phase, declared in phase_edges.items()
+            }
+        )
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
