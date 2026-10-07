@@ -650,6 +650,14 @@ def test_declared_transitions_read_a_declared_gate_typed() -> None:
     assert gate.predicate is _boolean_gate
 
 
+def test_declared_transitions_read_a_gate_route_fallback_regime_typed() -> None:
+    """A declared gate route's fallback regime reads back as a regime name."""
+    model = _gated_model(gate=_boolean_gate)
+    gate = model.declared_transitions["simulate"]["source"].gates["target"]
+    regime: str = gate.routes["only"].simulate_fallback.regime
+    assert regime == "fallback"
+
+
 def test_declared_transitions_reject_replacing_a_phase() -> None:
     """The declared transitions of a built model cannot be replaced per phase."""
     model = _dated_model()
