@@ -9,7 +9,7 @@ operations (see `host_operations._operation_memory`).
 """
 
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -41,7 +41,7 @@ from tests.test_models.graph import with_fixture_graph
 
 
 @contextmanager
-def _count_memory_reads(*, monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
+def _count_memory_reads(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counter[str]]:
     """Count every real `compiler_memory_reservation` call without changing it.
 
     Patches every module-level name this function is imported under —
