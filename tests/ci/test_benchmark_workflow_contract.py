@@ -4,12 +4,14 @@ from pathlib import Path
 
 import yaml
 
+from tests.ci import ci_workloads
 from tests.ci.cpu_suite_invocations import (
     benchmark_harness_invocation_argvs,
     cpu_suite_invocation_argvs,
 )
 
 _BENCHMARK_JOB = "tests-benchmarks"
+_BENCHMARK_COVERAGE = "coverage-benchmarks"
 _BENCHMARK_SUBPROJECTS = (
     "benchmarks/continuous_scaling",
     "benchmarks/discrete_control",
@@ -93,3 +95,43 @@ def test_benchmark_harness_lane_is_not_a_cpu_suite_invocation() -> None:
 def test_cpu_gate_waits_for_the_benchmark_harness_lane() -> None:
     """The required `cpu` check fails when the benchmark-harness lane fails."""
     assert _BENCHMARK_JOB in _cpu_workflow()["jobs"]["cpu"]["needs"]
+
+
+def test_benchmark_harness_lane_measures_coverage_of_the_whole_checkout() -> None:
+    """The lane measures coverage so the harness code it exercises is counted."""
+    assert "--cov=./" in _the_benchmark_harness_argv()
+
+
+def test_benchmark_harness_lane_writes_its_own_coverage_report() -> None:
+    """The lane's coverage lands in a report named after the lane."""
+    assert (
+        f"--cov-report=xml:reports/{_BENCHMARK_COVERAGE}.xml"
+        in _the_benchmark_harness_argv()
+    )
+
+
+def test_benchmark_harness_lane_uploads_its_coverage_artifact() -> None:
+    """The lane uploads its report as the artifact the combine stage downloads."""
+    steps = _cpu_workflow()["jobs"][_BENCHMARK_JOB]["steps"]
+    assert [
+        step["with"]["path"]
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+        and step["with"]["name"] == _BENCHMARK_COVERAGE
+    ] == [f"reports/{_BENCHMARK_COVERAGE}.xml"]
+
+
+def test_benchmark_harness_coverage_is_a_recorded_contributor() -> None:
+    """The combine stage refuses to publish without the benchmark coverage."""
+    assert _BENCHMARK_COVERAGE in ci_workloads.coverage_contributors()
+
+
+def test_coverage_combine_stage_waits_for_the_benchmark_harness_lane() -> None:
+    """The single Codecov upload starts only after the lane has reported."""
+    assert _BENCHMARK_JOB in _cpu_workflow()["jobs"]["coverage"]["needs"]
+
+
+def test_codecov_ignores_the_benchmark_test_modules() -> None:
+    """Benchmark test modules are not patch lines; the harness under them is."""
+    codecov = yaml.safe_load(Path("codecov.yml").read_text(encoding="utf-8"))
+    assert "benchmarks/test_*.py" in codecov["ignore"]
