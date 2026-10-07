@@ -174,7 +174,7 @@ def test_transition_with_a_probability_mapping_declares_a_lottery() -> None:
         edges={
             "working": Transition(
                 targets=MORTAL_TARGETS,
-                law=ByAge(cases={(60, 61): PERCEIVED}),
+                law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
             ),
             "retired": RETIRED_EDGES,
         }
@@ -192,7 +192,8 @@ def test_transition_by_age_must_cover_every_age_with_several_edges() -> None:
         _model(
             edges={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={60: PERCEIVED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={60: StochasticTransition(func=_mortality_vector)}),
                 ),
                 "retired": RETIRED_EDGES,
             }
@@ -205,13 +206,13 @@ def test_several_edges_without_a_law_are_rejected() -> None:
         _model(edges={"working": MORTAL_TARGETS, "retired": RETIRED_EDGES})
 
 
-def test_a_law_naming_a_destination_without_an_edge_at_an_age_is_rejected() -> None:
-    """A regime-name law applies at every source age, so it must have an edge there.
+def test_a_law_naming_a_destination_the_targets_omit_at_an_age_is_rejected() -> None:
+    """A regime-name law names its target at every source age; `targets` must agree.
 
-    `"dead"` is the retired regime's only destination at age 64, but at ages 60-63
-    its only edge leads back to retirement.
+    `"dead"` is the retired regime's only supplied destination at age 64, but at
+    ages 60-63 the supplied targets lead back to retirement.
     """
-    with pytest.raises(ModelInitializationError, match="names 'dead' outside"):
+    with pytest.raises(ModelInitializationError, match="supplied"):
         _model(
             edges={
                 "working": LAW_FREE_EDGES["working"],
@@ -246,10 +247,14 @@ def test_horizon_aware_law_at_single_destination_ages_solves_like_the_graph() ->
         edges={
             "working": Transition(
                 targets=SINGLE_DESTINATION_TARGETS,
-                law={
-                    "working": StochasticTransition(func=_survive_before_62),
-                    "dead": StochasticTransition(func=_die_from_62),
-                },
+                law=ByAge(
+                    cases={
+                        (60, 61): {
+                            "working": StochasticTransition(func=_survive_before_62)
+                        },
+                        62: {"dead": StochasticTransition(func=_die_from_62)},
+                    }
+                ),
             ),
             "retired": RETIRED_EDGES,
         }
@@ -262,24 +267,19 @@ def test_horizon_aware_law_at_single_destination_ages_solves_like_the_graph() ->
     )
 
 
-def test_law_short_of_unit_mass_at_a_single_destination_age_names_the_cell() -> None:
-    """A law ignoring the horizon loses the mass of its cell that has no edge.
+def test_per_target_law_naming_a_cell_the_targets_omit_is_rejected() -> None:
+    """A per-target law names both its cells at every age; `targets` must agree.
 
-    At ages 60 and 61 the only edge leads back to work, so the law's 0.1 death
-    cell is dropped; at 62 its 0.9 survival cell is. The debug check names the
-    dropped cell.
+    The supplied targets lead only back to work at ages 60 and 61 and only to
+    death at 62, while the law names both destinations at every age.
     """
-    model = _model(
-        edges={
-            "working": Transition(targets=SINGLE_DESTINATION_TARGETS, law=REALIZED),
-            "retired": RETIRED_EDGES,
-        }
-    )
-    with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"(?s)\(age 6[012], 'working' -> '(dead|working)'\).*declares no edge",
-    ):
-        model.solve(params=PARAMS, log_level="debug")
+    with pytest.raises(ModelInitializationError, match="supplied"):
+        _model(
+            edges={
+                "working": Transition(targets=SINGLE_DESTINATION_TARGETS, law=REALIZED),
+                "retired": RETIRED_EDGES,
+            }
+        )
 
 
 def _vector_ignoring_the_horizon() -> FloatND:
@@ -316,13 +316,15 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
         edges=Phased(
             solve={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
                 ),
                 "retired": RETIRED_EDGES,
             },
             simulate={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): REALIZED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={(60, 61): REALIZED, 62: "retired"}),
                 ),
                 "retired": RETIRED_EDGES,
             },
@@ -331,7 +333,8 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
     perceived = _model(
         edges={
             "working": Transition(
-                targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+                targets=MORTAL_TARGETS,
+                law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
             ),
             "retired": RETIRED_EDGES,
         }
@@ -346,7 +349,7 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
 
 LOTTERY_EDGES = {
     "working": Transition(
-        targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+        targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"})
     ),
     "retired": RETIRED_EDGES,
 }

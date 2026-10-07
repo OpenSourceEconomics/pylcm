@@ -88,7 +88,6 @@ from _lcm.grids import (
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.params.edges import (
-    PROBABILITY,
     is_gated_cell_slot,
     regime_kernel_params,
 )
@@ -161,7 +160,7 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
     phase_variation_paths,
 )
-from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration, RegimeLaws
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     route_output_roles,
@@ -295,7 +294,7 @@ from lcm.solvers import (
     Solver,
     UniformObservedFixedCost,
 )
-from lcm.transition import JointTransition, StochasticTransition
+from lcm.transition import JointTransition, StochasticTransition, Transition
 from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
 
 type _TransitionBundles = dict[
@@ -334,9 +333,9 @@ class PreparedModelStructure:
     """Per `(source, target)` gated edge, the source periods whose selected law
     declares the gate."""
 
-    declared_laws: MappingProxyType[RegimeName, tuple[RegimeLawDeclaration, ...]]
-    """Per source regime, its laws as declared in `Model(edges=...)`, which the
-    `edges` parameter template is read off."""
+    declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
+    """Per source regime, its `Transition` declarations in `Model(edges=...)`,
+    which the `edges` parameter template is read off."""
 
     declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
     """Per regime, the names it declares before demand prunes any, which the
@@ -355,7 +354,7 @@ def prepare_model_structure(
     gated_source_periods: MappingProxyType[
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
-    declared_laws: Mapping[RegimeName, tuple[RegimeLawDeclaration, ...]],
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
@@ -365,9 +364,9 @@ def prepare_model_structure(
     are the coverage, the per-period targets and the per-edge gated source
     periods resolved once from the declarations by the caller;
     `visited_periods_by_regime` are the periods a subject can occupy, where the
-    simulate graph is active. `declared_laws` are the laws as `Model(edges=...)`
-    declares them and `declared_edge_vocabulary` the names each regime declares
-    before demand prunes any.
+    simulate graph is active. `declared_transitions` are the `Transition`s as
+    `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
+    each regime declares before demand prunes any.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -397,7 +396,7 @@ def prepare_model_structure(
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
-        declared_laws=MappingProxyType(dict(declared_laws)),
+        declared_transitions=MappingProxyType(dict(declared_transitions)),
         declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
     )
 
@@ -730,7 +729,9 @@ def process_regimes(
         {
             regime_name: create_edge_params_template(
                 source=regime_name,
-                declared_laws=prepared_structure.declared_laws.get(regime_name, ()),
+                declared_transitions=prepared_structure.declared_transitions.get(
+                    regime_name, ()
+                ),
                 vocabulary_by_regime=edge_vocabulary,
             )
             for regime_name in representative_user_regimes
@@ -6334,9 +6335,8 @@ def _process_next_regime_cells(
 
     A law's parameters bind from `flat_params["edges"][source]` by key. A law
     over all targets reads them under their own names, which are their keys; a
-    per-target cell reads them under `<target>__<param>`, or
-    `<target>__probability__<param>` for a value-dependent cell's probability,
-    unless the parameter is declared by a law over all targets.
+    per-target cell reads them under `<target>__<param>`, unless the parameter
+    is declared by a law over all targets.
 
     Args:
         next_regime_cells_by_target: The canonical regime-transition cells,
@@ -6393,16 +6393,10 @@ def _with_cell_param_keys(
         return cast("EconFunction", func)
     target_branch = edge_params_template.get(target_regime_name)
     target_branch = target_branch if isinstance(target_branch, Mapping) else {}
-    probability_branch = target_branch.get(PROBABILITY)
-    probability_branch = (
-        probability_branch if isinstance(probability_branch, Mapping) else {}
-    )
     mapper: dict[str, str] = {}
     for arg in get_union_of_args([func]):
         if isinstance(target_branch.get(arg), str):
             mapper[arg] = qname_from_tree_path((target_regime_name, arg))
-        elif isinstance(probability_branch.get(arg), str):
-            mapper[arg] = qname_from_tree_path((target_regime_name, PROBABILITY, arg))
     if not mapper:
         return cast("EconFunction", func)
     return cast("EconFunction", rename_arguments(func, mapper=mapper))
@@ -6639,9 +6633,8 @@ def _engine_flat_param_names(
 def _law_param_names(*, edge_params_template: EdgeParamsTemplate) -> frozenset[str]:
     """Return the flat names of a source's regime-transition law parameters.
 
-    These are the edge slots outside a value-dependent cell's gate, gate
-    references and routes: a law over all targets, a per-target cell, and a
-    value-dependent cell's probability.
+    These are the edge slots outside a gate's predicate, references and routes:
+    a law over all targets and a per-target cell.
 
     Args:
         edge_params_template: The source's branch of the `edges` template.

@@ -8,7 +8,6 @@ import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
-from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +20,7 @@ from numpy.typing import ArrayLike
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
+from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.params.regime_template import create_edge_vocabulary
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
@@ -32,9 +32,11 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_regime_schedules,
 )
-from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
+from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
+from lcm.collective import Gate
+from lcm.transition import Transition
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
@@ -650,10 +652,23 @@ def bind_laws(declared: Mapping[RegimeName, object]) -> RegimeLaws:
     """Bind each regime's declared law the way `Model(edges=...)` binds it.
 
     `declared` maps every regime to its law between regimes, `None` for a
-    terminal regime.
+    terminal regime, or to a `Transition` whose gates the law carries along.
     """
     return MappingProxyType(
-        {name: bind_regime_law(law) for name, law in declared.items()}
+        {
+            name: (
+                bind_regime_law(
+                    law.law,
+                    gated_edges={
+                        target: gated_edge_from_gate(gate)
+                        for target, gate in law.gates.items()
+                    },
+                )
+                if isinstance(law, Transition)
+                else bind_regime_law(law)
+            )
+            for name, law in declared.items()
+        }
     )
 
 
@@ -688,8 +703,22 @@ def build_prepared_structure(
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
         # The bound laws stand in for the declarations a `Model` would hold.
-        declared_laws={
-            name: (cast("RegimeLawDeclaration", law.transition),)
+        declared_transitions={
+            name: (
+                Transition(
+                    targets=dict.fromkeys(laws, 0),
+                    law=law.transition,
+                    gates={
+                        target: Gate(
+                            predicate=edge.gate,
+                            routes=edge.legs,
+                            references=edge.gate_refs,
+                            off_grid=edge.off_grid,
+                        )
+                        for target, edge in law.gated_edges.items()
+                    },
+                ),
+            )
             for name, law in bound.items()
             if not law.terminal
         },

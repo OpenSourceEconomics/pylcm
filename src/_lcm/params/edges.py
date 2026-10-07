@@ -7,9 +7,9 @@ there too: `flat_params["edges"][source]` is a flat mapping whose keys are the
 rest of that path joined by `QNAME_DELIMITER`, e.g.
 
 - `n_periods` for a law over all targets;
-- `dead__probability__rate` for a gated cell's selection probability;
-- `dead__gate__min_wealth` for its gate;
-- `dead__gate_references__spouse__wealth__scale` for a gate reference;
+- `dead__rate` for a per-target cell, gated or not;
+- `dead__predicate__min_wealth` for the gate on `dead`;
+- `dead__references__spouse__wealth__scale` for a gate reference;
 - `dead__routes__husband__fallback__solve__wealth__scale` for one phase of a
   route fallback.
 
@@ -30,11 +30,10 @@ from lcm.exceptions import InvalidNameError
 # Root of the edge namespace, in the user's params and in the engine's.
 EDGES = "edges"
 
-# Entries of a value-dependent cell: its selection probability, gate predicate,
-# gate references and routes; and of one route's fallback below `ROUTES`.
-PROBABILITY = "probability"
-GATE = "gate"
-GATE_REFERENCES = "gate_references"
+# Entries of a target's gate: its predicate, references and routes; and of one
+# route's fallback below `ROUTES`.
+PREDICATE = "predicate"
+REFERENCES = "references"
 ROUTES = "routes"
 FALLBACK = "fallback"
 
@@ -120,14 +119,14 @@ def is_gated_cell_slot(key: str) -> bool:
         key: The slot's key in `flat_params["edges"][source]`.
 
     Returns:
-        Whether the slot's second path segment is `gate`, `gate_references` or
+        Whether the slot's second path segment is `predicate`, `references` or
         `routes`, below a target.
 
     """
     path = tree_path_from_qname(key)
     return len(path) >= _MIN_GATED_SLOT_DEPTH and path[1] in (
-        GATE,
-        GATE_REFERENCES,
+        PREDICATE,
+        REFERENCES,
         ROUTES,
     )
 

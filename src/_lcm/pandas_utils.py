@@ -16,10 +16,10 @@ from jax import Array
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.params.edges import EDGES
-from _lcm.params.regime_template import iter_edge_callables
+from _lcm.params.regime_template import iter_transition_callables
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
-from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
@@ -36,7 +36,7 @@ from lcm.exceptions import InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition
+from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition, Transition
 from lcm.typing import Float1D, FloatND, Int1D
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
@@ -293,7 +293,7 @@ def convert_series_in_params(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
-    declared_laws: Mapping[RegimeName, tuple[RegimeLawDeclaration, ...]],
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     array_writer: CanonicalArrayWriter | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -316,9 +316,9 @@ def convert_series_in_params(
         laws: Each regime's law, whose transition functions read params too.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
-        declared_laws: Per source regime, its laws as `Model(edges=...)`
-            declares them; an `edges` slot's Series is indexed by the declared
-            callable reading it.
+        declared_transitions: Per source regime, its `Transition`s as
+            `Model(edges=...)` declares them; an `edges` slot's Series is indexed
+            by the declared callable reading it.
         array_writer: Optional owner admitting each Series upload and retaining
             completed leaves while the parameter mapping is assembled.
 
@@ -336,7 +336,7 @@ def convert_series_in_params(
                         _convert_edge_params(
                             source=source,
                             leaves=cast("Mapping[str, object]", leaves),
-                            declared_laws=declared_laws.get(source, ()),
+                            declared_transitions=declared_transitions.get(source, ()),
                             ages=ages,
                             user_regimes=user_regimes,
                             regime_names_to_ids=regime_names_to_ids,
@@ -417,7 +417,7 @@ def _convert_edge_params(
     *,
     source: RegimeName,
     leaves: Mapping[str, object],
-    declared_laws: tuple[object, ...],
+    declared_transitions: tuple[Transition, ...],
     ages: AgeGrid,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
@@ -434,7 +434,7 @@ def _convert_edge_params(
     Args:
         source: The source regime.
         leaves: The source's slots, keyed by declaration path.
-        declared_laws: The source's declared laws.
+        declared_transitions: The source's `Transition` declarations.
         ages: Age grid for the model.
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
@@ -446,9 +446,9 @@ def _convert_edge_params(
 
     """
     readers: dict[tuple[str, ...], list[tuple[Callable[..., Any], bool]]] = {}
-    for law in declared_laws:
-        for path, func, cell in iter_edge_callables(law=law, path=()):
-            readers.setdefault(path, []).append((func, cell is not None))
+    for transition in declared_transitions:
+        for path, func, gate in iter_transition_callables(transition):
+            readers.setdefault(path, []).append((func, gate is not None))
     converted: dict[str, object] = {}
     for key, value in leaves.items():
         if not _value_contains_series(value):

@@ -45,14 +45,15 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -194,10 +195,16 @@ def build_model(
 
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
-    solo_law = {
-        "solo": StochasticTransition(func=_solo_stays_before_age_two),
-        "dead": StochasticTransition(func=_solo_leaves_from_age_two),
-    }
+    solo_leaves = StochasticTransition(func=_solo_leaves_from_age_two)
+    solo_law = ByAge(
+        cases={
+            (0, 1): {
+                "solo": StochasticTransition(func=_solo_stays_before_age_two),
+                "dead": solo_leaves,
+            },
+            2: {"dead": solo_leaves},
+        }
+    )
     solo = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
@@ -207,11 +214,19 @@ def build_model(
             "x": {"solo": fixed_transition("x")},
         },
     )
-    pair_law = {
-        "pair": StochasticTransition(func=_stay_before_age_one),
-        "dead": ValueDependentTransition(
-            probability=StochasticTransition(func=_leave_from_age_one),
-            gate=_gate_open_above_the_middle,
+    pair_leaves = StochasticTransition(func=_leave_from_age_one)
+    pair_law = ByAge(
+        cases={
+            0: {
+                "pair": StochasticTransition(func=_stay_before_age_one),
+                "dead": pair_leaves,
+            },
+            1: {"dead": pair_leaves},
+        }
+    )
+    pair_gates = {
+        "dead": Gate(
+            predicate=_gate_open_above_the_middle,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -223,7 +238,7 @@ def build_model(
                     )
                 )
             },
-        ),
+        )
     }
     pair = Regime(
         states={"wealth": _WEALTH},
@@ -246,7 +261,9 @@ def build_model(
                 targets={"solo": (0, 1), "dead": (0, 1, 2)}, law=solo_law
             ),
             "pair": Transition(
-                targets={"pair": 0, "dead": (0, 1), "solo": (0, 1)}, law=pair_law
+                targets={"pair": 0, "dead": (0, 1), "solo": (0, 1)},
+                law=pair_law,
+                gates=pair_gates,
             ),
         },
         states={

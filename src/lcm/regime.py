@@ -199,9 +199,9 @@ class Regime:
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a
-    `ValueDependentTransition`, with a folded IID state or nonlinear certainty
-    equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    rejected on a collective regime, on the source of a `Gate`, with a folded
+    IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
+    `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | None = None
@@ -257,10 +257,9 @@ class Regime:
     per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes goes through a `ValueDependentTransition` in the source's
-    `Transition` law. EV1 taste shocks, nonlinear certainty
-    equivalents, and non-GridSearch solvers on a collective regime raise
-    `NotImplementedError`.
+    regimes goes through a `Gate` in the source's `Transition`. EV1 taste
+    shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
+    collective regime raise `NotImplementedError`.
 
     A shock declared `fold=True` is refused when the model is built, naming the
     regime and the state. A collective regime writes `-inf` where no action

@@ -720,6 +720,7 @@ def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
     bound: Any = _bind_law(
         law=wrapper(func=lambda: RegimeId.dead, targets=("dead",)),
         targets=("working", "dead", "retirement"),
+        fallbacks=(),
         source="working",
         age=25,
         side="solve",

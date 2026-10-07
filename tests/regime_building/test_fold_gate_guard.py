@@ -37,18 +37,18 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 
@@ -94,8 +94,8 @@ def _solve_kwargs(
     regimes_and_laws: tuple[dict[str, Regime], dict[str, object]],
     ages: AgeGrid,
 ) -> dict:
-    regimes, declared_laws = regimes_and_laws
-    laws = bind_laws(declared_laws)
+    regimes, declared_transitions = regimes_and_laws
+    laws = bind_laws(declared_transitions)
     names = list(regimes)
     finalized = finalize_regimes(
         user_regimes=regimes,
@@ -138,23 +138,27 @@ def _make_gated_target_regimes(
     )
     regimes = {"source": source, "source_terminal": source_terminal, "target": target}
     laws = {
-        "source": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="source_terminal", projection={}
-                                ),
-                            )
-                        },
-                    )
+        "source": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_no_dissolution_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="source_terminal", projection={}
+                            ),
+                        )
+                    },
+                )
+            },
         ),
         "source_terminal": None,
         "target": None,
@@ -278,29 +282,33 @@ def _make_gate_refs_regimes(
         "ref_target": ref_target,
     }
     laws = {
-        "source": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=lambda V_ref: V_ref > 0.0,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="source_terminal", projection={}
-                                ),
-                            )
-                        },
-                        gate_references={
-                            "V_ref": ProjectedRegimeValue(
-                                regime="ref_target",
-                                projection={"wage_shock": lambda: 0.0},
-                            )
-                        },
-                    )
+        "source": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=lambda V_ref: V_ref > 0.0,
+                    routes={
+                        "only": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="source_terminal", projection={}
+                            ),
+                        )
+                    },
+                    references={
+                        "V_ref": ProjectedRegimeValue(
+                            regime="ref_target",
+                            projection={"wage_shock": lambda: 0.0},
+                        )
+                    },
+                )
+            },
         ),
         "source_terminal": None,
         "target": None,

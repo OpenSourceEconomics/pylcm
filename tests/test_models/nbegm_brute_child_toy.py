@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ByAge,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
@@ -210,7 +211,9 @@ def build_model(
     )
     return Model(
         edges={
-            "young": Transition(targets={"old": 0, "dead": 0}, law=young_transition),
+            "young": Transition(
+                targets={"old": 0, "dead": 0}, law=ByAge(cases={0: young_transition})
+            ),
             "old": {"dead": 1},
         },
         regimes={"young": young, "old": old, "dead": dead},

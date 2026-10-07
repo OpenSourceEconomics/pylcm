@@ -17,6 +17,7 @@ from lcm import (
     AgeGrid,
     ByAge,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -25,7 +26,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -71,24 +71,20 @@ def _model(
     latent_edges = (
         Transition(
             targets={"end": 0},
-            law=ByAge(
-                cases={
-                    0: {
-                        "end": ValueDependentTransition(
-                            probability=StochasticTransition(func=_probability),
-                            gate=_gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    target_stakeholder=None,
-                                    fallback=ProjectedRegimeValue(
-                                        regime="end", projection={"wealth": _projection}
-                                    ),
-                                )
-                            },
+            law=ByAge(cases={0: {"end": StochasticTransition(func=_probability)}}),
+            gates={
+                "end": Gate(
+                    predicate=_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            target_stakeholder=None,
+                            fallback=ProjectedRegimeValue(
+                                regime="end", projection={"wealth": _projection}
+                            ),
                         )
-                    }
-                }
-            ),
+                    },
+                )
+            },
         )
         if gated
         else {"end": 0}

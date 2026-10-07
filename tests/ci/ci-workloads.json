@@ -627,6 +627,7 @@
   "tests/test_taste_shocks.py",
   "tests/test_tiled_productmap.py",
   "tests/test_transition_checks.py",
+  "tests/test_transition_targets.py",
   "tests/test_tuning.py",
   "tests/test_ulp_assertion.py",
   "tests/test_user_regime.py",
@@ -1152,6 +1153,7 @@
     "tests/test_target_only_carried_constraint.py",
     "tests/test_taste_shocks.py",
     "tests/test_transition_checks.py",
+    "tests/test_transition_targets.py",
     "tests/test_tuning.py",
     "tests/test_ulp_assertion.py",
     "tests/test_utils.py"
@@ -1924,6 +1926,7 @@
     "tests/test_state_conditioned_model.py",
     "tests/test_stochastic.py",
     "tests/test_transition_checks.py",
+    "tests/test_transition_targets.py",
     "tests/test_tuning.py",
     "tests/test_validate_param_types.py",
     "tests/test_zero_safe.py"
@@ -3036,6 +3039,7 @@
     "tests/test_stochastic_volatility_example.py",
     "tests/test_target_only_carried_constraint.py",
     "tests/test_tiled_productmap.py",
+    "tests/test_transition_targets.py",
     "tests/test_tuning.py",
     "tests/test_utils.py",
     "tests/test_validate_regime_transition_probs.py"
@@ -5968,6 +5972,7 @@
     "tests/test_solvers.py",
     "tests/test_state_conditioned_model.py",
     "tests/test_transition_checks.py",
+    "tests/test_transition_targets.py",
     "tests/test_user_regime.py",
     "tests/test_validate_param_types.py",
     "tests/test_zero_safe.py"
@@ -14845,6 +14850,7 @@
   "tests/test_sharded_state_across_gated_edge.py",
   "tests/test_sharded_state_pruned_from_regimes.py",
   "tests/test_source_certificate_portability.py",
+  "tests/test_transition_targets.py",
   "tests/test_tuning.py"
  ],
  "excluded_files": {

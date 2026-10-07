@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from _lcm.config import TEST_DATA
-from lcm import AgeGrid, Model, StochasticTransition, Transition
+from lcm import AgeGrid, ByAge, Model, StochasticTransition, Transition
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import FloatND
 from lcm_examples.iskhakov_et_al_2017 import get_edges
@@ -113,10 +113,14 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
                     "retirement": tuple(ages.exact_values[:-2]),
                     "dead": tuple(ages.exact_values[:-1]),
                 },
-                law={
-                    "retirement": StochasticTransition(func=_retirement_stay_prob),
-                    "dead": StochasticTransition(func=_retirement_death_prob),
-                },
+                law=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law={
+                        "retirement": StochasticTransition(func=_retirement_stay_prob),
+                        "dead": StochasticTransition(func=_retirement_death_prob),
+                    },
+                    then="dead",
+                ),
             ),
         },
         regimes={

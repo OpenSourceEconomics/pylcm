@@ -20,6 +20,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     Model,
     StochasticTransition,
@@ -91,10 +92,15 @@ def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
 # Retirement can only stay retired or die. Declaring this granularly (with
 # indicator probabilities) narrows reachability so the bare wealth law never
 # has to cover the skill-carrying working regime.
-RETIREMENT_TRANSITION = {
-    "retirement": StochasticTransition(func=_retirement_stay_prob),
-    "dead": StochasticTransition(func=_retirement_death_prob),
-}
+RETIREMENT_TRANSITION = ByAge(
+    cases={
+        (40, 50): {
+            "retirement": StochasticTransition(func=_retirement_stay_prob),
+            "dead": StochasticTransition(func=_retirement_death_prob),
+        },
+        60: {"dead": StochasticTransition(func=_retirement_death_prob)},
+    }
+)
 
 
 @categorical(ordered=False)
@@ -318,10 +324,17 @@ def test_nan_regime_transition_prob_surfaces_as_error():
         edges={
             "retirement": Transition(
                 targets={"retirement": 40, "dead": (40, 50)},
-                law={
-                    "retirement": StochasticTransition(func=_stay_prob_from_param),
-                    "dead": StochasticTransition(func=_death_prob_from_param),
-                },
+                law=ByAge(
+                    cases={
+                        40: {
+                            "retirement": StochasticTransition(
+                                func=_stay_prob_from_param
+                            ),
+                            "dead": StochasticTransition(func=_death_prob_from_param),
+                        },
+                        50: {"dead": StochasticTransition(func=_death_prob_from_param)},
+                    }
+                ),
             )
         },
         regimes={

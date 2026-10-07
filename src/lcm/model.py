@@ -41,7 +41,7 @@ from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
-    declared_transition_laws,
+    collect_declared_transitions,
     naming_cells_without_edges,
     prepare_graph,
 )
@@ -693,9 +693,9 @@ class Model:
         # from its edges before anything reads the regimes.
         self._edges = cast("ModelEdges", edges)
         laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
-        # The laws as declared, before any age selects among them: the `edges`
-        # parameter template and its Series conversion read these.
-        self._declared_laws = declared_transition_laws(
+        # The transitions as declared, before any age selects among them: the
+        # `edges` parameter template and its Series conversion read these.
+        self._declared_transitions = collect_declared_transitions(
             cast("Mapping[RegimeName, object] | Phased", edges)
         )
         # A Markov state that declares a fixed component is carried as two states
@@ -793,7 +793,10 @@ class Model:
         )
         laws = MappingProxyType(
             {
-                name: bind_regime_law(transition)
+                name: bind_regime_law(
+                    transition,
+                    gated_edges=prepared_graph.laws[name].gated_edges,
+                )
                 for name, transition in demanded_transitions.items()
             }
         )
@@ -905,7 +908,7 @@ class Model:
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
-            declared_laws=self._declared_laws,
+            declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
         )
         self.reachability = dataclasses.replace(
@@ -4078,7 +4081,7 @@ class Model:
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
-                declared_laws=self._declared_laws,
+                declared_transitions=self._declared_transitions,
             )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves

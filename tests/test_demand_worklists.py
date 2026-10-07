@@ -20,6 +20,7 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -27,7 +28,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -348,23 +348,19 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         if phased_fallback
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
-    law = ByAge(
-        cases={
-            40: {
-                "target": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_gate,
-                    routes={"only": StakeholderRoute(fallback=fallback)},
-                    gate_references={
-                        "V_reference": ProjectedRegimeValue(
-                            regime="reference",
-                            projection={"wealth": _identity},
-                        )
-                    },
+    law = ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}})
+    gates = {
+        "target": Gate(
+            predicate=_gate,
+            routes={"only": StakeholderRoute(fallback=fallback)},
+            references={
+                "V_reference": ProjectedRegimeValue(
+                    regime="reference",
+                    projection={"wealth": _identity},
                 )
-            }
-        }
-    )
+            },
+        )
+    }
     return Model(
         regimes={
             "source": _nonterminal(),
@@ -377,13 +373,23 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         regime_id_class=GatedId,
         initial_nodes={40: "source"},
         edges=Phased(
-            solve={"source": Transition(targets={"target": 40, "priced": 40}, law=law)},
+            solve={
+                "source": Transition(
+                    targets={"target": 40, "priced": 40}, law=law, gates=gates
+                )
+            },
             simulate={
-                "source": Transition(targets={"target": 40, "fallback": 40}, law=law)
+                "source": Transition(
+                    targets={"target": 40, "fallback": 40}, law=law, gates=gates
+                )
             },
         )
         if phased_fallback
-        else {"source": Transition(targets={"target": 40, "fallback": 40}, law=law)},
+        else {
+            "source": Transition(
+                targets={"target": 40, "fallback": 40}, law=law, gates=gates
+            )
+        },
     )
 
 

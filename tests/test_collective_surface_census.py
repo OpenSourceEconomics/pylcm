@@ -1,7 +1,7 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
 A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
-`ValueDependentTransition` can cover the feature at either of two altitudes.
+`Gate` can cover the feature at either of two altitudes.
 Most drive it through `Model`, so the public route the documentation describes
 is what runs. The rest call the engine directly — `process_regimes`, a bare
 `solve`, `route_gated_edges` — which is the right altitude for pinning a
@@ -80,13 +80,13 @@ def _reaches_public_model(*, source: str) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary now: a regime says who its stakeholders are, what a
+#: There is one vocabulary: a regime says who its stakeholders are, what a
 #: value-reading constraint is, and where a value-dependent transition routes,
 #: each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
     "ValueDependentConstraint",
-    "ValueDependentTransition",
+    "Gate",
 )
 
 
@@ -177,7 +177,7 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("CollectiveUtility(utilities={})", True),
         ("lcm.CollectiveUtility(utilities={})", True),
         ("ValueDependentConstraint(predicate=p)", True),
-        ("ValueDependentTransition(gate=g)", True),
+        ("Gate(predicate=g)", True),
         ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("collective_utility = 1", False),

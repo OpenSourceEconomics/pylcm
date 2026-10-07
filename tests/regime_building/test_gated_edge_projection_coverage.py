@@ -39,6 +39,7 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -46,7 +47,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -245,10 +245,16 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         edges={
             "src": Transition(
                 targets={"src_exit": 0, "annuity": 0},
-                law={
-                    "src_exit": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_wage_gate,
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "src_exit": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                gates={
+                    "src_exit": Gate(
+                        predicate=_wage_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -323,27 +329,29 @@ def _build_model(
                 law=ByAge(
                     cases={
                         AgeRange(exclusive_stop=1): {
-                            "src_exit": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_gate,
-                                routes={
-                                    "only": StakeholderRoute(
-                                        fallback=ProjectedRegimeValue(
-                                            regime="fallback",
-                                            projection=fallback_projection,
-                                        )
-                                    )
-                                },
-                                gate_references={
-                                    "V_fallback_ref": ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection=gate_ref_projection,
-                                    )
-                                },
-                            )
+                            "src_exit": StochasticTransition(func=_prob_one)
                         }
                     }
                 ),
+                gates={
+                    "src_exit": Gate(
+                        predicate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection=fallback_projection,
+                                )
+                            )
+                        },
+                        references={
+                            "V_fallback_ref": ProjectedRegimeValue(
+                                regime="fallback",
+                                projection=gate_ref_projection,
+                            )
+                        },
+                    )
+                },
             ),
             "fallback": {"fallback_exit": 1},
         },

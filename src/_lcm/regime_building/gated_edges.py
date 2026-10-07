@@ -50,8 +50,8 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.params.edges import (
     FALLBACK,
-    GATE,
-    GATE_REFERENCES,
+    PREDICATE,
+    REFERENCES,
     ROUTES,
     regime_kernel_params,
 )
@@ -731,7 +731,7 @@ def _gate_ref_with_qualified_params(
     """Return a gate reference whose projections declare their flat param names."""
     return _ref_with_qualified_params(
         ref=ref,
-        path=(target, GATE_REFERENCES, ref_name),
+        path=(target, REFERENCES, ref_name),
         state_names=state_names,
     )
 
@@ -1254,7 +1254,7 @@ def _compile_edge_gate(
     # node can carry, which is exactly the collision the fences exist to detect.
     qualified_gate = _with_qualified_params(
         func=edge.gate,
-        path=(edge.target, GATE),
+        path=(edge.target, PREDICATE),
         wired_names=injected_names | set(state_names),
     )
     qualified_gate_refs = {

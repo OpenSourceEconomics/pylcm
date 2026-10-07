@@ -22,7 +22,9 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -31,7 +33,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
@@ -127,10 +128,12 @@ def _make_model(
         edges={
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_gate,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -226,10 +229,12 @@ def _make_categorical_process_fallback_model(
         edges={
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_gate,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -413,10 +418,12 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
         edges={
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_healthy_gate,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_healthy_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -521,10 +528,12 @@ def _witness_model() -> Model:
         edges={
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_witness_gate,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_witness_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -533,7 +542,7 @@ def _witness_model() -> Model:
                                 )
                             )
                         },
-                        gate_references={
+                        references={
                             "V_reference": ProjectedRegimeValue(
                                 regime="reference", projection={"x": _identity_x}
                             )

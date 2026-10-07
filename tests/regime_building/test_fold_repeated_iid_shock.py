@@ -18,6 +18,7 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -92,10 +93,14 @@ def _build_model(*, fold: bool) -> Model:
         edges={
             "alive": Transition(
                 targets={"alive": (0, 1), "dead": (0, 1, 2)},
-                law={
-                    "alive": StochasticTransition(func=_probability_alive),
-                    "dead": StochasticTransition(func=_probability_dead),
-                },
+                law=ByAge.until(
+                    stop_age_exclusive=LAST_ALIVE_AGE + 1,
+                    law={
+                        "alive": StochasticTransition(func=_probability_alive),
+                        "dead": StochasticTransition(func=_probability_dead),
+                    },
+                    then="dead",
+                ),
             )
         },
         ages=AGES,

@@ -86,12 +86,13 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -125,12 +126,12 @@ _SOURCE_POINTS = (0.0, 10.0)
 _GATE_THRESHOLD = 2.0
 
 # The name the gate's own parameter carries in `flat_params["edges"]["src"]`:
-# its declaration path below `params["edges"]["src"]` (target, `gate`,
+# its declaration path below `params["edges"]["src"]` (target, `predicate`,
 # parameter). The source's `x__points` below is a runtime-grid helper of the
 # source ITSELF, not an edge entry, so it keeps its bare name in
 # `flat_params["src"]` — which is what leaves it collidable with the target's,
 # the collision this fixture is built on.
-_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+_GATE_THRESHOLD_QNAME = "target__predicate__gate_threshold"
 
 
 @categorical(ordered=True)
@@ -197,22 +198,26 @@ def _make_f2_regimes() -> dict[str, Regime]:
 def _make_f2_laws() -> dict[str, object]:
     """`src` routes into `target` through a gated edge falling back to `fallback`."""
     return {
-        "src": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_threshold_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        "src": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_threshold_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
         "target": None,
         "fallback": None,
@@ -537,22 +542,26 @@ def _make_f3_regimes() -> dict[str, Regime]:
 def _make_f3_laws() -> dict[str, object]:
     """`src` routes into the stateless target, falling back to a stateless regime."""
     return {
-        "src": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "stateless_target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_stateless_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="stateless_fallback", projection={}
-                                )
-                            )
-                        },
-                    )
+        "src": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "stateless_target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "stateless_target": Gate(
+                    predicate=_stateless_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="stateless_fallback", projection={}
+                            )
+                        )
+                    },
+                )
+            },
         ),
         "stateless_target": None,
         "stateless_fallback": None,

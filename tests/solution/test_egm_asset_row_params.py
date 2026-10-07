@@ -23,6 +23,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -252,10 +253,15 @@ def _resources_param_model(solver: str) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob_wealth),
-                    "dead": StochasticTransition(func=death_prob_wealth),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob_wealth),
+                            "dead": StochasticTransition(func=death_prob_wealth),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob_wealth)},
+                    }
+                ),
             )
         },
     )
@@ -396,10 +402,15 @@ def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob_share),
-                    "dead": StochasticTransition(func=death_prob_share),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob_share),
+                            "dead": StochasticTransition(func=death_prob_share),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob_share)},
+                    }
+                ),
             )
         },
     )
@@ -544,10 +555,15 @@ def _imputed_pension_model(solver: str) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob_wealth),
-                    "dead": StochasticTransition(func=death_prob_wealth),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob_wealth),
+                            "dead": StochasticTransition(func=death_prob_wealth),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob_wealth)},
+                    }
+                ),
             )
         },
     )
@@ -621,10 +637,15 @@ def _decreasing_resources_model() -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob_wealth),
-                    "dead": StochasticTransition(func=death_prob_wealth),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob_wealth),
+                            "dead": StochasticTransition(func=death_prob_wealth),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob_wealth)},
+                    }
+                ),
             )
         },
     )

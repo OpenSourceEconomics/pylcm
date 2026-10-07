@@ -6,18 +6,17 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
-    Transition,
-    categorical,
-)
-from lcm.collective import (
     ProjectedRegimeValue,
     StakeholderRoute,
     StochasticTransition,
-    ValueDependentTransition,
+    Transition,
+    categorical,
 )
 from lcm.regime import Regime
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -70,19 +69,16 @@ def _closed_gate(V_target: FloatND) -> BoolND:
 
 
 def _build_model(*, gate, enable_jit: bool) -> Model:
-    src_law = {
-        "stateless_target": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_one),
-            gate=gate,
-            routes={
-                "only": StakeholderRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="stateless_fallback", projection={}
-                    )
+    src_gate = Gate(
+        predicate=gate,
+        routes={
+            "only": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="stateless_fallback", projection={}
                 )
-            },
-        )
-    }
+            )
+        },
+    )
     src = Regime(
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
@@ -109,7 +105,12 @@ def _build_model(*, gate, enable_jit: bool) -> Model:
         edges={
             "src": Transition(
                 targets={"stateless_target": 0, "stateless_fallback": 0},
-                law=src_law,
+                law=ByAge(
+                    cases={
+                        0: {"stateless_target": StochasticTransition(func=_prob_one)}
+                    }
+                ),
+                gates={"stateless_target": src_gate},
             )
         },
     )

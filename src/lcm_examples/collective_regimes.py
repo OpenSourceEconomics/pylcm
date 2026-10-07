@@ -2,12 +2,12 @@
 
 The first model isolates the household's shared argmax with stakeholder-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
-options through `ValueDependentConstraint`, and a dissolution edge through
-`ValueDependentTransition`, while keeping the state and action spaces hand-checkable.
+options through `ValueDependentConstraint`, and a dissolution edge through a
+`Gate`, while keeping the state and action spaces hand-checkable.
 
-The dissolution edge is keyed by the CONTINUING collective regime under
-`gate = ~D_target`: the gate-open branch is staying together, and each stakeholder's
-route fallback is that stakeholder's own singleton regime.
+The dissolution gate is keyed by the CONTINUING collective regime under
+`predicate = ~D_target`: the gate-open branch is staying together, and each
+stakeholder's route fallback is that stakeholder's own singleton regime.
 """
 
 import jax.numpy as jnp
@@ -18,6 +18,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -26,7 +27,6 @@ from lcm import (
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -253,29 +253,33 @@ def get_dissolution_model(
     married_law = ByAge(
         cases={
             AgeRange(exclusive_stop=1): {
-                "married_with_participation": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_one),
-                    gate=_no_dissolution,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
+                "married_with_participation": StochasticTransition(
+                    func=_probability_one
                 )
             }
         }
     )
+    married_gates = {
+        "married_with_participation": Gate(
+            predicate=_no_dissolution,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_f",
+                        projection={"wage": _identity_wage},
+                    ),
+                ),
+                "m": StakeholderRoute(
+                    target_stakeholder="m",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_m",
+                        projection={"wage": _identity_wage},
+                    ),
+                ),
+            },
+        )
+    }
     married = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -297,14 +301,7 @@ def get_dissolution_model(
     )
     return Model(
         edges={
-            "married": Transition(
-                targets={
-                    "married_with_participation": 0,
-                    "single_f": 0,
-                    "single_m": 0,
-                },
-                law=married_law,
-            ),
+            "married": Transition(law=married_law, gates=married_gates),
             "married_with_participation": {"married_terminal": 1},
         },
         regimes={

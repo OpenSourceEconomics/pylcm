@@ -1,9 +1,8 @@
 """Per-target stochastic regime transition laws.
 
 The granular form of a `Transition` law declares each target regime's
-transition probability as its own function. The source's edges in
-`Model(edges=...)` declare which targets are reachable; a target the law omits
-receives probability zero.
+transition probability as its own function. The law's keys at each source
+age name the source's destinations there.
 """
 
 from collections.abc import Mapping
@@ -18,6 +17,7 @@ from _lcm.regime_law import bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
+    ByAge,
     LinSpacedGrid,
     Model,
     Phased,
@@ -67,12 +67,20 @@ def _prob_dead(age: int) -> ScalarFloat:
     return jnp.asarray(1.0 - _prob_work(age) - _prob_retired(age))
 
 
-def _granular_transition() -> dict[str, StochasticTransition]:
-    return {
-        "work": StochasticTransition(func=_prob_work),
-        "retired": StochasticTransition(func=_prob_retired),
-        "dead": StochasticTransition(func=_prob_dead),
-    }
+def _granular_transition() -> ByAge:
+    return ByAge(
+        cases={
+            0: {
+                "work": StochasticTransition(func=_prob_work),
+                "retired": StochasticTransition(func=_prob_retired),
+                "dead": StochasticTransition(func=_prob_dead),
+            },
+            1: {
+                "retired": StochasticTransition(func=_prob_retired),
+                "dead": StochasticTransition(func=_prob_dead),
+            },
+        }
+    )
 
 
 _WORK_EDGES = {"work": 0, "retired": (0, 1), "dead": (0, 1)}
@@ -92,20 +100,26 @@ def _build_regime(**overrides: Any) -> UserRegime:
 def _build_model(
     *,
     work: UserRegime,
-    work_law: Mapping[str, StochasticTransition] | None = None,
+    work_law: Mapping[str, StochasticTransition] | ByAge | None = None,
     work_edges: Mapping[str, AgeSelector] = _WORK_EDGES,
 ) -> Model:
     # `retired` outlives `work` by one age so that the mass `work` sends it in
     # its final transition lands on an active regime, and hands everything to
     # `dead` in its own final transition.
-    retired_law = {
-        "retired": StochasticTransition(
-            func=lambda age: jnp.where(age < 2, 0.5, 0.0),
-        ),
-        "dead": StochasticTransition(
-            func=lambda age: jnp.where(age < 2, 0.5, 1.0),
-        ),
-    }
+    retired_dead = StochasticTransition(
+        func=lambda age: jnp.where(age < 2, 0.5, 1.0),
+    )
+    retired_law = ByAge(
+        cases={
+            (0, 1): {
+                "retired": StochasticTransition(
+                    func=lambda age: jnp.where(age < 2, 0.5, 0.0),
+                ),
+                "dead": retired_dead,
+            },
+            2: {"dead": retired_dead},
+        }
+    )
     return Model(
         regimes={
             "work": work,
@@ -158,14 +172,19 @@ def test_template_has_per_target_regime_transition_keys() -> None:
 
     model = _build_model(
         work=_build_regime(),
-        work_law={
-            "work": StochasticTransition(
-                func=lambda age, hazard: (
-                    1.0 - _prob_dead_with_param(age=age, hazard=hazard)
-                )
-            ),
-            "dead": StochasticTransition(func=_prob_dead_with_param),
-        },
+        work_law=ByAge(
+            cases={
+                (0, 1): {
+                    "work": StochasticTransition(
+                        func=lambda age, hazard: (
+                            1.0 - _prob_dead_with_param(age=age, hazard=hazard)
+                        )
+                    ),
+                    "dead": StochasticTransition(func=_prob_dead_with_param),
+                },
+                2: {"dead": StochasticTransition(func=_prob_dead_with_param)},
+            }
+        ),
         work_edges={"work": (0, 1), "dead": (0, 1, 2)},
     )
     template = model.get_params_template()
@@ -200,7 +219,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
                 "work": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
                 "valhalla": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
             },
-            work_edges={"work": (0, 1), "dead": (0, 1, 2)},
+            work_edges={"work": (0, 1, 2), "valhalla": (0, 1, 2)},
         )
 
 
@@ -420,10 +439,15 @@ def test_granular_keys_narrow_reachability() -> None:
     work = _build_regime(state_transitions={"wealth": {"retired": _next_wealth}})
     model = _build_model(
         work=work,
-        work_law={
-            "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
-            "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
-        },
+        work_law=ByAge(
+            cases={
+                (0, 1): {
+                    "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
+                    "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
+                },
+                2: {"dead": StochasticTransition(func=lambda age: jnp.asarray(0.3))},  # noqa: ARG005
+            }
+        ),
         work_edges={"retired": (0, 1), "dead": (0, 1, 2)},
     )
     assert "work" in model.user_regimes

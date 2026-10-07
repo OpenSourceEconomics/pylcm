@@ -564,7 +564,7 @@ def _mortal_model(
             "working": Transition(
                 targets={
                     "working": AgeRange(start=60, exclusive_stop=last_source_age),
-                    "dead": AgeRange(start=60),
+                    "dead": AgeRange(start=60, exclusive_stop=last_age),
                 },
                 law=(
                     per_target_law

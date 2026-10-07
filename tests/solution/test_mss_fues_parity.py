@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     Model,
     StochasticTransition,
@@ -181,7 +182,11 @@ def test_mss_publishes_neg_inf_for_all_infeasible_combo_like_fues():
 
     def build(envelope):
         ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-        retirement_law = retirement_transition
+        retirement_law = ByAge.until(
+            stop_age_exclusive=70,
+            law=retirement_transition,
+            then={"dead": retirement_transition["dead"]},
+        )
         return Model(
             edges=_lifecycle_edges(
                 ages=ages,

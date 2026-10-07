@@ -17,6 +17,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     LinSpacedGrid,
     Model,
@@ -149,14 +150,18 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     def _leaves(*, wealth, age):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
-    alive_law = {
-        "alive": StochasticTransition(
-            func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-        ),
-        "gone": StochasticTransition(
-            func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-        ),
-    }
+    alive_law = ByAge.until(
+        stop_age_exclusive=_LAST_AGE,
+        law={
+            "alive": StochasticTransition(
+                func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+            ),
+            "gone": StochasticTransition(
+                func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+            ),
+        },
+        then="gone",
+    )
     alive = Regime(
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},

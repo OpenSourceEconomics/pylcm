@@ -45,11 +45,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -176,25 +177,27 @@ def _laws() -> RegimeLaws:
     """The regimes' laws, bound as `Model(edges=...)` would bind them."""
     return bind_laws(
         {
-            "src": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=_gate_dissolves_everywhere,
-                            routes={
-                                "own": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={
-                                            "settlement": _settlement_from_health
-                                        },
-                                    )
-                                )
-                            },
-                        )
+            "src": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "target": StochasticTransition(func=_prob_one)
+                        }
                     }
-                }
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate_dissolves_everywhere,
+                        routes={
+                            "own": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"settlement": _settlement_from_health},
+                                )
+                            )
+                        },
+                    )
+                },
             ),
             "target": None,
             "fallback": None,

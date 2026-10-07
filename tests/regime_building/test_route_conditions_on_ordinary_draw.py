@@ -57,11 +57,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -277,10 +278,9 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
     declared in `transition` -- both orderings must yield the identical,
     order-independent routing.
     """
-    edges = {
-        "target_a": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+    gates = {
+        "target_a": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -289,9 +289,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
                 )
             },
         ),
-        "target_b": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+        "target_b": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -308,10 +307,16 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
-            }
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        name: StochasticTransition(func=_prob_half)
+                        for name in edge_order
+                    }
+                }
+            ),
+            gates={name: gates[name] for name in edge_order},
         ),
     )
     target_a = (

@@ -20,6 +20,7 @@ from lcm import (
     AgeRange,
     AgeSpecializedFunction,
     ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -27,7 +28,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -345,18 +345,16 @@ def _gated_fold_model(
     fallback_at_45: bool = False,
 ) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
-    target_law = {
-        "target": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_one),
-            gate=_gate,
-            routes={"only": StakeholderRoute(fallback=fallback)},
-            gate_references={
-                "V_reference": ProjectedRegimeValue(
-                    regime="reference", projection={"wealth": _identity}
-                )
-            },
-        )
-    }
+    target_law = {"target": StochasticTransition(func=_prob_one)}
+    target_gate = Gate(
+        predicate=_gate,
+        routes={"only": StakeholderRoute(fallback=fallback)},
+        references={
+            "V_reference": ProjectedRegimeValue(
+                regime="reference", projection={"wealth": _identity}
+            )
+        },
+    )
     terminal = Regime(
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
@@ -384,6 +382,7 @@ def _gated_fold_model(
                         **({45: "fallback"} if fallback_at_45 else {}),
                     }
                 ),
+                gates={"target": target_gate},
             )
         },
     )
@@ -416,9 +415,9 @@ def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     assert set(folds) == {1}
 
 
-def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
-    """A source solved at a later age whose case there declares no gate adds no
-    fold and requires no gate reference at the next age."""
+def test_a_gate_fold_exists_only_where_the_selected_case_reaches_the_target() -> None:
+    """A source solved at a later age whose case there does not reach the gated
+    target adds no fold and requires no gate reference at the next age."""
     model = _gated_fold_model(
         initial_nodes={40: "source", 45: "source", 50: "target"},
         fallback_at_45=True,

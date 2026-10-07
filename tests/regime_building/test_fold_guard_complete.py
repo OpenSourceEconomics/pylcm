@@ -42,12 +42,13 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -137,22 +138,26 @@ def _make_singleton_gated_target_regimes(
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_work},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_true_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="source_terminal", projection={}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_true_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="source_terminal", projection={}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     source_terminal = (
@@ -282,24 +287,28 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, tuple[Regime, object
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_work},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback_regime",
-                                    projection={"wage_shock": lambda: 0.0},
-                                ),
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_no_dissolution_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback_regime",
+                                projection={"wage_shock": lambda: 0.0},
+                            ),
+                        )
+                    },
+                )
+            },
         ),
     )
     fallback_regime = (
@@ -415,22 +424,26 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_f},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=lambda wage_shock: wage_shock > 0.0,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="source_terminal", projection={}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=lambda wage_shock: wage_shock > 0.0,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="source_terminal", projection={}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     source_terminal = (

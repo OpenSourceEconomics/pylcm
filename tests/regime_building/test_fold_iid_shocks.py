@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
@@ -49,12 +50,12 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -342,7 +343,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
 
     A gate is compiled and evaluated on the TARGET regime's own grid/DAG
     (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this (source)
-    regime's — so `gate=lambda wage_shock: ...` here reads `some_target`'s
+    regime's — so `predicate=lambda wage_shock: ...` here reads `some_target`'s
     `wage_shock` (if it declares one), not this regime's. Treating the
     SOURCE-local `_validate_fold_declarations` walk as if the gate were
     source-local would produce a false positive purely from a name collision.
@@ -356,19 +357,21 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     validate_regime_law(
         Regime(states={"wage_shock": _shock(fold=True)}),
         law=bind_regime_law(
-            {
-                "some_target": ValueDependentTransition(
-                    probability=StochasticTransition(func=lambda: jnp.asarray(1.0)),
-                    gate=lambda wage_shock: wage_shock > 0.0,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="elsewhere", projection={}
+            {"some_target": StochasticTransition(func=lambda: jnp.asarray(1.0))},
+            gated_edges={
+                "some_target": gated_edge_from_gate(
+                    Gate(
+                        predicate=lambda wage_shock: wage_shock > 0.0,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="elsewhere", projection={}
+                                )
                             )
-                        )
-                    },
+                        },
+                    )
                 )
-            }
+            },
         ),
     )
 

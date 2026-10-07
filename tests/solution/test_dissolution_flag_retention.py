@@ -25,6 +25,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -32,7 +33,6 @@ from lcm import (
     StakeholderRoute,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -197,10 +197,14 @@ def _make_consent_model() -> tuple[Model, dict]:
         edges={
             "single_f": Transition(
                 targets={"married_terminal": 0, "single_f_terminal": 0},
-                law={
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
+                law=ByAge(
+                    cases={
+                        0: {"married_terminal": StochasticTransition(func=_prob_one)}
+                    }
+                ),
+                gates={
+                    "married_terminal": Gate(
+                        predicate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",
@@ -210,7 +214,7 @@ def _make_consent_model() -> tuple[Model, dict]:
                                 ),
                             )
                         },
-                        gate_references={
+                        references={
                             "V_single_f_ref": ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
@@ -309,29 +313,31 @@ def _make_dissolution_model() -> tuple[Model, dict]:
                 law=ByAge(
                     cases={
                         AgeRange(exclusive_stop=1): {
-                            "married_ir": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_no_dissolution_gate,
-                                routes={
-                                    "f": StakeholderRoute(
-                                        target_stakeholder="f",
-                                        fallback=ProjectedRegimeValue(
-                                            regime="single_f",
-                                            projection={"wage": _identity_wage},
-                                        ),
-                                    ),
-                                    "m": StakeholderRoute(
-                                        target_stakeholder="m",
-                                        fallback=ProjectedRegimeValue(
-                                            regime="single_m",
-                                            projection={"wage": _identity_wage},
-                                        ),
-                                    ),
-                                },
-                            )
+                            "married_ir": StochasticTransition(func=_prob_one)
                         }
                     }
                 ),
+                gates={
+                    "married_ir": Gate(
+                        predicate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                },
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},

@@ -17,14 +17,15 @@ import numpy as np
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
+    Gate,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -66,10 +67,12 @@ def _prosperous_enough(wage: ContinuousState) -> BoolND:
 
 
 def _make_model() -> Model:
-    household_law = {
-        "household_next": ValueDependentTransition(
-            probability=StochasticTransition(func=_certain),
-            gate=_prosperous_enough,
+    household_law = ByAge(
+        cases={0: {"household_next": StochasticTransition(func=_certain)}}
+    )
+    household_gates = {
+        "household_next": Gate(
+            predicate=_prosperous_enough,
             routes={
                 "f": StakeholderRoute(
                     target_stakeholder="f",
@@ -128,6 +131,7 @@ def _make_model() -> Model:
             "household": Transition(
                 targets={"household_next": 0, "care_pair": 0, "lodging": 0},
                 law=household_law,
+                gates=household_gates,
             )
         },
     )

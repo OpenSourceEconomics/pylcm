@@ -316,10 +316,15 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
             ),
             "old": Transition(
                 targets={"old": 50, "dead": (50, 60)},
-                law={
-                    "old": StochasticTransition(func=next_old_stay_prob),
-                    "dead": StochasticTransition(func=next_old_death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        50: {
+                            "old": StochasticTransition(func=next_old_stay_prob),
+                            "dead": StochasticTransition(func=next_old_death_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=next_old_death_prob)},
+                    }
+                ),
             ),
         },
         regime_id_class=CrossRegimeId,

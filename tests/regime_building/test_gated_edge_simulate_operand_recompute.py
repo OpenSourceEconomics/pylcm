@@ -103,11 +103,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -124,8 +125,8 @@ _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 # The name the curved fixture's gate parameter carries in
 # `flat_params["edges"]["src"]`: its declaration path below
-# `params["edges"]["src"]` (target, `gate`, parameter).
-_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+# `params["edges"]["src"]` (target, `predicate`, parameter).
+_GATE_THRESHOLD_QNAME = "target__predicate__gate_threshold"
 
 
 @categorical(ordered=True)
@@ -176,27 +177,31 @@ def _make_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
-    src_law = ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "target": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_value_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                    gate_references={
-                        "V_ref": ProjectedRegimeValue(
-                            regime="ref", projection={"x": _identity_x}
-                        )
-                    },
-                )
+    src_law = Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_prob_one)
+                }
             }
-        }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_value_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+                references={
+                    "V_ref": ProjectedRegimeValue(
+                        regime="ref", projection={"x": _identity_x}
+                    )
+                },
+            )
+        },
     )
     target = Regime(
         states={"x": _X2},
@@ -392,22 +397,26 @@ def _make_curved_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
-    src_law = ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "target": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_threshold_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                )
+    src_law = Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_prob_one)
+                }
             }
-        }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_threshold_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
     )
     target = Regime(
         states={"x": _X2},

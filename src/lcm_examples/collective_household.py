@@ -9,11 +9,11 @@ declaration:
   it as alone in the same period — `ValueDependentConstraint`, reading the
   singles' current-period value functions;
 - a single marries only under mutual consent, and a couple whose feasible set
-  is empty dissolves back to two singles — `ValueDependentTransition`, whose
-  gate compares values on the target regime's grid.
+  is empty dissolves back to two singles — a `Gate` on the transition, whose
+  predicate compares values on the target regime's grid.
 
-The dissolution edge is keyed by the CONTINUING collective regime under
-`gate = ~D_couple`: the gate-open branch is staying married, and each partner's
+The dissolution gate is keyed by the CONTINUING collective regime under
+`predicate = ~D_couple`: the gate-open branch is staying married, and each partner's
 route fallback is her or his own single regime. Keying it by one partner's
 single regime would send both partners there whenever the couple stays
 together.
@@ -33,13 +33,13 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.transition import StochasticTransition, Transition
@@ -104,26 +104,7 @@ def get_model(
 
     couple_law = _until_last_age(
         {
-            "couple": ValueDependentTransition(
-                probability=StochasticTransition(func=probability["stays_married"]),
-                gate=_no_dissolution,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wealth": _half_of_couple_wealth},
-                        ),
-                    ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m",
-                            projection={"wealth": _half_of_couple_wealth},
-                        ),
-                    ),
-                },
-            ),
+            "couple": StochasticTransition(func=probability["stays_married"]),
             "couple_terminal": StochasticTransition(
                 func=probability["reaches_last_age"]
             ),
@@ -131,6 +112,27 @@ def get_model(
         terminal="couple_terminal",
         last_age=last_age,
     )
+    couple_gates = {
+        "couple": Gate(
+            predicate=_no_dissolution,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_f",
+                        projection={"wealth": _half_of_couple_wealth},
+                    ),
+                ),
+                "m": StakeholderRoute(
+                    target_stakeholder="m",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_m",
+                        projection={"wealth": _half_of_couple_wealth},
+                    ),
+                ),
+            },
+        )
+    }
     couple = Regime(
         states={"wealth": couple_wealth},
         state_transitions={"wealth": _next_couple_wealth},
@@ -177,29 +179,7 @@ def get_model(
     )
     single_f_law = _until_last_age(
         {
-            "couple": ValueDependentTransition(
-                probability=StochasticTransition(func=probability["meets_a_partner"]),
-                gate=_mutual_consent,
-                routes={
-                    "her": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wealth": _half_of_couple_wealth},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                    "V_alone_m": ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                },
-            ),
+            "couple": StochasticTransition(func=probability["meets_a_partner"]),
             "single_f": StochasticTransition(func=probability["meets_nobody"]),
             "single_f_terminal": StochasticTransition(
                 func=probability["reaches_last_age"]
@@ -208,6 +188,30 @@ def get_model(
         terminal="single_f_terminal",
         last_age=last_age,
     )
+    single_f_gates = {
+        "couple": Gate(
+            predicate=_mutual_consent,
+            routes={
+                "her": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_f",
+                        projection={"wealth": _half_of_couple_wealth},
+                    ),
+                )
+            },
+            references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f",
+                    projection={"wealth": _half_of_couple_wealth},
+                ),
+                "V_alone_m": ProjectedRegimeValue(
+                    regime="single_m",
+                    projection={"wealth": _half_of_couple_wealth},
+                ),
+            },
+        )
+    }
     single_f = Regime(
         states={"wealth": wealth},
         # Marrying pools two people's wealth, so the coordinate the couple's
@@ -231,29 +235,7 @@ def get_model(
     # regimes and enters the household in his own role.
     single_m_law = _until_last_age(
         {
-            "couple": ValueDependentTransition(
-                probability=StochasticTransition(func=probability["meets_a_partner"]),
-                gate=_mutual_consent,
-                routes={
-                    "his": StakeholderRoute(
-                        target_stakeholder="m",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_m",
-                            projection={"wealth": _half_of_couple_wealth},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                    "V_alone_m": ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                },
-            ),
+            "couple": StochasticTransition(func=probability["meets_a_partner"]),
             "single_m": StochasticTransition(func=probability["meets_nobody"]),
             "single_m_terminal": StochasticTransition(
                 func=probability["reaches_last_age"]
@@ -262,6 +244,30 @@ def get_model(
         terminal="single_m_terminal",
         last_age=last_age,
     )
+    single_m_gates = {
+        "couple": Gate(
+            predicate=_mutual_consent,
+            routes={
+                "his": StakeholderRoute(
+                    target_stakeholder="m",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_m",
+                        projection={"wealth": _half_of_couple_wealth},
+                    ),
+                )
+            },
+            references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f",
+                    projection={"wealth": _half_of_couple_wealth},
+                ),
+                "V_alone_m": ProjectedRegimeValue(
+                    regime="single_m",
+                    projection={"wealth": _half_of_couple_wealth},
+                ),
+            },
+        )
+    }
     single_m = Regime(
         states={"wealth": wealth},
         state_transitions={
@@ -277,48 +283,9 @@ def get_model(
     )
     return Model(
         edges={
-            "couple": Transition(
-                targets={
-                    "couple_terminal": tuple(range(last_age)),
-                    **(
-                        {
-                            target: tuple(range(last_age - 1))
-                            for target in ("couple", "single_f", "single_m")
-                        }
-                        if tuple(range(last_age - 1))
-                        else {}
-                    ),
-                },
-                law=couple_law,
-            ),
-            "single_f": Transition(
-                targets={
-                    "single_f_terminal": tuple(range(last_age)),
-                    **(
-                        {
-                            target: tuple(range(last_age - 1))
-                            for target in ("couple", "single_f")
-                        }
-                        if tuple(range(last_age - 1))
-                        else {}
-                    ),
-                },
-                law=single_f_law,
-            ),
-            "single_m": Transition(
-                targets={
-                    "single_m_terminal": tuple(range(last_age)),
-                    **(
-                        {
-                            target: tuple(range(last_age - 1))
-                            for target in ("couple", "single_m")
-                        }
-                        if tuple(range(last_age - 1))
-                        else {}
-                    ),
-                },
-                law=single_m_law,
-            ),
+            "couple": Transition(law=couple_law, gates=couple_gates),
+            "single_f": Transition(law=single_f_law, gates=single_f_gates),
+            "single_m": Transition(law=single_m_law, gates=single_m_gates),
         },
         regimes={
             "couple": couple,

@@ -17,13 +17,13 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import Model, Transition
+from lcm import Model
 from lcm.ages import AgeGrid
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     DissolutionRegimeId,
     _make_dissolution_regimes,
-    _married_dissolution_law,
+    _married_dissolution_transition,
 )
 
 #: Every parameter this model consumes, as `regime__function__parameter`. A
@@ -60,10 +60,7 @@ def _make_model() -> Model:
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
         edges={
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=_married_dissolution_law(),
-            ),
+            "married": _married_dissolution_transition(),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1, 2)},

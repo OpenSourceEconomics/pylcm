@@ -113,7 +113,6 @@ from lcm.collective import (  # noqa: E402
     ProjectedRegimeValue,
     StakeholderRoute,
     ValueDependentConstraint,
-    ValueDependentTransition,
 )
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
@@ -254,7 +253,6 @@ __all__ = [
     "Transition",
     "UniformIIDProcess",
     "ValueDependentConstraint",
-    "ValueDependentTransition",
     "__version__",
     "affine_breakpoint",
     "case_boundary",

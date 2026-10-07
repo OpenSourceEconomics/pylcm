@@ -21,6 +21,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -506,10 +507,15 @@ def _per_target_model(solver: str) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=_stay_prob),
-                    "dead": StochasticTransition(func=_death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=_stay_prob),
+                            "dead": StochasticTransition(func=_death_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=_death_prob)},
+                    }
+                ),
             )
         },
     )

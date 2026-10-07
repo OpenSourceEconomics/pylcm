@@ -43,13 +43,13 @@ from typing import Any, Literal, cast, no_type_check
 
 import jax.numpy as jnp
 
+from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
-from lcm.collective import ValueDependentTransition
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
@@ -111,6 +111,11 @@ class RegimeSchedules:
         RegimeName, MappingProxyType[int, NonterminalLaw]
     ] = MappingProxyType({})
     """Per nonterminal regime, the declared law at each available period."""
+
+    gated_edges_by_regime: MappingProxyType[
+        RegimeName, Mapping[RegimeName, GatedEdge]
+    ] = MappingProxyType({})
+    """Per source regime, its gated edges by gated target."""
 
     @property
     def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[str]]:
@@ -247,33 +252,28 @@ def resolve_regime_schedules(
                     for period, law in side_by_period.items()
                 }
             )
-        solve_side, simulate_side = side_by_phase.values()
+        gated = regime_law.gated_edges
+        solution_support = support["solution"][name]
+        simulation_support = support["simulation"][name]
         value_reads["solution"][name] = MappingProxyType(
             {
                 period: (
-                    (*_gate_references(law), *_fallbacks(law=law, side="solve"))
-                    if support["solution"][name][period]
-                    else ()
+                    *_gate_references(gated_edges=gated, targets=targets),
+                    *_fallbacks(gated_edges=gated, targets=targets, side="solve"),
                 )
-                for period, law in solve_side.items()
+                for period, targets in solution_support.items()
             }
         )
         value_reads["simulation"][name] = MappingProxyType(
             {
-                period: _gate_references(law)
-                if support["simulation"][name][period]
-                else ()
-                for period, law in simulate_side.items()
+                period: _gate_references(gated_edges=gated, targets=targets)
+                for period, targets in simulation_support.items()
             }
         )
         landings[name] = MappingProxyType(
             {
-                period: (
-                    _fallbacks(law=law, side="simulate")
-                    if support["simulation"][name][period]
-                    else ()
-                )
-                for period, law in simulate_side.items()
+                period: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
+                for period, targets in simulation_support.items()
             }
         )
         # The support check above rejected every other form.
@@ -294,6 +294,9 @@ def resolve_regime_schedules(
         ),
         landings_by_regime=MappingProxyType(landings),
         law_by_period_by_regime=MappingProxyType(law_by_period_by_regime),
+        gated_edges_by_regime=MappingProxyType(
+            {name: regime_law.gated_edges for name, regime_law in laws.items()}
+        ),
     )
 
 
@@ -379,8 +382,6 @@ def _law_functions(law: object) -> tuple[Callable[..., Any], ...]:
         return (*_law_functions(law.solve), *_law_functions(law.simulate))
     if isinstance(law, Mapping):
         return tuple(func for cell in law.values() for func in _law_functions(cell))
-    if isinstance(law, ValueDependentTransition):
-        return _law_functions(law.probability)
     if isinstance(law, DeterministicTransition | StochasticTransition):
         return (law.func,)
     return ()
@@ -514,20 +515,22 @@ def resolve_demand(
                 )
                 for reference in same_period_refs_by_regime.get(name, ())
             )
-        law = _phase_side(
-            law=schedules.law_by_period_by_regime.get(name, {}).get(period),
-            side="simulate" if physical else "solve",
+        targets = (
+            support["simulation" if physical else "solution"]
+            .get(name, {})
+            .get(period, ())
         )
         pair = f"({ages.exact_values[period]}, '{name}')"
         kinds = {
             **dict.fromkeys(reads, f"a fallback of {pair}"),
-            **dict.fromkeys(_gate_references(law), f"a gate reference of {pair}"),
             **dict.fromkeys(
-                support["simulation" if physical else "solution"]
-                .get(name, {})
-                .get(period, ()),
-                here,
+                _gate_references(
+                    gated_edges=schedules.gated_edges_by_regime.get(name, {}),
+                    targets=targets,
+                ),
+                f"a gate reference of {pair}",
             ),
+            **dict.fromkeys(targets, here),
         }
         work.extend((False, period + 1, target, kinds[target]) for target in reads)
 
@@ -557,25 +560,20 @@ def gated_source_periods(
 ) -> MappingProxyType[tuple[RegimeName, RegimeName], tuple[int, ...]]:
     """Per `(source, target)` edge, the demanded source periods that use a gate.
 
-    Solve gates count at valued nodes and simulation gates at visited nodes,
-    provided the selected phase graph contains the primary edge. A gated edge
-    folds and reads its references only after those periods.
+    A gate holds wherever its target is reached: solve gates count at valued
+    nodes and simulation gates at visited nodes, provided the selected phase
+    graph contains the gated edge. A gated edge folds and reads its references
+    only after those periods.
     """
     periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
-    for source, law_by_period in schedules.law_by_period_by_regime.items():
+    for source, gated in schedules.gated_edges_by_regime.items():
         for period in schedules.coverage_by_regime[source]:
-            law = law_by_period[period]
-            for side, phase in (("solve", "solution"), ("simulate", "simulation")):
-                cells = _phase_side(law=law, side=side)
-                if not isinstance(cells, Mapping):
-                    continue
+            for phase in ("solution", "simulation"):
                 selected = (
                     schedules.support_by_phase[phase].get(source, {}).get(period, ())
                 )
-                for target, cell in cells.items():
-                    if target in selected and isinstance(
-                        cell, ValueDependentTransition
-                    ):
+                for target in gated:
+                    if target in selected:
                         periods.setdefault((source, target), set()).add(period)
     return MappingProxyType(
         {edge: tuple(sorted(by_edge)) for edge, by_edge in periods.items()}
@@ -616,27 +614,27 @@ def _unavailable_message(
     return f"{requester} requires '{name}' at age {age}, {reason}."
 
 
-def _gate_references(law: object) -> tuple[str, ...]:
-    """The regimes whose value the gates of a per-target mapping read."""
-    if not isinstance(law, Mapping):
-        return ()
+def _gate_references(
+    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The regimes whose value the gates of the reached `targets` read."""
     return tuple(
         reference.regime
-        for cell in law.values()
-        if isinstance(cell, ValueDependentTransition)
-        for reference in cell.gate_references.values()
+        for target, edge in gated_edges.items()
+        if target in targets
+        for reference in edge.gate_refs.values()
     )
 
 
-def _fallbacks(*, law: object, side: Side) -> tuple[str, ...]:
-    """The gate-closed regimes of a per-target mapping, for one phase side."""
-    if not isinstance(law, Mapping):
-        return ()
+def _fallbacks(
+    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[str, ...], side: Side
+) -> tuple[str, ...]:
+    """The gate-closed regimes of the reached gated `targets`, for one phase side."""
     return tuple(
         (route.solve_fallback if side == "solve" else route.simulate_fallback).regime
-        for cell in law.values()
-        if isinstance(cell, ValueDependentTransition)
-        for route in cell.routes.values()
+        for target, edge in gated_edges.items()
+        if target in targets
+        for route in edge.legs.values()
     )
 
 
@@ -1183,7 +1181,6 @@ def _mapping_union(
     for target, entries in cells_by_target.items():
         distinct_cells = _distinct(cell for _, cell in entries)
         if len(distinct_cells) > 1:
-            _fail_if_a_gated_cell_differs(target=target, distinct_cells=distinct_cells)
             if mask is None:
                 merged[target] = distinct_cells[0]
                 continue
@@ -1216,52 +1213,6 @@ def _mapping_union(
             cell if periods == all_covered else _masked_cell(cell=cell, periods=periods)
         )
     return MappingProxyType(merged)
-
-
-def fail_if_a_gated_target_changes_across_cases(laws: Iterable[object]) -> None:
-    """Reject a schedule whose cases declare one gated target differently.
-
-    A target with a `ValueDependentTransition` in one case keeps that one
-    `ValueDependentTransition` in every case naming it. The check reads the
-    declared cases, so it holds at every horizon, whether or not any age or
-    demand selects a case. A per-target mapping declares a cell per target and
-    a regime name one for that regime; a selector or vector law names no target
-    until the graph binds its support.
-
-    Args:
-        laws: The schedule's cases, each resolved to one phase.
-
-    Raises:
-        ModelInitializationError: If a target is value-dependent in one case and
-            declared differently in another.
-
-    """
-    cells_by_target: dict[str, list[object]] = {}
-    for law in laws:
-        if isinstance(law, Mapping):
-            cells = tuple(law.items())
-        elif isinstance(law, str):
-            cells = ((law, law),)
-        else:
-            continue
-        for target, cell in cells:
-            cells_by_target.setdefault(target, []).append(cell)
-    for target, cells in cells_by_target.items():
-        _fail_if_a_gated_cell_differs(target=target, distinct_cells=_distinct(cells))
-
-
-def _fail_if_a_gated_cell_differs(
-    *, target: str, distinct_cells: tuple[object, ...]
-) -> None:
-    if len(distinct_cells) > 1 and any(
-        isinstance(cell, ValueDependentTransition) for cell in distinct_cells
-    ):
-        raise ModelInitializationError(
-            f"The transition into {target!r} is value-dependent in one "
-            "schedule case and declared differently in another. A gated "
-            "target keeps one `ValueDependentTransition` across every "
-            "case that names it."
-        )
 
 
 def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:  # noqa: ANN401
@@ -1301,18 +1252,7 @@ class _PeriodSum:
 
 
 def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:
-    """Zero a cell outside `periods`; a gated cell keeps its gate and routes."""
-    if isinstance(cell, ValueDependentTransition):
-        probability = cell.probability
-        func = (
-            probability.func
-            if isinstance(probability, StochasticTransition)
-            else probability
-        )
-        return dataclasses.replace(
-            cell,
-            probability=StochasticTransition(func=_masked(cell=func, periods=periods)),
-        )
+    """Zero a cell outside `periods`."""
     return StochasticTransition(func=_masked(cell=cell, periods=periods))
 
 

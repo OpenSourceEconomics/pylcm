@@ -14,6 +14,7 @@ from lcm import (
     AgeRange,
     ByAge,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -21,7 +22,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.typing import (
@@ -75,10 +75,9 @@ def p_far(age: int) -> FloatND:
     return jnp.where(age >= 1, 1.0, 0.0)
 
 
-def _edge(*, probability, fallback_regime: str) -> ValueDependentTransition:
-    return ValueDependentTransition(
-        probability=StochasticTransition(func=probability),
-        gate=always_open,
+def _gate(*, fallback_regime: str) -> Gate:
+    return Gate(
+        predicate=always_open,
         routes={
             "only": StakeholderRoute(
                 target_stakeholder=None,
@@ -106,18 +105,22 @@ def _decision_regime() -> Regime:
 
 def _build_model(*, enable_jit: bool) -> Model:
     wealth_grid = WEALTH_GRID
-    far_edge = _edge(probability=p_far, fallback_regime="far_fallback")
+    far_probability = StochasticTransition(func=p_far)
     source_law = ByAge(
         cases={
             AgeRange(exclusive_stop=1): {
-                "near": _edge(probability=p_near, fallback_regime="source"),
-                "far": far_edge,
+                "near": StochasticTransition(func=p_near),
+                "far": far_probability,
             },
             AgeRange(start=1, exclusive_stop=2): {
-                "far": far_edge,
+                "far": far_probability,
             },
         }
     )
+    source_gates = {
+        "near": _gate(fallback_regime="source"),
+        "far": _gate(fallback_regime="far_fallback"),
+    }
     far = Regime(
         states={"wealth": wealth_grid},
         functions={"utility": utility_state},
@@ -142,6 +145,7 @@ def _build_model(*, enable_jit: bool) -> Model:
             "source": Transition(
                 targets={"near": 0, "far": (0, 1), "source": 0, "far_fallback": (0, 1)},
                 law=source_law,
+                gates=source_gates,
             ),
             "near": {"far": 1},
         },

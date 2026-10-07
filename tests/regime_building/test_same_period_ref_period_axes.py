@@ -40,6 +40,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
@@ -221,10 +222,14 @@ def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
         edges={
             "single_f": Transition(
                 targets={"single_f": 0, "single_f_terminal": (0, 1)},
-                law={
-                    "single_f": StochasticTransition(func=_stays_single),
-                    "single_f_terminal": StochasticTransition(func=_leaves_single),
-                },
+                law=ByAge.until(
+                    stop_age_exclusive=2,
+                    law={
+                        "single_f": StochasticTransition(func=_stays_single),
+                        "single_f_terminal": StochasticTransition(func=_leaves_single),
+                    },
+                    then="single_f_terminal",
+                ),
             ),
             "couple": {"couple_terminal": 0},
         },

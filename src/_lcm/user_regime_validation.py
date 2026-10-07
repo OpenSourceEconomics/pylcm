@@ -162,8 +162,8 @@ def validate_regime_law(regime: lcm.regime.Regime, *, law: RegimeLaw) -> None:
 
     The regime itself has passed `validate_regime` when it was constructed;
     this checks only what depends on the law. The grammar, age-specialization
-    and fold-read checks share one period-independent view of the law with its
-    value-dependent cells taken apart (`RegimeLaw.decomposed_transition`).
+    and fold-read checks share one period-independent view of the law
+    (`RegimeLaw.decomposed_transition`).
 
     Args:
         regime: The regime the law moves.

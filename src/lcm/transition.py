@@ -25,6 +25,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.typing import StateName
 from lcm.ages import AgeGrid
+from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.typing import FloatND, UserAge, UserFunction
@@ -131,7 +132,7 @@ class Transition:
     law: object
     """The numerical law choosing among the destinations."""
 
-    gates: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
+    gates: Mapping[str, Gate] = field(default_factory=lambda: MappingProxyType({}))
     """One `Gate` per value-dependent destination, keyed by that destination."""
 
     def __post_init__(self) -> None:

@@ -23,9 +23,8 @@ from _lcm.grids import IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
-    GATE,
-    GATE_REFERENCES,
-    PROBABILITY,
+    PREDICATE,
+    REFERENCES,
     ROUTES,
     user_path,
 )
@@ -33,7 +32,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
 from _lcm.regime_building.gated_edges import is_target_value_operand
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration
+from _lcm.regime_law import RegimeLaw
 from _lcm.typing import (
     EdgeParamsTemplate,
     FunctionName,
@@ -44,7 +43,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args
-from lcm.collective import ValueDependentTransition
+from lcm.collective import Gate
 from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
@@ -54,6 +53,7 @@ from lcm.transition import (
     DeterministicTransition,
     JointTransition,
     StochasticTransition,
+    Transition,
 )
 from lcm.typing import UserFunction
 
@@ -298,7 +298,7 @@ def create_edge_vocabulary(
 def create_edge_params_template(
     *,
     source: RegimeName,
-    declared_laws: tuple[RegimeLawDeclaration, ...],
+    declared_transitions: tuple[Transition, ...],
     vocabulary_by_regime: Mapping[RegimeName, EdgeVocabulary],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
@@ -306,11 +306,10 @@ def create_edge_params_template(
     Every parameter sits at its declaration path below `params["edges"][source]`:
 
     - a law over all targets ⇒ `[<param>]`;
-    - a per-target cell ⇒ `[<target>][<param>]`;
-    - a value-dependent cell's probability ⇒ `[<target>]["probability"][<param>]`;
-    - its gate ⇒ `[<target>]["gate"][<param>]`;
+    - a per-target cell ⇒ `[<target>][<param>]`, gated or not;
+    - a target's gate predicate ⇒ `[<target>]["predicate"][<param>]`;
     - a gate reference's projection of one reference-regime state ⇒
-      `[<target>]["gate_references"][<reference>][<state>][<param>]`;
+      `[<target>]["references"][<reference>][<state>][<param>]`;
     - a route fallback's projection ⇒
       `[<target>]["routes"][<route>]["fallback"][<state>][<param>]`, with a
       `"solve"` / `"simulate"` level after `"fallback"` when it is `Phased`.
@@ -319,14 +318,14 @@ def create_edge_params_template(
     phases included, so its slots do not depend on the horizon or on which cells
     a fixed zero prunes. A law reads the source regime's variables; a gate and a
     projection run on the target regime's grid and also read its states, its
-    `V_target` value components, `D_target` and the cell's gate-reference keys.
+    `V_target` value components, `D_target` and the gate's reference keys.
     None of those is a parameter. The vocabulary holds what a regime declares
     even where no demanded law reads it, so a variable that only a case no age
     selects reads is never mistaken for a parameter.
 
     Args:
         source: The source regime's name.
-        declared_laws: The `Transition` laws declared for the source, one per
+        declared_transitions: The `Transition`s declared for the source, one per
             phase of `Model(edges=...)`.
         vocabulary_by_regime: The edge vocabulary of each regime of the model.
 
@@ -343,14 +342,14 @@ def create_edge_params_template(
     """
     variables = set(vocabulary_by_regime[source].variables)
     params_by_path: list[tuple[tuple[str, ...], dict[str, str]]] = []
-    for law in declared_laws:
-        for path, func, cell in iter_edge_callables(law=law, path=()):
+    for transition in declared_transitions:
+        for path, func, gate in iter_transition_callables(transition):
             non_params = (
                 variables
-                if cell is None
+                if gate is None
                 else variables
                 | _gated_edge_wired_names(
-                    gate_reference_names=frozenset(cell.gate_references),
+                    gate_reference_names=frozenset(gate.references),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
                         if path[0] in vocabulary_by_regime
@@ -365,7 +364,7 @@ def create_edge_params_template(
                         name="edge",
                         func=func,
                         non_params=non_params,
-                        strip_target_value_operands=cell is not None,
+                        strip_target_value_operands=gate is not None,
                         kind=(
                             "Edge-callable (at "
                             f"{user_path(path=(EDGES, source, *path))}) argument"
@@ -413,9 +412,28 @@ def _fail_if_coarse_law_params_meet_per_target_cells(
         )
 
 
+def iter_transition_callables(
+    transition: Transition,
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
+    """Yield every callable a `Transition` holds, at its declaration path.
+
+    Args:
+        transition: A source's declared `Transition`.
+
+    Yields:
+        Triples of the path below the source's edge branch, the callable, and the
+        gate when the callable runs on the gated target's grid (a predicate or a
+        projection); `None` for the law's callables.
+
+    """
+    yield from iter_edge_callables(law=transition.law, path=())
+    for target_regime_name, gate in transition.gates.items():
+        yield from _gate_callables(gate=gate, path=(target_regime_name,))
+
+
 def iter_edge_callables(
     *, law: object, path: tuple[str, ...]
-) -> Iterator[tuple[tuple[str, ...], UserFunction, ValueDependentTransition | None]]:
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
     """Yield every callable a declared law holds, at its declaration path.
 
     Args:
@@ -423,8 +441,8 @@ def iter_edge_callables(
         path: The declaration path of `law` below the source's edge branch.
 
     Yields:
-        Triples of the path, the callable, and the value-dependent cell when the
-        callable runs on that cell's target grid (a gate or a projection).
+        Triples of the path, the callable, and `None`: a law's callables run on
+        the source's grid.
 
     Raises:
         TypeError: If the law, a case, a phase or a cell is none of the law
@@ -439,8 +457,6 @@ def iter_edge_callables(
     elif isinstance(law, Phased):
         yield from iter_edge_callables(law=law.solve, path=path)
         yield from iter_edge_callables(law=law.simulate, path=path)
-    elif isinstance(law, ValueDependentTransition):
-        yield from _value_dependent_callables(cell=law, path=path)
     elif isinstance(law, DeterministicTransition | StochasticTransition):
         yield path, cast("UserFunction", law.func), None
     elif isinstance(law, Mapping):
@@ -456,26 +472,15 @@ def iter_edge_callables(
         raise TypeError(msg)
 
 
-def _value_dependent_callables(
-    *, cell: ValueDependentTransition, path: tuple[str, ...]
-) -> Iterator[tuple[tuple[str, ...], UserFunction, ValueDependentTransition | None]]:
-    """Yield a value-dependent cell's callables at their declaration paths."""
-    probability = cell.probability
-    yield (
-        (*path, PROBABILITY),
-        cast(
-            "UserFunction",
-            probability.func
-            if isinstance(probability, StochasticTransition)
-            else probability,
-        ),
-        None,
-    )
-    yield (*path, GATE), cell.gate, cell
-    for ref_name, ref in cell.gate_references.items():
+def _gate_callables(
+    *, gate: Gate, path: tuple[str, ...]
+) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
+    """Yield a gate's callables at their declaration paths below its target."""
+    yield (*path, PREDICATE), gate.predicate, gate
+    for ref_name, ref in gate.references.items():
         for state_name, projection in ref.projection.items():
-            yield (*path, GATE_REFERENCES, ref_name, state_name), projection, cell
-    for route_name, route in cell.routes.items():
+            yield (*path, REFERENCES, ref_name, state_name), projection, gate
+    for route_name, route in gate.routes.items():
         for phase, ref in _fallbacks_by_phase(
             solve=route.solve_fallback,
             simulate=route.simulate_fallback,
@@ -489,7 +494,7 @@ def _value_dependent_callables(
                 *(() if phase is None else (phase,)),
             )
             for state_name, projection in ref.projection.items():
-                yield (*prefix, state_name), projection, cell
+                yield (*prefix, state_name), projection, gate
 
 
 def _insert_edge_slot(
@@ -507,8 +512,8 @@ def _insert_edge_slot(
     branch[path[-1]] = annotation
 
 
-# The entries a value-dependent cell's parameters nest under.
-_CELL_ENTRIES = (PROBABILITY, GATE, GATE_REFERENCES, ROUTES)
+# The entries a gate's parameters nest under, below its target.
+_CELL_ENTRIES = (PREDICATE, REFERENCES, ROUTES)
 
 
 def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
@@ -517,7 +522,7 @@ def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
     return (
         f"The edge parameter path {spelled} below a source's `params['edges']` "
         "branch is both a parameter and a branch of further parameters: a "
-        "law's argument has the name of a target or of a cell entry "
+        "law's argument has the name of a target or of a gate entry "
         f"({', '.join(repr(entry) for entry in _CELL_ENTRIES)}). Rename the argument."
     )
 
@@ -1436,10 +1441,10 @@ def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
     """
     entries: dict[FunctionName, UserFunction] = {}
     for target_regime_name, edge in law.gated_edges.items():
-        entries[qname_from_tree_path((GATE, target_regime_name))] = edge.gate
+        entries[qname_from_tree_path((PREDICATE, target_regime_name))] = edge.gate
         for ref_name, ref in edge.gate_refs.items():
             for state_name, projection in ref.projection.items():
-                key = f"{GATE_REFERENCES}_{ref_name}_{state_name}"
+                key = f"{REFERENCES}_{ref_name}_{state_name}"
                 entries[qname_from_tree_path((key, target_regime_name))] = projection
         for leg_name, leg in edge.legs.items():
             for phase, ref in _fallbacks_by_phase(
@@ -1484,7 +1489,7 @@ def _gated_edge_wired_names(
 
     - the target regime's states, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
-    - each key of THIS edge's `gate_references`, bound to that reference's
+    - each key of THIS edge's gate `references`, bound to that reference's
       interpolated value.
 
     The set is per edge because that is what makes the answer right. A name that

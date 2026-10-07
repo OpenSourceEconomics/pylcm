@@ -395,7 +395,8 @@ def _build_partial_coverage_model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
         edges={
             "work": Transition(
-                targets={"work": (0, 1), "dead": (0, 1, 2)}, law=work_transition
+                targets={"work": (0, 1), "dead": (0, 1, 2)},
+                law=ByAge.until(stop_age_exclusive=3, law=work_transition, then="dead"),
             ),
             "retire": Transition(
                 targets={"work": (0, 1), "retire": (0, 1), "dead": (0, 1, 2)},

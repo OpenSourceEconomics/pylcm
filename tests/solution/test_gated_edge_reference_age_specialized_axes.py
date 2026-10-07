@@ -22,6 +22,8 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -29,7 +31,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
@@ -173,11 +174,14 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    saver_law = {
-        "saver": StochasticTransition(func=_probability_of_staying_put),
-        "account": ValueDependentTransition(
-            probability=StochasticTransition(func=_probability_of_opening_the_account),
-            gate=_index_clears_the_hurdle,
+    staying_put = StochasticTransition(func=_probability_of_staying_put)
+    opening = StochasticTransition(func=_probability_of_opening_the_account)
+    saver_law = ByAge(
+        cases={0: {"saver": staying_put, "account": opening}, 1: {"account": opening}}
+    )
+    saver_gates = {
+        "account": Gate(
+            predicate=_index_clears_the_hurdle,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -186,7 +190,7 @@ def _build_model() -> Model:
                     )
                 )
             },
-            gate_references={
+            references={
                 "index_value": ProjectedRegimeValue(
                     regime="index",
                     projection={"level": _level_from_balance},
@@ -226,6 +230,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
+                gates=saver_gates,
             )
         },
     )

@@ -25,8 +25,10 @@ from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -35,7 +37,6 @@ from lcm import (
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -165,24 +166,24 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    couple_law = {
-        "single": ValueDependentTransition(
-            probability=StochasticTransition(func=_probability_of_separating),
-            gate=_wage_clears_the_floor,
-            routes={
-                "f": StakeholderRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="outside_f", projection={"wage": _identity_wage}
-                    )
-                ),
-                "m": StakeholderRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="outside_m", projection={"wage": _identity_wage}
-                    )
-                ),
-            },
-        )
-    }
+    couple_law = ByAge(
+        cases={0: {"single": StochasticTransition(func=_probability_of_separating)}}
+    )
+    single_gate = Gate(
+        predicate=_wage_clears_the_floor,
+        routes={
+            "f": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="outside_f", projection={"wage": _identity_wage}
+                )
+            ),
+            "m": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="outside_m", projection={"wage": _identity_wage}
+                )
+            ),
+        },
+    )
     couple = Regime(
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
@@ -218,7 +219,9 @@ def _build_model() -> Model:
     return Model(
         edges={
             "couple": Transition(
-                targets={"single": 0, "outside_f": 0, "outside_m": 0}, law=couple_law
+                targets={"single": 0, "outside_f": 0, "outside_m": 0},
+                law=couple_law,
+                gates={"single": single_gate},
             )
         },
         regimes={

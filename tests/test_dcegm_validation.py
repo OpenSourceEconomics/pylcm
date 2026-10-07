@@ -13,6 +13,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -661,10 +662,14 @@ def test_granular_transition_excluding_brute_regime_passes():
     allowed in that direction).
     """
     model = _three_regime_model_with_brute_worker(
-        retirement_transition={
-            "retirement": StochasticTransition(func=_retirement_stay_prob),
-            "dead": StochasticTransition(func=_retirement_death_prob),
-        }
+        retirement_transition=ByAge.until(
+            stop_age_exclusive=LAST_AGE,
+            law={
+                "retirement": StochasticTransition(func=_retirement_stay_prob),
+                "dead": StochasticTransition(func=_retirement_death_prob),
+            },
+            then="dead",
+        )
     )
     assert model.n_periods == N_PERIODS
 

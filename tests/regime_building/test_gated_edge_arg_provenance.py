@@ -99,13 +99,14 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -245,11 +246,11 @@ def _same_period_mappings(*, regimes, flat_params, solution):
 # target-bound misbinding SILENT rather than a crash (both halves are asserted below).
 #
 # An edge callable's parameter is keyed by its declaration path below
-# `params["edges"]["src"]` (target, `gate_references`, reference, projected state,
+# `params["edges"]["src"]` (target, `references`, reference, projected state,
 # parameter), the name both the fold and the simulate evaluator declare. The
 # TARGET's competing entry is spelled identically here so the contest stays a
 # contest: two namespaces, one qname, different values.
-_SHIFT_QNAME = "target__gate_references__ref_v__x__shift"
+_SHIFT_QNAME = "target__references__ref_v__x__shift"
 _SRC_SHIFT = 0.1
 _TARGET_SHIFT = 0.9
 
@@ -281,27 +282,31 @@ def _make_shift_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_ref_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "ref_v": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_to_shift}
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_ref_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "ref_v": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_to_shift}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -604,23 +609,27 @@ def _make_projector_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_always_closed_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"z": _project_x_plus_shift},
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_always_closed_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"z": _project_x_plus_shift},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -954,27 +963,31 @@ def _make_ref_grid_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_ref_only,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "ref_v": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_realized}
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_ref_only,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "ref_v": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_realized}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1123,23 +1136,27 @@ def _make_fallback_grid_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_always_closed_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"z": _identity_x_to_z},
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_always_closed_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"z": _identity_x_to_z},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1443,22 +1460,26 @@ def _make_target_helper_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_target_helper,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_target_helper,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1532,28 +1553,32 @@ def _make_gate_ref_target_helper_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_ref_value_only,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "scaled_ref": ProjectedRegimeValue(
-                                regime="refregime",
-                                projection={"x": _project_through_target_helper},
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_ref_value_only,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "scaled_ref": ProjectedRegimeValue(
+                            regime="refregime",
+                            projection={"x": _project_through_target_helper},
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1622,23 +1647,27 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_uses_v_target,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"x": _project_through_target_helper},
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_uses_v_target,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"x": _project_through_target_helper},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1804,22 +1833,26 @@ def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_own_target_scale,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_own_target_scale,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1853,7 +1886,7 @@ def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
         for namespace, qname in evaluator.arg_provenance.params.values()
         if namespace == SOURCE_PARAMS
     )
-    assert source_qnames == ["target__gate__target_scale"]
+    assert source_qnames == ["target__predicate__target_scale"]
 
 
 # An injected gate-ref key that collides with a target function name must be
@@ -1874,31 +1907,35 @@ def _make_gate_ref_name_collision_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_outside,
-                        gate_references={
-                            # Injected operand named exactly like the target's
-                            # `outside` function below: the concatenated DAG
-                            # resolves the gate's `outside` arg to the target NODE
-                            # (0.9), not this ref (~0.6).
-                            "outside": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_realized}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_outside,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Injected operand named exactly like the target's
+                        # `outside` function below: the concatenated DAG
+                        # resolves the gate's `outside` arg to the target NODE
+                        # (0.9), not this ref (~0.6).
+                        "outside": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_realized}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1988,22 +2025,26 @@ def _make_threshold_shadow_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_shadowed_threshold,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_shadowed_threshold,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2062,28 +2103,32 @@ def _make_gate_ref_v_target_alias_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_uses_v_target,
-                        gate_references={
-                            # Aliases the built-in target-value operand `V_target`.
-                            "V_target": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _identity_x}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_uses_v_target,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Aliases the built-in target-value operand `V_target`.
+                        "V_target": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _identity_x}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2204,29 +2249,33 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_x_operand,
-                        gate_references={
-                            # Aliases the TARGET STATE `x` (not a value/D operand,
-                            # so the gate-ref alias fence stays silent).
-                            "x": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _identity_x}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_x_operand,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Aliases the TARGET STATE `x` (not a value/D operand,
+                        # so the gate-ref alias fence stays silent).
+                        "x": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _identity_x}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2287,7 +2336,7 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
 # A gate argument named like a target state reads that state. A source function's
 # parameter of the same name lives under the source regime's own namespace
 # (`utility__x`), and a gate's own parameters under
-# `flat_params["edges"][source]` at `<target>__gate__<param>`, so neither shares
+# `flat_params["edges"][source]` at `<target>__predicate__<param>`, so neither shares
 # the fold leaf the target state binds.
 
 
@@ -2344,22 +2393,26 @@ def _make_gate_param_aliases_target_state_regimes(
                 else _u_src_no_param
             },
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_x,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_x,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2412,7 +2465,7 @@ def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
 # `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
 # (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) and the period
 # context under their bare names. A gate's own parameters never meet them: every
-# one is renamed to its `<target>__gate__<name>` slot before the fold is built,
+# one is renamed to its `<target>__predicate__<name>` slot before the fold is built,
 # while the period context stays the engine's. A target STATE spelled like an
 # engine argument would share one fold leaf with it, so those names are reserved.
 def _gate_reads_params_engine_arg(
@@ -2434,22 +2487,26 @@ def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src_no_param},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2495,25 +2552,27 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src_no_param},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_v_arg_state,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={
-                                        SAME_PERIOD_V_ARG: _identity_v_arg_state
-                                    },
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_v_arg_state,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2538,7 +2597,7 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
     [
         pytest.param(
             _gate_reads_params_engine_arg,
-            {"V_target", f"target__gate__{SAME_PERIOD_PARAMS_ARG}"},
+            {"V_target", f"target__predicate__{SAME_PERIOD_PARAMS_ARG}"},
             id="engine-params-spelling-is-a-gate-slot",
         ),
         pytest.param(
@@ -2553,7 +2612,7 @@ def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
 ) -> None:
     """A gate parameter takes its slot name; the period context keeps its own."""
     qualified = _with_qualified_params(
-        func=gate, path=("target", "gate"), wired_names=frozenset()
+        func=gate, path=("target", "predicate"), wired_names=frozenset()
     )
     assert set(signature(qualified).parameters) == expected
 
@@ -2604,7 +2663,7 @@ def _gate_near_engine_name(
 def test_gate_param_named_like_an_engine_argument_solves_from_its_slot(
     *, gate: UserFunction, name: str
 ) -> None:
-    """A gate parameter is supplied at its `target__gate__<name>` edge slot."""
+    """A gate parameter is supplied at its `target__predicate__<name>` edge slot."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -2613,7 +2672,11 @@ def test_gate_param_named_like_an_engine_argument_solves_from_its_slot(
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
             "edges": MappingProxyType(
-                {"src": MappingProxyType({f"target__gate__{name}": jnp.asarray(0.1)})}
+                {
+                    "src": MappingProxyType(
+                        {f"target__predicate__{name}": jnp.asarray(0.1)}
+                    )
+                }
             ),
         }
     )

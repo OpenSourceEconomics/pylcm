@@ -24,6 +24,7 @@ from numpy.testing import assert_allclose
 
 from _lcm.utils.logging import LogLevel
 from lcm import (
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     Model,
@@ -266,7 +267,7 @@ def _build_model(
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
     # Every target is reachable before the last source age; only the terminal
-    # regime is reachable at it.
+    # regime is reachable at it, where it takes the whole mass.
     targets = {
         **dict.fromkeys(law or {}, tuple(range(source_ends_at_age - 1))),
         "couple_terminal": tuple(range(source_ends_at_age)),
@@ -277,7 +278,18 @@ def _build_model(
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
         edges={
-            "couple": targets if law is None else Transition(targets=targets, law=law)
+            "couple": (
+                targets
+                if law is None
+                else Transition(
+                    targets=targets,
+                    law=ByAge.until(
+                        stop_age_exclusive=source_ends_at_age,
+                        law=law,
+                        then="couple_terminal",
+                    ),
+                )
+            )
         },
     )
 

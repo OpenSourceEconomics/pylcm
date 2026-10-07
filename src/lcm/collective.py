@@ -21,7 +21,6 @@ from _lcm.typing import RegimeName, StateName
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import StochasticTransition
 from lcm.typing import UserFunction
 
 
@@ -363,97 +362,4 @@ class Gate:
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))
         object.__setattr__(
             self, "references", ensure_containers_are_immutable(self.references)
-        )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class ValueDependentTransition:
-    """A transition into one target whose branch depends on values there.
-
-    Declared inside the per-target law of the source's `Transition` in
-    `Model(edges=...)`, keyed by target regime name, so
-    target selection and value-dependent routing are one declaration of one
-    semantic transition rather than two.
-
-    **The key is always the GATE-OPEN target** — the regime a row enters when
-    the gate is true. A dissolution edge is therefore keyed by the CONTINUING
-    collective regime under `gate = ~D_target`, with each partner's own regime
-    as that partner's route fallback; keying it by one partner's regime would
-    send both partners there whenever the couple stays together.
-
-    `probability` and `gate` are two distinct operations: the first selects
-    whether this target edge is attempted at all, the second keeps that target
-    or takes the route's stakeholder-specific fallback.
-
-    In an outer `Phased` transition, a target must carry this declaration in
-    both phases or neither. The gate must be the same callable and the routes,
-    references, and off-grid contract must be equal; only `probability` may
-    differ between solve and simulation.
-
-    This is what unlocks mixed singleton/collective topologies — a singleton
-    regime reaching a collective one under mutual consent, a collective regime
-    routing per stakeholder into singleton ones on dissolution. A raw
-    transition between regimes of different stakeholder structure stays
-    rejected.
-    """
-
-    probability: UserFunction | StochasticTransition
-    """Probability of attempting this target edge.
-
-    A `StochasticTransition` passes through unchanged. A bare callable is a
-    convenience of `ValueDependentTransition` and is wrapped in
-    `StochasticTransition` in the bound law's `RegimeLaw.decomposed_transition`
-    view. Ordinary
-    per-target transition cells still require the wrapper explicitly.
-    """
-
-    gate: UserFunction
-    """Boolean predicate on the TARGET regime's grid, in the target fold's context.
-
-    May read the target's value — `V_target` for a singleton target,
-    `V_target_<s>` per stakeholder for a collective one — the target's
-    dissolution flag `D_target` (a collective target only; reading it on a
-    singleton target is rejected while the model is built), each key of
-    `gate_references`, ordinary target states and params, and the target fold's
-    `period` / `age`. Mutual consent is the strict, unanimous gate
-    `(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution
-    this period" is `~D_target`. A gate returning a probability rather than a
-    Boolean is rejected when the gate is evaluated, i.e. on the first `solve()`
-    rather than at model build: the branch is selected with a strict `where`,
-    in which every nonzero value is true.
-    """
-
-    routes: Mapping[str, StakeholderRoute]
-    """One route per SOURCE stakeholder, keyed by stakeholder name.
-
-    A singleton source declares exactly one route, under any key.
-    """
-
-    gate_references: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """The same-period reference values `gate` reads, projected from the target
-    regime's grid."""
-
-    off_grid: Literal["pointwise", "reject"] = "pointwise"
-    """What the edge promises about a landing point between the target's nodes.
-
-    - `"pointwise"` (the default) reads every operand at the landing point and
-      applies the gate there, in both phases. The operands are interpolated, so
-      the value carries the ordinary interpolation error of any continuation —
-      but it is a value one branch really delivers, and the branch the solve
-      priced is the branch simulation routes down.
-    - `"reject"` demands that no such point exists: the model refuses to build
-      unless the target regime's grid is reached exactly, i.e. it carries no
-      continuous state. Declare it where a straddled gate would be an economic
-      error rather than an approximation.
-    """
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))
-        object.__setattr__(
-            self,
-            "gate_references",
-            ensure_containers_are_immutable(self.gate_references),
         )

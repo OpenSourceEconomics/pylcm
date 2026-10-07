@@ -27,13 +27,13 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -75,13 +75,13 @@ CONSENT_WAGES = (1.0, 2.0)
 # Which consent-model subject reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
-# The married couple's dissolution law: the couple stays together unless the
-# gate closes, and a dissolving row continues in its own stakeholder's single
-# regime under the identity wage projection.
-MARRIED_DISSOLUTION_LAW = {
-    "married_ir": ValueDependentTransition(
-        probability=StochasticTransition(func=_prob_one),
-        gate=_no_dissolution_gate,
+# The married couple's dissolution law and its gate: the couple stays together
+# unless the gate closes, and a dissolving row continues in its own
+# stakeholder's single regime under the identity wage projection.
+MARRIED_DISSOLUTION_LAW = {"married_ir": StochasticTransition(func=_prob_one)}
+MARRIED_DISSOLUTION_GATES = {
+    "married_ir": Gate(
+        predicate=_no_dissolution_gate,
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
@@ -99,37 +99,40 @@ MARRIED_DISSOLUTION_LAW = {
     )
 }
 
-# The single woman's consent law: she marries when both partners prefer the
-# couple to their own single lives, and otherwise keeps her single value.
+# The single woman's consent law and its gate: she marries when both partners
+# prefer the couple to their own single lives, and otherwise keeps her single
+# value.
 SINGLE_F_CONSENT_LAW = ByAge(
     cases={
         AgeRange(exclusive_stop=1): {
-            "married_terminal": ValueDependentTransition(
-                probability=StochasticTransition(func=_prob_one),
-                gate=_consent_gate,
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f_terminal",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-                gate_references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f_terminal",
-                        projection={"wage": _identity_wage},
-                    ),
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_terminal",
-                        projection={"wage": _identity_wage},
-                    ),
-                },
-            )
+            "married_terminal": StochasticTransition(func=_prob_one)
         }
     }
 )
+SINGLE_F_CONSENT_GATES = {
+    "married_terminal": Gate(
+        predicate=_consent_gate,
+        routes={
+            "f": StakeholderRoute(
+                target_stakeholder="f",
+                fallback=ProjectedRegimeValue(
+                    regime="single_f_terminal",
+                    projection={"wage": _identity_wage},
+                ),
+            )
+        },
+        references={
+            "V_single_f_ref": ProjectedRegimeValue(
+                regime="single_f_terminal",
+                projection={"wage": _identity_wage},
+            ),
+            "V_single_m_ref": ProjectedRegimeValue(
+                regime="single_m_terminal",
+                projection={"wage": _identity_wage},
+            ),
+        },
+    )
+}
 
 
 @categorical(ordered=False)
@@ -158,6 +161,7 @@ def dissolution_model_and_solution():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
+                gates=MARRIED_DISSOLUTION_GATES,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -184,6 +188,7 @@ def consent_model_and_solution():
             "single_f": Transition(
                 targets={"married_terminal": 0, "single_f_terminal": 0},
                 law=SINGLE_F_CONSENT_LAW,
+                gates=SINGLE_F_CONSENT_GATES,
             )
         },
     )
@@ -384,6 +389,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
             "married": Transition(
                 targets={"married_ir": 0, "single_f": 0, "single_m": 0},
                 law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
+                gates=MARRIED_DISSOLUTION_GATES,
             ),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
@@ -458,6 +464,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
                 law=ByAge(
                     cases={AgeRange(start=1, exclusive_stop=2): MARRIED_DISSOLUTION_LAW}
                 ),
+                gates=MARRIED_DISSOLUTION_GATES,
             ),
             "married_ir": {"married_terminal": 2},
             "single_f": {"single_f_terminal": 2},

@@ -24,6 +24,7 @@ from lcm import (
     CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
@@ -32,7 +33,6 @@ from lcm import (
     ProjectedRegimeValue,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -288,9 +288,8 @@ def test_parameter_argument_name_must_be_a_valid_path_segment(
 @pytest.mark.parametrize(
     "name",
     [
-        "probability",
-        "gate",
-        "gate_references",
+        "predicate",
+        "references",
         "routes",
         "fallback",
         "solve",
@@ -355,11 +354,11 @@ def _gated_edge_model(
         edges={
             "source": Transition(
                 targets={"target": 0, "outside": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=probability),
-                        gate=gate,
-                        gate_references={
+                law={"target": StochasticTransition(func=probability)},
+                gates={
+                    "target": Gate(
+                        predicate=gate,
+                        references={
                             gate_reference_key: ProjectedRegimeValue(
                                 regime="outside",
                                 projection={"wage": gate_reference_projection},
