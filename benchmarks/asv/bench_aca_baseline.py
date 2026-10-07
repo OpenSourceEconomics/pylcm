@@ -38,8 +38,9 @@ ASV wiring notes:
   profile no longer pays for the timing subprocess. No reported phase peak is
   summed or subtracted.
 - `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
-  debug configuration a separate combined subprocess. It has no GPU-memory
-  profile: each profile costs a full cold ACA run.
+  debug configuration a separate combined subprocess. Its GPU-memory profile,
+  `_AcaBaselineDebugLogGpuPeakMem`, is excluded from routine ASV discovery
+  because each profile costs a full cold ACA run.
 - XLA autotuning is disabled and preallocation is on in the measurement
   subprocess, and the model is built without an execution policy, so planning
   and admission follow the production path: aca-model's default policy derives
@@ -255,3 +256,19 @@ class AcaBaselineDebugLog(AcaBaseline):
         # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
+
+
+class _AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
+    """Three-phase GPU-memory profile for `AcaBaselineDebugLog`.
+
+    Excluded from routine ASV discovery because each profile costs a full cold
+    ACA run; dropping the leading underscore re-enables it.
+    """
+
+    version = "3"
+    timeout = 14400
+    bench_module = "benchmarks.asv.bench_aca_baseline"
+    bench_class = "AcaBaselineDebugLog"
+
+    def setup_cache(self) -> dict[str, int]:
+        return self._measure_profile()
