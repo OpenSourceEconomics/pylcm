@@ -28,6 +28,7 @@ from _lcm.solution import backward_induction as engine
 from _lcm.solution import lower_candidate as candidate_lowering
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.solution.lowering_descriptors import describe_lowering_value
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
@@ -596,9 +597,12 @@ _EXPLICIT = ("enum", "jax._src.mesh", "AxisType", "Explicit")
     ],
     ids=["empty-ambient", "two-axes"],
 )
+@pytest.mark.parametrize(
+    "describe", [_describe, describe_lowering_value], ids=["tracer", "public"]
+)
 def test_describe_spells_abstract_mesh_by_axis_names_sizes_and_types(
-    *, mesh: Any, expected: Any
+    *, describe: Any, mesh: Any, expected: Any
 ) -> None:
     """An abstract mesh, such as JAX's ambient trace-context mesh, is described by
     its axis names, sizes, types and abstract device."""
-    assert _describe(mesh) == expected
+    assert describe(mesh) == expected
