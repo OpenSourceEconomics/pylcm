@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import Callable
 from functools import partial
-from math import ceil, log
+from math import ceil, log, prod
 from pathlib import Path
 
 import jax
@@ -15,9 +15,9 @@ import pytest
 import lcm
 import lcm.solvers
 from lcm import PolicyLookup
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
-from lcm.solver_api import SolutionSource
+from lcm.solver_api import SolutionSource, ValueStore
 from lcm_examples.mortality import LaborSupply
 from tests.test_models.deterministic.discrete import get_model as get_discrete_model
 from tests.test_models.deterministic.discrete import (
@@ -469,3 +469,121 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
             ),
         )
         assert after == before
+
+
+_OWNER_PERIODS = 16
+_OWNER_POINTS = 32768
+
+
+def _restored_owner_fixture(*, tmp_path: Path, archive_state: str):
+    """Solve unbudgeted, save, release the producer and reload the archive.
+
+    Returns the restored result, its parameters, a budgeted-consumer factory and
+    the total value payload `S` the restored result advertises.
+    """
+    build = partial(
+        get_model,
+        n_periods=_OWNER_PERIODS,
+        wealth_grid=lcm.LinSpacedGrid(start=1, stop=3, n_points=_OWNER_POINTS),
+        consumption_grid=lcm.LinSpacedGrid(start=1, stop=3, n_points=3),
+    )
+    params = get_params(n_periods=_OWNER_PERIODS)
+    solved = build().solve(params=params, log_level="off")
+    payload = sum(
+        prod(schema.shape) * np.dtype(schema.dtype).itemsize
+        for schema in solved.metadata.value_schemas.values()
+    )
+    path = save_solution(solution=solved, path=tmp_path / "values.solution")
+    del solved
+    restored = load_solution(path=path, verify_checksums=True)
+    if archive_state == "warm":
+        assert isinstance(restored.values, ValueStore)
+        jax.block_until_ready(restored.values.materialize())
+
+    def build_budgeted(budget: int | None):
+        return build(
+            execution_config=lcm.ExecutionConfig(
+                device_memory_bytes=budget, device_memory_headroom_fraction=0.0
+            )
+        )
+
+    return restored, params, build_budgeted, payload
+
+
+def _final_decision_lookup(*, model, params, restored):
+    result = model.lookup_policy(
+        params=params,
+        solution=restored,
+        period=_OWNER_PERIODS - 2,
+        regime_name="working_life",
+        states={"wealth": jnp.array([2.0])},
+    )
+    jax.block_until_ready((result.value, dict(result.actions)))
+    return result
+
+
+@pytest.mark.parametrize("archive_state", ["cold", "warm"])
+def test_restored_budgeted_lookup_refuses_when_cache_and_view_exceed_budget(
+    *, tmp_path: Path, archive_state: str
+):
+    """A budget below archive cache plus resolved view refuses the lookup.
+
+    The restored result keeps its archive cache (`S`) while lookup resolves a
+    detached value view (`S`). Under a `3S/2` budget both owners cannot coexist,
+    so the public call must refuse rather than return.
+    """
+    restored, params, build_budgeted, payload = _restored_owner_fixture(
+        tmp_path=tmp_path, archive_state=archive_state
+    )
+    consumer = build_budgeted(3 * payload // 2)
+    with pytest.raises(ExecutionPlanningError):
+        _final_decision_lookup(model=consumer, params=params, restored=restored)
+
+
+def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
+    tmp_path: Path,
+):
+    """Views that other models leave on the result count against a later lookup.
+
+    The first call fits a `3S` budget. Three unbudgeted consumers of the same
+    restored result then retain three more resolved views, so the archive cache
+    and four views (`5S`) exceed the budget and the repeat call must refuse.
+    """
+    restored, params, build_budgeted, payload = _restored_owner_fixture(
+        tmp_path=tmp_path, archive_state="cold"
+    )
+    consumer = build_budgeted(3 * payload)
+    _final_decision_lookup(model=consumer, params=params, restored=restored)
+    for _ in range(3):
+        _final_decision_lookup(
+            model=build_budgeted(None), params=params, restored=restored
+        )
+    with pytest.raises(ExecutionPlanningError):
+        _final_decision_lookup(model=consumer, params=params, restored=restored)
+
+
+@pytest.mark.parametrize("archive_state", ["cold", "warm"])
+def test_restored_lookup_under_a_generous_budget_has_analytic_policy_on_repeat(
+    *, tmp_path: Path, archive_state: str
+):
+    """A budget far above every retained owner returns the analytic policy twice.
+
+    All successors of the final decision are dead with utility zero; c <= wealth
+    leaves c in {1, 2} and work subtracts 0.5, so c = 2, retire, value log(2).
+    """
+    restored, params, build_budgeted, payload = _restored_owner_fixture(
+        tmp_path=tmp_path, archive_state=archive_state
+    )
+    consumer = build_budgeted(32 * payload)
+    got = [
+        _final_decision_lookup(model=consumer, params=params, restored=restored)
+        for _ in range(2)
+    ]
+    np.testing.assert_allclose(
+        [
+            [r.actions["consumption"][0], r.actions["labor_supply"][0], r.value[0]]
+            for r in got
+        ],
+        [[2.0, 1.0, log(2)]] * 2,
+        rtol=1e-5,
+    )

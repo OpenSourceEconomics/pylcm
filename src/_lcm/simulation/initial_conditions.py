@@ -257,6 +257,7 @@ def _preflight_memory(
             regime.solution.resolved_fixed_params,
             regime.solution._base_state_action_space.states,  # noqa: SLF001
             regime.solution._base_state_action_space.actions,  # noqa: SLF001
+            regime.derived_categorical_code_arrays,
         )
         for regime in regimes.values()
     )
