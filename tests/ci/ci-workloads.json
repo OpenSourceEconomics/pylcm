@@ -615,6 +615,7 @@
   "tests/test_static_params.py",
   "tests/test_stochastic.py",
   "tests/test_stochastic_volatility_example.py",
+  "tests/test_subprocess_precision.py",
   "tests/test_sum_in_value_order_short_axis.py",
   "tests/test_target_only_carried_constraint.py",
   "tests/test_taste_shocks.py",
@@ -1109,6 +1110,7 @@
     "tests/test_solution_on_toy_model_stochastic.py",
     "tests/test_source_certificate_portability.py",
     "tests/test_state_action_space.py",
+    "tests/test_subprocess_precision.py",
     "tests/test_tiled_productmap.py",
     "tests/test_tuning.py",
     "tests/test_utils.py",
@@ -1690,6 +1692,7 @@
     "tests/test_single_feasible_action.py",
     "tests/test_solver_api_out_of_tree.py",
     "tests/test_static_params.py",
+    "tests/test_subprocess_precision.py",
     "tests/test_taste_shocks.py",
     "tests/test_utils.py",
     "tests/test_validate_regime_transition_probs.py"
@@ -2225,7 +2228,8 @@
     "tests/test_single_feasible_action.py",
     "tests/test_state_action_space.py",
     "tests/test_stochastic.py",
-    "tests/test_stochastic_volatility_example.py"
+    "tests/test_stochastic_volatility_example.py",
+    "tests/test_subprocess_precision.py"
    ],
    "predicted_payload_minutes": 13.13
   },
@@ -2843,6 +2847,7 @@
     "tests/test_state_action_space.py",
     "tests/test_state_conditioned_model.py",
     "tests/test_static_params.py",
+    "tests/test_subprocess_precision.py",
     "tests/test_taste_shocks.py",
     "tests/test_user_regime.py",
     "tests/test_variables.py",
@@ -15326,6 +15331,7 @@
   "tests/test_sharded_state_across_gated_edge.py",
   "tests/test_sharded_state_pruned_from_regimes.py",
   "tests/test_source_certificate_portability.py",
+  "tests/test_subprocess_precision.py",
   "tests/test_tuning.py"
  ],
  "excluded_files": {
