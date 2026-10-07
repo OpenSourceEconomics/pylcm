@@ -34,7 +34,7 @@
           },
           {
             "path": "src/_lcm/execution/footprint.py",
-            "sha256": "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30"
+            "sha256": "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d"
           },
           {
             "path": "src/_lcm/execution/internal_outputs.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "39817a20fe256ed50817ec0c14d5f4b109ff3fd8a6b004a2a1d8de39b143b53a"
+        "source_inventory_sha256": "7bfda63f0c2f787edf00bab0ac9ea57c1cb2195fbb7101fcae7b029aa20c597b"
       },
       "fast": {
         "candidate_sources": [
@@ -508,7 +508,7 @@
           },
           {
             "path": "src/_lcm/execution/footprint.py",
-            "sha256": "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30"
+            "sha256": "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d"
           },
           {
             "path": "src/_lcm/execution/internal_outputs.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "39817a20fe256ed50817ec0c14d5f4b109ff3fd8a6b004a2a1d8de39b143b53a"
+        "source_inventory_sha256": "7bfda63f0c2f787edf00bab0ac9ea57c1cb2195fbb7101fcae7b029aa20c597b"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "39817a20fe256ed50817ec0c14d5f4b109ff3fd8a6b004a2a1d8de39b143b53a",
+  "source_inventory_sha256": "7bfda63f0c2f787edf00bab0ac9ea57c1cb2195fbb7101fcae7b029aa20c597b",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -986,7 +986,7 @@
     },
     {
       "path": "src/_lcm/execution/footprint.py",
-      "sha256": "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30"
+      "sha256": "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d"
     },
     {
       "path": "src/_lcm/execution/internal_outputs.py",
