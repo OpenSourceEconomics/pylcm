@@ -207,7 +207,7 @@ def _route_three_households() -> MappingProxyType:
     own_stakeholder = jnp.full(
         n_households, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
     )
-    routed_states, _routed_ids, _routed_roles = route_gated_edges(
+    routed_states, _routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

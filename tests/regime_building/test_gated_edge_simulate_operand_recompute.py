@@ -323,7 +323,7 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     new_subject_regime_ids = jnp.array([target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -618,7 +618,7 @@ def test_offgrid_residual_flips_routing_of_the_real_router():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

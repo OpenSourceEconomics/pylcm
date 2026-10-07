@@ -1878,7 +1878,6 @@ def _edge_reference_regimes(
     the source's own kernel.
 
     Args:
-        user_regime: The finalized user regime whose edges are inspected.
         law: The regime's law, bound from `Model(edges=...)`.
         targets: The edge targets to inspect, or `None` for every declared
             edge. A period reads only the edges landing in a target solved at
@@ -1890,19 +1889,8 @@ def _edge_reference_regimes(
     """
     names: list[RegimeName] = []
     for target, edge in law.gated_edges.items():
-        if targets is not None and target not in targets:
-            continue
-        names.extend(ref.regime for ref in edge.gate_refs.values())
-        for leg in edge.legs.values():
-            fallback = leg.fallback
-            names.extend(
-                side.regime
-                for side in (
-                    (fallback.solve, fallback.simulate)
-                    if isinstance(fallback, Phased)
-                    else (fallback,)
-                )
-            )
+        if targets is None or target in targets:
+            names.extend(edge.reference_regimes(phases=("solve", "simulate")))
     return tuple(dict.fromkeys(names))
 
 

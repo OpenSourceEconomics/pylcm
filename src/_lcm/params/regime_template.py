@@ -146,8 +146,16 @@ def create_regime_params_template(
     # Anywhere else the name has no value behind it, and admitting it as a
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
-    _fail_if_a_next_name_is_read_outside_a_transition(user_regime, law=law)
-    _fail_if_a_joint_node_is_read_outside_its_transition(user_regime, law=law)
+    edge_entries = _gated_edge_entries(law)
+    template_functions = _collect_all_functions_for_template(
+        user_regime, law=law, edge_entries=edge_entries
+    )
+    _fail_if_a_next_name_is_read_outside_a_transition(
+        user_regime, template_functions=template_functions
+    )
+    _fail_if_a_joint_node_is_read_outside_its_transition(
+        user_regime, template_functions=template_functions
+    )
 
     # Every illegitimate read is already rejected, so the subtraction below only
     # has to be permissive enough for the legitimate ones: a name in transition
@@ -175,8 +183,7 @@ def create_regime_params_template(
     # them within the edge — the same entry `_lcm.regime_building.gated_edges`
     # qualifies their parameters with.
     edge_template_keys = {
-        name: template_key
-        for name, (template_key, _func) in _gated_edge_entries(law).items()
+        name: template_key for name, (template_key, _func) in edge_entries.items()
     }
     edge_non_params_by_target = {
         target: variables
@@ -189,7 +196,7 @@ def create_regime_params_template(
         for target, edge in law.gated_edges.items()
     }
 
-    for name, func in _collect_all_functions_for_template(user_regime, law=law).items():
+    for name, func in template_functions.items():
         # State and action names appearing in a function's signature are
         # exempt from param-template extraction: pylcm wires those values
         # through `states_actions_params` at call time, so they must not
@@ -454,7 +461,7 @@ def _discovered_params(
 def _fail_if_a_joint_node_is_read_outside_its_transition(
     user_regime: UserRegime,
     *,
-    law: RegimeLaw,
+    template_functions: Mapping[str, object],
 ) -> None:
     """Reject transition-local nodes outside target-output evaluation.
 
@@ -474,9 +481,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
         )
         consumers: dict[str, object] = {
             name: func
-            for name, func in _collect_all_functions_for_template(
-                user_regime, law=law
-            ).items()
+            for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
         if user_regime.koopmans_aggregator is not None:
@@ -641,7 +646,7 @@ def _fail_if_a_joint_node_is_read(
 
 # keyword-only-exempt: primary-argument=user_regime
 def _fail_if_a_next_name_is_read_outside_a_transition(
-    user_regime: UserRegime, *, law: RegimeLaw
+    user_regime: UserRegime, *, template_functions: Mapping[str, object]
 ) -> None:
     """Check that only a state transition, or a function feeding one, reads `next_`.
 
@@ -663,7 +668,8 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
 
     Args:
         user_regime: User-form `Regime` instance.
-        law: The regime's law, bound from `Model(edges=...)`.
+        template_functions: Every callable the template collects for the regime,
+            from `_collect_all_functions_for_template`.
 
     Raises:
         InvalidNameError: If a consumer that runs before next-period values exist
@@ -676,9 +682,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
         )
         consumers: dict[str, object] = {
             name: func
-            for name, func in _collect_all_functions_for_template(
-                user_regime, law=law
-            ).items()
+            for name, func in template_functions.items()
             if tree_path_from_qname(name)[0] not in transition_role
         }
         if user_regime.koopmans_aggregator is not None:
@@ -1063,7 +1067,10 @@ def _function_names_in_transition_role(
 
 # keyword-only-exempt: primary-argument=user_regime
 def _collect_all_functions_for_template(
-    user_regime: UserRegime, *, law: RegimeLaw
+    user_regime: UserRegime,
+    *,
+    law: RegimeLaw,
+    edge_entries: Mapping[FunctionName, tuple[FunctionName, UserFunction]],
 ) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
     """Collect all regime functions, preserving phase-variant entries.
 
@@ -1109,9 +1116,7 @@ def _collect_all_functions_for_template(
             joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(law.decomposed_transition)
-    result |= {
-        name: func for name, (_template_key, func) in _gated_edge_entries(law).items()
-    }
+    result |= {name: func for name, (_template_key, func) in edge_entries.items()}
     return result
 
 

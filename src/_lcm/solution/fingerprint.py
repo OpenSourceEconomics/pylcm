@@ -748,8 +748,8 @@ def _project_user_regime_declaration(
 ) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
 
-    The regime's law joins its fields: its `transition` first and its
-    `gated_edges` before `same_period_refs`.
+    The regime's law joins its fields as `transition` and `gated_edges`, read as
+    declared without interpreting them.
 
     A stored policy is priced against the solve-phase laws of motion and regime
     transition; the realized path after the action is chosen does not change
@@ -768,7 +768,11 @@ def _project_user_regime_declaration(
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
         raise TypeError(msg)
-    fields = _with_law_fields(fields=fields, law=law)
+    all_fields = (
+        *fields,
+        ("transition", law.transition),
+        ("gated_edges", law.gated_edges),
+    )
     declaration_type = type(regime)
     return MappingProxyType(
         {
@@ -780,34 +784,11 @@ def _project_user_regime_declaration(
                         if name in _TRANSITION_SLOTS
                         else value
                     )
-                    for name, value in fields
+                    for name, value in all_fields
                     if name != "description"
                 }
             ),
         }
-    )
-
-
-def _with_law_fields(
-    *, fields: Iterable[tuple[str, object]], law: RegimeLaw
-) -> tuple[tuple[str, object], ...]:
-    """Place the law's two slots among a regime's own fields.
-
-    The law is read field by field, as the regime is, so the fingerprint hashes
-    the declaration as written without interpreting it.
-    """
-    own = [(name, value) for name, value in fields]
-    names = [name for name, _value in own]
-    at = names.index("same_period_refs") if "same_period_refs" in names else len(own)
-    law_fields = {
-        declaration.name: getattr(law, declaration.name)
-        for declaration in dataclasses.fields(law)
-    }
-    return (
-        ("transition", law_fields["transition"]),
-        *own[:at],
-        ("gated_edges", law_fields["gated_edges"]),
-        *own[at:],
     )
 
 

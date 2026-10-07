@@ -158,7 +158,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     new_subject_regime_ids = jnp.array([target_id, unrelated_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    routed_states, routed_ids, _routed_roles = route_gated_edges(
+    routed_states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -219,7 +219,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     new_subject_regime_ids = jnp.array([target_id, target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -415,7 +415,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     new_subject_regime_ids = jnp.array([target_a_id, target_b_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

@@ -421,7 +421,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -518,7 +518,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -823,7 +823,7 @@ def test_router_writes_the_fold_consistent_fallback_state():
             "fallback": MappingProxyType({"z": jnp.array([-999.0])}),
         }
     )
-    states, routed_ids, _routed_roles = route_gated_edges(
+    states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -1071,7 +1071,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

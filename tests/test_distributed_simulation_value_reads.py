@@ -610,7 +610,7 @@ def test_a_real_dissolution_gate_uses_raw_copies_on_an_ordered_submesh() -> None
         own_stakeholder=cast("Int1D", arguments["roles"]),
         new_own_stakeholder=cast("Int1D", arguments["roles"]),
         subject_devices=subject_devices,
-    )
+    )[:3]
     states, routed_ids, _ = routed
     np.testing.assert_array_equal(
         routed_ids, [ids[target], ids["single_f"], ids[target]] * 2

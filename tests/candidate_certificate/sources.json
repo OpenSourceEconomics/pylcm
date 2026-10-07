@@ -110,7 +110,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "acfa8e80a0ec7fce4cb67ff4aeeec665be7423dee2b186446d1d0f7685643200"
+            "sha256": "1bfbf84ec53da69348215e8aa4404afadfef6520ac954423c15bc388db26ff11"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -154,7 +154,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "ae8fa85091dca231ca46323b079f5fd030dd5d4ec2f1f3df9701ecddc9d7309a"
+            "sha256": "bcddc36772e2dc4a555f48892c9889280fa2a8d0805edbc44fd27fe3b6a464ac"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -222,7 +222,7 @@
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
-            "sha256": "f6d0cc6376fb09d9ead1a4071cd4502f7293226274099847c5ebb8c32b3da1b2"
+            "sha256": "edf10ac2e56b5df04c855cac3272c8ac8fdab3f0e52e2f1a5a9731fff967f258"
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
@@ -362,11 +362,11 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "db6de5f9c2cdbcc238d37106f0ff7036b503ad1a24eb909022affff1b4d25b63"
+            "sha256": "0ab0d938ca04fa694dd4c9cca7e11b1876c16c32bcfd3f9d6c94bf3ec58dd640"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "772f25062e6040e8ddd4e76155f485164cbea452840760a93e384bf5e692c230"
+            "sha256": "2a9b0fa192956e4b3ee4b4515bf87b213611c3b6ef8443faf50746bb13362b6e"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "831919fe9bb85979e36abf79f88c65b819db49af58056a501fcc73ef5d9b1084"
+        "source_inventory_sha256": "611d2ad97ef09258a1a2d360eeba6313599b77aca129496f1494d14fd885b7a1"
       },
       "fast": {
         "candidate_sources": [
@@ -584,7 +584,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "acfa8e80a0ec7fce4cb67ff4aeeec665be7423dee2b186446d1d0f7685643200"
+            "sha256": "1bfbf84ec53da69348215e8aa4404afadfef6520ac954423c15bc388db26ff11"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -628,7 +628,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "ae8fa85091dca231ca46323b079f5fd030dd5d4ec2f1f3df9701ecddc9d7309a"
+            "sha256": "bcddc36772e2dc4a555f48892c9889280fa2a8d0805edbc44fd27fe3b6a464ac"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -696,7 +696,7 @@
           },
           {
             "path": "src/_lcm/simulation/gated_routing.py",
-            "sha256": "f6d0cc6376fb09d9ead1a4071cd4502f7293226274099847c5ebb8c32b3da1b2"
+            "sha256": "edf10ac2e56b5df04c855cac3272c8ac8fdab3f0e52e2f1a5a9731fff967f258"
           },
           {
             "path": "src/_lcm/simulation/host_operations.py",
@@ -836,11 +836,11 @@
           },
           {
             "path": "src/_lcm/solution/fingerprint.py",
-            "sha256": "db6de5f9c2cdbcc238d37106f0ff7036b503ad1a24eb909022affff1b4d25b63"
+            "sha256": "0ab0d938ca04fa694dd4c9cca7e11b1876c16c32bcfd3f9d6c94bf3ec58dd640"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "772f25062e6040e8ddd4e76155f485164cbea452840760a93e384bf5e692c230"
+            "sha256": "2a9b0fa192956e4b3ee4b4515bf87b213611c3b6ef8443faf50746bb13362b6e"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "831919fe9bb85979e36abf79f88c65b819db49af58056a501fcc73ef5d9b1084"
+        "source_inventory_sha256": "611d2ad97ef09258a1a2d360eeba6313599b77aca129496f1494d14fd885b7a1"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "831919fe9bb85979e36abf79f88c65b819db49af58056a501fcc73ef5d9b1084",
+  "source_inventory_sha256": "611d2ad97ef09258a1a2d360eeba6313599b77aca129496f1494d14fd885b7a1",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1062,7 +1062,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "acfa8e80a0ec7fce4cb67ff4aeeec665be7423dee2b186446d1d0f7685643200"
+      "sha256": "1bfbf84ec53da69348215e8aa4404afadfef6520ac954423c15bc388db26ff11"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -1106,7 +1106,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "ae8fa85091dca231ca46323b079f5fd030dd5d4ec2f1f3df9701ecddc9d7309a"
+      "sha256": "bcddc36772e2dc4a555f48892c9889280fa2a8d0805edbc44fd27fe3b6a464ac"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -1174,7 +1174,7 @@
     },
     {
       "path": "src/_lcm/simulation/gated_routing.py",
-      "sha256": "f6d0cc6376fb09d9ead1a4071cd4502f7293226274099847c5ebb8c32b3da1b2"
+      "sha256": "edf10ac2e56b5df04c855cac3272c8ac8fdab3f0e52e2f1a5a9731fff967f258"
     },
     {
       "path": "src/_lcm/simulation/host_operations.py",
@@ -1314,11 +1314,11 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "db6de5f9c2cdbcc238d37106f0ff7036b503ad1a24eb909022affff1b4d25b63"
+      "sha256": "0ab0d938ca04fa694dd4c9cca7e11b1876c16c32bcfd3f9d6c94bf3ec58dd640"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "772f25062e6040e8ddd4e76155f485164cbea452840760a93e384bf5e692c230"
+      "sha256": "2a9b0fa192956e4b3ee4b4515bf87b213611c3b6ef8443faf50746bb13362b6e"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",

@@ -18,7 +18,7 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.collective import ProjectedRegimeValue, StakeholderRoute
-from lcm.typing import UserFunction
+from lcm.typing import RegimeName, UserFunction
 
 
 @beartype(conf=REGIME_CONF)
@@ -116,3 +116,21 @@ class GatedEdge:
         object.__setattr__(
             self, "gate_refs", ensure_containers_are_immutable(self.gate_refs)
         )
+
+    def reference_regimes(
+        self, *, phases: tuple[Literal["solve", "simulate"], ...]
+    ) -> tuple[RegimeName, ...]:
+        """Return the regimes this edge reads a projected current value from.
+
+        Every gate reference, then each leg's fallback in each of `phases`,
+        deduplicated in that order.
+        """
+        names = [ref.regime for ref in self.gate_refs.values()]
+        for leg in self.legs.values():
+            names.extend(
+                (
+                    leg.solve_fallback if phase == "solve" else leg.simulate_fallback
+                ).regime
+                for phase in phases
+            )
+        return tuple(dict.fromkeys(names))

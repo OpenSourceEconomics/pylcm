@@ -47,8 +47,7 @@ from _lcm.egm.interp import (
 from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
-    _get_child_resources_arg_names,
-    _get_child_resources_function,
+    _get_child_resources,
     _get_child_state_name,
     _get_discrete_state_names,
     _get_passive_state_names,
@@ -2378,13 +2377,8 @@ def _build_child_reads(
             )
         else:
             action_names, action_values = (), ()
-        resources_func = _get_child_resources_function(
+        resources_func, resources_arg_names = _get_child_resources(
             regime_name=target, user_regime=target_regime, law=laws[target]
-        )
-        resources_arg_names = frozenset(
-            _get_child_resources_arg_names(
-                regime_name=target, user_regime=target_regime, law=laws[target]
-            )
         )
         # Everything the resources function reads beyond the child's own
         # states and discrete actions is a (qualified) param or `age` /

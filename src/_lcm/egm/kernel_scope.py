@@ -17,7 +17,7 @@ from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.egm.preferences import concatenate_regime_function
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
-    _get_child_resources_arg_names,
+    _get_child_resources,
     _get_child_state_name,
     _get_process_state_names,
 )
@@ -163,7 +163,7 @@ def _find_unsupported_target_feature(
                 "(both regimes must carry the same process state)."
             )
     child_state_name = _get_child_state_name(user_regime=user_regimes[target])
-    resources_arg_names = _get_child_resources_arg_names(
+    _resources, resources_arg_names = _get_child_resources(
         regime_name=target, user_regime=user_regimes[target], law=laws[target]
     )
     child_action_names, _ = _get_child_discrete_actions(

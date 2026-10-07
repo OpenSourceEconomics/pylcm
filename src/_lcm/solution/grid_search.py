@@ -600,10 +600,8 @@ def _edge_reference_regimes_for_targets(
     references: list[RegimeName] = []
     for target in target_regimes:
         edge = law.gated_edges.get(target)
-        if edge is None:
-            continue
-        references.extend(ref.regime for ref in edge.gate_refs.values())
-        references.extend(route.solve_fallback.regime for route in edge.legs.values())
+        if edge is not None:
+            references.extend(edge.reference_regimes(phases=("solve",)))
     return tuple(dict.fromkeys(references))
 
 

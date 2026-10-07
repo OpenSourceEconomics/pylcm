@@ -181,49 +181,10 @@ def simulation_gate_route(
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
     on_derived: Callable[[object], None] | None = None,
-) -> tuple[StatesPerRegime, Int1D, Int1D]:
-    """Preserve the three-result routing adapter contract."""
-    states, regime_ids, roles, _closed_masks = _simulation_gate_route_with_closed_masks(
-        regime=regime,
-        fold_period=fold_period,
-        edge_values=edge_values,
-        edge_flags=edge_flags,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
-        flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
-        fold_age=fold_age,
-        subject_devices=subject_devices,
-        subject_width=subject_width,
-        on_derived=on_derived,
-    )
-    return states, regime_ids, roles
-
-
-def _simulation_gate_route_with_closed_masks(
-    *,
-    regime: Regime,
-    fold_period: int,
-    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    edge_flags: Mapping[RegimeName, BoolND],
-    next_states: StatesPerRegime,
-    regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
-    flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
-    fold_age: object = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
-    on_derived: Callable[[object], None] | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route from raw V and Boolean D, reusing their owned destination copies.
 
-    This adapter performs its own D-to-float conversion, so the fold mapping
+    It performs its own D-to-float conversion, so the fold mapping
     need not stay resident throughout the unit. The extra cast is intentional.
     The observer sees replacement mapping snapshots, then an empty snapshot
     after all route outputs are ready; no callback or mapping is cached here.
@@ -239,7 +200,7 @@ def _simulation_gate_route_with_closed_masks(
         )
         if on_derived is not None:
             on_derived({"same_period_mappings": MappingProxyType(dict(mappings))})
-    outputs = _route_gated_edges_with_closed_masks(
+    outputs = route_gated_edges(
         regime=regime,
         fold_period=fold_period,
         same_period_mappings=mappings,
@@ -290,22 +251,20 @@ def simulation_gate_route_delta(
     subject_width: int | None = None,
 ) -> tuple[MappingProxyType[str, Mapping[str, object]], Int1D, Int1D]:
     """Publish fixed-shape route deltas instead of a duplicate state carrier."""
-    routed, routed_ids, routed_roles, closed_masks = (
-        _simulation_gate_route_with_closed_masks(
-            regime=regime,
-            fold_period=fold_period,
-            edge_values=edge_values,
-            edge_flags=edge_flags,
-            next_states=candidate_states,
-            regime_names_to_ids=regime_names_to_ids,
-            new_subject_regime_ids=new_subject_regime_ids,
-            subjects_in_regime=subjects_in_regime,
-            flat_params=flat_params,
-            own_stakeholder=own_stakeholder,
-            new_own_stakeholder=new_own_stakeholder,
-            fold_age=fold_age,
-            subject_width=subject_width,
-        )
+    routed, routed_ids, routed_roles, closed_masks = simulation_gate_route(
+        regime=regime,
+        fold_period=fold_period,
+        edge_values=edge_values,
+        edge_flags=edge_flags,
+        next_states=candidate_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_width=subject_width,
     )
     delta = {}
     for target, edge in regime.gated_edges.items():
@@ -530,41 +489,6 @@ def substitute_gated_edge_continuations(
 
 
 def route_gated_edges(
-    *,
-    regime: Regime,
-    fold_period: int,
-    same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    next_states: StatesPerRegime,
-    regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
-    flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
-    fold_age: object = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
-) -> tuple[StatesPerRegime, Int1D, Int1D]:
-    """Preserve the three-result routing adapter contract."""
-    states, regime_ids, roles, _closed_masks = _route_gated_edges_with_closed_masks(
-        regime=regime,
-        fold_period=fold_period,
-        same_period_mappings=same_period_mappings,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
-        flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
-        fold_age=fold_age,
-        subject_devices=subject_devices,
-        subject_width=subject_width,
-    )
-    return states, regime_ids, roles
-
-
-def _route_gated_edges_with_closed_masks(
     *,
     regime: Regime,
     fold_period: int,
