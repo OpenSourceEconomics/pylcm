@@ -81,8 +81,10 @@ Each destination appears once, paired with its permitted **source ages**. An edg
 at the next grid coordinate. A deterministic law must select an available destination; a
 full vector must be exactly zero outside graph support. Scalar probability mappings
 supply graph-selected cells without declaring topology themselves. Terminal regimes have
-no outgoing edges. `Phased(solve=..., simulate=...)` can give the model different
-perceived and realized edges; each phase's `Transition` carries that phase's law, and
+no outgoing edges. A law that differs between the phases is phased inside one
+`Transition`, `Transition(targets=..., law=Phased(solve=..., simulate=...))`, on targets
+both phases share. `Model(edges=Phased(solve={...}, simulate={...}))` gives the model
+different perceived and realized edges, each phase's mapping with its own `Transition`;
 state handoffs stay phase-specific on the source regime. A lone edge in one phase,
 paired with a per-target probability mapping in the other, counts as a probability-one
 cell for its destination.

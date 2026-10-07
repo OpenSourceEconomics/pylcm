@@ -114,7 +114,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     that edge. Only an age a `ByAge` law leaves unselected uses its one edge
     instead; a `ByAge` law must select every age with several edges.
   - A regime with no outgoing edges is terminal.
-  - `Phased` edges carry each phase's law in that phase's `Transition`.
+  - A law that differs between the phases is phased inside one `Transition`:
+    `Transition(targets=..., law=Phased(solve=..., simulate=...))`. Destinations that
+    differ between the phases go in `Model(edges=Phased(solve={...}, simulate={...}))`,
+    each phase's mapping with its own `Transition`.
   - `DeterministicTransition` and `StochasticTransition` have no `targets` field.
   - `Regime` carries no law, so `Regime.terminal`, `Regime.gated_edges` and
     `Regime.decomposed_transition` are gone. `model.graph.laws[name]` holds each

@@ -210,12 +210,27 @@ initial states still belong to `Population` and `InitialConditions`.
 
 ## Migrate phase differences and inspection
 
-A shared edge mapping applies to both phases. Use `Phased(solve=..., simulate=...)` on
-`edges` for perceived versus realized connectivity; a former
-`Phased(solve=..., simulate=...)` law moves into each phase's `Transition`, or stays
-whole as the law of one `Transition` on shared edges. State handoffs stay phase-specific
-on the source regime. Physically visited nodes require solve values plus their perceived
-dependencies; extra valued nodes do not imply realized visits.
+A shared edge mapping applies to both phases. A former `Phased(solve=..., simulate=...)`
+regime law stays a `Phased`, inside the law of one `Transition` whose targets both
+phases share:
+
+```python
+ALIVE_AGES = AgeRange(start=60, exclusive_stop=75)
+edges = {
+    "alive": Transition(
+        targets={"alive": ALIVE_AGES, "dead": ALIVE_AGES},
+        law=Phased(solve=perceived_survival, simulate=realized_survival),
+    ),
+}
+```
+
+Only perceived versus realized connectivity, destinations that differ between the
+phases, wraps the whole mapping: `Model(edges=Phased(solve={...}, simulate={...}))`,
+each phase's mapping declaring its own `Transition`. A source mapped to
+`Phased(solve=Transition(...), simulate=Transition(...))` is refused with the supported
+form. State handoffs stay phase-specific on the source regime. Physically visited nodes
+require solve values plus their perceived dependencies; extra valued nodes do not imply
+realized visits.
 
 Inspect `model.graph.edges.solve` and `.simulate` for declared exact source ages,
 `.solution` and `.simulation` for effective period-indexed graphs, `.nodes` for valued
