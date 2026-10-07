@@ -198,6 +198,69 @@ def test_selector_parameter_alone_fills_the_edge_slots_at_every_horizon(
     ) == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("function_level", ["regime", "model"])
+@pytest.mark.parametrize("n_periods", [2, 3])
+def test_state_read_through_a_dormant_selector_function_is_no_parameter(
+    *, function_level, n_periods
+):
+    """A state a selector reads through a function stays a state at every horizon.
+
+    The function's own parameter is its only slot in every regime that declares
+    it, a model-level one reaching `dead` as well, and the selector's free
+    parameter is the only edge slot, whether or not the selector runs.
+    """
+    model = _dormant_scored_selector_model(
+        function_level=function_level, n_periods=n_periods
+    )
+    template = model.get_params_template()
+    assert (
+        {name: dict(branch.get("score", {})) for name, branch in template.items()},
+        _leaf_paths(template["edges"]),
+    ) == (
+        {
+            "alive": {"scale": "float"},
+            "dead": {"scale": "float"} if function_level == "model" else {},
+            "edges": {},
+        },
+        {("alive", "cutoff")},
+    )
+
+
+@pytest.mark.parametrize("function_level", ["regime", "model"])
+@pytest.mark.parametrize(
+    ("n_periods", "expected"),
+    [
+        # The only source age exits into `dead`: 1 + 0.95 * 1 at both nodes.
+        pytest.param(2, [1.95, 1.95], id="dormant-selector"),
+        # Below the cutoff the household stays alive for a last age that exits
+        # into `dead` (1 + 0.95 * 1.95); above it, it dies at once.
+        pytest.param(3, [2.8525, 1.95], id="running-selector"),
+    ],
+)
+def test_selector_reading_a_function_solves_with_only_declared_parameters(
+    *, function_level, n_periods, expected
+):
+    """The function's parameter and the selector's cutoff are all a solve needs."""
+    model = _dormant_scored_selector_model(
+        function_level=function_level, n_periods=n_periods
+    )
+    values = model.solve(
+        params={
+            "discount_factor": 0.95,
+            **(
+                {"alive": {"score": {"scale": 1.0}}}
+                if function_level == "regime"
+                else {"scale": 1.0}
+            ),
+            "edges": {"alive": {"cutoff": 0.5}},
+        },
+        log_level="debug",
+    ).values
+    np.testing.assert_allclose(
+        np.broadcast_to(np.asarray(values[0]["alive"]), (2,)), expected, rtol=1e-6
+    )
+
+
 @pytest.mark.parametrize(
     "params",
     [
@@ -697,6 +760,56 @@ def _dormant_selector_model(*, variable: str, n_periods: int) -> Model:
         states={"x": grid} if is_state else {},
         state_transitions={"x": fixed_transition("x")} if is_state else {},
         actions={} if is_state else {"a": grid},
+    )
+
+
+def _score(*, x: ContinuousState, scale: float) -> FloatND:
+    return scale * x
+
+
+def _choose_by_score(*, score: FloatND, cutoff: float) -> ScalarInt:
+    return jnp.where(score < cutoff, _LifeId.alive, _LifeId.dead)
+
+
+def _dormant_scored_selector_model(*, function_level: str, n_periods: int) -> Model:
+    """An `alive` regime whose selector reads a model-level state via a function.
+
+    `score` is declared on the regime or at the model level and is read only by
+    the selector. The selector runs at every source age but the last, which exits
+    into `dead`, so with two periods nothing reads `score` or the state `x`.
+    """
+    last_age = n_periods - 1
+    last_source_age = last_age - 1
+    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    if last_source_age > 0:
+        targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
+    on_regime = function_level == "regime"
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=last_age, step="Y"),
+        regimes={
+            "alive": Regime(
+                functions={
+                    "utility": _constant_utility,
+                    **({"score": _score} if on_regime else {}),
+                }
+            ),
+            "dead": Regime(functions={"utility": _constant_utility}),
+        },
+        regime_id_class=_LifeId,
+        initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets=targets,
+                law=ByAge.until(
+                    stop_age_exclusive=last_age,
+                    law=DeterministicTransition(func=_choose_by_score),
+                    then="dead",
+                ),
+            ),
+        },
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": fixed_transition("x")},
+        functions={} if on_regime else {"score": _score},
     )
 
 
