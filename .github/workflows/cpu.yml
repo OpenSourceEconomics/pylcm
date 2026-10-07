@@ -343,8 +343,8 @@ jobs:
   # signal. This lane is mandatory on every PR push and gates `cpu`.
   #
   # `--dist load` rather than `loadfile`: these are source-only cases with no
-  # device or cache coupling, and the program module alone is a 27-minute atom
-  # under `loadfile`, over the 24-minute payload guardrail. Per-test
+  # device or cache coupling, and under `loadfile` the program module alone
+  # would be one indivisible atom that sets the lane's wall time. Per-test
   # distribution costs one module-scoped clean verification per worker (two),
   # not per test.
   tests-source-contract:
@@ -2167,11 +2167,9 @@ jobs:
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
   # while balancing real cost rather than a hash. Both precisions take seven
-  # shards. Run 35078533997 measured 288.5 worker-minutes at fp64 and 285.4 at
-  # fp32, so a two-worker job carries 20.6 and 20.4 payload minutes at seven
-  # shards; fewer shards break the 24-minute payload guardrail and more buy
-  # nothing, because the heaviest indivisible file already costs 21.1 minutes at
-  # fp64 and 22.1 at fp32 and `--dist loadfile` cannot split it. Each job keeps
+  # shards, which keeps each job's predicted payload inside the 30-minute
+  # guardrail and close to the floor set by the heaviest indivisible file:
+  # `--dist loadfile` cannot split it, so more shards buy nothing. Each job keeps
   # two xdist workers: increasing that inside a 16 GB runner has exhausted
   # memory, whereas separate runners provide real capacity.
   tests-slow-solution:
