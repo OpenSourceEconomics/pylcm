@@ -13,7 +13,7 @@ structure and its law. Initial age–regime pairs are required explicitly throug
 `Regime` takes no regime transition law. The removed form declared the law on the source
 regime and now raises a `TypeError`:
 
-```python
+```text
 # Removed: raises TypeError. Shown only to identify code that needs migrating.
 working = Regime(
     functions={"utility": utility},
