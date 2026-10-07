@@ -59,7 +59,7 @@ def edge_params(
         `params["edges"][source]`; empty for a source owning no slot.
 
     """
-    edges = cast("FlatEdgeParams", flat_params.get(EDGES, MappingProxyType({})))
+    edges = cast("FlatEdgeParams", flat_params.get(EDGES, _EMPTY))
     return edges.get(source, _EMPTY)
 
 
