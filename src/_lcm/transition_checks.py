@@ -1228,6 +1228,15 @@ def validate_joint_transitions_all_periods(
         for regime_name, regime in regimes.items():
             if regime.terminal or period not in regime.active_periods:
                 continue
+            # The weight and support DAGs are built here, not partialled over
+            # fixed params, while the kernel params hold only the free ones: bind
+            # both.
+            joint_params = MappingProxyType(
+                {
+                    **regime.resolved_fixed_params,
+                    **regime_kernel_params(flat_params, regime_name=regime_name),
+                }
+            )
             state_action_space = (
                 regime.solution.state_action_space(
                     regime_params=regime_kernel_params(
@@ -1293,9 +1302,7 @@ def validate_joint_transitions_all_periods(
                             if phase_name == "simulate"
                             else _NO_EXTRA_GRIDS
                         ),
-                        regime_params=regime_kernel_params(
-                            flat_params, regime_name=regime_name
-                        ),
+                        regime_params=joint_params,
                         period=period_int32,
                         age=age,
                         regime_name=regime_name,
@@ -1313,9 +1320,7 @@ def validate_joint_transitions_all_periods(
                             transitions=phase.transitions[target],
                             weights=weights,
                             n_cells=n_cells,
-                            regime_params=regime_kernel_params(
-                                flat_params, regime_name=regime_name
-                            ),
+                            regime_params=joint_params,
                             period=period_int32,
                             period_index=period,
                             age=age,
