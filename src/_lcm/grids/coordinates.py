@@ -8,6 +8,8 @@ scalars.
 """
 
 import jax.numpy as jnp
+import numpy as np
+from jax.core import Tracer
 
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -38,7 +40,22 @@ def get_linspace_coordinate(
 
     A one-point grid has no spacing to divide by and holds a single value, so every
     value maps to its only index.
+
+    The spacing of a grid known before tracing is computed on the host, so it
+    enters a compiled program as one correctly rounded constant. Computed inside
+    the program, it is folded by the compiler, which may replace the division by a
+    multiplication with the reciprocal depending on the order it folds the
+    operands in; two programs reading the same grid then disagree in the last
+    place. A traced grid (a piecewise segment, a log-space bound) keeps the
+    in-program spacing.
     """
+    if not any(isinstance(arg, Tracer) for arg in (start, stop, n_points)):
+        start_host = np.asarray(start)
+        n_steps_host = np.asarray(n_points) - 1
+        step_length_host = (np.asarray(stop) - start_host) / np.where(
+            n_steps_host > 0, n_steps_host, 1
+        ).astype(start_host.dtype)
+        return jnp.where(n_steps_host > 0, (value - start) / step_length_host, 0.0)
     n_steps = n_points - 1
     step_length = (stop - start) / jnp.where(n_steps > 0, n_steps, 1)
     return jnp.where(n_steps > 0, (value - start) / step_length, 0.0)
