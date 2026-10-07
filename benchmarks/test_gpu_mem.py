@@ -768,10 +768,9 @@ def _discoverable_gpu_profile_classes() -> tuple[type, ...]:
     return tuple(sorted(found, key=lambda cls: cls.__qualname__))
 
 
-def test_discoverable_gpu_profile_classes_are_the_three_lifecycle_series() -> None:
-    """The profile population covers both ACA series and the budgeted Mahler series."""
+def test_discoverable_gpu_profile_classes_are_plain_aca_and_budgeted_mahler() -> None:
+    """The profile population is the plain ACA and the budgeted Mahler series."""
     assert [cls.__qualname__ for cls in _discoverable_gpu_profile_classes()] == [
-        "AcaBaselineDebugLogGpuPeakMem",
         "AcaBaselineGpuPeakMem",
         "MahlerYumBudgetedGpuPeakMem",
     ]

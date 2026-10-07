@@ -119,7 +119,6 @@ def test_aca_gpu_peak_mem_asv_surface_has_exact_phase_trackers(
 
     for cls, expected_bench_class in (
         (bench_aca_baseline.AcaBaselineGpuPeakMem, "AcaBaseline"),
-        (bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem, "AcaBaselineDebugLog"),
     ):
         instance = cls()
         cache = instance.setup_cache()
@@ -140,7 +139,7 @@ def test_aca_gpu_peak_mem_asv_surface_has_exact_phase_trackers(
         }
         assert cls.bench_class == expected_bench_class
 
-    assert profile_calls == ["AcaBaseline", "AcaBaselineDebugLog"]
+    assert profile_calls == ["AcaBaseline"]
 
 
 class _FakeSolution:
@@ -226,7 +225,6 @@ def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
     assert bench_aca_baseline.AcaBaseline.version == "2"
     assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
     assert bench_aca_baseline.AcaBaselineGpuPeakMem.version == "2"
-    assert bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem.version == "3"
 
 
 class _BuildStoppedError(Exception):
