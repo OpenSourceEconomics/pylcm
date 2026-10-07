@@ -290,7 +290,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges
+from lcm.transition import ModelEdges, TransitionLaw
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -1001,6 +1001,22 @@ class Model:
     def edges(self) -> ModelEdges:
         """The edges exactly as declared in `Model(edges=...)`, laws included."""
         return self._edges
+
+    @property
+    def declared_laws(self) -> Mapping[RegimeName, tuple[TransitionLaw, ...]]:
+        """Each `Transition` source's law exactly as declared, one per phase.
+
+        A source maps to its `Transition.law`:
+
+        - once, under edges declared for both phases;
+        - its solve law, then its simulate law, under `Phased` edges; a phase
+          that declares the source as a plain mapping contributes none.
+
+        A source declared only as a plain `{target: selector}` mapping declares
+        no law and has no entry. `model.graph.laws` holds the law as bound to the
+        graph.
+        """
+        raise NotImplementedError
 
     @property
     def execution_devices(self) -> tuple[int, ...]:

@@ -28,7 +28,7 @@ from lcm.ages import AgeGrid
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.typing import FloatND, UserAge, UserFunction
+from lcm.typing import FloatND, RegimeName, UserAge, UserFunction
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
@@ -68,11 +68,33 @@ type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRa
 
 # One phase's edges: each source regime maps to its destinations' source-age
 # selectors, or to a `Transition` whose law chooses among them.
-type PhaseEdges = Mapping[str, Transition | Mapping[str, AgeSelector]]
+type PhaseEdges = Mapping[RegimeName, Transition | Mapping[RegimeName, AgeSelector]]
 
 # What `Model(edges=...)` takes: one phase's edges for both phases, or a
 # `Phased` pair of them.
 type ModelEdges = PhaseEdges | Phased[PhaseEdges, PhaseEdges]
+
+# One target's cell of a per-target law: its probability, or a `Phased` pair.
+type TargetLawCell = (
+    StochasticTransition
+    | UserFunction
+    | Phased[StochasticTransition | UserFunction, StochasticTransition | UserFunction]
+)
+
+# A law one phase evaluates at a source age.
+type PhaseTransitionLaw = (
+    RegimeName
+    | DeterministicTransition
+    | StochasticTransition
+    | UserFunction
+    | Mapping[RegimeName, TargetLawCell]
+)
+
+# What `Transition(law=...)` takes: one phase's law for both phases, a `Phased`
+# pair of them, or a `ByAge` selecting among them per source age.
+type TransitionLaw = (
+    PhaseTransitionLaw | Phased[PhaseTransitionLaw, PhaseTransitionLaw] | ByAge
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -118,7 +140,7 @@ class Transition:
     whether a row stays there or takes its route's fallback.
     """
 
-    targets: Mapping[str, AgeSelector] | None = None
+    targets: Mapping[RegimeName, AgeSelector] | None = None
     """Destination regimes and the source ages at which each edge fires.
 
     Optional when the law names its targets — a per-target mapping, a regime
@@ -132,7 +154,9 @@ class Transition:
     law: object
     """The numerical law choosing among the destinations."""
 
-    gates: Mapping[str, Gate] = field(default_factory=lambda: MappingProxyType({}))
+    gates: Mapping[RegimeName, Gate] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """One `Gate` per value-dependent destination, keyed by that destination."""
 
     def __post_init__(self) -> None:

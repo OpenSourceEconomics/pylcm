@@ -564,6 +564,45 @@ def test_model_edges_keep_the_dated_declaration() -> None:
     assert edges["working"].law is declared
 
 
+def test_declared_laws_hold_the_transition_law_of_unphased_edges() -> None:
+    """Each source declared as a `Transition` maps to its one declared law."""
+    declared = _working_law()
+    model = _dated_model(edges=_dated_edges(working_law=declared))
+    laws = {
+        source: tuple(map(id, laws)) for source, laws in model.declared_laws.items()
+    }
+    assert laws == {"working": (id(declared),)}
+
+
+def test_declared_laws_hold_the_solve_then_simulate_law_of_phased_edges() -> None:
+    """Under `Phased` edges a source maps to its solve law, then its simulate law."""
+    solve_law, simulate_law = _working_law(), _working_law()
+    model = _dated_model(
+        edges=Phased(
+            solve=_dated_edges(working_law=solve_law),
+            simulate=_dated_edges(working_law=simulate_law),
+        )
+    )
+    laws = {
+        source: tuple(map(id, laws)) for source, laws in model.declared_laws.items()
+    }
+    assert laws == {"working": (id(solve_law), id(simulate_law))}
+
+
+def test_declared_laws_reject_item_assignment() -> None:
+    """The declared laws of a built model cannot be replaced per source."""
+    model = _dated_model()
+    with pytest.raises(TypeError):
+        model.declared_laws["working"] = ()  # ty: ignore[invalid-assignment]
+
+
+def test_declared_laws_cannot_be_rebound() -> None:
+    """The declared laws cannot be rebound on a built model."""
+    model = _dated_model()
+    with pytest.raises(AttributeError):
+        model.declared_laws = {}  # ty: ignore[invalid-assignment]
+
+
 _EARLY_STAGES = (AgeRange(start=25, exclusive_stop=55),)
 
 
