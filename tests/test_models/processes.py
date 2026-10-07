@@ -176,47 +176,32 @@ def get_multi_regime_model(
     shock_grid_cls = _SHOCK_GRID_CLASSES[distribution_type]
     shock_kwargs = _SHOCK_GRID_KWARGS[distribution_type]
 
-    work_regime = UserRegime(
-        states={
-            "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-            "income": shock_grid_cls(n_points=5, **shock_kwargs),
-            "health": DiscreteGrid(category_class=Health),
-        },
-        state_transitions={
-            "wealth": next_wealth,
-            "health": StochasticTransition(func=next_health),
-        },
-        actions={
-            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
-        },
-        constraints={"wealth_constraint": wealth_constraint},
-        functions={"utility": utility},
-    )
-    retire_regime = UserRegime(
-        states={
-            "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-            "income": shock_grid_cls(n_points=5, **shock_kwargs),
-            "health": DiscreteGrid(category_class=Health),
-        },
-        state_transitions={
-            "wealth": next_wealth,
-            "health": StochasticTransition(func=next_health),
-        },
-        actions={
-            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
-        },
-        constraints={"wealth_constraint": wealth_constraint},
-        functions={"utility": utility},
-    )
+    # `work` and `retire` share one declaration but are built separately, so the
+    # two regimes hold distinct regime and grid objects across the shock handoff.
+    living_regimes = {
+        name: UserRegime(
+            states={
+                "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
+                "income": shock_grid_cls(n_points=5, **shock_kwargs),
+                "health": DiscreteGrid(category_class=Health),
+            },
+            state_transitions={
+                "wealth": next_wealth,
+                "health": StochasticTransition(func=next_health),
+            },
+            actions={
+                "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
+            },
+            constraints={"wealth_constraint": wealth_constraint},
+            functions={"utility": utility},
+        )
+        for name in ("work", "retire")
+    }
     dead_regime = UserRegime(
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        regimes={
-            "work": work_regime,
-            "retire": retire_regime,
-            "dead": dead_regime,
-        },
+        regimes={**living_regimes, "dead": dead_regime},
         regime_id_class=MultiRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         initial_nodes={0: "work"},
