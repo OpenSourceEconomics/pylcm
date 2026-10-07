@@ -14,9 +14,7 @@ from _lcm.regime_building.transitions import (
     collect_state_transitions,
 )
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import (
-    validate_regime_law,  # ty: ignore[unresolved-import]
-)
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeRange,
     DeterministicTransition,

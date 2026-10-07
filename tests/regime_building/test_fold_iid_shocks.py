@@ -42,9 +42,7 @@ from _lcm.regime_building.transition_support import (
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.regime_law import bind_regime_law
 from _lcm.solution.backward_induction import solve
-from _lcm.user_regime_validation import (
-    validate_regime_law,  # ty: ignore[unresolved-import]
-)
+from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,

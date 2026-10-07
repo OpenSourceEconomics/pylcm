@@ -82,33 +82,22 @@ def normalize_regime_phases(
             grammar.
 
     """
-    pools = _phase_function_pools(user_regime=user_regime)
+    slots = _resolve_law_free_slots(user_regime=user_regime)
+    pools = slots.pools
     solve_functions, simulate_functions = pools.solve, pools.simulate
     solve_grid_states, simulate_grid_states = (
         pools.solve_grid_states,
         pools.simulate_grid_states,
     )
-
-    solve_state_transitions, simulate_state_transitions = _split_state_transitions(
-        user_regime=user_regime
+    solve_state_transitions, simulate_state_transitions = (
+        slots.solve_state_transitions,
+        slots.simulate_state_transitions,
     )
-    solve_joint_transitions, simulate_joint_transitions, joint_transition_errors = (
-        _split_joint_transitions(user_regime=user_regime)
+    solve_joint_transitions, simulate_joint_transitions = (
+        slots.solve_joint_transitions,
+        slots.simulate_joint_transitions,
     )
-
-    carried_only = frozenset(simulate_grid_states) - frozenset(solve_grid_states)
-    solve_state_transitions = {
-        name: law
-        for name, law in solve_state_transitions.items()
-        if name not in carried_only
-    }
-    carried_errors = [
-        message
-        for name in sorted(carried_only)
-        for message in _carried_law_errors(
-            name=name, law=simulate_state_transitions.get(name)
-        )
-    ]
+    carried_only = slots.carried_only
 
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
         law=law
@@ -144,9 +133,7 @@ def normalize_regime_phases(
     )
 
     errors = (
-        pools.errors
-        + carried_errors
-        + joint_transition_errors
+        slots.errors
         + transition_errors
         + terminal_errors
         + ([] if terminal else aggregator_errors)
@@ -179,6 +166,83 @@ def normalize_regime_phases(
             regime_transition=simulate_transition,
             koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
         ),
+    )
+
+
+def validate_law_free_phase_grammar(user_regime: lcm.regime.Regime) -> None:
+    """Validate the phase grammar of every slot that does not depend on the law.
+
+    `normalize_regime_phases` applies the same checks and adds those that need
+    the regime's law: the law's own variants, carried states in a terminal
+    regime, and an aggregator for each phase of a non-terminal one.
+
+    Raises:
+        RegimeInitializationError: If any law-free slot violates the phase
+            grammar.
+
+    """
+    errors = _resolve_law_free_slots(user_regime=user_regime).errors
+    if errors:
+        raise RegimeInitializationError(format_messages(errors))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LawFreeSlots:
+    """The per-phase slots resolved without the law, with their grammar errors."""
+
+    pools: _PhaseFunctionPools
+    """Each phase's function pool and grid states."""
+
+    solve_state_transitions: dict[StateName, _PhaseStateTransition]
+    """Solve-phase state transitions, without carried-only states."""
+
+    simulate_state_transitions: dict[StateName, _PhaseStateTransition]
+    """Simulate-phase state transitions."""
+
+    solve_joint_transitions: _PhaseJointTransitions
+    """Solve-phase joint transitions."""
+
+    simulate_joint_transitions: _PhaseJointTransitions
+    """Simulate-phase joint transitions."""
+
+    carried_only: frozenset[StateName]
+    """States on the simulate grid only."""
+
+    errors: list[str]
+    """Function-pool, carried-law and joint-transition errors, in that order."""
+
+
+def _resolve_law_free_slots(*, user_regime: lcm.regime.Regime) -> _LawFreeSlots:
+    """Split every slot that does not depend on the law into its phases."""
+    pools = _phase_function_pools(user_regime=user_regime)
+    solve_state_transitions, simulate_state_transitions = _split_state_transitions(
+        user_regime=user_regime
+    )
+    solve_joint_transitions, simulate_joint_transitions, joint_transition_errors = (
+        _split_joint_transitions(user_regime=user_regime)
+    )
+    carried_only = frozenset(pools.simulate_grid_states) - frozenset(
+        pools.solve_grid_states
+    )
+    carried_errors = [
+        message
+        for name in sorted(carried_only)
+        for message in _carried_law_errors(
+            name=name, law=simulate_state_transitions.get(name)
+        )
+    ]
+    return _LawFreeSlots(
+        pools=pools,
+        solve_state_transitions={
+            name: law
+            for name, law in solve_state_transitions.items()
+            if name not in carried_only
+        },
+        simulate_state_transitions=simulate_state_transitions,
+        solve_joint_transitions=solve_joint_transitions,
+        simulate_joint_transitions=simulate_joint_transitions,
+        carried_only=carried_only,
+        errors=pools.errors + carried_errors + joint_transition_errors,
     )
 
 

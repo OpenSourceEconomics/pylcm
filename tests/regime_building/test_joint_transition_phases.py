@@ -6,8 +6,8 @@ import pytest
 from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_regime_phases
 from _lcm.regime_law import RegimeLaw, bind_regime_law
 from _lcm.user_regime_validation import (
-    fail_if_a_joint_target_is_unreachable,  # ty: ignore[unresolved-import]
-    validate_regime_law,  # ty: ignore[unresolved-import]
+    fail_if_a_joint_target_is_unreachable,
+    validate_regime_law,
 )
 from lcm import (
     AgeGrid,

@@ -28,7 +28,7 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.regime_law import bind_regime_law
 from _lcm.solution.negm import _BoundNEGM
 from lcm import (
     DiscreteGrid,
@@ -56,9 +56,17 @@ from lcm.typing import (
 )
 from tests.test_models import negm_kinked_toy
 
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
+
 _VALID = negm_kinked_toy.build_alive_regime()
 # The single regime's law: one no model has bound.
-_LAWS = MappingProxyType({"alive": UNBOUND_LAW})
+_LAWS = MappingProxyType({"alive": _NON_TERMINAL_LAW})
 
 
 def _validate(regime: UserRegime) -> None:

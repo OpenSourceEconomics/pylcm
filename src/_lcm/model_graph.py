@@ -22,7 +22,10 @@ from _lcm.regime_building.transition_support import (
     _SupportedStochasticTransition,
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
-from _lcm.user_regime_validation import validate_regimes
+from _lcm.user_regime_validation import (
+    fail_if_a_joint_target_is_unreachable,
+    validate_regimes,
+)
 from lcm.ages import AgeGrid
 from lcm.collective import ValueDependentTransition
 from lcm.exceptions import (
@@ -240,7 +243,7 @@ def bind_edge_laws(
     a `Transition` on a source whose every age has at most one outgoing edge,
     unless its law carries a `ValueDependentTransition` gate. A regime with no
     outgoing edge in either phase is terminal. Each regime is validated against
-    its bound law.
+    its bound law, and its joint kernels against the targets its edges reach.
 
     Returns:
         Each regime's bound law, and both phases' edges with their selectors
@@ -289,6 +292,14 @@ def bind_edge_laws(
         bound[name] = _combined_law(laws_by_side=laws_by_side, ages=ages)
     laws = MappingProxyType({name: bind_regime_law(bound[name]) for name in regimes})
     validate_regimes(regimes=regimes, laws=laws)
+    fail_if_a_joint_target_is_unreachable(
+        user_regimes=regimes,
+        targets_by_regime={
+            name: frozenset(resolved["solve"].get(name, {}))
+            | frozenset(resolved["simulate"].get(name, {}))
+            for name in regimes
+        },
+    )
     return laws, GraphEdges(solve=resolved["solve"], simulate=resolved["simulate"])
 
 

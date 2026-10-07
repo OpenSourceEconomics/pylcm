@@ -20,9 +20,7 @@ import numpy as np
 import pytest
 
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import (
-    validate_regime_law,  # ty: ignore[unresolved-import]
-)
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
