@@ -66,17 +66,12 @@ DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 
-def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Work until the age before `last_age`, then die."""
-    return ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
+# Law of the `working_life` edges: keep working until `final_age_alive`, then die.
+WORKING_LIFE_LAW = DeterministicTransition(func=next_regime)
 
 
 def graph_bound_working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """`working_life_transitions` with the destinations a model graph would bind.
+    """`WORKING_LIFE_LAW` with the destinations a model graph would bind, by age.
 
     For tests that lower regime declarations directly, without a `Model` to bind
     the laws to its edges.
@@ -92,19 +87,16 @@ def graph_bound_working_life_transitions(*, last_age: UserAge | float) -> ByAge:
 
 def working_life_edges(
     ages: AgeGrid,
-) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
-    """Keep working before the second-to-last age; die from every non-final age.
-
-    Where both edges leave an age, `working_life_transitions` chooses between them.
-    """
+) -> dict[str, Transition]:
+    """Keep working before the second-to-last age; die from every non-final age."""
     stays = tuple(ages.exact_values[:-2])
-    dies = tuple(ages.exact_values[:-1])
-    if not stays:
-        return {"working_life": {"dead": dies}}
     return {
         "working_life": Transition(
-            targets={"working_life": stays, "dead": dies},
-            law=working_life_transitions(last_age=ages.exact_values[-1]),
+            targets={
+                "dead": tuple(ages.exact_values[:-1]),
+                **({"working_life": stays} if stays else {}),
+            },
+            law=WORKING_LIFE_LAW,
         )
     }
 
@@ -176,14 +168,11 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
 ) -> UserParams:
-    final_age_alive = START_AGE + n_periods - 2
     return {
         "discount_factor": discount_factor,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
         },
-        # The law reading `final_age_alive` exists only where some age has two
-        # outgoing edges, which takes at least three periods.
-        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
+        "final_age_alive": START_AGE + n_periods - 2,
     }

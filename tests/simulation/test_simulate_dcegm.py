@@ -55,8 +55,8 @@ from tests.test_models import dcegm_paper_twin
 from tests.test_models.deterministic import dcegm_variants
 from tests.test_models.deterministic.base import RegimeId as FullRegimeId
 from tests.test_models.deterministic.retirement_only import (
+    RETIREMENT_LAW,
     RetirementOnlyRegimeId,
-    retirement_transitions,
 )
 
 CONSUMPTION_GRID_STEP = float(
@@ -345,7 +345,7 @@ def _phase_variant_savings_model(n_periods: int) -> Model:
                     "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
                     "dead": AgeRange(exclusive_stop=last_age),
                 },
-                law=retirement_transitions(last_age=last_age),
+                law=RETIREMENT_LAW,
             )
         },
     )

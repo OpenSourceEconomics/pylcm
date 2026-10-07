@@ -31,9 +31,9 @@ from lcm import (
 )
 from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import (
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
     dead,
-    retirement_transitions,
-    working_life_transitions,
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
@@ -109,12 +109,11 @@ def _retirement_only_model(*, envelope, n_periods):
 
 def _full_model(*, envelope, n_periods):
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     return Model(
         edges=_lifecycle_edges(
             ages=ages,
-            working_life_law=working_life_transitions(last_age=last_age),
-            retirement_law=retirement_transitions(last_age=last_age),
+            working_life_law=WORKING_LIFE_LAW,
+            retirement_law=RETIREMENT_LAW,
         ),
         regimes={
             "working_life": _with_backend(regime=dcegm_working_life, envelope=envelope),
@@ -190,7 +189,7 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
         return Model(
             edges=_lifecycle_edges(
                 ages=ages,
-                working_life_law=working_life_transitions(last_age=70),
+                working_life_law=WORKING_LIFE_LAW,
                 retirement_law=retirement_law,
             ),
             regimes={
