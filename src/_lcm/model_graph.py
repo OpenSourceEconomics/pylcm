@@ -225,8 +225,8 @@ def prepare_graph(
 
 def bind_edge_laws(
     *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
-) -> tuple[RegimeLaws, object]:
-    """Bind each regime's law from `Model(edges=...)` and strip laws off the edges.
+) -> tuple[RegimeLaws, GraphEdges]:
+    """Bind each regime's law from `Model(edges=...)` and resolve its support.
 
     Per phase, a source's law at each source age with outgoing edges is:
 
@@ -243,8 +243,8 @@ def bind_edge_laws(
     its bound law.
 
     Returns:
-        Each regime's bound law, and the edges in the law-free
-        `{source: {target: selector}}` form, `Phased` when the input was.
+        Each regime's bound law, and both phases' edges with their selectors
+        snapshotted as exact source ages.
     """
     declared = (
         {"solve": edges.solve, "simulate": edges.simulate}
@@ -287,14 +287,9 @@ def bind_edge_laws(
                     side=side,
                 )
         bound[name] = _combined_law(laws_by_side=laws_by_side, ages=ages)
-    law_free = (
-        Phased(solve=structural["solve"], simulate=structural["simulate"])
-        if isinstance(edges, Phased)
-        else structural["solve"]
-    )
     laws = MappingProxyType({name: bind_regime_law(bound[name]) for name in regimes})
     validate_regimes(regimes=regimes, laws=laws)
-    return laws, law_free
+    return laws, GraphEdges(solve=resolved["solve"], simulate=resolved["simulate"])
 
 
 def _targets_by_period(
@@ -435,19 +430,6 @@ def _lottery_if_paired(*, law: object, other: object) -> object:
     return law
 
 
-def resolve_graph_edges(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
-) -> GraphEdges:
-    """Validate both phases and snapshot selectors as exact source ages."""
-    solve, simulate = (
-        (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges, edges)
-    )
-    return GraphEdges(
-        solve=_resolve_edges(edges=solve, regimes=regimes, ages=ages),
-        simulate=_resolve_edges(edges=simulate, regimes=regimes, ages=ages),
-    )
-
-
 def bind_graph_support(
     *, laws: RegimeLaws, edges: GraphEdges, ages: AgeGrid
 ) -> tuple[RegimeLaws, CellsWithoutEdges]:
@@ -468,7 +450,6 @@ def bind_graph_support(
             result[source] = source_law
             continue
         transition = source_law.transition
-        _fail_if_law_names_targets(transition=transition, source=source)
         kernels = (
             transition.resolve(ages).law_by_period
             if isinstance(transition, ByAge)
@@ -702,25 +683,6 @@ def _bind_law(
     raise ModelInitializationError(
         f"Invalid transition kernel {law!r} out of ({age}, '{source}')."
     )
-
-
-def _fail_if_law_names_targets(*, transition: object, source: RegimeName) -> None:
-    """Reject a regime law tagged with destinations; only the graph declares them."""
-    laws = transition.laws if isinstance(transition, ByAge) else (transition,)
-    for law in laws:
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        if any(
-            isinstance(
-                side,
-                _SupportedDeterministicTransition | _SupportedStochasticTransition,
-            )
-            for side in sides
-        ):
-            raise ModelInitializationError(
-                f"The regime law of '{source}' names its destinations. Declare "
-                "every regime transition in `Model(edges=...)`; the law supplies "
-                "only the numbers."
-            )
 
 
 def _fail_if_kernel_extends_graph(

@@ -444,13 +444,14 @@ class AgeSpecializedFunction(_AgeSpecialized):
 
     Usable in `functions` and `constraints` of non-terminal regimes. A
     policy-dependent law of motion is expressed as a plain state transition that
-    reads an `AgeSpecializedFunction` entry of `functions`; a direct
-    `AgeSpecializedFunction` state-transition value, a specialized regime
-    transition law, a regime transition whose dependency graph reads an
-    `AgeSpecializedFunction`, a
-    `StochasticTransition(func=AgeSpecializedFunction(...))`, and
-    any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`
-    construction. Every concrete function returned by `build` must expose the same
+    reads an `AgeSpecializedFunction` entry of `functions`. A direct
+    `AgeSpecializedFunction` state-transition value and a
+    `StochasticTransition(func=AgeSpecializedFunction(...))` state transition are
+    rejected at `Regime` construction. A specialized regime transition law, a
+    regime transition whose dependency graph reads an `AgeSpecializedFunction`,
+    and any `AgeSpecializedFunction` in a terminal regime are rejected when the
+    model binds each regime's law from `Model(edges=...)`. Every concrete function
+    returned by `build` must expose the same
     call signature — only the constants it closes over may differ across ages.
 
         functions={"tax": AgeSpecializedFunction(build=make_tax, signature=policy_key)}

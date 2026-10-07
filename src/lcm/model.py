@@ -43,7 +43,6 @@ from _lcm.model_graph import (
     bind_edge_laws,
     naming_cells_without_edges,
     prepare_graph,
-    resolve_graph_edges,
 )
 from _lcm.model_processing import (
     _validate_param_types,
@@ -626,9 +625,8 @@ class Model:
         Args:
             regimes: Mapping of regime names to user-provided `Regime`
                 instances. Stored as `self.user_regimes` after merging in
-                any model-level `derived_categoricals`, with each transition
-                kept as declared; the canonical processed form is exposed as
-                `self._regimes`.
+                any model-level `derived_categoricals`; the canonical processed
+                form is exposed as `self._regimes`.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -689,7 +687,7 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self.edges = edges
-        laws, edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (
@@ -743,7 +741,6 @@ class Model:
         resolved_initial_nodes = resolve_initial_nodes(
             initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
         )
-        graph_edges = resolve_graph_edges(edges=edges, regimes=regimes, ages=ages)
         regime_names_to_ids = {
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
@@ -823,16 +820,16 @@ class Model:
         # known. What no process could take stays a runtime parameter and
         # reaches `build_regimes_and_template` unchanged.
         (
-            self._engine_user_regimes,
+            self.user_regimes,
             residual_fixed_params,
             params_consumed_by_binder,
         ) = bind_fixed_process_laws(
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
-        validate_regimes(regimes=self._engine_user_regimes, laws=laws)
+        validate_regimes(regimes=self.user_regimes, laws=laws)
         validate_model_inputs(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
@@ -855,19 +852,17 @@ class Model:
             device_pool_limit_bytes=visible_device_pool_limits(),
             state_names=frozenset(states)
             | frozenset(
-                name
-                for regime in self._engine_user_regimes.values()
-                for name in regime.states
+                name for regime in self.user_regimes.values() for name in regime.states
             ),
-            regime_names=frozenset(self._engine_user_regimes),
+            regime_names=frozenset(self.user_regimes),
         )
         _fail_if_a_sharded_state_is_pruned(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
         continuous_sharded_state = _validate_sharded_state_capability(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             model_states=states,
             sharded_states=self._execution.sharded_states,
@@ -876,17 +871,17 @@ class Model:
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
         fail_if_invariant_blocking_route_is_unsupported(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
             schedule=self._execution.invariant_block_schedule,
         )
         self._execution = _with_action_partition_ceilings(
-            execution=self._execution, user_regimes=self._engine_user_regimes, laws=laws
+            execution=self._execution, user_regimes=self.user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             ages=self.ages,
             active_periods_by_regime=schedules.coverage_by_regime,
@@ -912,12 +907,10 @@ class Model:
             pruned_edges=prepared_graph.pruned_edges,
             laws=laws,
         )
-        # Regimes carry no law: the graph holds it.
-        self.user_regimes = self._engine_user_regimes
         self.initial_nodes = resolved_initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
@@ -928,7 +921,7 @@ class Model:
             execution=self._execution,
         )
         self._regimes = admit_invariant_blocking(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regimes=self._regimes,
             laws=laws,
             reachability=self.reachability,
@@ -974,7 +967,7 @@ class Model:
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         self._solution_param_projection: SolutionParamProjection = (
@@ -1003,7 +996,7 @@ class Model:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
                 ages=self.ages,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
@@ -1026,7 +1019,7 @@ class Model:
             else ""
         )
         return (
-            f"Model(n_regimes={len(self._engine_user_regimes)}, "
+            f"Model(n_regimes={len(self.user_regimes)}, "
             f"n_periods={self.n_periods}{pruned_part})"
         )
 
@@ -1133,7 +1126,7 @@ class Model:
         return fingerprint_model(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -1152,7 +1145,7 @@ class Model:
         return fingerprint_model_programs(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -1568,7 +1561,7 @@ class Model:
                 internal_result=internal_result,
                 retention=preparation.retention,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
@@ -2177,11 +2170,11 @@ class Model:
                 f"{type(user_regime.solver).__module__}."
                 f"{type(user_regime.solver).__qualname__}"
             )
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_solver_identities = {
             regime_name: user_regime.solver.identity
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_replay_routes = {
             regime_name: _replay_route_identity(regime.simulation.replay_route)
@@ -2896,9 +2889,7 @@ class Model:
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
                 continue
             if isinstance(route, UnsupportedReplayRoute):
-                solver_name = type(
-                    self._engine_user_regimes[regime_name].solver
-                ).__name__
+                solver_name = type(self.user_regimes[regime_name].solver).__name__
                 reasons.append(
                     f"'{regime_name}': its solver '{solver_name}' declares that its "
                     "solved decision cannot be reproduced in simulation"
@@ -3103,13 +3094,13 @@ class Model:
                 initial_conditions = split_initial_conditions(
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
-                    user_regimes=self._engine_user_regimes,
+                    user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
-                        user_regimes=self._engine_user_regimes,
+                        user_regimes=self.user_regimes,
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
                     )
@@ -3869,13 +3860,13 @@ class Model:
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         canonical = canonicalize_initial_conditions(
@@ -4049,7 +4040,7 @@ class Model:
             flat_params = convert_series_in_params(
                 flat_params=flat_params,
                 ages=self.ages,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,

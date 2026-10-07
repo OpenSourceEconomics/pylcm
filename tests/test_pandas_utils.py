@@ -534,7 +534,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
     )
     result = convert_series_in_params(
         flat_params=internal,
-        user_regimes=model._engine_user_regimes,
+        user_regimes=model.user_regimes,
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,

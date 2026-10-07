@@ -301,7 +301,7 @@ def _work_to_gap(age: float) -> ScalarInt:
 def _components(model: Model) -> dict[str, InvariantComponent]:
     return dict(
         analyze_invariant_components(
-            user_regimes=model._engine_user_regimes,
+            user_regimes=model.user_regimes,
             laws=model.graph.laws,
             regimes=model._regimes,
             reachability=model.reachability,

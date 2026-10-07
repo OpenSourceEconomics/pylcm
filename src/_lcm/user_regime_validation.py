@@ -580,10 +580,11 @@ def _validate_logical_consistency(regime: lcm.regime.Regime, *, law: RegimeLaw) 
 
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_joint_transition_grammar_errors(regime, law=law))
-    error_messages.extend(_regime_transition_grammar_errors(law.decomposed_transition))
+    transition = law.decomposed_transition
+    error_messages.extend(_regime_transition_grammar_errors(transition))
     error_messages.extend(
         _age_specialized_scope_errors(
-            transition=law.decomposed_transition,
+            transition=transition,
             state_transitions=regime.state_transitions,
             functions=regime.decomposed_functions,
             constraints=regime.decomposed_constraints,
@@ -1739,17 +1740,16 @@ def fail_if_a_folded_conditioner_can_move(
             conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
             if conditioned is None:
                 continue
-            movers = sorted(
-                source_name
-                for source_name, source in user_regimes.items()
-                if regime_name
-                in _reachable_regime_targets(
-                    law=laws[source_name], user_regimes=user_regimes
-                )
-                and _state_law_can_move(
+            movers = []
+            for source_name, source in user_regimes.items():
+                law = laws[source_name]
+                if regime_name in _law_targets(
+                    law.transition, user_regimes=user_regimes
+                ) and _state_law_can_move(
                     regime=source, state_name=conditioned.on, toward=regime_name
-                )
-            )
+                ):
+                    movers.append(source_name)
+            movers.sort()
             if not movers:
                 continue
             error_messages.append(
@@ -1795,13 +1795,6 @@ def _state_law_can_move(
     return bool(laws) and not all(
         getattr(law, "_is_auto_identity", False) for law in laws
     )
-
-
-def _reachable_regime_targets(
-    *, law: RegimeLaw, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
-) -> frozenset[RegimeName]:
-    """The regimes this one's transition can structurally reach."""
-    return _law_targets(law.transition, user_regimes=user_regimes)
 
 
 # keyword-only-exempt: primary-argument=transition

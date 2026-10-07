@@ -328,7 +328,8 @@ class ValueDependentTransition:
 
     A `StochasticTransition` passes through unchanged. A bare callable is a
     convenience of `ValueDependentTransition` and is wrapped in
-    `StochasticTransition` in the regime's `decomposed_transition` view. Ordinary
+    `StochasticTransition` in the bound law's `RegimeLaw.decomposed_transition`
+    view. Ordinary
     per-target transition cells still require the wrapper explicitly.
     """
 

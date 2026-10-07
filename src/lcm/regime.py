@@ -389,8 +389,8 @@ class Regime:
         """Derive the engine-facing views of the collective declarations.
 
         `CollectiveUtility` and `ValueDependentConstraint` are declared inside
-        the slots a regime
-        already have — `functions` and `constraints` — and each one carries
+        the slots a regime already has — `functions` and `constraints` — and
+        each one carries
         several engine-side facts at once. Deriving those facts here, without
         replacing the raw declarations, lets every later stage read the fields
         and decomposed views it needs.
@@ -431,7 +431,7 @@ class Regime:
         this view holds is the ordinary constraints alone — the ones evaluated
         before and independently of the action values.
 
-        Deterministic and idempotent, like the other two views.
+        Deterministic and idempotent, like `decomposed_functions`.
         """
         return decompose_constraints(self.constraints)
 
