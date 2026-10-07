@@ -110,6 +110,7 @@ from lcm.typing import (
 )
 from tests.candidate_certificate.direct_flow import (
     direct_flow_mutation_specs,
+    supplemental_direct_flow_mutation_specs,
     verify_direct_candidate_flow,
 )
 from tests.candidate_certificate.generate_sources import (
@@ -601,6 +602,45 @@ def test_native_value_dependencies_are_literal_certificate_obligations():
     """The exact single-array native reader participates in budgeted value replay."""
     assert isinstance(_parse("src/_lcm/solution/native_values.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/persistence/solution.py"), ast.Module)
+
+
+_STRUCTURAL_BLUEPRINT_SOURCE = "src/_lcm/solution/structural_blueprints.py"
+
+
+def test_structural_blueprint_store_is_a_certified_corridor_source():
+    """Warm solves bind stored blueprints only through a sealed store and key."""
+    assert isinstance(_parse("src/_lcm/solution/structural_blueprints.py"), ast.Module)
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+
+    assert _STRUCTURAL_BLUEPRINT_SOURCE in result["certified_corridor_sources"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "structural_blueprint:cache_hit_ignores_key",
+        "structural_blueprint:schema_drops_dtype",
+    ],
+)
+def test_structural_blueprint_mutation_is_rejected(*, tmp_path: Path, mutation: str):
+    """A mutated blueprint store or key derivation fails the direct-flow proof."""
+    root = _SRC_ROOT.parent
+    spec = supplemental_direct_flow_mutation_specs(repo_root=root)[mutation]
+    for relative in verify_direct_candidate_flow(repo_root=root)[
+        "certified_corridor_sources"
+    ]:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = (
+            spec["source"]
+            if relative == spec["path"]
+            else (root / relative).read_text(encoding="utf-8")
+        )
+        target.write_text(source, encoding="utf-8")
+
+    result = verify_direct_candidate_flow(repo_root=tmp_path)
+
+    assert result["offending_paths"] == [_STRUCTURAL_BLUEPRINT_SOURCE]
 
 
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
