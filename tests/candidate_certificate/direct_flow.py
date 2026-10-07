@@ -348,7 +348,7 @@ _SOURCE_SEALS = {
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
     NATIVE_ARCHIVE_SOURCE: "25cde4c549c1a97b8465e282dceef49dbdcbb0d75ba32d037d5fac7c07ea4d41",
-    STRUCTURAL_BLUEPRINTS_SOURCE: "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004",
+    STRUCTURAL_BLUEPRINTS_SOURCE: "76143787bc63bdadf2ae3020383eed15be2a4124b8f47a7ac4510d8ebda12e78",
     SOLVE_PENDING_WORK_SOURCE: "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb",
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "7744426281b262014e974e461b966dba3ca0f063ec01d7606caf67676d67aba6",
@@ -428,7 +428,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "8c3393343a21a4e277cfbb73a3e28ea70ccfa725285889fb20dbffd45bac15a4",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "bfd394a4a6540726aa9c860ac1ebf484424df7adf858bc93f72b5f946784f5b1",
+    BACKWARD_INDUCTION_SOURCE: "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6",
     PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
     INITIAL_CONDITIONS_SOURCE: "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90",
     RESULT_SOURCE: "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d",
@@ -4041,7 +4041,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "b73aa33d1c3de2b2fb416a8d8d4719c98a95e3874c094d7f61db54ecaada0473",
+        "e6788004e8c7f8f6aa676f804db9f9dbda9746a76ea475a793d47deb5fd14a29",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4125,7 +4125,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "b73aa33d1c3de2b2fb416a8d8d4719c98a95e3874c094d7f61db54ecaada0473",
+        "e6788004e8c7f8f6aa676f804db9f9dbda9746a76ea475a793d47deb5fd14a29",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4397,7 +4397,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "b73aa33d1c3de2b2fb416a8d8d4719c98a95e3874c094d7f61db54ecaada0473",
+        "e6788004e8c7f8f6aa676f804db9f9dbda9746a76ea475a793d47deb5fd14a29",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4508,10 +4508,10 @@ _STRUCTURAL_BLUEPRINT_CONTRACTS = {
     # weak type or placement misses. The store, its lookup and both key
     # derivations are one corridor.
     STRUCTURAL_BLUEPRINTS_SOURCE: (
-        "0be03a0f240e2be927493de83264a79b548dc07ee0b4cfa717d5d64c658af358",
+        "eee5dd71e1e0561c9690d1b9746c753ff6d7528ac11023dde5922aa4f20c0a2b",
         {
             "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
-            "StructuralBlueprintCache.get": "d854c5c738f2d093d31a64d6999ffc4d1dcff29509fb5d3cfc91fe8ad8ce2dcf",
+            "StructuralBlueprintCache.get": "bbe960e78093b2927cf39b80aa9e33086af960f8d0f10cdaa649666b8d8b6826",
             "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
             "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
             "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
@@ -4643,7 +4643,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_compile_all_functions": "0ac5c6c8c17510d4f4022fde8471b5040644181efbd1c4d63289bd5cc274b463",
             "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
             # The structural blueprint is where every program is materialized
             # and its top-ranked candidate resolved against abstract inputs; a
             # warm solve binds the stored blueprint, so the recipe, its key and
@@ -4700,7 +4700,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "b73aa33d1c3de2b2fb416a8d8d4719c98a95e3874c094d7f61db54ecaada0473"
+        != "e6788004e8c7f8f6aa676f804db9f9dbda9746a76ea475a793d47deb5fd14a29"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6605,7 +6605,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "b73aa33d1c3de2b2fb416a8d8d4719c98a95e3874c094d7f61db54ecaada0473",
+        "e6788004e8c7f8f6aa676f804db9f9dbda9746a76ea475a793d47deb5fd14a29",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -6614,7 +6614,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_iter_edge_topologies": "1f00ea1efc353c24b0709e83b46dd417118147f9a7e7a6079d6a57e8132150ed",
             "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
             "_compile_all_functions": "0ac5c6c8c17510d4f4022fde8471b5040644181efbd1c4d63289bd5cc274b463",
-            "_resolve_output_layouts_and_lowering_keys": "d70b835ec5a62ee96b7c6c1889250b70a820349a12248b1f2348a676e41d32a5",
+            "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
             "_build_structural_blueprint": "929c01769199b79f0d972b9f659162fe80eb4130d0460a36c48464fc29800dd0",
             "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
             "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
