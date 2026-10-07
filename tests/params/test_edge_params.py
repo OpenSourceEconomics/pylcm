@@ -65,6 +65,12 @@ class _RetirementId:
     dead: ScalarInt
 
 
+@categorical(ordered=False)
+class _WorkRetireId:
+    working: ScalarInt
+    retired: ScalarInt
+
+
 def test_coarse_law_slot_is_the_source_path():
     """A law choosing among all targets reads `params["edges"][source][arg]`."""
     model = _retirement_model()
@@ -100,13 +106,18 @@ def test_source_without_a_law_has_no_edges_entry():
 def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop):
     """Every declared case of a schedule owns its slots, whatever the horizon.
 
-    The early case covers ages 60 and 61 and the default case every later age,
-    which is a source age only when the grid runs past 62.
+    The early case covers the source ages before 62, the last source age exits
+    into `dead`, and the default case covers every age in between, of which
+    there is one only when the grid runs past 63.
     """
+    last_source_age = inclusive_stop - 1
     model = _mortal_model(
         ages=AgeGrid(start=60, inclusive_stop=inclusive_stop, step="Y"),
         law=ByAge(
-            cases={AgeRange(start=60, exclusive_stop=62): _EARLY_LAW},
+            cases={
+                AgeRange(start=60, exclusive_stop=min(62, last_source_age)): _EARLY_LAW,
+                last_source_age: "dead",
+            },
             default=_LATE_LAW,
         ),
     )
@@ -406,7 +417,8 @@ def test_parametrized_coarse_case_beside_per_target_cases_is_rejected():
                 cases={
                     AgeRange(start=60, exclusive_stop=62): DeterministicTransition(
                         func=_stay_until
-                    )
+                    ),
+                    62: "dead",
                 },
                 default=_LATE_LAW,
             )
@@ -526,8 +538,22 @@ def _mortal_model(
     law: object = None,
     fixed_params: UserParams | None = None,
 ) -> Model:
-    """Working regime that survives a year at a time until the last age."""
-    source_ages = AgeRange(start=60)
+    """Working regime that survives a year at a time, then dies at the last age.
+
+    Working is a destination at every source age but the last, where `dead` is
+    the only one. A per-target `law` applies before the last source age, which
+    exits into `dead`; a `ByAge` law states its own last-age case.
+    """
+    last_age = ages.exact_values[-1]
+    last_source_age = ages.exact_values[-2]
+    per_target_law = (
+        {
+            "working": StochasticTransition(func=_survive),
+            "dead": StochasticTransition(func=_die),
+        }
+        if law is None
+        else law
+    )
     return Model(
         regimes={"working": _alive(), "dead": _dead()},
         ages=ages,
@@ -536,14 +562,18 @@ def _mortal_model(
         fixed_params={} if fixed_params is None else fixed_params,
         edges={
             "working": Transition(
-                targets={"working": source_ages, "dead": source_ages},
+                targets={
+                    "working": AgeRange(start=60, exclusive_stop=last_source_age),
+                    "dead": AgeRange(start=60),
+                },
                 law=(
-                    {
-                        "working": StochasticTransition(func=_survive),
-                        "dead": StochasticTransition(func=_die),
-                    }
-                    if law is None
-                    else law
+                    per_target_law
+                    if isinstance(per_target_law, ByAge)
+                    else ByAge.until(
+                        stop_age_exclusive=last_age,
+                        law=per_target_law,
+                        then="dead",
+                    )
                 ),
             ),
         },
@@ -555,7 +585,11 @@ def _retire_at(*, age: float, retirement_age: float) -> ScalarInt:
 
 
 def _retirement_model() -> Model:
-    """Working regime that retires at a parametrized age; retirement ends in death."""
+    """Working regime that retires at a parametrized age; retirement ends in death.
+
+    Working retires at 61 at the latest, so retirement reaches `dead` at the last
+    age.
+    """
     return Model(
         regimes={"working": _alive(), "retired": _alive(), "dead": _dead()},
         ages=_AGES,
@@ -563,8 +597,12 @@ def _retirement_model() -> Model:
         initial_nodes={60: "working"},
         edges={
             "working": Transition(
-                targets={"working": (60, 61), "retired": (60, 61, 62)},
-                law=DeterministicTransition(func=_retire_at),
+                targets={"working": (60,), "retired": (60, 61)},
+                law=ByAge.until(
+                    stop_age_exclusive=62,
+                    law=DeterministicTransition(func=_retire_at),
+                    then="retired",
+                ),
             ),
             "retired": {"retired": (60, 61), "dead": 62},
         },
@@ -574,25 +612,34 @@ def _retirement_model() -> Model:
 def _horizon_retirement_model(*, n_periods: int) -> Model:
     """Working regime that may stay at work until its last source age, then retires.
 
-    The edges follow the age grid from 60 over `n_periods` years; the law is the
-    same at every horizon.
+    The edges follow the age grid from 60 over `n_periods` years and retirement
+    is terminal. The parametrized law chooses before the last source age, which
+    retires; the declaration is the same at every horizon.
     """
     last_source_age = 58 + n_periods
     targets: dict[str, AgeRange] = {"retired": AgeRange(start=60)}
     if last_source_age > 60:
         targets["working"] = AgeRange(start=60, exclusive_stop=last_source_age)
     return Model(
-        regimes={"working": _alive(), "retired": _alive(), "dead": _dead()},
+        regimes={"working": _alive(), "retired": _dead()},
         ages=AgeGrid(start=60, inclusive_stop=last_source_age + 1, step="Y"),
-        regime_id_class=_RetirementId,
+        regime_id_class=_WorkRetireId,
         initial_nodes={60: "working"},
         edges={
             "working": Transition(
-                targets=targets, law=DeterministicTransition(func=_retire_at)
+                targets=targets,
+                law=ByAge.until(
+                    stop_age_exclusive=last_source_age + 1,
+                    law=DeterministicTransition(func=_retire_from_work_at),
+                    then="retired",
+                ),
             ),
-            "retired": {"dead": AgeRange(start=60)},
         },
     )
+
+
+def _retire_from_work_at(*, age: float, retirement_age: float) -> ScalarInt:
+    return jnp.where(age < retirement_age, _WorkRetireId.working, _WorkRetireId.retired)
 
 
 @categorical(ordered=False)
