@@ -18,7 +18,11 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -201,15 +205,81 @@ def test_several_edges_without_a_law_are_rejected() -> None:
         _model(edges={"working": MORTAL_TARGETS, "retired": RETIRED_EDGES})
 
 
-def test_a_law_on_a_source_with_one_edge_per_age_is_rejected() -> None:
-    """The graph is the law of a source with one destination at every age."""
-    with pytest.raises(ModelInitializationError, match="graph is its law"):
+def test_a_law_naming_a_destination_without_an_edge_at_an_age_is_rejected() -> None:
+    """A regime-name law applies at every source age, so it must have an edge there.
+
+    `"dead"` is the retired regime's only destination at age 64, but at ages 60-63
+    its only edge leads back to retirement.
+    """
+    with pytest.raises(ModelInitializationError, match="names 'dead' outside"):
         _model(
             edges={
                 "working": LAW_FREE_EDGES["working"],
                 "retired": Transition(targets=RETIRED_EDGES, law="dead"),
             }
         )
+
+
+def _survive_before_62(age: float) -> FloatND:
+    return jnp.where(age < 62, 1.0, 0.0)
+
+
+def _die_from_62(age: float) -> FloatND:
+    return 1.0 - _survive_before_62(age)
+
+
+# One destination at every source age: working at 60 and 61, dead at 62.
+SINGLE_DESTINATION_TARGETS = {"working": (60, 61), "dead": 62}
+GRAPH_ONLY_EDGES = {
+    "working": SINGLE_DESTINATION_TARGETS,
+    "retired": RETIRED_EDGES,
+}
+
+
+def test_horizon_aware_law_at_single_destination_ages_solves_like_the_graph() -> None:
+    """A law putting unit mass on each age's only destination passes the debug check.
+
+    The law is evaluated at every source age, also where one edge leaves the
+    source, and there it reproduces the graph-only lifecycle's values exactly.
+    """
+    with_law = _model(
+        edges={
+            "working": Transition(
+                targets=SINGLE_DESTINATION_TARGETS,
+                law={
+                    "working": StochasticTransition(func=_survive_before_62),
+                    "dead": StochasticTransition(func=_die_from_62),
+                },
+            ),
+            "retired": RETIRED_EDGES,
+        }
+    )
+    got = with_law.solve(params=PARAMS, log_level="debug").values
+    expected = _model(edges=GRAPH_ONLY_EDGES).solve(params=PARAMS, log_level="off")
+    np.testing.assert_array_equal(
+        [np.asarray(got[period]["working"]) for period in (0, 1, 2)],
+        [np.asarray(expected.values[period]["working"]) for period in (0, 1, 2)],
+    )
+
+
+def test_law_short_of_unit_mass_at_a_single_destination_age_names_the_cell() -> None:
+    """A law ignoring the horizon loses the mass of its cell that has no edge.
+
+    At ages 60 and 61 the only edge leads back to work, so the law's 0.1 death
+    cell is dropped; at 62 its 0.9 survival cell is. The debug check names the
+    dropped cell.
+    """
+    model = _model(
+        edges={
+            "working": Transition(targets=SINGLE_DESTINATION_TARGETS, law=REALIZED),
+            "retired": RETIRED_EDGES,
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"(?s)\(age 6[012], 'working' -> '(dead|working)'\).*declares no edge",
+    ):
+        model.solve(params=PARAMS, log_level="debug")
 
 
 def test_phased_edges_solve_with_the_perceived_law() -> None:
