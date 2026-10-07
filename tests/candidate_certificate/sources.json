@@ -338,7 +338,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "bfd394a4a6540726aa9c860ac1ebf484424df7adf858bc93f72b5f946784f5b1"
+            "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -402,7 +402,7 @@
           },
           {
             "path": "src/_lcm/solution/structural_blueprints.py",
-            "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
+            "sha256": "76143787bc63bdadf2ae3020383eed15be2a4124b8f47a7ac4510d8ebda12e78"
           },
           {
             "path": "src/_lcm/solution/v_topology.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "16b122f9317da805a2941ebb14104ea0ccda9b64bb5e74317480f7800b046f22"
+        "source_inventory_sha256": "4fbf769fd9657a05b3612384c58119778ec021afa003bccfe865cdd94d2bc9d0"
       },
       "fast": {
         "candidate_sources": [
@@ -812,7 +812,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "bfd394a4a6540726aa9c860ac1ebf484424df7adf858bc93f72b5f946784f5b1"
+            "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -876,7 +876,7 @@
           },
           {
             "path": "src/_lcm/solution/structural_blueprints.py",
-            "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
+            "sha256": "76143787bc63bdadf2ae3020383eed15be2a4124b8f47a7ac4510d8ebda12e78"
           },
           {
             "path": "src/_lcm/solution/v_topology.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "16b122f9317da805a2941ebb14104ea0ccda9b64bb5e74317480f7800b046f22"
+        "source_inventory_sha256": "4fbf769fd9657a05b3612384c58119778ec021afa003bccfe865cdd94d2bc9d0"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "16b122f9317da805a2941ebb14104ea0ccda9b64bb5e74317480f7800b046f22",
+  "source_inventory_sha256": "4fbf769fd9657a05b3612384c58119778ec021afa003bccfe865cdd94d2bc9d0",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1290,7 +1290,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "bfd394a4a6540726aa9c860ac1ebf484424df7adf858bc93f72b5f946784f5b1"
+      "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -1354,7 +1354,7 @@
     },
     {
       "path": "src/_lcm/solution/structural_blueprints.py",
-      "sha256": "36d9b9417f6938984558367a24d44f86163aabf41ee7c11d85ace785466dc004"
+      "sha256": "76143787bc63bdadf2ae3020383eed15be2a4124b8f47a7ac4510d8ebda12e78"
     },
     {
       "path": "src/_lcm/solution/v_topology.py",

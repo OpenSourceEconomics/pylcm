@@ -5700,8 +5700,14 @@ def _resolve_output_layouts_and_lowering_keys(
     blueprint = (
         None
         if key is None or structural_blueprints is None
-        else structural_blueprints.get(key=key)
+        else structural_blueprints.get(
+            key=key,
+            accept=lambda stored: _holds_programs(
+                blueprint=stored, all_programs=all_programs
+            ),
+        )
     )
+    outcome = "uncached" if key is None else "miss" if blueprint is None else "hit"
     if blueprint is None:
         blueprint = _build_structural_blueprint(
             all_programs=all_programs,
@@ -5721,7 +5727,7 @@ def _resolve_output_layouts_and_lowering_keys(
     if logger is not None and structural_blueprints is not None:
         logger.debug(
             "structural blueprint: %s (hits=%d, misses=%d, entries=%d)",
-            "uncached" if key is None else "stored",
+            outcome,
             structural_blueprints.hits,
             structural_blueprints.misses,
             len(structural_blueprints),
@@ -5749,7 +5755,11 @@ class _StructuralBlueprint:
     """
 
     programs: tuple[CoreProgram, ...]
-    """The declarations the recipe was resolved from, kept alive with it."""
+    """The declarations the recipe was resolved from, in key order.
+
+    Holding them keeps their ids valid for `_structural_key`, which names
+    programs by id; every hit checks that each is the very object at its key.
+    """
     layouts: MappingProxyType[_CoreTriple, ResolvedOutputLayout]
     resolved_programs: MappingProxyType[_CoreCandidate, ResolvedCoreProgram]
     """The marked top-ranked candidate of every core, in producer order."""
@@ -5947,6 +5957,20 @@ def _build_structural_blueprint(  # noqa: PLR0915
             {key: frozenset(triples) for key, triples in transfer_consumers.items()}
         ),
         representative_metadata=representative_metadata,
+    )
+
+
+def _holds_programs(
+    *,
+    blueprint: _StructuralBlueprint,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+) -> bool:
+    """Return whether `blueprint` was resolved from exactly these program objects."""
+    return len(blueprint.programs) == len(all_programs) and all(
+        stored is program
+        for stored, program in zip(
+            blueprint.programs, all_programs.values(), strict=True
+        )
     )
 
 
