@@ -21,8 +21,8 @@ template = model.get_params_template()
 This returns a mutable nested dict showing every parameter the model expects, organized
 as `{regime_name: {function_name: {param_name: type_name}}}`. Parameters of callables
 declared in `Model(edges=...)` sit under one more root, `"edges"`; see
-[Edge parameters](#edge-parameters). Use it as a starting point to see what values you
-need to provide.
+[Edge parameters](#edge-parameters). Use the template as a starting point to see what
+values you need to provide.
 
 Only *free* parameters appear in the template — arguments that are states, actions, or
 outputs of other functions in the DAG are resolved automatically and do not show up
