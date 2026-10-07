@@ -27,6 +27,8 @@ from tests.test_models.processes import (
 
 _N_PERIODS = 6
 _CELL_AXIS = "cell"
+# The one leaf whose low-income, bad-health entries are born by cancellation.
+_CANCELLATION_LEAF = (2, "work")
 
 
 def _base_model() -> Model:
@@ -129,23 +131,28 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
     assert set(pinned_values) == set(planned_values)
     for period, by_regime in planned_values.items():
         for regime_name, expected in by_regime.items():
-            # A different cell width reorders the floating-point reductions
-            # that form each value, so an element moves by roundings of the
-            # operands it is summed from: the flow utility and the expected
-            # continuation. A value born by their cancellation can therefore
-            # move by many of its own steps while moving by a fraction of a
-            # step of either operand; the bound is taken from each element's
-            # own operands, never from a constant or another element.
+            got = pinned_values[period][regime_name]
+            err_msg = f"{regime_name} period {period}"
+            if (period, regime_name) != _CANCELLATION_LEAF:
+                assert_agrees_to_ulp(
+                    got=got, expected=expected, n_ulp=8, err_msg=err_msg
+                )
+                continue
+            # The cancellation leaf's low-income, bad-health entries are a
+            # small sum of a flow utility and a continuation of opposite sign.
+            # A reordered reduction moves such an entry by roundings of those
+            # operands, which are many of the entry's own steps, so this leaf
+            # alone is bounded by each entry's own two operands.
             flow, continuation = _bellman_operands(
                 values=planned_values, period=period, regime_name=regime_name
             )
             _assert_within_operand_rounding_bound(
-                got=pinned_values[period][regime_name],
+                got=got,
                 expected=expected,
                 flow=flow,
                 continuation=continuation,
                 n_ulp=8,
-                err_msg=f"{regime_name} period {period}",
+                err_msg=err_msg,
             )
 
 
