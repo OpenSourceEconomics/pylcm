@@ -31,6 +31,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
+    RegimeInitializationError,
 )
 from lcm.phased import Phased
 from lcm.regime import Regime
@@ -747,5 +748,21 @@ def test_a_phased_pair_of_transitions_names_the_supported_form() -> None:
                     simulate=Transition(targets=TWO_EDGE_TARGETS, law=law),
                 ),
                 "retirement": RETIREMENT_EDGES,
+            },
+        )
+
+
+def test_a_regime_without_outgoing_edges_is_told_why_it_is_terminal() -> None:
+    """A regime with state transitions and no edge out is told both ways out."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=(
+            r"no outgoing edge in `Model\(edges=\.\.\.\)`.*\['health', 'wealth'\].*"
+            r"Declare an edge from it.*or drop its `state_transitions`"
+        ),
+    ):
+        _dated_model(
+            edges={
+                "working": Transition(targets=DATED_TARGETS, law=_working_law()),
             },
         )
