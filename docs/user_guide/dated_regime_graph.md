@@ -106,20 +106,21 @@ default start and no automatic inference of roots from a graph.
 ## Declare a law where a source has several destinations
 
 A source age with more than one outgoing edge needs a law that chooses among them. The
-source is then declared as a `Transition`, which holds the same destination-to-age
-mapping together with the law:
+source is then declared as a `Transition`. A law that names its destinations —
+per-target mappings and regime names, possibly selected by `ByAge` — is enough on its
+own; the destination-to-age mapping is derived from it:
 
 ```python
 # Fragment: survive and die are scalar probability functions.
 edges = {
     "working": Transition(
-        targets={"working": (60, 61), "dead": (60, 61), "retired": 62},
         law=ByAge(
             cases={
                 (60, 61): {
                     "working": StochasticTransition(func=survive),
                     "dead": StochasticTransition(func=die),
                 },
+                62: "retired",
             }
         ),
     ),
@@ -127,10 +128,14 @@ edges = {
 }
 ```
 
+This derives `{"working": (60, 61), "dead": (60, 61), "retired": 62}`. Passing that
+mapping as `targets=` as well is allowed; a `targets` that differs from the derived one
+is refused. A law over all targets — a function or a full-vector `StochasticTransition`
+— names none, so it needs `targets` spelled out.
+
 The law can be
 
-- a per-target mapping of `StochasticTransition` probabilities (or
-  `ValueDependentTransition` gates), keyed by destination;
+- a per-target mapping of `StochasticTransition` probabilities, keyed by destination;
 - a plain function or `DeterministicTransition` returning a global regime code, which is
   how a discrete choice between regimes is written;
 - a full-vector `StochasticTransition`;
@@ -139,10 +144,12 @@ The law can be
   `ByAge.until(...)`;
 - `Phased(solve=..., simulate=...)` giving each phase its own.
 
-A `ByAge` law must select every source age with several outgoing edges. It need not
-select an age with a single outgoing edge; that edge is the law there, as age 62 above
-shows. Several outgoing edges without a law are rejected. A law that does select an age
-with a single outgoing edge is evaluated there and must put unit mass on that edge.
+A `ByAge` law must select every source age with several outgoing edges. A `ByAge` with a
+case over all targets, which comes with an explicit `targets`, need not select an age
+with a single outgoing edge; that edge is the law there. A law that names its targets
+declares every edge it has, so it selects such an age too, as the regime name at age 62
+above does. Several outgoing edges without a law are rejected. A law that does select an
+age with a single outgoing edge is evaluated there and must put unit mass on that edge.
 
 Plain functions are deterministic. Explicit wrappers and decorator syntax work for both
 regime and state laws:
@@ -161,9 +168,10 @@ def death_probability(mortality: ScalarFloat) -> ScalarFloat:
 A deterministic regime function returns a global regime code supported at that source
 age. A full-vector `StochasticTransition(func=...)` returns probabilities in full global
 regime-code order and must be zero outside graph support. Per-target scalar probability
-mappings provide the probabilities for graph-selected destinations. Their keys do not
-independently define edges. Public wrappers and decorators take no `targets` argument;
-passing one raises a `TypeError`. Destinations are declared only in `Model(edges=...)`.
+mappings provide the probabilities for their destinations, and their keys are the
+destinations `Transition` derives when `targets` is omitted. Public wrappers and
+decorators take no `targets` argument; passing one raises a `TypeError`. Destinations
+are declared only in `Model(edges=...)`.
 
 Source-age selectors can be exact ages, nonempty tuples, integer ranges, or
 `AgeRange(start=..., exclusive_stop=...)`. A half-open selector excludes its stop:

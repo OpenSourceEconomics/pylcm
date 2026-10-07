@@ -245,9 +245,9 @@ carry it, joins the first code's group; an empty group dispatches nothing.
 
 Simulation falls back to the ungrouped route when the simulate phase can change the
 state, for example through a `Phased` law whose `simulate` branch moves it, or when a
-regime has taste shocks, has gated edges (a `ValueDependentTransition` in its
-`Model(edges=...)` law), or replays a stored policy. The plan summary's
-`subject_grouping` names the grouping state, or is `None` on the ungrouped route.
+regime has taste shocks, has gated edges (a `Gate` in its `Transition` in
+`Model(edges=...)`), or replays a stored policy. The plan summary's `subject_grouping`
+names the grouping state, or is `None` on the ungrouped route.
 
 ### Solve, simulate and release one code at a time
 

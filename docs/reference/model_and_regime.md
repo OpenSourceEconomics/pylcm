@@ -30,8 +30,10 @@ starts are all terminal needs no other.
 
 `edges` declares every regime transition, structure and law. Each source maps to a plain
 `{target: source_ages}` mapping when every source age has one destination (the graph is
-the law), or to `Transition(targets={target: source_ages, ...}, law=...)` when some
-source age has several. A regime with no outgoing edges is terminal. See
+the law), or to `Transition(targets={target: source_ages, ...}, law=..., gates=...)`
+when some source age has several or a destination is gated. `targets` may be omitted
+when the law names its targets, and is then derived from it. A regime with no outgoing
+edges is terminal. See
 [Regime transitions and graph support](transitions.md#api-regime-transitions).
 
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
@@ -56,8 +58,7 @@ Public inspection attributes include:
   pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
   bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
   (`laws[name].terminal` is true for a regime without outgoing edges,
-  `laws[name].gated_edges` holds the edges its `ValueDependentTransition` cells
-  declare);
+  `laws[name].gated_edges` holds the edges its `Transition.gates` declare);
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -188,7 +189,7 @@ choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on a source regime with a `ValueDependentTransition`; together with a folded IID state
+on the source regime of a gated transition; together with a folded IID state
 (`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.

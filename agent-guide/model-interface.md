@@ -65,22 +65,27 @@ Model(
 - `Regime` takes no regime transition. `Model(edges=...)` declares every regime
   transition, structure and law. A source maps to a plain `{target: source_ages}`
   mapping when every source age has exactly one destination (the graph is the law), or
-  to `Transition(targets={target: source_ages, ...}, law=...)` when some source age has
-  several. A regime with no outgoing edges is terminal. A `Transition` law is a regime
+  to `Transition(targets={target: source_ages, ...}, law=..., gates=...)` when some
+  source age has several or a destination is gated. A regime with no outgoing edges is
+  terminal. A `Transition` law is a regime
   name, plain deterministic function, `DeterministicTransition(func=...)`, full-vector
   `StochasticTransition(func=...)`, per-target scalar probability mapping, `ByAge`
-  selecting complete laws, or `Phased` of those. The law never owns topology; the
-  targets do. A `ByAge` law must select every age with several outgoing edges. A law is
+  selecting complete laws, or `Phased` of those. `targets` is optional when the law
+  names its targets (per-target mapping, regime name, or `ByAge` / `Phased` of those):
+  it is then derived — each key at the non-final ages its case covers, each gate's route
+  fallback regimes at the gated target's ages — and a supplied `targets` must equal it
+  exactly (`ModelInitializationError` otherwise). A law over all targets requires
+  `targets`. A `ByAge` law must select every age with several outgoing edges. A law is
   evaluated at every source age with outgoing edges, including single-destination ages,
   where it must put unit mass on that destination; its parameter slots do not depend
   on the horizon. Ordinary scalar probability cells require `StochasticTransition`.
 - Edge parameters belong to the edges: the parameter path of an edge-declared callable
   is its declaration path under `params["edges"]` — `[source][arg]` for a law over all
-  targets, `[source][target][arg]` for a per-target cell, and
-  `[source][target]["probability" | "gate"][arg]`,
-  `[source][target]["gate_references"][reference][state][arg]`,
-  `[source][target]["routes"][route]["fallback"][state][arg]` for a gated cell. Values
-  resolve from that path, `params["edges"][source][arg]` or the model level; a
+  targets, `[source][target][arg]` for a per-target cell (gated or not), and
+  `[source][target]["predicate"][arg]`,
+  `[source][target]["references"][reference][state][arg]`,
+  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate`.
+  Values resolve from that path, `params["edges"][source][arg]` or the model level; a
   regime-level value never reaches an edge callable. Per-target state laws stay under
   their source regime.
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
@@ -173,11 +178,12 @@ model's actual core programs declare.
 
 - `edges` is required: `{source: {target: source_age_selector}}` for a source with one
   destination per source age, `{source: Transition(targets={target: selector, ...},
-  law=...)}` for a source with several at some age, or `Phased(solve=..., simulate=...)`
-  with one such mapping per phase. `model.edges` keeps them as declared, laws included;
-  `model.graph.edges` is law-free. Selectors are exact
-  ages, nonempty tuples, integer ranges, or `AgeRange(start=..., exclusive_stop=...)`.
-  An edge lands at the next `AgeGrid` coordinate. Terminal regimes have no outgoing edges.
+  law=..., gates=...)}` for a source with several at some age or a gated destination,
+  or `Phased(solve=..., simulate=...)` with one such mapping per phase. `model.edges`
+  keeps them as declared, laws included; `model.graph.edges` is law-free. Selectors are
+  exact ages, nonempty tuples, integer ranges, or
+  `AgeRange(start=..., exclusive_stop=...)`. An edge lands at the next `AgeGrid`
+  coordinate. Terminal regimes have no outgoing edges.
 - `initial_nodes` is required with no default. Prefer explicit pairs such as
   `((25, "working"),)`. A mapping from age selectors to a regime name or nonempty
   sequence of names is also accepted. The normalized immutable pairs are admissible
@@ -236,7 +242,7 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 A regime whose utility is a `CollectiveUtility` has **stakeholders** — the `utilities`
 keys, in insertion order, which fix the trailing axis of `V` and of every published
 array. Everything is declared in a slot that already exists: the regime's utility and
-constraints, and the law on its `Model(edges=...)` entry:
+constraints, and the `Transition` on its `Model(edges=...)` entry:
 
 ```python
 Regime(
@@ -253,20 +259,19 @@ Regime(
     },
 )
 
-# The gated law lives on the source's edges, keyed by TARGET
+# The gate lives on the source's edges, beside the law, keyed by TARGET
 Model(
     edges={
         "couple": Transition(
-            # Each route's fallback regime is a declared destination too
-            targets={"couple": ages, "single_f": ages, "single_m": ages},
-            law={
-                "couple": ValueDependentTransition(
-                    probability=StochasticTransition(func=stays_married),
-                    gate=no_dissolution,  # Boolean predicate on the target's grid
+            # targets derived: the law's keys plus each route's fallback regime
+            law={"couple": StochasticTransition(func=stays_married)},
+            gates={
+                "couple": Gate(
+                    predicate=no_dissolution,  # Boolean, on the target's grid
                     routes={
                         "f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)
                     },
-                    gate_references={
+                    references={
                         "V_alone_f": ProjectedRegimeValue(
                             regime="single_f", projection={"wealth": half_of_wealth}
                         )
@@ -281,16 +286,20 @@ Model(
 ```
 
 - **The transition key is always the GATE-OPEN target.** A dissolution edge is keyed by
-  the *continuing* collective regime under `gate = ~D_target`. Keying it by the
+  the *continuing* collective regime under `predicate = ~D_target`. Keying it by the
   singleton would send both partners there whenever the couple stays together.
 - `routes` is keyed by **source** stakeholder; a singleton source declares exactly one
   route. Each route owns four destinations: the open regime (the dict key) and role
   (`target_stakeholder`), and the closed regime and role (`fallback.regime`,
   `fallback.stakeholder`).
-- Gate operands: `V_target` (singleton target) / `V_target_<s>` (collective target), and
-  `D_target`, which is **collective-only** — reading it on a singleton target is refused
-  at model build. The Boolean-dtype requirement is checked **at evaluation**, i.e. on
-  the first `solve()`, not at build.
+- One `Gate` per target, valid at every age the target is reached and in both phases;
+  never inside `ByAge` / `Phased` (only a route `fallback` may be `Phased`). With
+  `Phased` edges, a target reached in both phases carries the equal `Gate` in both or
+  none. A gate on a target the `Transition` never reaches is refused.
+- Predicate operands: `V_target` (singleton target) / `V_target_<s>` (collective
+  target), and `D_target`, which is **collective-only** — reading it on a singleton
+  target is refused at model build. The Boolean-dtype requirement is checked **at
+  evaluation**, i.e. on the first `solve()`, not at build.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
   parameters under the `pareto_objective` key. Omit it for equal weights.

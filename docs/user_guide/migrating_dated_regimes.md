@@ -110,6 +110,61 @@ structural destination and age restrictions into `edges`, and keep target-specif
 handoffs on the source regime. `ByAge` selects complete laws, not topology or solved
 coverage. Replace age activity predicates with graph selectors and explicit starts.
 
+A law that names its destinations — a per-target mapping, a regime name, or a `ByAge` /
+`Phased` of those — makes `Transition.targets` optional: the destinations are derived
+from the law's keys at the non-final source ages each case covers, plus each gate's
+route fallback regimes at the ages of the gated target. A `targets` supplied with such a
+law must equal the derived mapping exactly, or `Model(...)` raises a
+`ModelInitializationError` listing both. Where a per-target law reaches more ages than
+the declared `targets`, wrap it in `ByAge(cases={ages: law})` restricted to those ages.
+A law over all targets still requires `targets`.
+
+(migrating-gates)=
+
+## Declare gated destinations with `Gate`
+
+A value-dependent destination is declared in the `Transition`'s `gates`, beside the law,
+instead of as a cell of the law. The law cell supplies the target's probability like any
+other per-target cell, and the gate is keyed by the same target:
+
+| Removed                                                                                         | Current                                                                                                       |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| law cell `tgt: ValueDependentTransition(probability=p, gate=g, routes=r, gate_references=refs)` | law cell `tgt: p` (a `StochasticTransition`) plus `gates={tgt: Gate(predicate=g, routes=r, references=refs)}` |
+| `ValueDependentTransition(off_grid=...)`                                                        | `Gate(off_grid=...)`                                                                                          |
+
+A bare probability callable `p` becomes `StochasticTransition(func=p)`. One `Gate` per
+target holds at every age the target is reached and in both phases, so it is declared
+once rather than repeated per `ByAge` case or per `Phased` side; only a route's
+`fallback` may be `Phased`. With `Phased` edges, a target reached in both phases carries
+the equal `Gate` in both or none.
+
+The gated target's parameters move with it. Below `params["edges"][source][target]`:
+
+| Removed                                      | Current                                 |
+| -------------------------------------------- | --------------------------------------- |
+| `["probability"][arg]`                       | `[arg]`, as for any per-target cell     |
+| `["gate"][arg]`                              | `["predicate"][arg]`                    |
+| `["gate_references"][reference][state][arg]` | `["references"][reference][state][arg]` |
+| `["routes"][route]["fallback"][...]`         | unchanged                               |
+
+```python
+edges = {
+    "single_f": Transition(
+        law={
+            "couple": StochasticTransition(func=meets_a_partner),
+            "single_f": StochasticTransition(func=meets_nobody),
+        },
+        gates={
+            "couple": Gate(
+                predicate=mutual_consent,
+                routes={"her": route_into_couple},
+                references={"V_alone_f": outside_option_f},
+            ),
+        },
+    ),
+}
+```
+
 (migrating-edge-parameters)=
 
 ## Move transition parameters under `edges`
@@ -125,9 +180,9 @@ source regime and keep their paths, `params[source][target]["next_<state>"]`.
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `[source]["next_regime"][arg]` (a law over all targets)           | `[source][arg]`                                                         |
 | `[source][target]["next_regime"][arg]` (a per-target cell)        | `[source][target][arg]`                                                 |
-| the same, for a `ValueDependentTransition` cell                   | `[source][target]["probability"][arg]`                                  |
-| `[source][target]["gate"][arg]`                                   | `[source][target]["gate"][arg]`                                         |
-| `[source][target]["gate_ref_<reference>_<state>"][arg]`           | `[source][target]["gate_references"][reference][state][arg]`            |
+| the same, for a gated target's cell                               | `[source][target][arg]`                                                 |
+| `[source][target]["gate"][arg]`                                   | `[source][target]["predicate"][arg]`                                    |
+| `[source][target]["gate_ref_<reference>_<state>"][arg]`           | `[source][target]["references"][reference][state][arg]`                 |
 | `[source][target]["leg_fallback_<regime>_<state>"][arg]`          | `[source][target]["routes"][route]["fallback"][state][arg]`             |
 | the same, solve side of a `Phased` fallback                       | `[source][target]["routes"][route]["fallback"]["solve"][state][arg]`    |
 | `[source][target]["simulate_leg_fallback_<regime>_<state>"][arg]` | `[source][target]["routes"][route]["fallback"]["simulate"][state][arg]` |
@@ -159,7 +214,8 @@ first:
 
 1. its declaration path, e.g. `params["edges"]["working"]["dead"]["survival_rate"]`;
 1. `params["edges"][source][arg]`, which covers every callable below the source: the law
-   over all targets, each target's cell, gates, gate references and route fallbacks;
+   over all targets, each target's cell, gate predicates, gate references and route
+   fallbacks;
 1. the model level, `params[arg]`, which also feeds regime functions.
 
 `get_params_template()` lists every slot at its declaration path, the most specific
@@ -185,7 +241,7 @@ functions keep their levels: function, regime, model.
 
 Every user-chosen name that becomes a parameter-path segment contains no `__` and does
 not start or end with `_`: regime (source and target), state, action, function and
-constraint names, `gate_references` keys, `routes` keys, stakeholder names, and the
+constraint names, gate `references` keys, `routes` keys, stakeholder names, and the
 argument names of model functions, which become parameter names. A violation raises when
 the regime or model is built, naming the name and its kind. `edges` is reserved: no
 regime, function or function argument may take that name. A law argument may not share

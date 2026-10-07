@@ -36,8 +36,8 @@ declares none. A source maps to either
 
 - a plain `{target: source_ages}` mapping, when it has exactly one outgoing edge at
   every source age — the graph is the law; or
-- `Transition(targets={target: source_ages, ...}, law=...)`, required when some source
-  age has several outgoing edges.
+- `Transition(targets={target: source_ages, ...}, law=..., gates=...)`, required when
+  some source age has several outgoing edges, or when a destination is gated.
 
 A regime with no outgoing edges is terminal. A `Transition` law is one of
 
@@ -45,8 +45,7 @@ A regime with no outgoing edges is terminal. A `Transition` law is one of
 - a plain function or `DeterministicTransition(func=func)` returns a global regime code;
 - `StochasticTransition(func=func)` returns probabilities in full global regime-code
   order;
-- a per-target mapping supplies scalar `StochasticTransition` probability functions or
-  `ValueDependentTransition` declarations;
+- a per-target mapping supplies scalar `StochasticTransition` probability functions;
 - `ByAge(...)` selecting one of these per source age, or
   `Phased(solve=..., simulate=...)`.
 
@@ -58,6 +57,28 @@ every age with several outgoing edges, and an age it does not select uses its on
 A law short of unit mass is caught by the probability check at `log_level="debug"`,
 which names the cells dropped for lack of an edge; run a model at that level at least
 once.
+
+`targets` is optional when the law names its targets: a per-target mapping, a regime
+name, or a `ByAge` / `Phased` whose every case and side is one of these. The
+destinations are then derived from the law against the model's age grid:
+
+- a plain mapping or name reaches each of its keys at every non-final source age;
+- a `ByAge` case reaches its keys at the non-final ages that case selects, and a
+  `default` covers every age no other case selects;
+- the cases and sides of `ByAge` and `Phased` laws contribute their union;
+- each route fallback regime of a gate is reached at the ages of its gated target.
+
+Supplied anyway, `targets` must equal the derived destinations and source ages exactly;
+otherwise `Model(...)` raises a `ModelInitializationError` that lists both the supplied
+and the derived targets. A law over all targets — a function, a
+`DeterministicTransition`, a full-vector `StochasticTransition`, or a `ByAge` with any
+such case — names none, so it requires `targets`.
+
+`gates={target: Gate(...)}` makes the transition into a target value-dependent: the law
+supplies the probability of reaching the target as for any other destination, and the
+target's [`Gate`](collective_regimes.md#api-gate) decides whether a row stays there or
+takes its route's fallback. One gate per target holds at every age the target is reached
+and in both phases; a gate is never wrapped in `ByAge` or `Phased`.
 
 The targetless factories `@deterministic_transition()` and `@stochastic_transition()`
 produce the same wrappers for state and regime laws and preserve DAG signatures.
@@ -98,10 +119,9 @@ path of an edge-declared callable is its declaration path under `params["edges"]
 
 ```text
 params["edges"][source][arg]                       # a law over all targets
-params["edges"][source][target][arg]               # a per-target StochasticTransition cell
-params["edges"][source][target]["probability"][arg]          # ValueDependentTransition
-params["edges"][source][target]["gate"][arg]
-params["edges"][source][target]["gate_references"][reference][state][arg]
+params["edges"][source][target][arg]               # a per-target cell, gated or not
+params["edges"][source][target]["predicate"][arg]  # the target's Gate
+params["edges"][source][target]["references"][reference][state][arg]
 params["edges"][source][target]["routes"][route]["fallback"][state][arg]
 params["edges"][source][target]["routes"][route]["fallback"]["solve" | "simulate"][state][arg]
 ```
@@ -302,9 +322,9 @@ Decisions use the solve law, while realized transitions use the simulate law. Ev
 simulation-visited node is solved with its own perceived continuation dependencies;
 value-only nodes do not create realized visits. Each phase supplies valid probabilities
 and state handoffs for its own edges. Use outer `Phased` state-transition mappings when
-the two phases need different destination handoffs. `ValueDependentTransition` retains
-its shared-edge contract: a gated target appears in both phases with the same gate,
-routes, references and off-grid contract; only its probability may differ.
+the two phases need different destination handoffs. A `Gate` is shared by both phases: a
+target reached in both phases carries the equal `Gate` in both or none, and only the law
+supplying its probability may differ.
 
 Workflow: [Transitions](../user_guide/transitions.ipynb) and
 [Age-specialized functions and grids](../user_guide/age_specialized.md). Rationale:

@@ -5,6 +5,37 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Gates are declared beside the transition law; derived `Transition.targets`
+
+- Breaking API: `ValueDependentTransition` is removed. A value-dependent destination is
+  declared as `Transition(law=..., gates={target: Gate(...)})`. The law supplies the
+  gated target's probability like any other per-target cell, and `Gate` carries the
+  rest: `predicate` (formerly `gate`), `routes`, `references` (formerly
+  `gate_references`) and `off_grid`. A law cell
+  `tgt: ValueDependentTransition(probability=p, gate=g, routes=r, gate_references=refs)`
+  becomes the law cell `tgt: p` plus `gates={tgt: Gate(predicate=g, routes=r,
+  references=refs)}`.
+- One `Gate` per target holds at every age the target is reached and in both phases; a
+  gate is never wrapped in `ByAge` or `Phased`, and only a route's `fallback` may be
+  `Phased`. With `Phased` edges, a target reached in both phases carries the equal
+  `Gate` in both or none. A gate on a target its `Transition` never reaches is refused.
+- Breaking API: the parameter paths of a gated target follow the declaration.
+  `params["edges"][source][target]["probability"][arg]` becomes
+  `params["edges"][source][target][arg]`, `["gate"][arg]` becomes
+  `["predicate"][arg]`, and `["gate_references"][reference][state][arg]` becomes
+  `["references"][reference][state][arg]`; route fallback paths are unchanged.
+- `Transition.targets` is optional when the law names its targets — a per-target
+  mapping, a regime name, or a `ByAge` / `Phased` of those. The destinations are
+  derived from the law: each key at the non-final source ages its case covers, and each
+  gate's route fallback regimes at the ages of the gated target. Supplied anyway,
+  `targets` must equal the derived mapping exactly, or `Model(...)` raises a
+  `ModelInitializationError` listing both. A law over all targets — a function, a
+  `DeterministicTransition` or a full-vector `StochasticTransition` — still requires
+  `targets`. See
+  [the migration guide](docs/user_guide/migrating_dated_regimes.md#migrating-gates).
+- Breaking API: `lcm.collective` does not re-export `StochasticTransition`; import it
+  from `lcm`.
+
 ### Public production period capture
 
 - `Model.solve(period_capture=PeriodCapture(...))` atomically records selected
@@ -331,8 +362,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Gated edges simulate across subject devices
 
-- A model whose regime declares a gated edge — a `ValueDependentTransition` carrying a
-  `gate`, such as the dissolution edge of a collective regime — may be simulated with
+- A model whose regime declares a gated edge — a `Gate` on its transition, such as the
+  dissolution edge of a collective regime — may be simulated with
   `ExecutionConfig(simulation_sharding="subjects")` on more than one device. The gate
   fold reads and writes regime-level grids and declares no subject axis, so it is
   replicated and the continuations it publishes stay shared operands; the gate route
