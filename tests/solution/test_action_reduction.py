@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import Jaxpr, Var
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_reduction import (
@@ -240,6 +241,75 @@ def test_hard_max_supports_jit_and_vmap():
     assert_array_equal(result.best_value, jnp.array([5.0, 8.0]))
     assert_array_equal(result.best_global_action_id, jnp.array([2, 17]))
     assert_array_equal(result.any_feasible, jnp.array([True, True]))
+
+
+def _count_equalities_with_a_reduced_maximum(
+    *, jaxpr: Jaxpr, derived_inputs: tuple[bool, ...]
+) -> tuple[int, tuple[bool, ...]]:
+    """Count `eq` equations that read a value computed from a `reduce_max` output.
+
+    Returns the count and, per output of `jaxpr`, whether it is such a value.
+    Nested jaxprs (e.g. inlined `jit` calls) are followed.
+    """
+    derived = {
+        var
+        for var, is_derived in zip(jaxpr.invars, derived_inputs, strict=True)
+        if is_derived
+    }
+    count = 0
+    for eqn in jaxpr.eqns:
+        reads = tuple(isinstance(var, Var) and var in derived for var in eqn.invars)
+        if eqn.primitive.name == "eq" and any(reads):
+            count += 1
+        nested = eqn.params.get("jaxpr")
+        if nested is None:
+            outputs = (any(reads) or eqn.primitive.name == "reduce_max",) * len(
+                eqn.outvars
+            )
+        else:
+            nested_count, outputs = _count_equalities_with_a_reduced_maximum(
+                jaxpr=getattr(nested, "jaxpr", nested), derived_inputs=reads
+            )
+            count += nested_count
+        derived.update(
+            var
+            for var, is_derived in zip(eqn.outvars, outputs, strict=True)
+            if is_derived
+        )
+    return count, tuple(
+        isinstance(var, Var) and var in derived for var in jaxpr.outvars
+    )
+
+
+def test_hard_max_identity_is_not_matched_against_a_separately_reduced_maximum():
+    """The winner's identity and its value come out of one reduction.
+
+    Matching the values against a separately reduced maximum loses the winner
+    whenever the compiler evaluates the values once per reduction and the two
+    evaluations round differently: no value then equals the maximum, and the
+    published identity names no action of the block.
+    """
+    values = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
+    action_ids = jnp.arange(4, dtype=jnp.int32)
+
+    def reduce_block(*, values: jax.Array, feasible: jax.Array) -> HardMaxAccumulator:
+        return HARD_MAX_REDUCTION.add(
+            accumulator=HARD_MAX_REDUCTION.initialize(
+                value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype)
+            ),
+            values=values,
+            feasible=feasible,
+            action_ids=action_ids,
+        )
+
+    jaxpr = jax.make_jaxpr(reduce_block)(
+        values=values, feasible=jnp.ones_like(values, dtype=bool)
+    ).jaxpr
+    count, _ = _count_equalities_with_a_reduced_maximum(
+        jaxpr=jaxpr, derived_inputs=(False,) * len(jaxpr.invars)
+    )
+
+    assert count == 0
 
 
 @pytest.mark.parametrize(
