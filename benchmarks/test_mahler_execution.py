@@ -209,5 +209,5 @@ def test_active_mahler_routes_use_fixed_forward_simulation_seed(
         f"4-{_mahler_execution.POLICY_LABEL}"
     )
     assert bench_mahler_yum.MahlerYumBudgetedGpuPeakMem.version == (
-        f"3-{_mahler_execution.POLICY_LABEL}"
+        f"4-{_mahler_execution.POLICY_LABEL}"
     )

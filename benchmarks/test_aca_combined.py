@@ -226,7 +226,7 @@ def test_aca_asv_version_identifies_fixed_forward_simulation_seed() -> None:
     assert bench_aca_baseline.AcaBaseline.version == "2"
     assert bench_aca_baseline.AcaBaselineDebugLog.version == "2"
     assert bench_aca_baseline.AcaBaselineGpuPeakMem.version == "2"
-    assert bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem.version == "2"
+    assert bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem.version == "3"
 
 
 class _BuildStoppedError(Exception):
