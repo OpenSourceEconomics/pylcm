@@ -803,25 +803,13 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
 
 
 def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
-    """A coarse `transition=func`'s candidate universe is admitted as reachable
-    EXCEPT the source regime itself, so it never fabricates a self-transition.
+    """Explicit terminal-only support builds no self-transition of the source.
 
-    A coarse `transition=func` emits a `next_regime` cell for EVERY regime —
-    routing is decided at runtime from the returned id — so its cell keys are
-    the CANDIDATE universe. Those candidates ARE admitted to `reachable_targets`
-    (omitting a genuinely-routed candidate would silently drop its
-    continuation), but two things keep that from fabricating a spurious
-    continuation here: (1) the SOURCE regime is excluded, so no false
-    `period0 -> period0` self-transition is fabricated;
-    (2) process transitions are still scoped to the source's own processes, and
-    `terminal` shares none, so admitting it builds nothing. This is the module's
-    primary supported fold topology (shock declared and folded only in
-    `period0`); it must still solve cleanly to `E[10 + shock] = 10`.
-
-    MEASURED: admitting the candidates INCLUDING self (`reachable_targets |=
-    set(next_regime_cells_by_target)`) fabricates the self-transition and fails
-    this model with a bogus persistence error; the minus-self admission does
-    not.
+    `period0`'s coarse law declares `terminal` as its only target, so the source
+    reaches no continuation of its own, and `terminal` shares none of its
+    processes, so the edge builds no process transition either. This is the
+    module's primary supported fold topology (shock declared and folded only in
+    `period0`); it solves to `E[10 + shock] = 10`.
     """
     solution = _solve(_make_regimes(fold=True), laws=_to_terminal_laws())
     assert solution[0]["period0"].shape == ()
@@ -1019,13 +1007,19 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
     """A regime that folds a shock and coarse-routes to itself is the repeat case.
 
     `stay` is active for two periods and redraws the shock in each, so its own
-    continuation reads a value whose shock axis is already integrated out.
+    continuation reads a value whose shock axis is already integrated out. Work
+    pays `10 + shock` with a mean-zero shock that never makes leisure better, so
+    the folded value is 10 in the last `stay` period, which exits into the
+    worthless `done`, and `10 + 0.9 * 10 = 19` in the first.
     """
     ages3 = AgeGrid(start=0, inclusive_stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
 
     def _next_self() -> ScalarInt:
         return jnp.int32(0)
+
+    def _next_done() -> ScalarInt:
+        return jnp.int32(1)
 
     stay = Regime(
         states={"wage_shock": _shock(fold=True)},
@@ -1045,7 +1039,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
                     func=_next_self, targets=("stay", "done")
                 ),
                 then=_SupportedDeterministicTransition(
-                    func=_next_self, targets=("done",)
+                    func=_next_done, targets=("done",)
                 ),
             ),
             "done": None,
@@ -1060,11 +1054,16 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
         flat_params=_discounted_params("stay", "done"),
         ages=ages3,
         regimes=processed,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     ).value_functions
     assert solution[0]["stay"].shape == ()
     assert solution[1]["stay"].shape == ()
+    np.testing.assert_allclose(
+        [float(solution[0]["stay"]), float(solution[1]["stay"])],
+        [19.0, 10.0],
+        atol=1e-4,
+    )
 
 
 def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
