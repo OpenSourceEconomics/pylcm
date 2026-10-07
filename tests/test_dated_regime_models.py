@@ -21,6 +21,7 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     StochasticTransition,
@@ -36,7 +37,10 @@ from lcm.exceptions import (
 )
 from lcm.phased import Phased
 from lcm.regime import Regime
+from lcm.transition import TransitionLaw
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
+from tests.regime_building.test_gate_output_dtype import _boolean_gate
+from tests.regime_building.test_gate_output_dtype import _make_model as _gated_model
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 ROOTS: dict[object, str] = {25: "working"}
@@ -105,7 +109,9 @@ def _working_law() -> ByAge:
     )
 
 
-def _dated_edges(*, working_law: object = None) -> dict[str, object]:
+def _dated_edges(
+    *, working_law: TransitionLaw | None = None
+) -> dict[str, Transition | dict[str, int]]:
     """Working dies or survives until it retires at 55; retirement dies at 65."""
     return {
         "working": Transition(
@@ -116,7 +122,7 @@ def _dated_edges(*, working_law: object = None) -> dict[str, object]:
     }
 
 
-def _choice_edges(*, working_law: object) -> dict[str, object]:
+def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
     """Working stays until 55, where `working_law` picks retirement or death."""
     return {
         "working": Transition(targets=CHOICE_TARGETS, law=working_law),
@@ -564,11 +570,11 @@ def test_model_edges_keep_the_dated_declaration() -> None:
     assert edges["working"].law is declared
 
 
-def _declared_law_ids(model: Model) -> dict[str, dict[str, int]]:
-    """The identity of each declared law, by phase and source."""
+def _declared_transition_ids(model: Model) -> dict[str, dict[str, int]]:
+    """The identity of each declared `Transition`, by phase and source."""
     return {
-        phase: {source: id(law) for source, law in laws.items()}
-        for phase, laws in model.declared_laws.items()
+        phase: {source: id(transition) for source, transition in transitions.items()}
+        for phase, transitions in model.declared_transitions.items()
     }
 
 
@@ -576,67 +582,124 @@ def _go_dead() -> ScalarInt:
     return RegimeId.dead
 
 
-def test_declared_laws_hold_the_same_law_in_both_phases_of_unphased_edges() -> None:
-    """Edges declared for both phases give each phase the same declared law."""
+def test_declared_transitions_hold_the_same_transition_in_both_phases() -> None:
+    """Edges declared for both phases give each phase the same `Transition`."""
+    edges = _dated_edges()
+    model = _dated_model(edges=edges)
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(edges["working"])},
+        "simulate": {"working": id(edges["working"])},
+    }
+
+
+def test_declared_transitions_hold_each_phase_transition_of_phased_edges() -> None:
+    """Under `Phased` edges each phase holds the `Transition` that phase declares."""
+    solve_edges, simulate_edges = _dated_edges(), _dated_edges()
+    model = _dated_model(edges=Phased(solve=solve_edges, simulate=simulate_edges))
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(solve_edges["working"])},
+        "simulate": {"working": id(simulate_edges["working"])},
+    }
+
+
+def test_declared_transitions_omit_a_source_from_a_phase_without_one() -> None:
+    """A source with a `Transition` in one phase only is absent from the other."""
+    retirement = Transition(
+        targets=RETIREMENT_EDGES, law=DeterministicTransition(func=_go_dead)
+    )
+    solve_edges = _dated_edges()
+    simulate_edges = solve_edges | {"retirement": retirement}
+    model = _dated_model(edges=Phased(solve=solve_edges, simulate=simulate_edges))
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(solve_edges["working"])},
+        "simulate": {
+            "working": id(solve_edges["working"]),
+            "retirement": id(retirement),
+        },
+    }
+
+
+def test_declared_transitions_carry_the_targets_a_law_names() -> None:
+    """A `Transition` declared without targets reads back with the derived ones."""
+    model = _dated_model(
+        edges={
+            "working": Transition(law=_working_law()),
+            "retirement": RETIREMENT_EDGES,
+        }
+    )
+    targets = model.declared_transitions["simulate"]["working"].targets
+    assert targets == {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": (55,),
+    }
+
+
+def test_a_bare_name_case_beside_per_target_cases_derives_its_edge() -> None:
+    """A `ByAge` mixing per-target cases with a bare-name case derives an edge
+    to the named regime at that case's age."""
+    law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=55): {
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            },
+            55: "retirement",
+        }
+    )
+    model = _dated_model(
+        edges={"working": Transition(law=law), "retirement": RETIREMENT_EDGES}
+    )
+    targets = model.declared_transitions["solve"]["working"].targets
+    assert targets == {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": (55,),
+    }
+
+
+def test_declared_transitions_read_the_declared_law_typed() -> None:
+    """A declared `Transition`'s law reads back as declared, typed `TransitionLaw`."""
     declared = _working_law()
     model = _dated_model(edges=_dated_edges(working_law=declared))
-    assert _declared_law_ids(model) == {
-        "solve": {"working": id(declared)},
-        "simulate": {"working": id(declared)},
-    }
+    law: TransitionLaw = model.declared_transitions["solve"]["working"].law
+    assert law is declared
 
 
-def test_declared_laws_hold_each_phase_law_of_phased_edges() -> None:
-    """Under `Phased` edges each phase holds the law that phase declares."""
-    solve_law, simulate_law = _working_law(), _working_law()
-    model = _dated_model(
-        edges=Phased(
-            solve=_dated_edges(working_law=solve_law),
-            simulate=_dated_edges(working_law=simulate_law),
-        )
-    )
-    assert _declared_law_ids(model) == {
-        "solve": {"working": id(solve_law)},
-        "simulate": {"working": id(simulate_law)},
-    }
+def test_declared_transitions_read_a_declared_gate_typed() -> None:
+    """A `Gate` declared on a `Transition` reads back typed from the built model."""
+    model = _gated_model(gate=_boolean_gate)
+    gate: Gate = model.declared_transitions["solve"]["source"].gates["target"]
+    assert gate.predicate is _boolean_gate
 
 
-def test_declared_laws_omit_a_source_from_a_phase_that_declares_no_law() -> None:
-    """A source with a law in one phase only is absent from the other phase."""
-    working_law = _working_law()
-    retirement_law = DeterministicTransition(func=_go_dead)
-    model = _dated_model(
-        edges=Phased(
-            solve=_dated_edges(working_law=working_law),
-            simulate=_dated_edges(working_law=working_law)
-            | {"retirement": Transition(targets=RETIREMENT_EDGES, law=retirement_law)},
-        )
-    )
-    assert _declared_law_ids(model) == {
-        "solve": {"working": id(working_law)},
-        "simulate": {"working": id(working_law), "retirement": id(retirement_law)},
-    }
+def test_declared_transitions_read_a_gate_route_fallback_regime_typed() -> None:
+    """A declared gate route's fallback regime reads back as a regime name."""
+    model = _gated_model(gate=_boolean_gate)
+    gate = model.declared_transitions["simulate"]["source"].gates["target"]
+    regime: str = gate.routes["only"].simulate_fallback.regime
+    assert regime == "fallback"
 
 
-def test_declared_laws_reject_replacing_a_phase() -> None:
-    """The declared laws of a built model cannot be replaced per phase."""
+def test_declared_transitions_reject_replacing_a_phase() -> None:
+    """The declared transitions of a built model cannot be replaced per phase."""
     model = _dated_model()
     with pytest.raises(TypeError):
-        model.declared_laws["solve"] = {}  # ty: ignore[invalid-assignment]
+        model.declared_transitions["solve"] = {}  # ty: ignore[invalid-assignment]
 
 
-def test_declared_laws_reject_replacing_a_source_law() -> None:
-    """The declared laws of a built model cannot be replaced per source."""
+def test_declared_transitions_reject_replacing_a_source_transition() -> None:
+    """The declared transitions of a built model cannot be replaced per source."""
     model = _dated_model()
     with pytest.raises(TypeError):
-        model.declared_laws["solve"]["working"] = "dead"  # ty: ignore[invalid-assignment]
+        model.declared_transitions["solve"]["working"] = "dead"  # ty: ignore[invalid-assignment]
 
 
-def test_declared_laws_cannot_be_rebound() -> None:
-    """The declared laws cannot be rebound on a built model."""
+def test_declared_transitions_cannot_be_rebound() -> None:
+    """The declared transitions cannot be rebound on a built model."""
     model = _dated_model()
     with pytest.raises(AttributeError):
-        model.declared_laws = {}  # ty: ignore[invalid-assignment]
+        model.declared_transitions = {}  # ty: ignore[invalid-assignment]
 
 
 _EARLY_STAGES = (AgeRange(start=25, exclusive_stop=55),)

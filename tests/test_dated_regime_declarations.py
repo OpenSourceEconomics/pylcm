@@ -17,9 +17,11 @@ from lcm import (
     DeterministicTransition,
     Phased,
     StochasticTransition,
+    Transition,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
+from lcm.typing import AgeSelector
 
 
 def _probs() -> jnp.ndarray:
@@ -55,6 +57,33 @@ def test_by_age_selects_exact_grid_coordinates(*, selector, expected) -> None:
     """Each selector covers exactly the existing grid points it names."""
     schedule = ByAge(cases={selector: "b"}).resolve(ANNUAL)
     assert schedule.covered_ages == expected
+
+
+def test_by_age_takes_cases_typed_by_tuples_of_float_ages() -> None:
+    """Cases keyed by tuples of float ages select those grid ages."""
+    cases: dict[tuple[float, ...], str] = {(61.0, 62.0): "a"}
+    assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == (61, 62)
+
+
+def test_by_age_takes_cases_typed_by_age_ranges() -> None:
+    """Cases keyed by `AgeRange` with per-target cells select the range's ages."""
+    cases: dict[AgeRange, dict[str, StochasticTransition]] = {
+        AgeRange(start=63): {"a": StochasticTransition(func=_probs)}
+    }
+    assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == (63, 64, 65)
+
+
+def test_by_age_takes_cases_typed_by_every_age_selector_form() -> None:
+    """`lcm.typing.AgeSelector` admits every selector form a case may use."""
+    selectors: list[AgeSelector] = [60, (61.0,), range(62, 63), AgeRange(start=63)]
+    schedule = ByAge(cases=dict.fromkeys(selectors, "a"))
+    assert schedule.resolve(ANNUAL).covered_ages == (60, 61, 62, 63, 64, 65)
+
+
+def test_transition_rejects_a_none_law_with_its_own_message() -> None:
+    """A `None` law is refused by `Transition` itself, naming terminality."""
+    with pytest.raises(RegimeInitializationError, match="cannot be `None`"):
+        Transition(targets={"dead": 61}, law=None)  # ty: ignore[invalid-argument-type]
 
 
 def test_range_selects_integers_not_intervening_quarters() -> None:
@@ -166,17 +195,25 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (lambda: ByAge(cases={61: None}), _TERMINAL_INSIDE),
+        (
+            lambda: ByAge(cases={61: None}),  # ty: ignore[invalid-argument-type]
+            _TERMINAL_INSIDE,
+        ),
         (lambda: ByAge(cases={61: "a"}, default=None), _TERMINAL_INSIDE),
         (
             lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
             _TERMINAL_INSIDE,
         ),
         (
-            lambda: ByAge(cases={61: Phased(solve=None, simulate="a")}),
+            lambda: ByAge(
+                cases={61: Phased(solve=None, simulate="a")}  # ty: ignore[invalid-argument-type]
+            ),
             _TERMINAL_INSIDE,
         ),
-        (lambda: ByAge(cases={61: ByAge(cases={61: "a"})}), "cannot be nested"),
+        (
+            lambda: ByAge(cases={61: ByAge(cases={61: "a"})}),  # ty: ignore[invalid-argument-type]
+            "cannot be nested",
+        ),
         (lambda: ByAge(cases={}), "needs at least one case"),
     ],
 )

@@ -62,16 +62,17 @@ Code that read a regime's law back reads it from the model:
 | `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
 | `Regime.gated_edges`                    | `model.graph.laws[name].gated_edges`           |
 | `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
-| the law passed as `regime_transitions=` | `model.declared_laws[phase][name]`             |
+| the law passed as `regime_transitions=` | `model.declared_transitions[phase][name].law`  |
 
-`model.declared_laws["solve"][name]` and `model.declared_laws["simulate"][name]` are the
-law a source declared as a `Transition`, exactly as declared. Edges declared for both
-phases give both phases the same law; a `Phased` `edges` mapping gives each phase its
-own. A source without a `Transition` in a phase is absent from that phase's mapping.
-`model.graph.laws[name]` is the law the solver and simulator evaluate: bound to the
-graph, pruned of fixed-zero cells and lowered to the ages the starts demand. A regime is
-terminal when it has no outgoing edge in `Model(edges=...)`, and
-`model.graph.laws[name].terminal` says so:
+`model.declared_transitions["solve"][name]` and
+`model.declared_transitions["simulate"][name]` are the `Transition` a source declared,
+exactly as declared: its `law`, its `gates` and its declared or derived `targets`. Edges
+declared for both phases give both phases the same `Transition`; a `Phased` `edges`
+mapping gives each phase its own. A source without a `Transition` in a phase is absent
+from that phase's mapping. `model.graph.laws[name]` is the law the solver and simulator
+evaluate: bound to the graph, pruned of fixed-zero cells and lowered to the ages the
+starts demand. A regime is terminal when it has no outgoing edge in `Model(edges=...)`,
+and `model.graph.laws[name].terminal` says so:
 
 ```python
 assert model.graph.laws["dead"].terminal
@@ -96,9 +97,9 @@ edges = {
 }
 ```
 
-A `ByAge` law may leave single-destination ages unselected. A law that does reach such
-an age is evaluated there and must put unit mass on its one destination; see
-[Laws at every horizon](#laws-at-every-horizon).
+With declared `targets`, a `ByAge` law may leave single-destination ages unselected. A
+law that does reach such an age is evaluated there and must put unit mass on its one
+destination; see [Laws at every horizon](#laws-at-every-horizon).
 
 Public `DeterministicTransition` and `StochasticTransition` have no `targets` argument;
 passing one raises a `TypeError`. Declare destinations in `Model(edges=...)`, the only
@@ -120,6 +121,30 @@ law must equal the derived mapping exactly, or `Model(...)` raises a
 `ModelInitializationError` listing both. Where a per-target law reaches more ages than
 the declared `targets`, wrap it in `ByAge(cases={ages: law})` restricted to those ages.
 A law over all targets still requires `targets`.
+
+When the targets are derived from a `ByAge` law, every source age with an edge needs a
+case: an age no case selects has no edge. At an age with a single certain destination,
+the case is that regime's bare name, not a per-target cell holding a probability
+function. Per-target cases and bare-name cases mix freely in one `ByAge`:
+
+```python
+edges = {
+    "worker": Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=64): {
+                    "worker": StochasticTransition(func=survive),
+                    "dead": StochasticTransition(func=die),
+                },
+                64: "retiree",
+            }
+        ),
+    ),
+    "retiree": {"dead": AgeRange(start=65)},
+}
+```
+
+Here `worker` reaches `worker` and `dead` at every age below 64 and `retiree` at 64.
 
 (migrating-gates)=
 
@@ -260,10 +285,11 @@ put unit mass on that destination. Its parameter slots are read off the declared
 values: a law that is never decisive, for instance on a two-period grid, still has
 required parameters.
 
-Declare the `Transition` at every horizon and write its law horizon-aware, or let
-`ByAge` (e.g. `ByAge.until`) leave single-destination ages unselected. Delete branches
-such as `Transition(targets=..., law=...) if len(targets) > 1 else targets` in a model
-and the matching branch in its parameter helper:
+Declare the `Transition` at every horizon and write its law horizon-aware, or, with
+declared `targets`, let `ByAge` (e.g. `ByAge.until`) leave single-destination ages
+unselected. Delete branches such as
+`Transition(targets=..., law=...) if len(targets) > 1 else targets` in a model and the
+matching branch in its parameter helper:
 
 ```python
 def retire(*, age: float, retirement_age: float) -> ScalarInt:

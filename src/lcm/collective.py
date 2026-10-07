@@ -12,7 +12,7 @@ reading of another regime's value in the same period.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal
 
 from beartype import beartype
 
@@ -245,7 +245,7 @@ class StakeholderRoute:
     singleton regime carries no role.
     """
 
-    fallback: ProjectedRegimeValue | Phased
+    fallback: ProjectedRegimeValue | Phased[ProjectedRegimeValue, ProjectedRegimeValue]
     """The gate-closed branch: a reference regime's same-period value at a
     projection from the TARGET regime's grid.
 
@@ -260,6 +260,12 @@ class StakeholderRoute:
 
     Both sides must be `ProjectedRegimeValue`, and each is validated against
     the phase that reads it.
+
+    `solve_fallback` and `simulate_fallback` read either form as the
+    `ProjectedRegimeValue` of their phase, so `route.simulate_fallback.regime`
+    needs no narrowing. The field itself keeps the union: a route read back
+    from `model.graph.laws` or `model.declared_transitions` is looked up by
+    regime name, so its type cannot carry which form that one route declared.
     """
 
     target_stakeholder: str | None = None
@@ -270,16 +276,14 @@ class StakeholderRoute:
     def solve_fallback(self) -> ProjectedRegimeValue:
         """The reference whose value the gate-closed branch is priced at."""
         return (
-            cast("ProjectedRegimeValue", self.fallback.solve)
-            if isinstance(self.fallback, Phased)
-            else self.fallback
+            self.fallback.solve if isinstance(self.fallback, Phased) else self.fallback
         )
 
     @property
     def simulate_fallback(self) -> ProjectedRegimeValue:
         """The reference a routed row's regime, role and states come from."""
         return (
-            cast("ProjectedRegimeValue", self.fallback.simulate)
+            self.fallback.simulate
             if isinstance(self.fallback, Phased)
             else self.fallback
         )

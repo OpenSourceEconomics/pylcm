@@ -35,6 +35,7 @@ from lcm.exceptions import (
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import EULER_POINT_AXIS, SAVINGS_POINT_AXIS, FUESEnvelope, GridSearch
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -70,7 +71,7 @@ RETIREMENT_EDGES = {
 def _build_model(
     *,
     regime: UserRegime,
-    law: object = None,
+    law: TransitionLaw | None = None,
     config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the retirement/dead model; `law` replaces the retirement law."""

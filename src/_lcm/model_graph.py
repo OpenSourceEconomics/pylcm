@@ -45,6 +45,7 @@ from lcm.exceptions import (
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
+    AgeCaseLaw,
     AgeSelector,
     ByAge,
     DeterministicTransition,
@@ -776,7 +777,7 @@ def bind_graph_support(
             )
         # An undemanded source remains inspectable but supplies no local problem.
         bound = (
-            ByAge(cases=dict(cases))
+            ByAge(cases=cast("dict[AgeSelector, AgeCaseLaw]", dict(cases)))
             if cases
             else _SupportedStochasticTransition(
                 func=_Constant(value=(0.0,) * len(regime_names)),

@@ -24,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -62,7 +63,7 @@ _WORK_LAW = ByAge(
 )
 
 
-def _edges(*, work_law: object = _WORK_LAW) -> dict:
+def _edges(*, work_law: TransitionLaw = _WORK_LAW) -> dict:
     return {
         "work": Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=work_law),
         "retired": {"dead": (0, 1, 2)},
@@ -95,7 +96,7 @@ def _retired_regime() -> UserRegime:
     )
 
 
-def _build_model(*, work: UserRegime, work_law: object = _WORK_LAW) -> Model:
+def _build_model(*, work: UserRegime, work_law: TransitionLaw = _WORK_LAW) -> Model:
     return Model(
         regimes={
             "work": work,

@@ -180,10 +180,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   reads — rather than from transition schedules. `ByAge` selects laws only;
   `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
 - A regime is terminal exactly when it has no outgoing edges in `Model(edges=...)`.
-- `Model.declared_laws[phase][source]` is the law a source declared as a `Transition`,
-  exactly as declared and typed as `lcm.transition.TransitionLaw`, with `phase` one of
-  `lcm.typing.Phase` (`"solve"`, `"simulate"`); `model.graph.laws` holds the law as
-  bound to the graph.
+- `Model.declared_transitions[phase][source]` is the `Transition` a source declared,
+  exactly as declared, with `phase` one of `lcm.typing.Phase` (`"solve"`,
+  `"simulate"`). Its `law` is typed `lcm.transition.TransitionLaw`, its `gates` map each
+  gated target to its `Gate`, and its `targets` are the declared or derived
+  destinations; `model.graph.laws` holds the law as bound to the graph.
 - `ByAge`, `ByAge.until`, `AgeRange`, `DeterministicTransition` and `StochasticTransition` take keyword
   arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
   uses `then` at the last source age below `stop_age_exclusive`. See

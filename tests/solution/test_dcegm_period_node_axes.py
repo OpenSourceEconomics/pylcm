@@ -27,7 +27,7 @@ from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime
 from lcm.solver_api import SolutionResult
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
-from lcm.transition import AgeSelector
+from lcm.transition import AgeCaseLaw, AgeSelector
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
@@ -85,7 +85,7 @@ def _model(
     old_domain = ShortHealth if short_old_health else Health
     young = {"young": StochasticTransition(func=young_probability)}
     old = {"old": StochasticTransition(func=old_probability)}
-    parent_cases: dict[AgeSelector, object] = {
+    parent_cases: dict[AgeSelector, AgeCaseLaw] = {
         AgeRange(start=40, exclusive_stop=50): young | old
         if overlapping_children
         else young,
