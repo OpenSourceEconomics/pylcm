@@ -882,14 +882,6 @@ class GpuPeakMem:
         pass
 
 
-def _profile_setup_cache(self) -> dict[str, int]:
-    return measure_gpu_memory_profile(
-        bench_module=self.bench_module,
-        bench_class=self.bench_class,
-        phases=self.phases,
-    )
-
-
 # keyword-only-exempt: library-callback=asv
 def _track_peak_gpu_mem_automatic_solve_simulate(
     self, cache: dict[str, int] | None = None
@@ -932,6 +924,11 @@ class GpuPeakMemProfile:
     `bench_mahler_yum.MahlerYumBudgetedGpuPeakMem`, which drops
     `automatic_solve_simulate` because `MahlerYumBudgetedGpu`'s own
     `setup_cache` already captures that peak from its own cold call.
+
+    Every discoverable subclass defines `setup_cache` in its own body, as
+    `return self._measure_profile()`. ASV keys a `setup_cache` result by the
+    defining module and first source line of the function, so a single shared
+    function would hand one class's profile to every other class.
     """
 
     bench_module: str
@@ -942,7 +939,14 @@ class GpuPeakMemProfile:
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls.setup_cache = _profile_setup_cache
+        if not cls.__name__.startswith("_") and "setup_cache" not in cls.__dict__:
+            msg = (
+                f"{cls.__qualname__} must define its own `setup_cache` "
+                "(`return self._measure_profile()`): ASV keys the cached profile "
+                "by the function's source line, so an inherited one is shared "
+                "across classes."
+            )
+            raise TypeError(msg)
         if AUTOMATIC_SOLVE_SIMULATE in cls.phases:
             cls.track_peak_gpu_mem_automatic_solve_simulate = (
                 _track_peak_gpu_mem_automatic_solve_simulate
@@ -958,6 +962,13 @@ class GpuPeakMemProfile:
 
     def setup(self, cache: dict[str, int]) -> None:
         self._measurements = cache
+
+    def _measure_profile(self) -> dict[str, int]:
+        return measure_gpu_memory_profile(
+            bench_module=self.bench_module,
+            bench_class=self.bench_class,
+            phases=self.phases,
+        )
 
 
 if __name__ == "__main__":
