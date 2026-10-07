@@ -14,6 +14,7 @@ from _lcm.regime_building.schedules import (
     _edge_support,
     _fallbacks,
     _phase_side,
+    fail_if_a_gated_target_changes_across_cases,
     resolve_demand,
     resolve_regime_schedules,
 )
@@ -403,6 +404,11 @@ def _transition_laws(
     law = transition.law
     if isinstance(law, Phased):
         law = getattr(law, side)
+    if isinstance(law, ByAge):
+        fail_if_a_gated_target_changes_across_cases(
+            getattr(case, side) if isinstance(case, Phased) else case
+            for case in law.laws
+        )
     selected = (
         law.resolve(ages).law_by_period
         if isinstance(law, ByAge)

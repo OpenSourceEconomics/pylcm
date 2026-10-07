@@ -1183,15 +1183,7 @@ def _mapping_union(
     for target, entries in cells_by_target.items():
         distinct_cells = _distinct(cell for _, cell in entries)
         if len(distinct_cells) > 1:
-            if any(
-                isinstance(cell, ValueDependentTransition) for cell in distinct_cells
-            ):
-                raise ModelInitializationError(
-                    f"The transition into {target!r} is value-dependent in one "
-                    "schedule case and declared differently in another. A gated "
-                    "target keeps one `ValueDependentTransition` across every "
-                    "case that names it."
-                )
+            _fail_if_a_gated_cell_differs(target=target, distinct_cells=distinct_cells)
             if mask is None:
                 merged[target] = distinct_cells[0]
                 continue
@@ -1224,6 +1216,52 @@ def _mapping_union(
             cell if periods == all_covered else _masked_cell(cell=cell, periods=periods)
         )
     return MappingProxyType(merged)
+
+
+def fail_if_a_gated_target_changes_across_cases(laws: Iterable[object]) -> None:
+    """Reject a schedule whose cases declare one gated target differently.
+
+    A target with a `ValueDependentTransition` in one case keeps that one
+    `ValueDependentTransition` in every case naming it. The check reads the
+    declared cases, so it holds at every horizon, whether or not any age or
+    demand selects a case. A per-target mapping declares a cell per target and
+    a regime name one for that regime; a selector or vector law names no target
+    until the graph binds its support.
+
+    Args:
+        laws: The schedule's cases, each resolved to one phase.
+
+    Raises:
+        ModelInitializationError: If a target is value-dependent in one case and
+            declared differently in another.
+
+    """
+    cells_by_target: dict[str, list[object]] = {}
+    for law in laws:
+        if isinstance(law, Mapping):
+            cells = tuple(law.items())
+        elif isinstance(law, str):
+            cells = ((law, law),)
+        else:
+            continue
+        for target, cell in cells:
+            cells_by_target.setdefault(target, []).append(cell)
+    for target, cells in cells_by_target.items():
+        _fail_if_a_gated_cell_differs(target=target, distinct_cells=_distinct(cells))
+
+
+def _fail_if_a_gated_cell_differs(
+    *, target: str, distinct_cells: tuple[object, ...]
+) -> None:
+    if len(distinct_cells) > 1 and any(
+        isinstance(cell, ValueDependentTransition) for cell in distinct_cells
+    ):
+        raise ModelInitializationError(
+            f"The transition into {target!r} is value-dependent in one "
+            "schedule case and declared differently in another. A gated "
+            "target keeps one `ValueDependentTransition` across every "
+            "case that names it."
+        )
 
 
 def _masked(*, cell: Any, periods: tuple[int, ...]) -> Callable[..., Any]:  # noqa: ANN401
