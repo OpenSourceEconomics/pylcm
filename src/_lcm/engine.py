@@ -1358,6 +1358,20 @@ class Regime:
     re-pairing parallel mappings by target name or by leg position.
     """
 
+    @property
+    def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:
+        """Return the code arrays every stochastic law keeps for validation.
+
+        One entry per law, target and phase that reads a derived categorical.
+        These are the retained owners themselves, so a residency inventory charges
+        their storage for the model's lifetime without allocating anything.
+        """
+        return tuple(
+            code
+            for transition in self.stochastic_state_transitions.values()
+            for code in transition.derived_categorical_codes.values()
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class _RegimeSharding:

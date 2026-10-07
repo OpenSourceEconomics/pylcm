@@ -3878,6 +3878,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                             regime.solution.period_state_axes,
                             regime.solution.resolved_fixed_params,
                             _retained_base_space_arrays(regime=regime),
+                            regime.derived_categorical_code_arrays,
                         )
                         for regime in regimes.values()
                     ),

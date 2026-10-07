@@ -3496,17 +3496,32 @@ class _ExpectationOverSliceDraws:
     the end and divided, without any further weighting.
 
     All terms are put on the scale of the largest joint node, which a first,
-    weights-only loop finds; a second loop reads the values.
+    weights-only loop finds; a second loop reads the values. Where the largest
+    node's probability is at least four times the smallest normal number, both
+    numerator and mass are held one binade below that scale, which leaves
+    their ratio unchanged and keeps the largest node normal.
 
-    Finite-range invariant: at every coordinate node the running numerator is a
-    sum of terms `w v` whose weights are joint probabilities — raised by the
-    common scale only where the largest joint node lies below the normal range
-    — so its magnitude is bounded by that node's share of the probability times
-    the largest `|v|`, up to one rounding per term and addition. The final sum
-    over the coordinate axis is bounded the same way by the total mass. It can
-    leave the finite range only where the joint expectation itself lies within
-    that rounding of the largest finite value, the bound the joint contraction
-    has.
+    Finite-range invariant, over `n` joint nodes with unit roundoff `u` and
+    `n u < 1/3`, for weights that are probabilities:
+
+    - the accumulator cannot overflow. With the headroom binade each term is
+      `w_i v_i / 2` with `sum w_i <= 1 + n u`, so every partial sum, in any
+      order, is at most `(1 + u)**n (1 + n u) max|v| / 2 < max|v|`. Without
+      it the largest node lies below four times the smallest normal on the
+      common scale, so `sum w_i < 4 n tiny` and every partial sum is below
+      `16 n (1 + u)**n`, since `tiny` times the largest finite value is four;
+    - the published mean lies in the hull of the live reads. The quotient is
+      clamped to `[min v, max v]` over the nodes of nonzero weight, an interval
+      that contains the exact mean, so the clamp only moves the quotient
+      towards it. A quotient that rounds past the largest finite value at an
+      expectation within roundings of it is thereby returned as the largest
+      live read instead of an infinity.
+
+    A finite set of live reads therefore yields a finite mean no larger in
+    magnitude than the largest of them, and the regime probability applied
+    afterwards scales a finite number. A live infinite read widens the hull to
+    it and is published; opposite infinities and a live NaN stay NaN; a node of
+    zero weight leaves both the sums and the hull untouched.
     """
 
     interpolator: Callable[..., FloatND]
@@ -3569,25 +3584,37 @@ class _ExpectationOverSliceDraws:
         lower_shift = functools.partial(
             _lower_shift_at_slice_node, coordinate_factors=coordinate_factors
         )
-        common_shift, _ = jax.lax.scan(
+        (common_shift, largest_probability), _ = jax.lax.scan(
             lower_shift, lower_shift(None, first)[0], slice_nodes
         )
+        smallest_normal = jnp.finfo(largest_probability.dtype).tiny
+        headroom = (largest_probability >= 4 * smallest_normal).astype(jnp.int32)
         add_node = functools.partial(
             _add_slice_node,
             interpolator=self.interpolator,
             fixed=fixed,
             slice_draws=self.slice_draws,
             coordinate_factors=coordinate_factors,
-            common_shift=common_shift,
+            common_shift=common_shift - headroom,
         )
-        # The sums start at zeros shaped like one step's terms, so they carry
-        # the type every term has — including how it varies across a mapped
-        # device axis. Only the terms' type is read; their values are discarded.
-        first_sums, _ = add_node(None, first)
-        (numerator, mass), _ = jax.lax.scan(
-            add_node, jax.tree_util.tree_map(jnp.zeros_like, first_sums), slice_nodes
+        # The running values start at the identities of their reductions,
+        # shaped like one step's own, so they carry the type every step has —
+        # including how it varies across a mapped device axis. Only that step's
+        # type is read; its values are discarded.
+        (numerator, mass, lowest, highest), _ = add_node(None, first)
+        (numerator, mass, lowest, highest), _ = jax.lax.scan(
+            add_node,
+            (
+                jnp.zeros_like(numerator),
+                jnp.zeros_like(mass),
+                jnp.full_like(lowest, jnp.inf),
+                jnp.full_like(highest, -jnp.inf),
+            ),
+            slice_nodes,
         )
-        return jnp.sum(numerator) / jnp.sum(mass)
+        return jnp.clip(
+            jnp.sum(numerator) / jnp.sum(mass), jnp.min(lowest), jnp.max(highest)
+        )
 
 
 def _joint_weights_at_slice_node(
@@ -3613,26 +3640,32 @@ def _joint_weights_at_slice_node(
 
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _lower_shift_at_slice_node(
-    smallest: IntND | None,
+    running: tuple[IntND, FloatND] | None,
     node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
     *,
     coordinate_factors: tuple[FloatND, ...],
-) -> tuple[IntND, None]:
-    """Lower the running smallest scale to that of one slice node's joint nodes.
+) -> tuple[tuple[IntND, FloatND], None]:
+    """Fold one slice node's joint nodes into the running smallest scale.
 
-    A `None` running value starts it at this slice node's smallest scale.
+    Alongside the smallest scale it carries the largest probability of a joint
+    node held without scaling, which is zero where every node is scaled. A
+    `None` running value starts both at this slice node's own.
     """
     _, slice_factors = node
-    _, shifts = _joint_weights_at_slice_node(
+    coefficients, shifts = _joint_weights_at_slice_node(
         coordinate_factors=coordinate_factors, slice_factors=slice_factors
     )
     lowest = jnp.min(shifts)
-    return (lowest if smallest is None else jnp.minimum(smallest, lowest)), None
+    largest = jnp.max(jnp.where(shifts == 0, coefficients, 0.0))
+    if running is None:
+        return (lowest, largest), None
+    smallest, largest_so_far = running
+    return (jnp.minimum(smallest, lowest), jnp.maximum(largest_so_far, largest)), None
 
 
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _add_slice_node(
-    sums: tuple[FloatND, FloatND] | None,
+    sums: tuple[FloatND, FloatND, FloatND, FloatND] | None,
     node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
     *,
     interpolator: Callable[..., FloatND],
@@ -3640,11 +3673,12 @@ def _add_slice_node(
     slice_draws: tuple[TransitionFunctionName, ...],
     coordinate_factors: tuple[FloatND, ...],
     common_shift: IntND,
-) -> tuple[tuple[FloatND, FloatND], None]:
+) -> tuple[tuple[FloatND, FloatND, FloatND, FloatND], None]:
     """Add one slice node's weighted reads and masses to the running sums.
 
-    Both sums keep the flattened coordinate axis. A `None` running value starts
-    them at this slice node's terms.
+    Alongside the numerator and the mass it carries the smallest and largest
+    read at a node of nonzero weight. All four keep the flattened coordinate
+    axis. A `None` running value starts them at this slice node's own.
     """
     codes, slice_factors = node
     coefficients, shifts = _joint_weights_at_slice_node(
@@ -3669,10 +3703,18 @@ def _add_slice_node(
         shift=scale - on_the_weight,
     )
     mass = scaled_down_by_power_of_two(values=coefficients, shift=scale)
+    live = ~is_represented_zero(coefficients)
+    lowest_read = jnp.where(live, value, jnp.inf)
+    highest_read = jnp.where(live, value, -jnp.inf)
     if sums is None:
-        return (term, mass), None
-    numerator, total = sums
-    return (numerator + term, total + mass), None
+        return (term, mass, lowest_read, highest_read), None
+    numerator, total, lowest, highest = sums
+    return (
+        numerator + term,
+        total + mass,
+        jnp.minimum(lowest, lowest_read),
+        jnp.maximum(highest, highest_read),
+    ), None
 
 
 def _scalar_target_contribution(
