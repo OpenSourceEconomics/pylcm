@@ -1488,19 +1488,10 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
         _solve_fixture(spec=_make_target_helper_regimes(), flat_params=flat_params)
 
 
-# A fence covering only the concatenated gate predicate, keyed on GLOBAL
-# target-DAG leaf names, lets three topologies through:
-#   - a gate-REFERENCE projection reaches a target helper param (unfenced: the
-#     readers are compiled on a separate path from the gate predicate);
-#   - the fence over-rejects a valid DIRECT source param merely because an
-#     UNRELATED target helper reuses the qname (global union, not the consumer's
-#     own ancestor closure);
-#   - a target function/transition NODE whose name collides with an injected
-#     gate-ref key shadows the injected reference value in the concatenated DAG.
-# So the fence is ancestry-aware (seeded on each consumer's OWN args) and applies
-# to every gate-ref / fallback projection, alongside an injected-name collision
-# guard. Fixtures give the two candidate bindings DIFFERENT values so each
-# misbinding is genuinely discriminated, not coincidentally agreed.
+# Every target-DAG-concatenating consumer is fenced, not only the gate predicate:
+# a gate-REFERENCE projection or a leg-fallback projection naming a target helper
+# is compiled on a separate path and is refused the same way. A target node whose
+# name collides with an injected gate-ref key is refused by its own guard.
 
 
 def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
@@ -1749,7 +1740,7 @@ def test_fence_edge_consumer_rejects_every_argument_naming_a_target_node(
             r"regime's own function"
         ),
     ):
-        _fence_edge_consumer(  # ty: ignore[missing-argument]
+        _fence_edge_consumer(
             dag_pool=_FENCE_DAG_POOL,
             seed_args=seed_args,
             edge_target="target",
@@ -1772,7 +1763,7 @@ def test_fence_edge_consumer_accepts_arguments_naming_no_target_node(
     """Arguments that name no target-DAG node pass, including a source parameter
     spelled like a parameter some target helper reads."""
     assert (
-        _fence_edge_consumer(  # ty: ignore[missing-argument]
+        _fence_edge_consumer(
             dag_pool=_FENCE_DAG_POOL,
             seed_args=seed_args,
             edge_target="target",
