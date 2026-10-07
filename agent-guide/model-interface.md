@@ -94,7 +94,9 @@ Model(
 - Stochastic processes have intrinsic transitions and must NOT appear in
   `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
-- Regime names (dict keys) cannot contain the reserved separator `__`
+- Regime, state, action, function, constraint, stakeholder, route and gate-reference
+  names, and parameter arguments of model functions, cannot contain the reserved
+  separator `__` and cannot start or end with `_`
 
 ### Model Creation
 

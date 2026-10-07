@@ -16,8 +16,6 @@ from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, cast
 
-from dags.tree import QNAME_DELIMITER
-
 from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
@@ -26,7 +24,7 @@ from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import ProcessName, RegimeName, StateName
-from _lcm.utils.error_messages import format_messages
+from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
@@ -223,6 +221,9 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_stakeholders_tuple_errors(stakeholders))
     error_messages.extend(
+        path_segment_name_errors(kind="Stakeholder", names=stakeholders)
+    )
+    error_messages.extend(
         _collective_weights_errors(regime=regime, stakeholders=stakeholders)
     )
 
@@ -322,16 +323,12 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             "predicates. Declare the predicates, or drop the references."
         )
 
-    invalid_names = [
-        name
-        for name in [*regime.value_constraints, *regime.same_period_refs]
-        if QNAME_DELIMITER in name
-    ]
-    if invalid_names:
-        error_messages.append(
-            f"Value-constraint and reference-value names cannot contain the "
-            f"reserved separator '{QNAME_DELIMITER}': {invalid_names}."
+    error_messages.extend(
+        path_segment_name_errors(
+            kind="Value-constraint and reference-value",
+            names=[*regime.value_constraints, *regime.same_period_refs],
         )
+    )
 
     # The engine-facing names: a value constraint's own name is the key its
     # declaration sits under, so reading the declared names would report
@@ -415,7 +412,8 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
     regimes: the gate is a plain boolean callable (a stochastic, probabilistic
     gate — a `StochasticTransition` — is not implemented); the legs cover the
     SOURCE's stakeholder structure (exactly one leg for a singleton source, one
-    per stakeholder for a collective source). Cross-regime properties — the
+    per stakeholder for a collective source); route and gate-reference keys are
+    valid parameter-path segments. Cross-regime properties — the
     target and fallback regimes exist, the stakeholder names resolve, the
     projections cover the reference states — are validated at model processing.
 
@@ -442,6 +440,14 @@ def _validate_gated_edges(*, regime: lcm.regime.Regime, law: RegimeLaw) -> None:
             )
         elif not callable(edge.gate):
             error_messages.append(f"{prefix}the gate must be a callable.")
+        error_messages.extend(
+            path_segment_name_errors(kind=f"{prefix}route", names=edge.legs)
+        )
+        error_messages.extend(
+            path_segment_name_errors(
+                kind=f"{prefix}gate-reference", names=edge.gate_refs
+            )
+        )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
         elif source_stakeholders is None:
@@ -549,15 +555,11 @@ def _validate_logical_consistency(regime: lcm.regime.Regime, *, law: RegimeLaw) 
         *regime.decomposed_constraints.keys(),
         *regime.decomposed_functions.keys(),
     ]
-    invalid_function_names = [
-        name for name in all_function_names if QNAME_DELIMITER in name
-    ]
-    if invalid_function_names:
-        error_messages.append(
-            f"Function names cannot contain the reserved separator "
-            f"'{QNAME_DELIMITER}'. The following names are invalid: "
-            f"{invalid_function_names}.",
+    error_messages.extend(
+        path_segment_name_errors(
+            kind="Function and constraint", names=all_function_names
         )
+    )
 
     next_prefixed = [name for name in all_function_names if name.startswith("next_")]
     if next_prefixed:
@@ -567,16 +569,12 @@ def _validate_logical_consistency(regime: lcm.regime.Regime, *, law: RegimeLaw) 
             f"Invalid names: {next_prefixed}.",
         )
 
-    all_variable_names = [*regime.states.keys(), *regime.actions.keys()]
-    invalid_variable_names = [
-        name for name in all_variable_names if QNAME_DELIMITER in name
-    ]
-    if invalid_variable_names:
-        error_messages.append(
-            f"State and action names cannot contain the reserved separator "
-            f"'{QNAME_DELIMITER}'. The following names are invalid: "
-            f"{invalid_variable_names}.",
+    error_messages.extend(
+        path_segment_name_errors(
+            kind="State and action",
+            names=[*regime.states.keys(), *regime.actions.keys()],
         )
+    )
 
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_joint_transition_grammar_errors(regime, law=law))
@@ -1282,11 +1280,10 @@ def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
             prefix = f"joint_transitions['{target_name}'][{kernel_name!r}]"
             if not isinstance(kernel_name, str):
                 error_messages.append(f"{prefix}: the node name must be a string.")
-            elif QNAME_DELIMITER in kernel_name:
-                error_messages.append(
-                    f"{prefix}: node names cannot contain the reserved separator "
-                    f"'{QNAME_DELIMITER}'."
-                )
+            elif node_name_errors := path_segment_name_errors(
+                kind=f"{prefix}: node", names=[kernel_name]
+            ):
+                error_messages.extend(node_name_errors)
             elif (
                 reserved_prefix := next(
                     (

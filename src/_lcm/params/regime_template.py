@@ -33,6 +33,7 @@ from _lcm.typing import (
     StateName,
     TransitionFunctionName,
 )
+from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
@@ -438,6 +439,10 @@ def _discovered_params(
     Returns:
         Dictionary of parameter name to type annotation, in name order.
 
+    Raises:
+        InvalidNameError: If a parameter's name is not a valid parameter-path
+            segment.
+
     """
     if isinstance(func, Phased):
         tree = {
@@ -449,6 +454,13 @@ def _discovered_params(
         }
     else:
         tree = dict(dt.create_tree_with_input_types({name: func}))
+    # `dags` nests a `__`-joined argument into a subtree, so the argument names
+    # are read back from the flattened tree.
+    if errors := path_segment_name_errors(
+        kind=f"{name!r} argument",
+        names=[arg for arg in dt.flatten_to_qnames(tree) if arg not in non_params],
+    ):
+        raise InvalidNameError(errors[0])
     return {
         arg_name: annotation
         for arg_name, annotation in sorted(tree.items())

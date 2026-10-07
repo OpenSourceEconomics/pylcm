@@ -60,7 +60,7 @@ from _lcm.typing import (
     StateName,
 )
 from _lcm.utils.containers import get_field_names_and_values
-from _lcm.utils.error_messages import format_messages
+from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
@@ -288,13 +288,7 @@ def validate_model_inputs(
     if not user_regimes:
         error_messages.append("At least one terminal regime must be provided.")
 
-    # Validate regime names don't contain separator
-    invalid_names = [name for name in user_regimes if QNAME_DELIMITER in name]
-    if invalid_names:
-        error_messages.append(
-            f"Regime names cannot contain the separator character "
-            f"'{QNAME_DELIMITER}'. The following names are invalid: {invalid_names}."
-        )
+    error_messages.extend(path_segment_name_errors(kind="Regime", names=user_regimes))
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
     terminal_regimes = [name for name in user_regimes if laws[name].terminal]
