@@ -92,10 +92,6 @@ from tests.execution.test_eager_core import eager_program, internal_eager_progra
 from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
-from tests.test_transition_checks import (
-    _health_probs_reading_effort,
-    _model_with_function_reading_health_probs,
-)
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -1923,6 +1919,11 @@ def test_solve_admission_covers_code_owners_held_off_the_execution_device(
     law keeps for validation lives there. A budgeted solve on device 1 still
     decides every candidate on device 0 as well, charging at least those 8 bytes.
     """
+    from tests.test_transition_checks import (  # noqa: PLC0415
+        _health_probs_reading_effort,
+        _model_with_function_reading_health_probs,
+    )
+
     with jax.default_device(jax.devices()[0]):
         model = _model_with_function_reading_health_probs(
             next_health_func=_health_probs_reading_effort,
