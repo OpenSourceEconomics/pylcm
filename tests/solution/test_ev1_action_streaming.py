@@ -148,7 +148,7 @@ def test_ev1_packs_pure_discrete_branches_into_vector_blocks() -> None:
     scan_lengths = _nested_scan_lengths(closed_jaxpr)
     n_branches = sectors.size * statuses.size
     n_vector_blocks = math.ceil(n_branches / block_width)
-    assert scan_lengths == [n_vector_blocks - 1]
+    assert scan_lengths == [n_vector_blocks]
 
     expected = _numpy_ev1_oracle(
         Q_and_F=Q_and_F,
