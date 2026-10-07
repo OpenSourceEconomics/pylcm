@@ -82,6 +82,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FlatParams,
+    FlatRegimeParams,
     RegimeName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
@@ -1505,9 +1506,13 @@ def _with_outer_post_decision(
     the durable's declared law of motion reads it and produces the next-period
     stock itself, so a law that is not the identity is honoured rather than
     replaced by the node the outer search picked.
+
+    Only the source's own branch receives the node. Its edge parameters stay in
+    `flat_params["edges"]`, which the inner argument builder joins with the own
+    branch when it binds the kernel.
     """
     regime_params = {
-        **dict(regime_kernel_params(flat_params, regime_name=regime_name)),
+        **dict(cast("FlatRegimeParams", flat_params[regime_name])),
         outer_post_decision: value,
     }
     return MappingProxyType(
