@@ -17,7 +17,12 @@
 
 `map_coordinates` reads an array at fractional coordinates by weighting its
 neighbouring cells; the continuation's value interpolator is its only caller.
-Coordinates are clamped to the array's extent rather than extrapolated.
+
+- Outside the array's extent the read extrapolates linearly from the two
+  outermost nodes of each axis, so a corner weight there is negative.
+- `-inf` marks a state at which no action is feasible. A read whose stencil
+  gives such a corner a nonzero weight, of either sign, is itself `-inf`; a
+  corner of exactly zero weight contributes nothing, whatever stands at it.
 """
 
 import functools
@@ -28,6 +33,7 @@ from collections.abc import Sequence
 import jax.numpy as jnp
 from jax import jit, lax
 
+from _lcm.probability import is_represented_zero
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import FloatND, IntND
 
@@ -66,6 +72,11 @@ def map_coordinates(
     non-positive weights would truncate an extrapolated read rather than drop a
     null event.
 
+    The same negative weight is why feasibility is decided per corner rather
+    than left to the arithmetic: a negative weight on `-inf` gives `+inf`, which
+    would report an infeasible read as the best one available. Any corner
+    holding `-inf` under a nonzero weight therefore makes the read `-inf`.
+
     Args:
       input: N-dimensional input array from which values are interpolated.
       coordinates: length-N sequence of arrays specifying the coordinates
@@ -94,27 +105,35 @@ def map_coordinates(
     ]
 
     interpolation_values = []
+    touches_infeasible = jnp.zeros((), dtype=bool)
     for indices_and_weights in itertools.product(*interpolation_data):
         indices, weights = zip(*indices_and_weights, strict=True)
         contribution = input[indices]
         corner_weight = _multiply_all(weights)
         # Only a floating grid can hold the `+-inf` that makes a zero-weight
-        # corner undefined, and only a floating weight has a sign bit and an
-        # exponent field to read. An integer read has neither hazard, so it
-        # multiplies as it always did.
-        weighted_value = (
-            zero_safe_weighted_term(
+        # corner undefined or marks an infeasible state, and only a floating
+        # weight has a sign bit and an exponent field to read. An integer read
+        # has neither hazard, so it multiplies as it always did.
+        if jnp.issubdtype(corner_weight.dtype, jnp.floating) and jnp.issubdtype(
+            contribution.dtype, jnp.floating
+        ):
+            weighted_value = zero_safe_weighted_term(
                 weight=corner_weight,
                 value=contribution,
                 subnormal_is_accounted_for=True,
             )
-            if jnp.issubdtype(corner_weight.dtype, jnp.floating)
-            and jnp.issubdtype(contribution.dtype, jnp.floating)
-            else corner_weight * contribution
-        )
+            touches_infeasible = touches_infeasible | (
+                jnp.isneginf(contribution) & ~is_represented_zero(corner_weight)
+            )
+        else:
+            weighted_value = corner_weight * contribution
         interpolation_values.append(weighted_value)
 
     result = _sum_all(interpolation_values)
+    if jnp.issubdtype(result.dtype, jnp.floating):
+        result = jnp.where(
+            touches_infeasible, jnp.asarray(-jnp.inf, dtype=result.dtype), result
+        )
 
     if jnp.issubdtype(input.dtype, jnp.integer):
         result = _round_half_away_from_zero(result)
