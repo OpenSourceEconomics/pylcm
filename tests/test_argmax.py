@@ -1,11 +1,17 @@
+from functools import partial
+
 import jax.numpy as jnp
-from jax import jit
+import pytest
+from jax import jit, make_jaxpr, vmap
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
     argmax_and_max,
+)
+from tests.solution._reduced_maximum_probe import (
+    count_equalities_with_a_reduced_maximum,
 )
 
 # Test jitted functions
@@ -157,3 +163,38 @@ def test_flatten_last_n_axes_3d():
 
     got = _flatten_last_n_axes(a=a, n=3)
     assert_array_equal(got, a.reshape(8))
+
+
+def test_argmax_and_max_identity_is_not_matched_against_a_separately_reduced_max():
+    """The argmax and the max it reports come out of one reduction."""
+    a = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
+    where = jnp.array([[True, True, True, False]])
+
+    jaxpr = make_jaxpr(
+        partial(argmax_and_max, axis=1, initial=-jnp.inf),
+    )(a=a, where=where).jaxpr
+
+    assert count_equalities_with_a_reduced_maximum(jaxpr) == 0
+
+
+@pytest.mark.parametrize(
+    ("a", "where", "expected_index"),
+    [
+        ([10.0, 3.0, 7.0], [False, True, True], 2),
+        ([-jnp.inf, 4.0, 9.0, 9.0], [True, True, True, True], 2),
+        ([0.5, 8.0, -1.0], [False, True, False], 1),
+    ],
+    ids=["position-zero-infeasible", "tie-after-position-zero", "single-feasible"],
+)
+def test_argmax_and_max_index_attains_the_reported_max_under_jit_and_vmap(
+    *, a: list[float], where: list[bool], expected_index: int
+) -> None:
+    """In a batch, each row's index attains its max; it is never a stray zero."""
+    rows = jnp.asarray([a, a], dtype=jnp.float32)
+    masks = jnp.asarray([where, where])
+
+    index, _ = vmap(
+        jit(partial(argmax_and_max, axis=0, initial=-jnp.inf)),
+    )(a=rows, where=masks)
+
+    assert_array_equal(index, jnp.array([expected_index, expected_index]))
