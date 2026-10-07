@@ -405,7 +405,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
-    PROCESSING_SOURCE: "bcddc36772e2dc4a555f48892c9889280fa2a8d0805edbc44fd27fe3b6a464ac",
+    PROCESSING_SOURCE: "3c8d68e86dc79898637344b6cc1b6fc374463c1cefff0591a3da44140df0f577",
     GRID_SEARCH_SOURCE: "2a9b0fa192956e4b3ee4b4515bf87b213611c3b6ef8443faf50746bb13362b6e",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -3057,7 +3057,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
         label="simulate caller",
         contracts={
             "_build_per_subject_decisions_per_period": "3b2dfd37e32f72e41f17264ec806fcb9309bf9f6d2faed91fafd1477871cea83",
-            "process_regimes": "ba3b9d0bd87897a4f6f7cdaf53d4eba51f6257dfb4bf83d6e2b64f10f66e29a2",
+            "process_regimes": "2e0fd318cc1a09b42896fc8b3fe7875ce3dca4f4b8bb2a8e5ed5a07920bd8695",
         },
     )
     try:

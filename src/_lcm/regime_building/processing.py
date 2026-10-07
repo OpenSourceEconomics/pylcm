@@ -515,6 +515,7 @@ def process_regimes(
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
+    _validate_all_conditioned_processes(all_grids=all_grids)
     # Only a state can be entered: entry places a next-period value on the
     # target's support, and an action is chosen inside the target's own period,
     # so it has no axis in that regime's value function to place anything on.
@@ -5507,7 +5508,6 @@ def _process_regime_core(
         # axis stays integrated out where it was.
         if phase_name != "solution" or not getattr(grid, "fold", False)
     }
-    _validate_all_conditioned_processes(all_grids=all_grids)
     # A process the source carries is transitioned from its current value. One
     # it does not carry is entered at its own law -- unless the source declared
     # an explicit entry law for it, which is the more specific statement and
