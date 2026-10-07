@@ -352,3 +352,67 @@ def test_streaming_scans_every_block(route: str) -> None:
     """One scan runs over every block of the action product."""
     build, expected = _STREAMED_ROUTES[route]
     assert scan_lengths(jaxpr=build()) == expected
+
+
+def _shifted_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A Q that reads the action and one per-device state."""
+    return jnp.sin(choice) + shift, jnp.ones((), dtype=bool)
+
+
+def _shifted_collective_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Two stakeholders' Q from the action and one per-device state."""
+    return (jnp.sin(choice) + shift) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
+
+
+def _shifted_ev1_Q_and_F(
+    *, branch: jax.Array, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A discrete-branch Q that reads one per-device state."""
+    return jnp.sin(choice) + branch + shift, jnp.ones((), dtype=bool)
+
+
+_SHIFTED_ROUTES = {
+    "hard_max": lambda shift: build_streaming_max_Q_over_a(
+        Q_and_F=_shifted_Q_and_F, action_names=("choice",), block_width=3
+    )(choice=_CHOICE, shift=shift),
+    "collective": lambda shift: build_streaming_collective_max_Q_over_a(
+        Q_and_F=_shifted_collective_Q_and_F,
+        action_names=("choice",),
+        block_width=3,
+        stakeholders=("first", "second"),
+        weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
+    )(choice=_CHOICE, shift=shift),
+    "ev1": lambda shift: build_streaming_ev1_max_Q_over_a(
+        Q_and_F=_shifted_ev1_Q_and_F,
+        action_names=("branch", "choice"),
+        n_discrete_action_axes=1,
+        block_width=3,
+        scale=1.0,
+    )(branch=jnp.arange(2.0), choice=_CHOICE, shift=shift),
+}
+
+
+@pytest.mark.parametrize("route", tuple(_SHIFTED_ROUTES))
+def test_streaming_reduces_a_device_varying_state(route: str) -> None:
+    """Inside `shard_map`, a state that varies over the mesh axis streams as outside."""
+    reduce_route = _SHIFTED_ROUTES[route]
+    mesh = jax.make_mesh((1,), ("X",), (jax.sharding.AxisType.Auto,))
+    shift = jnp.asarray([0.25])
+    sharded = jax.shard_map(
+        lambda local: jax.tree.map(
+            lambda leaf: leaf[jnp.newaxis], reduce_route(local[0])
+        ),
+        mesh=mesh,
+        in_specs=jax.P("X"),
+        out_specs=jax.P("X"),
+        check_vma=True,
+    )(shift)
+    expected = reduce_route(shift[0])
+    assert_array_equal(
+        np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(sharded)]),
+        np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(expected)]),
+    )

@@ -39,7 +39,7 @@ import itertools
 import math
 import os
 import tempfile
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -184,7 +184,7 @@ def nnbegm_inner_contexts(
 
 
 @contextlib.contextmanager
-def _environment(variables: Mapping[str, str]) -> Iterator[None]:
+def _environment(variables: Mapping[str, str]) -> Generator[None]:
     """Set environment variables for the duration of the block."""
     previous = {name: os.environ.get(name) for name in variables}
     os.environ.update(variables)
