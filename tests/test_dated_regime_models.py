@@ -32,6 +32,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
 )
+from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
 
@@ -723,3 +724,28 @@ def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
         regime_names=("working", "retirement", "dead"),
     )
     assert bound.targets == ("working", "dead", "retirement")
+
+
+def test_a_phased_pair_of_transitions_names_the_supported_form() -> None:
+    """A source mapped to `Phased(Transition, Transition)` is told the supported form.
+
+    The law is phased inside one `Transition` whose targets both phases share.
+    """
+    law = DeterministicTransition(func=lambda: RegimeId.dead)
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"'working'.*inside one `Transition`.*"
+            r"Transition\(targets=\{\.\.\.\}, law=Phased\(solve=\.\.\., "
+            r"simulate=\.\.\.\)\)"
+        ),
+    ):
+        _dated_model(
+            edges={
+                "working": Phased(
+                    solve=Transition(targets=TWO_EDGE_TARGETS, law=law),
+                    simulate=Transition(targets=TWO_EDGE_TARGETS, law=law),
+                ),
+                "retirement": RETIREMENT_EDGES,
+            },
+        )
