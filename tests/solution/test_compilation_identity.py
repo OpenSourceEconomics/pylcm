@@ -31,12 +31,12 @@ from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
 from tests.test_models.dcegm_paper_twin import get_params as twin_params
 from tests.test_models.deterministic.regression import (
     START_AGE,
+    WORKING_LIFE_LAW,
     LaborSupply,
     RegimeId,
     dead,
     get_params,
     working_life,
-    working_life_transitions,
 )
 
 _N_PERIODS = 3
@@ -113,7 +113,7 @@ def _model(
         edges={
             "working_life": Transition(
                 targets={"working_life": 18, "dead": (18, 19)},
-                law=working_life_transitions(last_age=final_age_alive + 1),
+                law=WORKING_LIFE_LAW,
             )
         },
     )

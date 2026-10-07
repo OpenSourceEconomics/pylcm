@@ -554,7 +554,7 @@ def build_model(  # noqa: C901, PLR0912
         # The survival law reads the age past which the alive regime dies; with
         # one outgoing edge per age there is no law and no such parameter.
         fixed_params={"final_age_alive": float(n_periods - 1)}
-        if survival_transition is not None and n_periods >= 3
+        if survival_transition is not None
         else None,
     )
 

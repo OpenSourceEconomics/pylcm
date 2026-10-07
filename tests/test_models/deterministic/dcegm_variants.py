@@ -184,12 +184,7 @@ def get_full_params(
     interest_rate: float = 0.0,
     wage: float = 20.0,
 ) -> dict:
-    """Params for the full-model pair; valid for both solver variants.
-
-    The laws reading `final_age_alive` exist only where some age has several
-    outgoing edges (see `lcm_examples.iskhakov_et_al_2017.get_edges`), so a
-    two-period model takes none.
-    """
+    """Params for the full-model pair; valid for both solver variants."""
     return base.get_params(
         n_periods=n_periods,
         discount_factor=discount_factor,

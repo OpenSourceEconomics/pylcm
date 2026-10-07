@@ -118,8 +118,7 @@ def borrowing_constraint(
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-# Laws of the `working_life` and `retirement` edges at ages with several outgoing
-# edges.
+# Laws of the `working_life` and `retirement` edges.
 WORKING_LIFE_LAW = StochasticTransition(func=next_regime_from_working)
 RETIREMENT_LAW = StochasticTransition(func=next_regime_from_retirement)
 
@@ -183,16 +182,8 @@ def get_model(n_periods: int) -> Model:
     }
     return Model(
         edges={
-            "working_life": (
-                Transition(targets=working_targets, law=WORKING_LIFE_LAW)
-                if len(working_targets) > 1
-                else working_targets
-            ),
-            "retirement": (
-                Transition(targets=retirement_targets, law=RETIREMENT_LAW)
-                if len(retirement_targets) > 1
-                else retirement_targets
-            ),
+            "working_life": Transition(targets=working_targets, law=WORKING_LIFE_LAW),
+            "retirement": Transition(targets=retirement_targets, law=RETIREMENT_LAW),
         },
         regimes={
             "working_life": working_life,

@@ -114,8 +114,7 @@ def build_model(
         "buy_private": DiscreteGrid(category_class=BuyPrivate),
     }
     transitions = DeterministicTransition(func=smooth.next_regime)
-    # The alive regime can both stay and die only once it lives past age 20.
-    has_law = final_age_alive > 20
+    stays = tuple(range(20, final_age_alive, 5))
     if variant == "brute":
         # Same oracle correction as the smooth toy: reaching `s'` through an
         # investment action would let the oracle land on only 3 of the 15 outer
@@ -165,16 +164,14 @@ def build_model(
             "alive": Transition(
                 targets={
                     "dead": tuple(range(20, final_age_alive + 1, 5)),
-                    "alive": tuple(range(20, final_age_alive, 5)),
+                    **({"alive": stays} if stays else {}),
                 },
                 law=transitions,
-            )
-            if has_law
-            else {"dead": tuple(range(20, final_age_alive + 1, 5))},
+            ),
         },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=smooth.RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
-        fixed_params={"final_age_alive": final_age_alive} if has_law else {},
+        fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
     )

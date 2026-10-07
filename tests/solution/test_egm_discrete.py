@@ -36,8 +36,8 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
-    retirement_transitions,
-    working_life_transitions,
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base
@@ -58,7 +58,7 @@ N_PERIODS = 4
 def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age.
 
-    The worker chooses by `working_life_transitions`; the retiree follows
+    The worker chooses by `WORKING_LIFE_LAW`; the retiree follows
     `retirement_law`.
     """
     return {
@@ -68,7 +68,7 @@ def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Tran
                 "retirement": tuple(ages.exact_values[:-2]),
                 "dead": tuple(ages.exact_values[:-1]),
             },
-            law=working_life_transitions(last_age=ages.exact_values[-1]),
+            law=WORKING_LIFE_LAW,
         ),
         "retirement": Transition(
             targets={
@@ -165,11 +165,8 @@ def _get_skill_model() -> Model:
 def _get_must_retire_model() -> Model:
     """Full DC-EGM retirement model where a constraint forbids working."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     return Model(
-        edges=_lifecycle_edges(
-            ages=ages, retirement_law=retirement_transitions(last_age=last_age)
-        ),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_LAW),
         regimes={
             "working_life": dcegm_working_life.replace(
                 constraints={"must_retire": must_retire},
@@ -339,10 +336,11 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     # The granular transition replaces the age-based one, so its param goes
     # and the per-cell survival rate (set to NaN) arrives.
     del params["final_age_alive"]
-    params["retirement"] = {
-        **params.get("retirement", {}),
-        "retirement": {"next_regime": {"survival_rate": float("nan")}},
-        "dead": {"next_regime": {"survival_rate": float("nan")}},
+    params["edges"] = {
+        "retirement": {
+            "retirement": {"survival_rate": float("nan")},
+            "dead": {"survival_rate": float("nan")},
+        }
     }
 
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):

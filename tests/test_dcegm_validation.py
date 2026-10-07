@@ -41,7 +41,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm_examples.iskhakov_et_al_2017 import working_life_transitions
+from lcm_examples.iskhakov_et_al_2017 import WORKING_LIFE_LAW
 from lcm_examples.mortality import (
     borrowing_constraint,
     dead,
@@ -61,7 +61,7 @@ RETIREMENT_TARGETS = {"retirement": 40, "dead": (40, 50)}
 RETIREMENT_EDGES = {
     "retirement": Transition(
         targets=RETIREMENT_TARGETS,
-        law=retirement_only.retirement_transitions(last_age=LAST_AGE),
+        law=retirement_only.RETIREMENT_LAW,
     )
 }
 
@@ -630,7 +630,7 @@ def _three_regime_model_with_brute_worker(
         edges={
             "working_life": Transition(
                 targets={"dead": dies, "working_life": stays, "retirement": stays},
-                law=working_life_transitions(last_age=ages.exact_values[-1]),
+                law=WORKING_LIFE_LAW,
             ),
             "retirement": Transition(
                 targets={
@@ -725,11 +725,11 @@ def test_non_dcegm_non_terminal_target_raises():
                         "retirement": (40,),
                         "dead": (40, 50),
                     },
-                    law=base.working_life_transitions(last_age=60),
+                    law=base.WORKING_LIFE_LAW,
                 ),
                 "retirement": Transition(
                     targets={"retirement": (40,), "dead": (40, 50)},
-                    law=base.retirement_transitions(last_age=60),
+                    law=base.RETIREMENT_LAW,
                 ),
             },
             regimes={

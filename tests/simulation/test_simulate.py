@@ -105,12 +105,21 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                     "koopmans_aggregator__discount_factor": jnp.asarray(1.0),
                     "utility__disutility_of_work": jnp.asarray(1.0),
                     "working_life__next_wealth__interest_rate": jnp.asarray(0.05),
-                    # `simulate` consumes already-canonical params; an `int` leaf
-                    # is `int32` (a bare `jnp.asarray(0)` would be `int64` under x64).
-                    "next_regime__final_age_alive": jnp.asarray(0, dtype=jnp.int32),
                 }
             ),
             "dead": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {
+                    "working_life": MappingProxyType(
+                        {
+                            # `simulate` consumes already-canonical params; an
+                            # `int` leaf is `int32` (a bare `jnp.asarray(0)` would
+                            # be `int64` under x64).
+                            "final_age_alive": jnp.asarray(0, dtype=jnp.int32),
+                        }
+                    )
+                }
+            ),
         }
     )
 

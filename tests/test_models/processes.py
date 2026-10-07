@@ -101,8 +101,7 @@ def get_model(
     ],
 ):
     final_age_alive = n_periods - 2
-    # The alive regime can both stay and die only when it lives past age 0.
-    has_law = final_age_alive > 0
+    stays = tuple(range(final_age_alive))
 
     alive = UserRegime(
         states={
@@ -129,18 +128,16 @@ def get_model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
-        fixed_params={"final_age_alive": final_age_alive} if has_law else {},
+        fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={0: "alive"},
         edges={
             "alive": Transition(
                 targets={
-                    "alive": tuple(range(final_age_alive)),
+                    **({"alive": stays} if stays else {}),
                     "dead": tuple(range(final_age_alive + 1)),
                 },
                 law=DeterministicTransition(func=next_regime),
             )
-            if has_law
-            else {"dead": tuple(range(final_age_alive + 1))}
         },
     )
 

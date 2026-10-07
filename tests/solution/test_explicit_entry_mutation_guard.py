@@ -92,7 +92,7 @@ _PARAMS = {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-        "target": {"next_regime": {}, "next_shock": {}},
+        "target": {"next_shock": {}},
     },
     "target": {"utility": {}},
 }

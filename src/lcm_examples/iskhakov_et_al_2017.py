@@ -21,7 +21,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -41,7 +40,6 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
-    UserAge,
 )
 
 
@@ -143,24 +141,10 @@ WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 
-def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Work, retire or die until the age before `last_age`, then die."""
-    return ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(
-            func=next_regime_from_working,
-        ),
-        then=DeterministicTransition(func=next_regime_from_working),
-    )
-
-
-def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Stay retired or die until the age before `last_age`, then die."""
-    return ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime_from_retirement),
-        then=DeterministicTransition(func=next_regime_from_retirement),
-    )
+# Laws of the `working_life` and `retirement` edges: work, retire or die, and stay
+# retired or die; both die from `final_age_alive` on.
+WORKING_LIFE_LAW = DeterministicTransition(func=next_regime_from_working)
+RETIREMENT_LAW = DeterministicTransition(func=next_regime_from_retirement)
 
 
 working_life = Regime(
@@ -320,10 +304,8 @@ def get_edges(*, ages: AgeGrid) -> dict[str, object]:
 
     Working life leads to work, retirement or death and retirement to retirement
     or death at every age before the second-to-last; at that age both lead only
-    to death. A source with several outgoing edges carries its law as a
-    `Transition`.
+    to death.
     """
-    last_age = ages.exact_values[-1]
     earlier_ages = tuple(ages.exact_values[:-2])
     working_targets = {
         "dead": tuple(ages.exact_values[:-1]),
@@ -338,22 +320,8 @@ def get_edges(*, ages: AgeGrid) -> dict[str, object]:
         **({"retirement": earlier_ages} if earlier_ages else {}),
     }
     return {
-        "working_life": (
-            Transition(
-                targets=working_targets,
-                law=working_life_transitions(last_age=last_age),
-            )
-            if earlier_ages
-            else working_targets
-        ),
-        "retirement": (
-            Transition(
-                targets=retirement_targets,
-                law=retirement_transitions(last_age=last_age),
-            )
-            if earlier_ages
-            else retirement_targets
-        ),
+        "working_life": Transition(targets=working_targets, law=WORKING_LIFE_LAW),
+        "retirement": Transition(targets=retirement_targets, law=RETIREMENT_LAW),
     }
 
 
@@ -381,13 +349,10 @@ def get_params(
         Parameter dict ready for `model.solve()`.
 
     """
-    final_age_alive = 40 + (n_periods - 2) * 10
-    # A two-coordinate graph has no selector reading `final_age_alive`.
-    has_selector = n_periods > 2  # noqa: PLR2004
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
-        **({"final_age_alive": final_age_alive} if has_selector else {}),
+        "final_age_alive": 40 + (n_periods - 2) * 10,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},
@@ -401,8 +366,10 @@ def get_params(
 __all__ = [
     "CONSUMPTION_GRID",
     "DCEGM_SOLVER",
+    "RETIREMENT_LAW",
     "SAVINGS_GRID",
     "WEALTH_GRID",
+    "WORKING_LIFE_LAW",
     "LaborSupply",
     "RegimeId",
     "borrowing_constraint",
@@ -420,10 +387,8 @@ __all__ = [
     "next_wealth",
     "next_wealth_from_savings",
     "retirement",
-    "retirement_transitions",
     "savings",
     "utility_retirement",
     "utility_working",
     "working_life",
-    "working_life_transitions",
 ]

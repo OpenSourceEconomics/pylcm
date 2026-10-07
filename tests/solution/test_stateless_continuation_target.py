@@ -91,7 +91,6 @@ def _solve_with_bequest(bequest: float):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }
@@ -180,7 +179,6 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {"alive": {}, "gone": {}},
         },
         "gone": {"utility": {}},
         "limbo": {"utility": {}},
@@ -245,7 +243,6 @@ def _solve_with_process_only_target(level: float):
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }

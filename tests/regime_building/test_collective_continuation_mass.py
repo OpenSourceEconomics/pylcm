@@ -325,14 +325,14 @@ def _two_target_params(
 ) -> UserParams:
     """Return the two-target model's params, with the split probabilities."""
     return {
-        "couple": {
-            "koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR},
-            "couple": {"next_regime": {"stay_probability": stay_probability}},
-            "couple_terminal": {
-                "next_regime": {"leave_probability": leave_probability}
-            },
-        },
+        "couple": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},
         "couple_terminal": {},
+        "edges": {
+            "couple": {
+                "couple": {"stay_probability": stay_probability},
+                "couple_terminal": {"leave_probability": leave_probability},
+            }
+        },
     }
 
 

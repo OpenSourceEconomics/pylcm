@@ -169,8 +169,8 @@ def test_template_has_per_target_regime_transition_keys() -> None:
         work_edges={"work": (0, 1), "dead": (0, 1, 2)},
     )
     template = model.get_params_template()
-    assert "hazard" in template["work"]["dead"]["next_regime"]
-    assert "hazard" in template["work"]["work"]["next_regime"]
+    assert "hazard" in template["edges"]["work"]["dead"]
+    assert "hazard" in template["edges"]["work"]["work"]
 
 
 def test_plain_callable_cell_is_rejected() -> None:
@@ -272,9 +272,9 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
             },
         ),
     )
-    template = model.get_params_template()["work"]
-    assert "perceived_mass" in template["dead"]["next_regime"]
-    assert "realized_mass" in template["retired"]["next_regime"]
+    template = model.get_params_template()["edges"]["work"]
+    assert "perceived_mass" in template["dead"]
+    assert "realized_mass" in template["retired"]
     params = {"discount_factor": 1.0, "perceived_mass": 1.0, "realized_mass": 1.0}
     if phase_local_handoffs:
         params |= {"perceived_scale": 1.0, "realized_scale": 1.0}
@@ -429,9 +429,9 @@ def test_granular_keys_narrow_reachability() -> None:
     assert "work" in model.user_regimes
 
 
-def test_per_target_regime_transition_template_nests_under_target() -> None:
-    """Granular cells' params nest under the target in the template."""
+def test_per_target_regime_transition_leaves_no_target_branch_under_source() -> None:
+    """Granular cells add no target branch to the source regime's template."""
     work = _build_regime()
     model = _build_model(work=work)
     template = model.get_params_template()
-    assert "next_regime" in template["work"]["retired"]
+    assert not {"work", "retired", "dead"} & set(template["work"])

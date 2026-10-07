@@ -235,10 +235,14 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
 
     params = {
         "next_health": {"probs_array": probs_array},
-        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(
-        log_level="debug", params={"discount_factor": discount_factor, "alive": params}
+        log_level="debug",
+        params={
+            "discount_factor": discount_factor,
+            "alive": params,
+            "edges": {"alive": {"final_age_alive": model.n_periods - 2}},
+        },
     ).values
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
@@ -296,7 +300,6 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
 
     params_alive = {
         "next_health": {"probs_array": probs_array},
-        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     initial_conditions = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
@@ -306,7 +309,11 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     }
     result = model.simulate(
         log_level="debug",
-        params={"discount_factor": discount_factor, "alive": params_alive},
+        params={
+            "discount_factor": discount_factor,
+            "alive": params_alive,
+            "edges": {"alive": {"final_age_alive": model.n_periods - 2}},
+        },
         initial_conditions=initial_conditions,
     )
     # Filter to alive regime only (dead regime has trivial values)

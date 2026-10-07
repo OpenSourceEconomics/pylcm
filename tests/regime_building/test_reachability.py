@@ -342,7 +342,7 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
 
 @pytest.mark.parametrize(
     "fixed_params",
-    [{"probability": 0.0}, {"source": {"high": {"next_regime": {"probability": 0.0}}}}],
+    [{"probability": 0.0}, {"edges": {"source": {"high": {"probability": 0.0}}}}],
 )
 def test_fixed_zero_probability_removes_target_problem(fixed_params: dict) -> None:
     """A fixed zero cell creates neither a physical visit nor a value problem."""

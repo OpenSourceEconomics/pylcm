@@ -189,12 +189,10 @@ def _numerical_inputs(
     return (
         model,
         {
-            "alive": {
-                "koopmans_aggregator": {"discount_factor": 0.5},
-                "done": {"next_regime": {"done_probability": 1.0}},
-            },
+            "alive": {"koopmans_aggregator": {"discount_factor": 0.5}},
             "done": {},
             "gone": {},
+            "edges": {"alive": {"done": {"done_probability": 1.0}}},
         },
         {
             "age": jnp.zeros(3),
@@ -262,11 +260,11 @@ def test_invalid_regime_diagnostic_matches_unbudgeted_and_recovers() -> None:
         )
         invalid = copy.deepcopy(params)
         assert isinstance(invalid, dict)
-        alive_params = invalid["alive"]
+        edge_params = invalid["edges"]
+        assert isinstance(edge_params, dict)
+        alive_params = edge_params["alive"]
         assert isinstance(alive_params, dict)
-        done_params = alive_params["done"]
-        assert isinstance(done_params, dict)
-        law_params = done_params["next_regime"]
+        law_params = alive_params["done"]
         assert isinstance(law_params, dict)
         law_params["done_probability"] = 0.5
         with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as error:

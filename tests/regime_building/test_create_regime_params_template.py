@@ -29,7 +29,6 @@ def test_create_params_without_processes(binary_category_class):
             "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"c": "no_annotation_found"},
             "next_b": {},
-            "next_regime": {},
         }
     )
 
@@ -182,7 +181,6 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
             "koopmans_aggregator": {},
             "utility": {},
             "next_discount_factor": {},
-            "next_regime": {},
         }
     )
 
@@ -256,7 +254,6 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "koopmans_aggregator": {"discount_factor": "FloatND"},
             "utility": {"risk_aversion": "no_annotation_found"},
             "next_wealth": {},
-            "next_regime": {},
         }
     )
 
@@ -297,6 +294,5 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
             "utility": {},
             "next_wealth": {},
             "next_aime": {},
-            "next_regime": {},
         }
     )

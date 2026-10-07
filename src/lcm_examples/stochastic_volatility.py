@@ -136,20 +136,12 @@ def get_model(
         ),
     }
     return Model(
-        edges={
-            "alive": (
-                Transition(targets=alive_targets, law=alive_law)
-                if len(alive_targets) > 1
-                else alive_targets
-            )
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),
-        fixed_params=(
-            {"final_age_alive": final_age_alive} if len(alive_targets) > 1 else {}
-        ),
+        fixed_params={"final_age_alive": final_age_alive},
     )
 
 
