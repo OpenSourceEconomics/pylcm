@@ -778,8 +778,10 @@ def _project_user_regime_declaration(
         raise TypeError(msg)
     all_fields = (
         *fields,
-        ("transition", law.transition),
-        ("gated_edges", law.gated_edges),
+        *(
+            (declaration.name, getattr(law, declaration.name))
+            for declaration in dataclasses.fields(law)
+        ),
     )
     declaration_type = type(regime)
     return MappingProxyType(
