@@ -151,8 +151,6 @@ def build_params(
     kink_a: float = 15.0,
     rate_b: float = 0.2,
     kink_b: float = 14.0,
-    # Unused: the model's edges fix the age at which `alive` dies.
-    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the two-derived-variable budget toy.
 

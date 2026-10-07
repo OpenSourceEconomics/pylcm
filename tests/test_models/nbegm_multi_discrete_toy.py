@@ -227,8 +227,6 @@ def build_params(
     wage: float = 1.2,
     tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
-    # Unused: the model's edges fix the age at which `alive` dies.
-    final_age_alive: float = 2.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the multi-discrete ride-along toy."""
     budget_params = {

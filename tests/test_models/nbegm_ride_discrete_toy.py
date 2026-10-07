@@ -569,8 +569,6 @@ def build_params(
     premium: float = 1.5,
     tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
-    # Unused: `build_model` fixes the age at which `alive` dies.
-    final_age_alive: float = 3.0,  # noqa: ARG001
     jump_schedule: bool = False,
     tax_lump: float = 2.0,
     action_in_liquid_law: bool = False,

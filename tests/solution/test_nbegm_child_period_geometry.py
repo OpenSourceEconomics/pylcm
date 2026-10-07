@@ -104,7 +104,6 @@ def _wage_grid_model(
         return_liquid=0.0,
         income=1.0,
         subsidy_high=0.5,
-        final_age_alive=2.0,
         wage_persistence=wage_persistence,
     )
     return model, params

@@ -746,7 +746,7 @@ def test_declaring_the_bound_leaves_the_nbegm_solution_unchanged():
     admitted declaration adds no mask, no candidate, and no shift in value.
     """
     # Three periods: alive at ages 0 and 1, so life ends after age 1.
-    params = nbegm_medicaid_toy.build_params(final_age_alive=2.0)
+    params = nbegm_medicaid_toy.build_params()
     declared = _build_model(
         variant="nbegm",
         constraints={
