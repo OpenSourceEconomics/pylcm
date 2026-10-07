@@ -170,10 +170,10 @@ def test_cell_width_preserves_exact_dissolution_flags(*, width: int) -> None:
 def _collision_utility(
     *,
     wealth: ContinuousState,
-    _lcm_cell_width: ContinuousAction,
-    _lcm_cell_width_1: ContinuousAction,
+    lcm_cell_width: ContinuousAction,
+    lcm_cell_width_1: ContinuousAction,
 ) -> FloatND:
-    return wealth + 10.0 * _lcm_cell_width + 100.0 * _lcm_cell_width_1
+    return wealth + 10.0 * lcm_cell_width + 100.0 * lcm_cell_width_1
 
 
 def _collision_model() -> Model:
@@ -181,8 +181,8 @@ def _collision_model() -> Model:
     common: dict[str, Any] = {
         "states": states,
         "actions": {
-            "_lcm_cell_width": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
-            "_lcm_cell_width_1": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+            "lcm_cell_width": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+            "lcm_cell_width_1": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
         },
         "functions": {"utility": _collision_utility},
     }
@@ -203,12 +203,12 @@ def _collision_model() -> Model:
 
 
 def test_cell_width_keyword_avoids_action_names() -> None:
-    """Both occupied spellings stay numerical inputs to the declared program."""
+    """Actions spelled like the cell width keyword leave it its reserved name."""
     model = _collision_model()
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]
     )["main"]
-    assert program.requirements.tiled_axes[0].width_keyword == "_lcm_cell_width_2"
+    assert program.requirements.tiled_axes[0].width_keyword == "_lcm_cell_width"
 
 
 def test_colliding_cell_names_keep_their_economic_values() -> None:

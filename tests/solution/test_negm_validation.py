@@ -191,9 +191,9 @@ def _durable_part(new_durable: ContinuousState) -> FloatND:
 
 
 def _multiplicative_utility(
-    *, _consumption_part: FloatND, _durable_part: FloatND
+    *, consumption_part: FloatND, durable_part: FloatND
 ) -> FloatND:
-    return _consumption_part * _durable_part
+    return consumption_part * durable_part
 
 
 def test_utility_coupling_through_helper_branches_is_rejected() -> None:
@@ -201,8 +201,8 @@ def test_utility_coupling_through_helper_branches_is_rejected() -> None:
     regime = _VALID.replace(
         functions={
             **dict(_VALID.functions),
-            "_consumption_part": _consumption_part,
-            "_durable_part": _durable_part,
+            "consumption_part": _consumption_part,
+            "durable_part": _durable_part,
             "utility": _multiplicative_utility,
         },
     )
