@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
     SIMULATION_RUNTIME_SOURCE: "e28c9df32a0c7f242d65b414988df330d491dce4de7585ad2773c740492fa27a",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
+    ARGMAX_SOURCE: "8b469563cffecfa38d84e0ddda8b298284ee3bda56f7e73a7578b3e9cf30aaae",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
     PROCESSING_SOURCE: "9e7eaea0cf772c19ffdbc7c5515466c9715f1c7d152e8a2ffc26635b569fa2e2",
@@ -409,7 +409,7 @@ _SOURCE_SEALS = {
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
-    ACTION_REDUCTION_SOURCE: "729a88343ea699766c99fc594d8164459079e3d66d8ca8969c97afaeb07c7d69",
+    ACTION_REDUCTION_SOURCE: "c4a0226889d7ec3b15fe3b2414a8cee4b9e6390b834b38004588f8efdc9f98e8",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
     DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
@@ -2391,7 +2391,7 @@ def _hard_max_streaming_reduction_errors(tree: ast.Module) -> list[str]:
             "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
             "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
             "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
-            "_reduce_block": "1e606baafc9c4d89585de4b1fd7637d1108752edac1a34f8d2d28767f517ef4c",
+            "_reduce_block": "a2b99218e89f1bc0a43a8ffc2c7861240bbca164e4bbe2ab8b25b6d6f3fe8391",
         },
     )
 
@@ -5084,6 +5084,8 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         node = _definition(tree=tree, name="argmax_and_max")
         move = _definition(tree=tree, name="_move_axes_to_back")
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
+        pair_max = _definition(tree=tree, name="max_and_smallest_id")
+        pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -5112,12 +5114,37 @@ if a.ndim != 0:
 if where is not None and where.ndim != 0:
     where = _move_axes_to_back(a=where, axes=axis)
     where = _flatten_last_n_axes(a=where, n=len(axis))
-_max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)
-max_value_mask = a == _max
-if where is not None:
-    max_value_mask = jnp.logical_and(max_value_mask, where)
-_argmax = jnp.argmax(max_value_mask, axis=-1).astype(jnp.int32)
-return _argmax, _max.reshape(_argmax.shape)
+where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(
+    where, a.shape
+)
+is_nan = jnp.isnan(a)
+comparable = where & ~is_nan
+lowest = -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
+positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
+_max, _argmax = max_and_smallest_id(
+    values=jnp.where(comparable, a, lowest),
+    ids=jnp.where(comparable, positions, NO_ID),
+    initial=lowest if initial is None else initial,
+)
+any_nan = jnp.any(where & is_nan, axis=-1)
+_max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
+_argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
+return _argmax, _max
+"""
+    expected_pair_max = r"""return jax.lax.reduce(
+    (values, ids),
+    (jnp.asarray(initial, dtype=values.dtype), jnp.asarray(NO_ID, dtype=jnp.int32)),
+    _larger_value_then_smaller_id,
+    (values.ndim - 1,),
+)
+"""
+    expected_pair_order = r"""left_value, left_id = left
+right_value, right_id = right
+tie = right_value == left_value
+take_right = (right_value > left_value) | (tie & (right_id < left_id))
+value = jnp.where(take_right, right_value, left_value)
+value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
+return value, jnp.where(take_right, right_id, left_id)
 """
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
@@ -5129,6 +5156,29 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
+    if pair_max.decorator_list or pair_order.decorator_list:
+        errors.append("argmax reducer: decorators are not allowlisted")
+    if not _keyword_only_signature(
+        node=pair_max, names=("values", "ids", "initial")
+    ) or not _body_matches(node=pair_max, expected_source=expected_pair_max):
+        errors.append(
+            "argmax reducer: the (value, id) maximum is not one exact paired reduction"
+        )
+    if not _body_matches(node=pair_order, expected_source=expected_pair_order):
+        errors.append(
+            "argmax reducer: the (value, id) order is not larger value, then smaller id"
+        )
+    no_id = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(_target_names(target) == ("NO_ID",) for target in statement.targets)
+    ]
+    if not (
+        len(no_id) == 1
+        and _expression_matches(node=no_id[0].value, source="jnp.iinfo(jnp.int32).max")
+    ):
+        errors.append("argmax reducer: the no-identity sentinel is not int32 max")
     if not _body_matches(node=move, expected_source=expected_move):
         errors.append(
             "argmax reducer: action-axis move is not the exact order-preserving "
@@ -5144,6 +5194,8 @@ return a.transpose((*front_axes, *axes))
         isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
         and {
             "argmax_and_max",
+            "max_and_smallest_id",
+            "_larger_value_then_smaller_id",
             "_move_axes_to_back",
             "_flatten_last_n_axes",
         }
@@ -9812,25 +9864,21 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     argmax_cases = {
         "shared_argmax:q_order_early_return": replace_once(
             source=argmax_source,
-            old=(
-                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
-            ),
+            old="    is_nan = jnp.isnan(a)\n",
             new="    if a.reshape(-1)[0] > a.reshape(-1)[1]:\n"
             "        return jnp.array(1, dtype=jnp.int32), a.reshape(-1)[1]\n"
-            "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            "    is_nan = jnp.isnan(a)\n",
             label="argmax q-order",
         ),
         "shared_argmax:support_filter": replace_once(
             source=argmax_source,
-            old=(
-                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
-            ),
+            old="    is_nan = jnp.isnan(a)\n",
             new="    where = jnp.where(\n"
             "        jnp.sum(where) > 1,\n"
             "        where.reshape(-1).at[0].set(False).reshape(where.shape),\n"
             "        where,\n"
             "    )\n"
-            "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            "    is_nan = jnp.isnan(a)\n",
             label="argmax support",
         ),
         "shared_argmax:axis_prefix": replace_once(

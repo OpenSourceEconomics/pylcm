@@ -9,9 +9,9 @@ device placement.
 
 from typing import Literal, NamedTuple
 
-import jax
 import jax.numpy as jnp
 
+from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxAccumulator,
@@ -198,26 +198,18 @@ def _reduce_block(
 ) -> HardMaxAccumulator:
     """Reduce one block without assuming its local order is canonical.
 
-    The best value and its identity come out of one reduction over
-    `(value, identity)` pairs. Matching the values against a separately reduced
-    maximum would be unsafe: the compiler may evaluate the values once per
-    reduction, and evaluations that round differently leave no value equal to
-    the maximum.
+    The best value and its identity come out of one reduction, so the identity
+    always names a feasible action attaining the published value.
     """
     feasible_nan = feasible & jnp.isnan(values)
     any_feasible = jnp.any(feasible, axis=-1)
     any_nan = jnp.any(feasible_nan, axis=-1)
 
     comparable = feasible & ~feasible_nan
-    id_sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
-    best_non_nan, best_global_action_id = jax.lax.reduce(
-        (
-            jnp.where(comparable, values, -jnp.inf),
-            jnp.where(comparable, action_ids, id_sentinel),
-        ),
-        (jnp.asarray(-jnp.inf, dtype=values.dtype), id_sentinel),
-        _larger_value_then_smaller_id,
-        (values.ndim - 1,),
+    best_non_nan, best_global_action_id = max_and_smallest_id(
+        values=jnp.where(comparable, values, -jnp.inf),
+        ids=jnp.where(comparable, action_ids, NO_ID),
+        initial=-jnp.inf,
     )
     best_value = jnp.where(
         any_nan,
@@ -242,23 +234,6 @@ def _reduce_block(
         ),
         any_feasible=any_feasible,
     )
-
-
-# keyword-only-exempt: library-callback=jax.lax.reduce
-def _larger_value_then_smaller_id(
-    left: tuple[FloatND, IntND], right: tuple[FloatND, IntND]
-) -> tuple[FloatND, IntND]:
-    """Keep the pair with the larger value, and the smaller identity on a tie.
-
-    A `{-0, +0}` tie keeps `+0` unless both are `-0`, as the merge does.
-    """
-    left_value, left_id = left
-    right_value, right_id = right
-    tie = right_value == left_value
-    take_right = (right_value > left_value) | (tie & (right_id < left_id))
-    value = jnp.where(take_right, right_value, left_value)
-    value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
-    return value, jnp.where(take_right, right_id, left_id)
 
 
 HARD_MAX_REDUCTION = HardMaxReduction()
