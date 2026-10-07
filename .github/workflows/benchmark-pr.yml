@@ -37,6 +37,25 @@ jobs:
         run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Report free disk space
         run: df -h "$TMPDIR" /tmp / | cat
+      # The benchmark machine runs several runner slots on one GPU, and the
+      # concurrency group is per branch, so benchmark jobs of different pull
+      # requests can start together. A machine-wide lock, taken here and held
+      # until the job ends, runs them one after another. The `nvidia-smi` poll
+      # below only guards against GPU work started outside these jobs: it cannot
+      # see a job that is still installing its environment.
+      - name: Hold the benchmark GPU for this whole job
+        run: |
+          held="$RUNNER_TEMP/gpu-lock-held"
+          rm -f "$held"
+          nohup flock /tmp/pylcm-gpu-benchmark.lock \
+            sh -c 'touch "$0" && exec sleep infinity' "$held" \
+            > /dev/null 2>&1 &
+          echo "GPU_LOCK_PID=$!" >> "$GITHUB_ENV"
+          until test -e "$held"; do
+            echo "$(date): another benchmark job holds the GPU, retrying in 30s..."
+            sleep 30
+          done
+          echo "GPU lock held."
       - name: Wait for GPU to be free
         run: |
           echo "Waiting for GPU to be free..."
@@ -98,3 +117,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: pixi run -e benchmarks-cuda12 asv-run-and-pr-comment
+      # Runs even when an earlier step fails or the job is cancelled. Killing
+      # the lock holder's child as well closes every copy of the lock file.
+      - name: Release the benchmark GPU
+        if: always()
+        run: |-
+          if test -n "${GPU_LOCK_PID:-}"; then
+            pkill -P "$GPU_LOCK_PID" || true
+            kill "$GPU_LOCK_PID" 2> /dev/null || true
+          fi
