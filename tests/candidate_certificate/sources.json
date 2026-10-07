@@ -110,7 +110,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
+            "sha256": "6c27b7694723f06e32183f3fde3dce68db7947604d0546984998d07b02533e39"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -338,7 +338,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
+            "sha256": "40d494a7bfe3c3a1d33f92e24d4fe3191deb38968cd2556b3e0d9fdcfcbe1c43"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -418,7 +418,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "c1d3b52330549d38d55bdc43e03acc775075b6eb39c9aa61629b56f4a7b398af"
+            "sha256": "6067c0dd1a0767784eff097eb1fdd8b61b0ba030fdad1ac891f35336b2e15eda"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -426,7 +426,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1"
+            "sha256": "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -442,7 +442,7 @@
           },
           {
             "path": "src/_lcm/variables.py",
-            "sha256": "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6"
+            "sha256": "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139"
           },
           {
             "path": "src/_lcm/zero_safe.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "e7c5bb4a9dcd24412d29835d67fb8cee9b2f6779235a2a64cc7f1a7eec0522da"
+        "source_inventory_sha256": "b4cfdbf5ac2612b1d461a0233c94d32359d04a39e1042ad0513b53c5112c7595"
       },
       "fast": {
         "candidate_sources": [
@@ -584,7 +584,7 @@
           },
           {
             "path": "src/_lcm/params/regime_template.py",
-            "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
+            "sha256": "6c27b7694723f06e32183f3fde3dce68db7947604d0546984998d07b02533e39"
           },
           {
             "path": "src/_lcm/persistence/solution.py",
@@ -812,7 +812,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
+            "sha256": "40d494a7bfe3c3a1d33f92e24d4fe3191deb38968cd2556b3e0d9fdcfcbe1c43"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -892,7 +892,7 @@
           },
           {
             "path": "src/_lcm/transition_checks.py",
-            "sha256": "c1d3b52330549d38d55bdc43e03acc775075b6eb39c9aa61629b56f4a7b398af"
+            "sha256": "6067c0dd1a0767784eff097eb1fdd8b61b0ba030fdad1ac891f35336b2e15eda"
           },
           {
             "path": "src/_lcm/utils/containers.py",
@@ -900,7 +900,7 @@
           },
           {
             "path": "src/_lcm/utils/dispatchers.py",
-            "sha256": "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1"
+            "sha256": "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf"
           },
           {
             "path": "src/_lcm/utils/functools.py",
@@ -916,7 +916,7 @@
           },
           {
             "path": "src/_lcm/variables.py",
-            "sha256": "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6"
+            "sha256": "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139"
           },
           {
             "path": "src/_lcm/zero_safe.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "e7c5bb4a9dcd24412d29835d67fb8cee9b2f6779235a2a64cc7f1a7eec0522da"
+        "source_inventory_sha256": "b4cfdbf5ac2612b1d461a0233c94d32359d04a39e1042ad0513b53c5112c7595"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "e7c5bb4a9dcd24412d29835d67fb8cee9b2f6779235a2a64cc7f1a7eec0522da",
+  "source_inventory_sha256": "b4cfdbf5ac2612b1d461a0233c94d32359d04a39e1042ad0513b53c5112c7595",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1062,7 +1062,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095"
+      "sha256": "6c27b7694723f06e32183f3fde3dce68db7947604d0546984998d07b02533e39"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -1290,7 +1290,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6"
+      "sha256": "40d494a7bfe3c3a1d33f92e24d4fe3191deb38968cd2556b3e0d9fdcfcbe1c43"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -1370,7 +1370,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "c1d3b52330549d38d55bdc43e03acc775075b6eb39c9aa61629b56f4a7b398af"
+      "sha256": "6067c0dd1a0767784eff097eb1fdd8b61b0ba030fdad1ac891f35336b2e15eda"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -1378,7 +1378,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1"
+      "sha256": "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf"
     },
     {
       "path": "src/_lcm/utils/functools.py",
@@ -1394,7 +1394,7 @@
     },
     {
       "path": "src/_lcm/variables.py",
-      "sha256": "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6"
+      "sha256": "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139"
     },
     {
       "path": "src/_lcm/zero_safe.py",

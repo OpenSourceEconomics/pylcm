@@ -69,14 +69,14 @@ repos:
           - pyi
           - python
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.84
+    rev: v0.0.85
     hooks:
       - id: ty
         # Run ty directly so import resolution uses `[tool.ty] environment.python`.
         # Keep this dependency pin aligned with the hook revision above.
         entry: ty check
         additional_dependencies:
-          - ty==0.0.79
+          - ty==0.0.85
   - repo: https://github.com/kynan/nbstripout
     rev: 0.9.1
     hooks:

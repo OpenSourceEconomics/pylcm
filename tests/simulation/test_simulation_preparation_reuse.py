@@ -5,7 +5,7 @@ import gc
 import hashlib
 import weakref
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -55,7 +55,7 @@ def _snapshot(result: Any) -> dict[tuple[str, int, str, int], tuple[object, ...]
 
 
 @contextmanager
-def _observe_preparation(*, monkeypatch: pytest.MonkeyPatch) -> Iterator[Counter[str]]:
+def _observe_preparation(*, monkeypatch: pytest.MonkeyPatch) -> Generator[Counter[str]]:
     """Count structural calls while preserving their actual implementations."""
     counts: Counter[str] = Counter()
     eval_shape = jax.eval_shape
