@@ -405,7 +405,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
-    PROCESSING_SOURCE: "f89333052bcf934bc3548db0a474d16a009808a2c54c547d1b9dc0026fc9c036",
+    PROCESSING_SOURCE: "ae8fa85091dca231ca46323b079f5fd030dd5d4ec2f1f3df9701ecddc9d7309a",
     GRID_SEARCH_SOURCE: "772f25062e6040e8ddd4e76155f485164cbea452840760a93e384bf5e692c230",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -3069,8 +3069,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="simulate caller",
         contracts={
-            "_build_per_subject_decisions_per_period": "762d57a4dca8e9ce3cafc9725c81032b1a87dff7a2297593395cb5040fab1e2d",
-            "_argmax_reducer": "d703712f2beec0f93e9cacbb67754faffe20bf4628e71979dba4dd8f4dd6842c",
+            "_build_per_subject_decisions_per_period": "3b2dfd37e32f72e41f17264ec806fcb9309bf9f6d2faed91fafd1477871cea83",
             "process_regimes": "ba3b9d0bd87897a4f6f7cdaf53d4eba51f6257dfb4bf83d6e2b64f10f66e29a2",
         },
     )
@@ -3168,7 +3167,6 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
                 "attach_gated_simulation_programs": 1,
                 "SimulationPhase": 1,
                 "_build_per_subject_decisions_per_period": 1,
-                "_argmax_reducer": 1,
                 "id": 0,
                 "len": 0,
             },
@@ -10130,24 +10128,24 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     processing_cases = {
         "caller_simulate:action_names_slice": replace_once(
             source=processing_source,
-            old="        action_names=state_action_space.action_names,",
-            new="        action_names=state_action_space.action_names[:-1],",
+            old="                action_names=state_action_space.action_names,",
+            new="                action_names=state_action_space.action_names[:-1],",
             label="simulate caller action names",
         ),
         "caller_simulate:wrong_discrete_axis_count": replace_once(
             source=processing_source,
-            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),",
-            new="        n_discrete_action_axes=max(\n"
+            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),",
+            new="                n_discrete_action_axes=max(\n"
             "                    0, len(state_action_space.discrete_actions) - 1\n"
             "                ),",
             label="simulate caller axis count",
         ),
         "caller_simulate:taste_flag_disabled": replace_once(
             source=processing_source,
-            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "        has_taste_shocks=has_taste_shocks,",
-            new="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "        has_taste_shocks=False,",
+            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "                has_taste_shocks=has_taste_shocks,",
+            new="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "                has_taste_shocks=False,",
             label="simulate caller taste flag",
         ),
         "caller_simulate:live_taste_flag_rebinding": replace_once(

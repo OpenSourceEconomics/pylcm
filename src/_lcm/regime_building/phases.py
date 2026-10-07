@@ -24,7 +24,7 @@ from _lcm.constraints.processed import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.regime_law import UNBOUND_LAW, RegimeLaw, RegimeLaws
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
@@ -82,31 +82,12 @@ def normalize_regime_phases(
             grammar.
 
     """
-    solve_functions, simulate_functions, function_errors = _split_functions(
-        user_regime=user_regime
+    pools = _phase_function_pools(user_regime=user_regime)
+    solve_functions, simulate_functions = pools.solve, pools.simulate
+    solve_grid_states, simulate_grid_states = (
+        pools.solve_grid_states,
+        pools.simulate_grid_states,
     )
-    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
-        solve_functions
-    )
-    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
-        simulate_functions
-    )
-    solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
-        _split_states(user_regime=user_regime)
-    )
-
-    collision_errors = [
-        f"State '{name}' is carried: its solve-phase imputation is "
-        f"registered as a derived function under '{name}', colliding "
-        f"with the regime function of the same name. Rename one of "
-        f"the two."
-        for name in carried_imputations
-        # The engine-facing names, not the declared ones: a carried state
-        # spelled like a stakeholder's utility collides with the entry that
-        # utility is decomposed into, and the overlay below would win.
-        if name in user_regime.decomposed_functions
-    ]
-    solve_functions = {**solve_functions, **carried_imputations}
 
     solve_state_transitions, simulate_state_transitions = _split_state_transitions(
         user_regime=user_regime
@@ -163,9 +144,7 @@ def normalize_regime_phases(
     )
 
     errors = (
-        function_errors
-        + state_errors
-        + collision_errors
+        pools.errors
         + carried_errors
         + joint_transition_errors
         + transition_errors
@@ -278,9 +257,63 @@ def _resolve_solve_functions(
     Keeping that projection at the phase-normalization seam prevents consumers
     from independently unwrapping only a subset of the public phase grammar.
     """
-    # The solve functions do not depend on the regime's law.
-    return dict(
-        normalize_regime_phases(user_regime, law=UNBOUND_LAW).solution.functions
+    pools = _phase_function_pools(user_regime=user_regime)
+    if pools.errors:
+        raise RegimeInitializationError(format_messages(pools.errors))
+    return dict(pools.solve)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PhaseFunctionPools:
+    """Each phase's function pool and grid states, with their grammar errors."""
+
+    solve: dict[FunctionName, UserFunction]
+    """Solve-phase functions, augmented and with carried-state imputations."""
+
+    simulate: dict[FunctionName, UserFunction]
+    """Simulate-phase functions, augmented."""
+
+    solve_grid_states: dict[StateName, Grid | AgeSpecializedGrid]
+    """States on the solve-phase grid."""
+
+    simulate_grid_states: dict[StateName, Grid | AgeSpecializedGrid]
+    """States on the simulate-phase grid."""
+
+    errors: list[str]
+    """Function, state and carried-state collision errors, in that order."""
+
+
+def _phase_function_pools(*, user_regime: lcm.regime.Regime) -> _PhaseFunctionPools:
+    """Resolve each phase's function pool, which does not depend on the law."""
+    solve_functions, simulate_functions, function_errors = _split_functions(
+        user_regime=user_regime
+    )
+    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        solve_functions
+    )
+    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        simulate_functions
+    )
+    solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
+        _split_states(user_regime=user_regime)
+    )
+    collision_errors = [
+        f"State '{name}' is carried: its solve-phase imputation is "
+        f"registered as a derived function under '{name}', colliding "
+        f"with the regime function of the same name. Rename one of "
+        f"the two."
+        for name in carried_imputations
+        # The engine-facing names, not the declared ones: a carried state
+        # spelled like a stakeholder's utility collides with the entry that
+        # utility is decomposed into, and the overlay below would win.
+        if name in user_regime.decomposed_functions
+    ]
+    return _PhaseFunctionPools(
+        solve={**solve_functions, **carried_imputations},
+        simulate=simulate_functions,
+        solve_grid_states=solve_grid_states,
+        simulate_grid_states=simulate_grid_states,
+        errors=function_errors + state_errors + collision_errors,
     )
 
 

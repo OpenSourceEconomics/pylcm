@@ -8511,35 +8511,17 @@ def _build_per_subject_decisions_per_period(
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
         if q_id not in built:
-            built[q_id] = _argmax_reducer(
+            built[q_id] = get_argmax_and_max_Q_over_a(
                 Q_and_F=Q_and_F,
-                state_action_space=state_action_space,
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
-
-
-def _argmax_reducer(
-    *,
-    Q_and_F: QAndFFunction,
-    state_action_space: StateActionSpace,
-    has_taste_shocks: bool,
-    stakeholders: tuple[str, ...] | None,
-    pareto_weights: ParetoWeights | None,
-) -> ArgmaxQOverAFunction:
-    """Return the canonical argmax reducer at one subject's state cell."""
-    return get_argmax_and_max_Q_over_a(
-        Q_and_F=Q_and_F,
-        action_names=state_action_space.action_names,
-        state_names=state_action_space.state_names,
-        n_discrete_action_axes=len(state_action_space.discrete_actions),
-        has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
-        pareto_weights=pareto_weights,
-    )
 
 
 def _build_pointwise_Q_and_F_per_period(

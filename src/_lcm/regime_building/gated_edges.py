@@ -475,14 +475,16 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
     A gated edge is resolved in two stages: the resolution the build-time
     fences read is available before any regime's grid is known, and the folds,
     the simulate gate evaluators, and each leg's fallback projector can only be
-    compiled once they are. Only an edge reached through a source law's gated edges
-    carries the compiled callables, so calling one on any other edge is a
+    compiled once they are. Only an edge reached through the compiled source engine
+    regime's `gated_edges` carries the compiled callables, so calling one on any
+    other edge is a
     staging mistake rather than a bad model, and says so.
     """
     msg = (
         "This gated-edge callable was never compiled. Only edges reached "
-        "through a source law's gated edges carry their folds, their simulate gate "
-        "evaluators, and their legs' fallback state projectors."
+        "through the compiled source engine regime's `gated_edges` carry their "
+        "folds, their simulate gate evaluators, and their legs' fallback state "
+        "projectors."
     )
     raise RuntimeError(msg)
 
@@ -703,15 +705,17 @@ def _select_period_callable[T](
     what looks like a model error:
 
     - the mapping is empty ⇒ nothing was ever compiled for this edge, i.e. it
-      was not reached through a source law's gated edges;
+      was not reached through the compiled source engine regime's
+      `gated_edges`;
     - the mapping is non-empty but lacks `period` ⇒ the target regime is not
       active there, so no value of it exists to fold.
     """
     if not by_period:
         msg = (
             f"This gated edge's {what} was never compiled. Only edges reached "
-            "through a source law's gated edges carry their folds, their simulate "
-            "gate evaluators, and their legs' fallback state projectors."
+            "through the compiled source engine regime's `gated_edges` carry "
+            "their folds, their simulate gate evaluators, and their legs' "
+            "fallback state projectors."
         )
         raise RuntimeError(msg)
     if period not in by_period:
