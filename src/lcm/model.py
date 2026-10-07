@@ -808,10 +808,12 @@ class Model:
             certainty_equivalent=certainty_equivalent,
         )
         # Runs on the finalized regimes, since a conditioner's law may arrive as
-        # a model-level broadcast, and against the graph-bound laws, whose
-        # targets are regime names rather than lowered regime codes.
+        # a model-level broadcast, and against the resolved graph support: the
+        # targets each source reaches after fixed-zero pruning, at the pairs the
+        # model values or visits.
         fail_if_a_folded_conditioner_can_move(
-            user_regimes=finalized_regimes, laws=prepared_graph.laws
+            user_regimes=finalized_regimes,
+            targets_by_regime=schedules.targets_by_regime,
         )
         # A process law named in `fixed_params` means exactly what the same
         # value passed to the process constructor means, so it is bound into

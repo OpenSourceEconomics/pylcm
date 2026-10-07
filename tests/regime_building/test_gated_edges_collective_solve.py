@@ -31,7 +31,7 @@ from _lcm.regime_building.processing import (
 )
 from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.solution.backward_induction import solve
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -590,7 +590,7 @@ def test_raw_ungated_mixed_transition_still_rejected():
 def test_probabilistic_gate_is_rejected():
     """A stochastic (StochasticTransition) gate is out of scope — boolean only."""
     with pytest.raises(RegimeInitializationError, match="boolean"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": fixed_transition("wage")},
@@ -965,7 +965,7 @@ def test_full_ekl_topology_via_public_model_api():
 def test_singleton_source_with_two_legs_is_rejected():
     """A singleton source must declare exactly one edge leg."""
     with pytest.raises(RegimeInitializationError, match="exactly one leg"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": fixed_transition("wage")},

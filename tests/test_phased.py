@@ -18,7 +18,7 @@ import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_law import RegimeLaw, bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -129,7 +129,7 @@ def _build_regime(
     spec.update(overrides)
     regime = UserRegime(**spec)
     bound = bind_regime_law(law)
-    validate_regime(regime, law=bound)
+    validate_regime_law(regime, law=bound)
     return regime, bound
 
 
@@ -349,7 +349,7 @@ def test_carried_state_name_colliding_with_function_is_rejected() -> None:
 def test_terminal_regime_with_carried_state_is_rejected() -> None:
     """Terminal regimes have no next period to carry a state into."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
-        validate_regime(
+        validate_regime_law(
             UserRegime(
                 states={
                     "pension_wealth": Phased(

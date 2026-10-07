@@ -85,14 +85,6 @@ class RegimeLaw:
         """
         return decompose_transition(_engine_view(self.transition))
 
-    @property
-    def validation_view(self) -> RegimeLaw:
-        """The law in the period-independent vocabulary regime validation reads."""
-        view = _engine_view(self.transition)
-        if view is self.transition:
-            return self
-        return RegimeLaw(transition=view, gated_edges=self.gated_edges)
-
 
 type RegimeLaws = Mapping[RegimeName, RegimeLaw]
 
@@ -110,20 +102,6 @@ type RegimeLawDeclaration = (
     | ValueDependentTransition
     | None
 )
-
-
-def _unbound_law() -> int:
-    """Stand in for the law of a regime no model has bound yet.
-
-    A callable names no target and reads no variable, so the checks that depend
-    on the law's targets or inputs are left to the model, which validates the
-    regime again with the law it binds from its edges.
-    """
-    return 0
-
-
-# The law a regime is validated against before a model binds its own.
-UNBOUND_LAW = RegimeLaw(transition=_unbound_law)
 
 
 def bind_regime_law(transition: object) -> RegimeLaw:

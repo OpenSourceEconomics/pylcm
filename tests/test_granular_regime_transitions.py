@@ -15,7 +15,7 @@ import pytest
 
 import lcm
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -176,7 +176,7 @@ def test_template_has_per_target_regime_transition_keys() -> None:
 def test_plain_callable_cell_is_rejected() -> None:
     """Granular cells must be `StochasticTransition`-wrapped."""
     with pytest.raises(RegimeInitializationError, match=r"StochasticTransition"):
-        validate_regime(
+        validate_regime_law(
             _build_regime(),
             law=bind_regime_law({"work": lambda age: 1.0}),  # noqa: ARG005
         )
@@ -188,7 +188,7 @@ def test_empty_granular_dict_is_rejected() -> None:
     with pytest.raises(
         RegimeInitializationError, match=r"without outgoing edges.*is terminal"
     ):
-        validate_regime(_build_regime(), law=bind_regime_law({}))
+        validate_regime_law(_build_regime(), law=bind_regime_law({}))
 
 
 def test_unknown_target_in_granular_dict_raises() -> None:

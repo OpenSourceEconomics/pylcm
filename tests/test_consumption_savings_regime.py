@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -36,6 +36,14 @@ from lcm.solvers import (
     GridSearch,
 )
 from lcm.typing import ScalarInt
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)
 
@@ -296,7 +304,7 @@ def test_finalized_specialization_rejects_a_missing_broadcastable_function():
     with pytest.raises(RegimeInitializationError, match="resources 'resources'"):
         finalize_regimes(
             user_regimes={"working": regime},
-            laws={"working": UNBOUND_LAW},
+            laws={"working": _NON_TERMINAL_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -336,7 +344,7 @@ def test_composed_resources_are_injected_only_at_model_finalization():
 
     finalized = finalize_regimes(
         user_regimes={"working": regime},
-        laws={"working": UNBOUND_LAW},
+        laws={"working": _NON_TERMINAL_LAW},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -371,7 +379,7 @@ def test_composition_exclusion_reports_the_complete_rule():
     ):
         finalize_regimes(
             user_regimes={"working": regime},
-            laws={"working": UNBOUND_LAW},
+            laws={"working": _NON_TERMINAL_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),

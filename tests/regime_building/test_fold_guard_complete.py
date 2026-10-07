@@ -36,7 +36,7 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeRange,
     ByAge,
@@ -357,7 +357,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
     (`_fail_if_collective_scope_out_of_bounds`), fold or not.
     """
     with pytest.raises(RegimeInitializationError, match="certainty_equivalent"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={"wage_shock": _shock(fold=True)},
                 actions={"work": DiscreteGrid(category_class=Work)},
@@ -378,7 +378,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
 
 def test_fold_without_certainty_equivalent_still_constructs():
     """Pin: the SAME topology with no `certainty_equivalent` still constructs."""
-    validate_regime(
+    validate_regime_law(
         Regime(
             states={"wage_shock": _shock(fold=True)},
             actions={"work": DiscreteGrid(category_class=Work)},

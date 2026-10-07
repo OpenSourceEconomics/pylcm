@@ -21,7 +21,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.regime_law import UNBOUND_LAW, RegimeLaw
+from _lcm.regime_law import RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
@@ -370,11 +370,11 @@ class Regime:
     def __post_init__(self) -> None:
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
-        # The model validates the regime again once it binds the regime's law
-        # from `Model(edges=...)`; completeness (a `utility` entry, aggregator
+        # What depends on the law is validated once the model binds it from
+        # `Model(edges=...)`; completeness (a `utility` entry, aggregator
         # injection, transition coverage) is validated when the model finalizes
         # its regimes, since model-level slots may still satisfy it.
-        validate_regime(self, law=UNBOUND_LAW)
+        validate_regime(self)
         self._make_field_immutable(name="functions")
         self._make_field_immutable(name="states")
         self._make_field_immutable(name="state_transitions")

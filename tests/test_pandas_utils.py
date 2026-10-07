@@ -18,7 +18,7 @@ from _lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from _lcm.params.processing import broadcast_to_template
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -45,6 +45,14 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.regime_markov import EDGES as REGIME_MARKOV_EDGES
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 
 @categorical(ordered=False)
@@ -1617,7 +1625,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         flat_params=flat_params,
         ages=ages,
         user_regimes={"source": source, "target": target},
-        laws={"source": UNBOUND_LAW},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
@@ -1681,7 +1689,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         flat_params={"source": {"target__next_health__transition_matrix": series}},
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         user_regimes={"source": source, "target": target},
-        laws={"source": UNBOUND_LAW},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),

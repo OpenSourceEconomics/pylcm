@@ -113,6 +113,21 @@ class RegimeSchedules:
     """Per nonterminal regime, the declared law at each available period."""
 
     @property
+    def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[str]]:
+        """Per source regime, every target its support names in either phase."""
+        return MappingProxyType(
+            {
+                name: frozenset(
+                    target
+                    for by_regime in self.support_by_phase.values()
+                    for targets in by_regime.get(name, {}).values()
+                    for target in targets
+                )
+                for name in self.coverage_by_regime
+            }
+        )
+
+    @property
     def visited_periods_by_regime(
         self,
     ) -> MappingProxyType[RegimeName, tuple[int, ...]]:
