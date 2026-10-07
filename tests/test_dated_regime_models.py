@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.model_graph import _bind_law
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
@@ -709,15 +710,16 @@ def test_off_grid_monthly_start_raises_at_every_log_level(
     [_SupportedDeterministicTransition, _SupportedStochasticTransition],
     ids=lambda w: w.__name__,
 )
-def test_a_model_refuses_a_regime_law_carrying_its_targets(*, wrapper: Any) -> None:
-    """A regime law tagged with destinations is refused; the graph declares them."""
-    with pytest.raises(ModelInitializationError, match=r"Model\(edges=\.\.\.\)"):
-        _dated_model(
-            edges={
-                "working": Transition(
-                    targets=TWO_EDGE_TARGETS,
-                    law=wrapper(func=lambda: RegimeId.dead, targets=("dead",)),
-                ),
-                "retirement": RETIREMENT_EDGES,
-            },
-        )
+def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
+    *, wrapper: Any
+) -> None:
+    """A law tagged with its own destinations is bound to the graph's edges."""
+    bound: Any = _bind_law(
+        law=wrapper(func=lambda: RegimeId.dead, targets=("dead",)),
+        targets=("working", "dead", "retirement"),
+        source="working",
+        age=25,
+        side="solve",
+        regime_names=("working", "retirement", "dead"),
+    )
+    assert bound.targets == ("working", "dead", "retirement")
