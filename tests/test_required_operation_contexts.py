@@ -1,8 +1,9 @@
 """Required operations decide parameters and the domain of probability checks.
 
 - A regime that is only valued (S) and never visited (H) owes the parameters of
-  its backward problem, not those of its realized routing; promoting it to a
-  physical visit adds them.
+  its backward problem; promoting it to a physical visit adds the parameters of
+  its simulate-side slots. The parameters of its declared regime law sit at
+  `params["edges"][source]` whether or not it is visited.
 - The regime-selection check evaluates each required law on the rows its
   operation evaluates: the period's own grid, the true carried-state axes of a
   realized law, and only the economically feasible action rows.
@@ -139,6 +140,15 @@ def _leaf_names(*, tree: Any) -> set[str]:
     }
 
 
+def _branches(*, model: Model) -> dict[str, set[str]]:
+    """The leaf names of `perceived`'s own branch and of its edge branch."""
+    template = model.get_params_template()
+    return {
+        "perceived": _leaf_names(tree=template["perceived"]),
+        "edges": _leaf_names(tree=template.get("edges", {}).get("perceived", {})),
+    }
+
+
 def _visited(*, promote: bool) -> frozenset[tuple[int, str]]:
     visited = {(0, "source"), (1, "realized"), (2, "end")}
     if promote:
@@ -189,27 +199,32 @@ def test_value_only_regime_has_no_realized_route_parameter(
 
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("redundant_root", [False, True])
-def test_promoting_a_value_only_regime_adds_its_realized_route_parameter(
-    *, redundant_root: bool, enable_jit: bool
+@pytest.mark.parametrize("promote", [False, True])
+def test_realized_route_parameter_sits_on_the_edge_whether_or_not_visited(
+    *, promote: bool, redundant_root: bool, enable_jit: bool
 ) -> None:
-    """The same declared law owes `realized_rate` once its regime is visited."""
+    """The declared law's `realized_rate` is an edge parameter of `perceived`."""
     model = _demand_model(
-        promote=True, redundant_root=redundant_root, enable_jit=enable_jit
+        promote=promote, redundant_root=redundant_root, enable_jit=enable_jit
     )
-    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
-        "discount_factor",
-        "backward_bonus",
-        "realized_rate",
+    assert _branches(model=model) == {
+        "perceived": {"discount_factor", "backward_bonus"},
+        "edges": {"realized_rate"},
     }
 
 
-def test_value_only_regime_solves_without_its_realized_route_parameter() -> None:
+def test_value_only_regime_value_ignores_its_realized_route() -> None:
     """`V_perceived(w) = 1 + 1.5 w`, so `V_source(w) = 0.5 + 1.75 w` on w in {0, 1}."""
     model = _demand_model(promote=False)
-    values = model.solve(
-        params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
-    ).values
+    values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
     np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+
+
+_VALUE_ONLY_PARAMS = {
+    "discount_factor": 0.5,
+    "backward_bonus": 1.0,
+    "realized_rate": 1.0,
+}
 
 
 def _simulate_utility(*, wealth: ContinuousState, simulate_bonus: float) -> FloatND:
@@ -304,7 +319,6 @@ def test_promoted_regime_owes_its_simulate_side_parameter(*, slot: str) -> None:
     assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
         "discount_factor",
         "backward_bonus",
-        "realized_rate",
         _SIMULATE_SLOT_PARAMETER[slot],
     }
 
@@ -317,9 +331,7 @@ def test_value_only_regime_with_simulate_slots_keeps_its_value(*, slot: str) -> 
         perceived=_perceived_with_simulate_slot(slot=slot, calls=[]),
         choice=_slot_choice(slot),
     )
-    values = model.solve(
-        params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
-    ).values
+    values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
     np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
 
 
@@ -393,14 +405,16 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
     )
 
 
-def test_mixed_age_regime_owes_the_realized_route_of_its_visited_age_only() -> None:
-    """Visited at age 2 only, `perceived` owes `late_rate`, not `realized_rate`."""
+def test_mixed_age_regime_declares_both_age_routes_on_its_edge() -> None:
+    """Visited at age 2 only, `perceived` owes its simulate slot's parameter.
+
+    Both ages' realized routes are declared in its law, so both rates are edge
+    parameters.
+    """
     model = _mixed_age_model(calls=[])
-    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
-        "discount_factor",
-        "backward_bonus",
-        "simulate_bonus",
-        "late_rate",
+    assert _branches(model=model) == {
+        "perceived": {"discount_factor", "backward_bonus", "simulate_bonus"},
+        "edges": {"realized_rate", "late_rate"},
     }
 
 
@@ -451,10 +465,7 @@ def _collective_demand_model(*, promote: bool) -> Model:
     ("promote", "expected"),
     [
         (False, {"discount_factor", "backward_bonus"}),
-        (
-            True,
-            {"discount_factor", "backward_bonus", "realized_rate", "simulate_bonus"},
-        ),
+        (True, {"discount_factor", "backward_bonus", "simulate_bonus"}),
     ],
 )
 def test_collective_regime_owes_stakeholder_simulate_parameters_only_when_visited(
@@ -469,7 +480,7 @@ def test_value_only_collective_regime_keeps_each_stakeholders_value() -> None:
     """Each stakeholder's source value is the plain `0.5 + 1.75 w`."""
     values = (
         _collective_demand_model(promote=False)
-        .solve(params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off")
+        .solve(params=_VALUE_ONLY_PARAMS, log_level="off")
         .values
     )
     np.testing.assert_array_equal(
@@ -853,6 +864,7 @@ def test_mixed_age_regime_simulates_its_visited_age() -> None:
         "discount_factor": 0.5,
         "backward_bonus": 1.0,
         "simulate_bonus": 0.0,
+        "realized_rate": 1.0,
         "late_rate": 1.0,
     }
     panel = model.simulate(
