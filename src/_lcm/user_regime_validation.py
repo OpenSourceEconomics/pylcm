@@ -632,7 +632,11 @@ def _validate_law_consistency(
     """
     error_messages: list[str] = []
     if terminal and regime.joint_transitions:
-        error_messages.append("Terminal regimes must have empty joint_transitions.")
+        error_messages.append(
+            _terminal_regime_message(
+                slot="joint_transitions", names=sorted(regime.joint_transitions)
+            )
+        )
     error_messages.extend(_regime_transition_grammar_errors(transition))
     error_messages.extend(
         _age_specialized_scope_errors(
@@ -646,6 +650,15 @@ def _validate_law_consistency(
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _terminal_regime_message(*, slot: str, names: list[str]) -> str:
+    """Explain why a regime is terminal and how to give it a next period."""
+    return (
+        "This regime is terminal: it has no outgoing edge in `Model(edges=...)`, "
+        f"so no next period reads its `{slot}` {names}. Declare an edge from it "
+        f"in `Model(edges=...)`, or drop its `{slot}` (or the regime)."
+    )
 
 
 def _iter_transition_nodes(value: object) -> Iterator[object]:
@@ -1398,7 +1411,9 @@ def _state_transition_coverage_errors(
     if law.terminal:
         if regime.state_transitions:
             error_messages.append(
-                "Terminal regimes must have empty state_transitions.",
+                _terminal_regime_message(
+                    slot="state_transitions", names=sorted(regime.state_transitions)
+                )
             )
         return error_messages
 
