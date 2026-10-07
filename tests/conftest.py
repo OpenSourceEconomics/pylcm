@@ -672,28 +672,19 @@ def build_prepared_structure(
     # Regime codes follow the regimes' order, as in `Model`.
     laws = MappingProxyType({name: laws[name] for name in user_regimes})
     schedules = resolve_regime_schedules(laws=laws, ages=ages)
+    lowered = lower_demanded_transitions(
+        schedules=schedules,
+        declared_transitions={name: law.transition for name, law in laws.items()},
+        code_by_name={name: code for code, name in enumerate(laws)},
+    )
     return prepare_model_structure(
         user_regimes=user_regimes,
-        laws=lower_laws(laws, ages=ages),
+        laws=bind_laws(lowered),
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
     )
-
-
-# keyword-only-exempt: primary-argument=laws
-def lower_laws(laws: RegimeLaws, *, ages: AgeGrid) -> RegimeLaws:
-    """Lower each regime's bound law to its engine law, as `Model` does.
-
-    Regime codes follow the mapping's order.
-    """
-    lowered = lower_demanded_transitions(
-        schedules=resolve_regime_schedules(laws=laws, ages=ages),
-        declared_transitions={name: law.transition for name, law in laws.items()},
-        code_by_name={name: code for code, name in enumerate(laws)},
-    )
-    return bind_laws(lowered)
 
 
 @pytest.fixture(scope="session")
