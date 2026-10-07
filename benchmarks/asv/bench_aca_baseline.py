@@ -228,6 +228,9 @@ class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     bench_module = "benchmarks.asv.bench_aca_baseline"
     bench_class = "AcaBaseline"
 
+    def setup_cache(self) -> dict[str, int]:
+        return self._measure_profile()
+
 
 class AcaBaselineDebugLog(AcaBaseline):
     """aca-baseline simulate at `log_level="debug"` with snapshot logging.
@@ -257,7 +260,10 @@ class AcaBaselineDebugLog(AcaBaseline):
 class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     """Three-phase GPU-memory profile for `AcaBaselineDebugLog`."""
 
-    version = "2"
+    version = "3"
     timeout = 14400
     bench_module = "benchmarks.asv.bench_aca_baseline"
     bench_class = "AcaBaselineDebugLog"
+
+    def setup_cache(self) -> dict[str, int]:
+        return self._measure_profile()

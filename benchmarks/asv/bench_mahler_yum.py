@@ -210,15 +210,18 @@ class MahlerYumBudgetedGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     """Lifecycle GPU peaks for the capacity-admitted fp64 ASV series.
 
     `automatic_solve_simulate` is deliberately absent from `phases`:
-    `MahlerYumBudgetedGpu.setup_cache` now captures that peak from its own
+    `MahlerYumBudgetedGpu.setup_cache` captures that peak from its own
     cold call, so this class only spends isolated processes on the two
     phases -- solve+save and load+simulate -- that genuinely need one.
     """
 
-    version = f"3-{POLICY_LABEL}"
+    version = f"4-{POLICY_LABEL}"
     phases = (
         _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE,
         _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE,
     )
     bench_module = "benchmarks.asv.bench_mahler_yum"
     bench_class = "MahlerYumBudgetedGpu"
+
+    def setup_cache(self) -> dict[str, int]:
+        return self._measure_profile()
