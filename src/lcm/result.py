@@ -321,6 +321,7 @@ class SimulationResult:
             result_metadata=self._metadata,
             available_targets=self._available_targets,
             subject_batch_size=self._subject_batch_size,
+            subject_rows=self._subject_rows,
         )
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
@@ -427,6 +428,7 @@ class SimulationResult:
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
+        instance._subject_rows = metadata.subject_rows  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
         instance._plan_summary = None  # noqa: SLF001
         return instance
@@ -466,6 +468,10 @@ class _SavedMetadata:
 
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
+
+    subject_rows: np.ndarray | None = None
+    """Original rows of a simulation of selected codes; `None` for the whole
+    population."""
 
 
 @dataclass(frozen=True)
