@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from fractions import Fraction
+from inspect import get_annotations
 from typing import Any, cast
 
 import jax.numpy as jnp
@@ -766,3 +767,19 @@ def test_a_regime_without_outgoing_edges_is_told_why_it_is_terminal() -> None:
                 "working": Transition(targets=DATED_TARGETS, law=_working_law()),
             },
         )
+
+
+def test_model_edges_is_typed_as_the_edges_declaration() -> None:
+    """`Model.edges` returns the `ModelEdges` declaration type."""
+    annotation = get_annotations(vars(Model)["edges"].fget)["return"]
+    assert (annotation.__module__, annotation.__name__) == (
+        "lcm.transition",
+        "ModelEdges",
+    )
+
+
+def test_model_edges_is_read_only() -> None:
+    """The declared edges cannot be rebound on a built model."""
+    model = _dated_model()
+    with pytest.raises(AttributeError):
+        model.edges = {}
