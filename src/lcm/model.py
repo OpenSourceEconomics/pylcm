@@ -290,7 +290,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges, PhaseEdges, Transition, TransitionLaw
+from lcm.transition import ModelEdges, PhaseEdges, Transition
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -1002,14 +1002,18 @@ class Model:
         return self._edges
 
     @property
-    def declared_laws(self) -> Mapping[Phase, Mapping[RegimeName, TransitionLaw]]:
-        """Each `Transition` source's law exactly as declared, by phase and source.
+    def declared_transitions(self) -> Mapping[Phase, Mapping[RegimeName, Transition]]:
+        """Each source declared as a `Transition`, by phase and source.
 
-        - Edges declared for both phases give both phases the same laws.
-        - `Phased` edges give each phase the laws that phase declares.
+        - Edges declared for both phases give both phases the same `Transition`.
+        - `Phased` edges give each phase the `Transition` that phase declares.
 
-        A source without a `Transition` in a phase is absent from that phase.
-        `model.graph.laws` holds the law as bound to the graph.
+        A `Transition` declared with `targets` is returned as declared. One whose
+        law names its targets is returned with the targets derived from that law
+        and its gates in that phase, each at its exact source ages; its law and
+        gates are the declared objects. A source without a `Transition` in a
+        phase is absent from that phase. `model.graph.laws` holds each law as
+        bound to the graph.
         """
         edges = self._edges
         phase_edges: dict[Phase, PhaseEdges] = (
@@ -1017,12 +1021,27 @@ class Model:
             if isinstance(edges, Phased)
             else {"solve": edges, "simulate": edges}
         )
-        # `bind_edge_laws` accepted every declared law as a declaration form.
+        graph_edges = {
+            "solve": self._graph.edges.solve,
+            "simulate": self._graph.edges.simulate,
+        }
         return MappingProxyType(
             {
                 phase: MappingProxyType(
                     {
-                        source: cast("TransitionLaw", declaration.law)
+                        source: (
+                            declaration
+                            if declaration.targets is not None
+                            else dataclasses.replace(
+                                declaration,
+                                targets={
+                                    target: tuple(sorted(source_ages))
+                                    for target, source_ages in graph_edges[phase][
+                                        source
+                                    ].items()
+                                },
+                            )
+                        )
                         for source, declaration in declared.items()
                         if isinstance(declaration, Transition)
                     }
