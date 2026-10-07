@@ -181,11 +181,13 @@ def capture_public_entry(
         or (kernel_kwargs["regime_name"], period) not in context.request.periods
     ):
         return None
-    if (
-        kernel_kwargs["next_regime_to_continuation"]
-        or kernel_kwargs["next_edge_to_V_arr"]
+    # Gated-edge values belong to the regimes declaring the edges. A target without
+    # gated edges of its own never reads them, so its entry records none.
+    if kernel_kwargs["next_regime_to_continuation"] or (
+        regime.gated_edges and kernel_kwargs["next_edge_to_V_arr"]
     ):
         raise ValueError("Unsupported continuation or edge inputs in period capture.")
+    kernel_kwargs = {**kernel_kwargs, "next_edge_to_V_arr": MappingProxyType({})}
     if kernel_kwargs["selected_artifact_keys"] or any(
         core.donated_arguments for core in compiled_cores.values()
     ):
