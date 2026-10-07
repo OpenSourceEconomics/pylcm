@@ -330,7 +330,7 @@
           },
           {
             "path": "src/_lcm/solution/action_reduction.py",
-            "sha256": "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135"
+            "sha256": "729a88343ea699766c99fc594d8164459079e3d66d8ca8969c97afaeb07c7d69"
           },
           {
             "path": "src/_lcm/solution/action_streaming.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "d03d474ac7e8d1e76e569ca2e6cde0cb684e500f06d95146b5c93486d9266817"
+        "source_inventory_sha256": "76f5c59e8f40e7137064fbd3ac324929fc87b5c0730bc3faeb6a3a7ba7ae31cf"
       },
       "fast": {
         "candidate_sources": [
@@ -804,7 +804,7 @@
           },
           {
             "path": "src/_lcm/solution/action_reduction.py",
-            "sha256": "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135"
+            "sha256": "729a88343ea699766c99fc594d8164459079e3d66d8ca8969c97afaeb07c7d69"
           },
           {
             "path": "src/_lcm/solution/action_streaming.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "d03d474ac7e8d1e76e569ca2e6cde0cb684e500f06d95146b5c93486d9266817"
+        "source_inventory_sha256": "76f5c59e8f40e7137064fbd3ac324929fc87b5c0730bc3faeb6a3a7ba7ae31cf"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "d03d474ac7e8d1e76e569ca2e6cde0cb684e500f06d95146b5c93486d9266817",
+  "source_inventory_sha256": "76f5c59e8f40e7137064fbd3ac324929fc87b5c0730bc3faeb6a3a7ba7ae31cf",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1282,7 +1282,7 @@
     },
     {
       "path": "src/_lcm/solution/action_reduction.py",
-      "sha256": "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135"
+      "sha256": "729a88343ea699766c99fc594d8164459079e3d66d8ca8969c97afaeb07c7d69"
     },
     {
       "path": "src/_lcm/solution/action_streaming.py",
