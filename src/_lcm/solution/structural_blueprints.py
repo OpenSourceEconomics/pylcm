@@ -15,7 +15,7 @@ cursor or admission. Those are built for every solve from the current inputs.
 import dataclasses
 import threading
 from collections import OrderedDict
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 
 import jax
 
@@ -43,11 +43,16 @@ class StructuralBlueprintCache[Blueprint]:
         self._entries: OrderedDict[Hashable, Blueprint] = OrderedDict()
         self._lock = threading.Lock()
 
-    def get(self, *, key: Hashable) -> Blueprint | None:
-        """Return the blueprint stored under `key`, or `None` on a miss."""
+    def get(
+        self, *, key: Hashable, accept: Callable[[Blueprint], bool] = lambda _: True
+    ) -> Blueprint | None:
+        """Return the blueprint stored under `key`, or `None` on a miss.
+
+        A stored blueprint `accept` rejects counts as a miss.
+        """
         with self._lock:
             blueprint = self._entries.get(key)
-            if blueprint is None:
+            if blueprint is None or not accept(blueprint):
                 self.misses += 1
                 return None
             self._entries.move_to_end(key)
