@@ -25,7 +25,7 @@ from tests.test_models.deterministic.regression import (
 
 
 def test_get_next_state_function_with_solve_target():
-    ages = AgeGrid(start=0, stop=4, step="Y")
+    ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {
         "working_life": working_life.replace(
             regime_transitions=working_life_transitions(last_age=4)

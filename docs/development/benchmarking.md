@@ -64,10 +64,17 @@ pixi run asv-publish
 
 The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false`
 automatically so JAX allocates GPU memory on demand rather than grabbing it all up
-front. The default device-memory budget refuses an on-demand pool, so every benchmark
-that builds a model without an explicit budget passes
+front. The default device-memory budget refuses an on-demand pool, so a benchmark that
+builds its model inside the ASV process passes
 `_gpu_mem.default_budget_execution_kwargs()`: the default budget the devices would
-resolve to, as an explicit `device_memory_bytes`.
+resolve to, as an explicit `device_memory_bytes`. The isolated measurement subprocesses
+in `_gpu_mem` turn preallocation back on, as production runs: an on-demand pool grows in
+separate regions, so an explicit budget the size of the device pool can admit a buffer
+that no free region holds. There the ACA benchmark passes no execution policy and runs
+under aca-model's default, as production does. `peak_bytes_in_use` counts the allocator
+chunks handed to buffers, not the pool. A preallocated pool carves each chunk to the
+requested size; an on-demand pool can hand a buffer a whole newly grown region, so it
+reads higher for the same programs.
 
 ### Exact paired GridSearch measurements
 

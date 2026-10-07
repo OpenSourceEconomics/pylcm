@@ -2,7 +2,7 @@
 
 The claw uses `INTERNAL_CONF`, so type violations in internal helpers
 surface as beartype's own `BeartypeCallHintViolation`. User-facing
-constructors (`Model`, `Regime`, `MarkovTransition`, every grid and shock,
+constructors (`Model`, `Regime`, `StochasticTransition`, every grid and shock,
 `@categorical`, `as_leaf`) carry their own explicit `@beartype(conf=...)`
 decorators that map violations to the relevant project exception
 (`ModelInitializationError`, `RegimeInitializationError`,
@@ -39,7 +39,7 @@ from _lcm.simulation.simulate import _compute_starting_periods
 from _lcm.solution.diagnostics import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import _validate_regime_transition_probs
-from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, LinSpacedGrid
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
@@ -47,6 +47,7 @@ from lcm.exceptions import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
+from tests.test_models.graph import with_fixture_graph
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -54,7 +55,7 @@ def test_claw_checks_lcm_simulation() -> None:
     with pytest.raises(BeartypeCallHintViolation):
         _compute_starting_periods(
             initial_ages=np.array([25.0]),  # ty: ignore[invalid-argument-type]
-            ages=AgeGrid(start=25, stop=75, step="Y"),
+            ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
         )
 
 
@@ -278,11 +279,11 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
 def test_model_with_bad_arg_raises_project_exception() -> None:
     """A bad `Model` argument surfaces as `ModelInitializationError`."""
     with pytest.raises(ModelInitializationError):
-        Model(
-            ages=AgeGrid(start=25, stop=75, step="Y"),
+        with_fixture_graph(
+            ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
-            initial_regimes={25: "n"},
+            initial_nodes={25: "n"},
         )
 
 

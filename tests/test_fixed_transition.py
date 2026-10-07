@@ -13,9 +13,11 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -26,6 +28,7 @@ from lcm import (
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -57,7 +60,11 @@ def _build_regime(**overrides: Any) -> UserRegime:
     """A small valid regime with a fixed health state; tests override slots."""
     spec: dict[str, Any] = {
         "regime_transitions": until_exit(
-            2, law=Choose(func=_next_regime, targets=("dead", "work")), exits=("dead",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("dead", "work")
+            ),
+            exits=("dead",),
         ),
         "states": {
             "health": DiscreteGrid(category_class=_Health),
@@ -79,11 +86,11 @@ def _build_model(work: UserRegime) -> Model:
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"work": work, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        initial_regimes={0: "work"},
+        initial_nodes={0: "work"},
     )
 
 

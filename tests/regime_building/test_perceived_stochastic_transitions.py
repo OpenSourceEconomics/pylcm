@@ -19,19 +19,22 @@ import pytest
 from _lcm.regime_building.stochastic_state_transitions import (
     collect_stochastic_state_transitions,
 )
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -87,18 +90,22 @@ def _model(law: Any) -> Model:
     }
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("live", "last")
+            ),
+            exits=("last",),
         ),
         state_transitions={"good": law},
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    return Model(
+    return with_fixture_graph(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="perceived vs true stochastic law",
-        initial_regimes={0: "live"},
+        initial_nodes={0: "live"},
     )
 
 
@@ -120,11 +127,11 @@ def _simulate(law: Any) -> pd.DataFrame:
 
 
 def test_phased_stochastic_law_is_accepted():
-    """A `MarkovTransition` inside `Phased` is legal for a state transition."""
+    """A `StochasticTransition` inside `Phased` is legal for a state transition."""
     _model(
         Phased(
-            solve=MarkovTransition(func=next_good_belief),
-            simulate=MarkovTransition(func=next_good_actual),
+            solve=StochasticTransition(func=next_good_belief),
+            simulate=StochasticTransition(func=next_good_actual),
         )
     )
 
@@ -141,8 +148,8 @@ def test_q_uses_the_solve_law_and_the_draw_uses_the_simulate_law():
     """
     df = _simulate(
         Phased(
-            solve=MarkovTransition(func=next_good_belief),
-            simulate=MarkovTransition(func=next_good_actual),
+            solve=StochasticTransition(func=next_good_belief),
+            simulate=StochasticTransition(func=next_good_actual),
         )
     )
     period_0 = df[df["period"] == 0]
@@ -163,12 +170,12 @@ def test_outer_phased_per_target_dict_splits_by_phase():
     df = _simulate(
         Phased(
             solve={
-                "live": MarkovTransition(func=next_good_belief),
-                "last": MarkovTransition(func=next_good_belief),
+                "live": StochasticTransition(func=next_good_belief),
+                "last": StochasticTransition(func=next_good_belief),
             },
             simulate={
-                "live": MarkovTransition(func=next_good_actual),
-                "last": MarkovTransition(func=next_good_actual),
+                "live": StochasticTransition(func=next_good_actual),
+                "last": StochasticTransition(func=next_good_actual),
             },
         )
     )
@@ -182,7 +189,7 @@ def test_outer_phased_per_target_dict_splits_by_phase():
 
 def test_bare_law_is_unchanged():
     """With one law, beliefs and truth coincide: the agent optimizes against it."""
-    df = _simulate(MarkovTransition(func=next_good_actual))
+    df = _simulate(StochasticTransition(func=next_good_actual))
     period_0 = df[df["period"] == 0]
     period_1 = df[df["period"] == 1]
 
@@ -216,23 +223,27 @@ def test_markov_and_process_states_coexist():
     }
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("live", "last")
+            ),
+            exits=("last",),
         ),
         state_transitions={
             "good": Phased(
-                solve=MarkovTransition(func=next_good_belief),
-                simulate=MarkovTransition(func=next_good_actual),
+                solve=StochasticTransition(func=next_good_belief),
+                simulate=StochasticTransition(func=next_good_actual),
             )
         },
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = Model(
+    model = with_fixture_graph(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="Markov law and process state in one regime",
-        initial_regimes={0: "live"},
+        initial_nodes={0: "live"},
     )
     shock_params = {"shock": {"mu": 0.0, "sigma": 1.0}}
     params = {
@@ -290,18 +301,22 @@ def test_continuation_helper_resolves_from_the_solve_phase():
     }
     live = Regime(
         regime_transitions=until_exit(
-            2, law=Choose(func=_next_regime, targets=("live", "last")), exits=("last",)
+            2,
+            law=_SupportedDeterministicTransition(
+                func=_next_regime, targets=("live", "last")
+            ),
+            exits=("last",),
         ),
-        state_transitions={"good": MarkovTransition(func=next_good)},
+        state_transitions={"good": StochasticTransition(func=next_good)},
         **common,
     ).replace()
     last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = Model(
+    model = with_fixture_graph(
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,
         description="phase-varying helper under a bare stochastic law",
-        initial_regimes={0: "live"},
+        initial_nodes={0: "live"},
     )
     V = model.solve(params=PARAMS, log_level="debug")
     df = (
@@ -336,8 +351,8 @@ def test_both_phase_variants_get_their_own_metadata_entry():
         regime_transitions=_next_regime,
         state_transitions={
             "good": Phased(
-                solve=MarkovTransition(func=next_good_belief),
-                simulate=MarkovTransition(func=next_good_actual),
+                solve=StochasticTransition(func=next_good_belief),
+                simulate=StochasticTransition(func=next_good_actual),
             )
         },
         states={"good": DiscreteGrid(category_class=Good)},
@@ -358,7 +373,7 @@ def test_bare_law_keeps_its_unqualified_key_and_no_phase():
     """A phase-invariant law is untouched by the phase tagging."""
     live = Regime(
         regime_transitions=_next_regime,
-        state_transitions={"good": MarkovTransition(func=next_good_actual)},
+        state_transitions={"good": StochasticTransition(func=next_good_actual)},
         states={"good": DiscreteGrid(category_class=Good)},
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
@@ -388,8 +403,8 @@ def test_a_malformed_law_is_caught_in_either_phase(bad_phase):
     laws[bad_phase] = _bad_probs
     model = _model(
         Phased(
-            solve=MarkovTransition(func=laws["solve"]),
-            simulate=MarkovTransition(func=laws["simulate"]),
+            solve=StochasticTransition(func=laws["solve"]),
+            simulate=StochasticTransition(func=laws["simulate"]),
         )
     )
     with pytest.raises(

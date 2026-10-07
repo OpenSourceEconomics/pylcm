@@ -17,7 +17,7 @@ import pytest
 
 from _lcm.execution.core_program import core_program_graph
 from _lcm.execution.workspace_planning import workspace_width_candidates
-from lcm import ExecutionConfig, LinSpacedGrid, MarkovTransition, Model
+from lcm import ExecutionConfig, LinSpacedGrid, Model, StochasticTransition
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, SAVINGS_POINT_AXIS
@@ -37,6 +37,7 @@ from tests.solution.test_egm_euler_point_axis import (
     stay_prob,
     utility,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -71,8 +72,8 @@ def _model(width: int | None = None) -> Model:
         regime_transitions=until_exit(
             last_age,
             law={
-                "working": MarkovTransition(func=stay_prob),
-                "dead": MarkovTransition(func=death_prob),
+                "working": StochasticTransition(func=stay_prob),
+                "dead": StochasticTransition(func=death_prob),
             },
             exits=("dead",),
         ),
@@ -100,12 +101,12 @@ def _model(width: int | None = None) -> Model:
         states={"wealth": LinSpacedGrid(start=1.0, stop=120.0, n_points=40)},
         functions={"utility": bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         execution_config=config,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
     )
 
 

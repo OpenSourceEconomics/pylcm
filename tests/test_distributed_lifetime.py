@@ -31,9 +31,9 @@ from _lcm.solution.continuation_reads import continuation_leaf_reads
 from lcm import (
     AgeGrid,
     ExecutionConfig,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     fixed_transition,
 )
 from lcm.solver_api import (
@@ -56,7 +56,10 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
-from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import (
+    assert_values_agree as assert_agrees_to_ulp,
+)
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 # The out-of-tree solver module builds arrays at import, which initializes a JAX
@@ -594,12 +597,12 @@ def _model(
         next_wealth,
     )
 
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": Regime(
                 regime_transitions=until_exit(
                     _N_PERIODS - 1,
-                    law={"dead": MarkovTransition(func=_certain)},
+                    law={"dead": StochasticTransition(func=_certain)},
                     exits=("dead",),
                 ),
                 states={"wealth": _WEALTH},
@@ -618,14 +621,14 @@ def _model(
                 ),
             ),
         },
-        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
         regime_id_class=RegimeId,
         states={"type1": DiscreteGrid(category_class=_Type)},
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
         # Every reading age is a start: `alive` exits straight to `dead`, so one
         # age-0 root would demand the reading problem at period 0 alone.
-        initial_regimes={range(_N_PERIODS - 1): "alive"},
+        initial_nodes={range(_N_PERIODS - 1): "alive"},
     )
 
 

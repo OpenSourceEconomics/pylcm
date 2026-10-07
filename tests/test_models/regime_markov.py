@@ -1,10 +1,12 @@
-"""Model with MarkovTransition on regime transitions."""
+"""Model with StochasticTransition on regime transitions."""
 
+from _lcm.regime_building.transition_support import (
+    _SupportedStochasticTransition,
+)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     categorical,
     fixed_transition,
@@ -38,7 +40,9 @@ def _next_regime_probs(
 alive = UserRegime(
     regime_transitions=until_exit(
         62,
-        law=MarkovTransition(func=_next_regime_probs, targets=("alive", "dead")),
+        law=_SupportedStochasticTransition(
+            func=_next_regime_probs, targets=("alive", "dead")
+        ),
         exits=("dead",),
     ),
     states={
@@ -59,10 +63,11 @@ dead = UserRegime(
 
 
 def get_model() -> Model:
-    """Create a model with MarkovTransition on regime transitions."""
+    """Create a model with StochasticTransition on regime transitions."""
     return Model(
+        edges={"alive": {"alive": 60, "dead": (60, 61)}},
         regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=60, stop=62, step="Y"),
+        ages=AgeGrid(start=60, inclusive_stop=62, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={60: "alive"},
+        initial_nodes={60: "alive"},
     )

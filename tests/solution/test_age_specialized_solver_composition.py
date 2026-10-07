@@ -43,6 +43,7 @@ from tests.test_models.dcegm_paper_twin import (
     done_retired,
     get_params,
 )
+from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -52,7 +53,7 @@ _NEGM_PARAMS = {"discount_factor": 0.95, "alive": {}}
 def _dcegm_twin_with_wealth_grid(wealth_grid) -> Model:
     """The DC-EGM twin, with its `wealth` state declared on `wealth_grid`."""
     solver = dataclasses.replace(DCEGM_SOLVER)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": _working_life("dcegm")
             .replace(solver=solver)
@@ -65,9 +66,9 @@ def _dcegm_twin_with_wealth_grid(wealth_grid) -> Model:
             ),
             "done_retired": done_retired.replace(states={"wealth": wealth_grid}),
         },
-        ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
-        initial_regimes={20: ("working_life", "retirement")},
+        initial_nodes={20: ("working_life", "retirement")},
     )
 
 
@@ -159,7 +160,7 @@ def _negm_toy_with_illiquid_grid(illiquid_grid) -> Model:
     """The kinked NEGM toy, with its durable `illiquid` state on `illiquid_grid`."""
     final_age_alive = 20 + (negm_kinked_toy.N_PERIODS - 2) * 5
     alive = negm_kinked_toy.build_alive_regime()
-    return Model(
+    return with_fixture_graph(
         regimes={
             "alive": alive.replace(
                 states={**dict(alive.states), "illiquid": illiquid_grid}
@@ -168,10 +169,10 @@ def _negm_toy_with_illiquid_grid(illiquid_grid) -> Model:
         },
         regime_id_class=negm_kinked_toy.RegimeId,
         ages=AgeGrid(
-            start=20, stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
+            start=20, inclusive_stop=20 + (negm_kinked_toy.N_PERIODS - 1) * 5, step="5Y"
         ),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

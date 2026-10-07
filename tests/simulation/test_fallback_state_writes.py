@@ -46,7 +46,6 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
-    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
@@ -56,19 +55,20 @@ from lcm import (
     fixed_transition,
 )
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import (
     DECIMAL_PRECISION,
     build_prepared_structure,
     lower_declarations,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _BETA = 0.95
 
 # Three periods: the couple is married at age 0, either still married or single
 # at age 1, and out of the model at age 2.
-_AGES = AgeGrid(start=0, stop=3, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 # The wage every regime is defined on, and the three households' wages.
 _WAGE = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -227,11 +227,11 @@ def _route_three_households() -> MappingProxyType:
 
 def _simulate_three_households():
     """Solve and simulate the model whose `single_f` carries a career state."""
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_regimes(carrying_fallback=True),
         ages=_AGES,
         regime_id_class=RegimeId,
-        initial_regimes={0: "married"},
+        initial_nodes={0: "married"},
     )
     params = {"discount_factor": _BETA}
     solution = model.solve(params=params, log_level="off")
@@ -316,8 +316,8 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         single_f = Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(start=1, stop=2): {
-                        "single_f_terminal": MarkovTransition(func=_prob_one)
+                    AgeRange(start=1, exclusive_stop=2): {
+                        "single_f_terminal": StochasticTransition(func=_prob_one)
                     }
                 }
             ),
@@ -337,8 +337,8 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         single_f = Regime(
             regime_transitions=ByAge(
                 cases={
-                    AgeRange(start=1, stop=2): {
-                        "single_f_terminal": MarkovTransition(func=_prob_one)
+                    AgeRange(start=1, exclusive_stop=2): {
+                        "single_f_terminal": StochasticTransition(func=_prob_one)
                     }
                 }
             ),
@@ -351,9 +351,9 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "married_terminal": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_consent_gate,
                         routes={
                             "f": StakeholderRoute(
@@ -396,8 +396,8 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
     single_m = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=1, stop=2): {
-                    "single_m_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_m_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),

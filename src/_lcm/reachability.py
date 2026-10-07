@@ -1,21 +1,20 @@
 """Construction-time, solver-independent temporal regime reachability.
 
-This module owns the model graph, built once — via `build_model_reachability` — at
-model construction, from the single canonical `active_periods_by_regime` mapping and
-the declared regime transitions. There is no runtime topology pass: the graph never
-changes after construction, and no runtime probability value narrows or widens it.
+This module materializes effective period-indexed graphs from the canonical
+coverage and graph-bound support prepared by `_lcm.model_graph.prepare_graph`.
+`Model.edges` owns declared connectivity; numerical regime transitions and
+`ByAge` supply the available laws. There is no runtime topology pass: the graph
+never changes after construction, and runtime probabilities cannot alter it.
 
 Every retained edge in `targets_by_period` / `edge_status_by_period` is
-`EdgeStatus.CONDITIONAL` — there is no `TRUE` status, because no declaration form
-proves unconditional positive probability independently of state, action, and free
-runtime parameters. Each regime transition declares its support per period,
-and every declared edge is checked for a valid state handoff (a carried state, a
-deterministic/stochastic law, or an explicit target-local/entry law) at model
-build.
+`EdgeStatus.CONDITIONAL`: no declaration proves unconditional positive probability
+independently of states, actions and free runtime parameters. Construction-fixed
+exact-zero scalar probability proofs may remove effective edges. Every retained
+edge requires a valid state handoff at model construction.
 
 The solve and simulate phases build independent graphs (`ModelReachability.solution`
-/ `.simulation`) from the same construction-time semantics, and may retain different
-edges for the same source period when the regime transition's `Phased` sides differ.
+/ `.simulation`) from graph-declared phase support and canonical demand. They may
+retain different edges at the same source period when `Model.edges` is phased.
 
 Solver and simulation runtime code consume this graph (`PhaseReachability.targets`,
 `.union_targets`, `.edge_status`, ...) but never infers reachability itself — it does
@@ -30,7 +29,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from _lcm.typing import RegimeName
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 
 type PhaseName = Literal["solution", "simulation"]
 
@@ -129,10 +128,10 @@ class PhaseReachability:
         )
 
     def reachable_from(
-        self, initial_regimes: Collection[RegimeName]
+        self, initial_regime_names: Collection[RegimeName]
     ) -> tuple[frozenset[RegimeName], ...]:
         """Return the forward closure over the already-built static graph."""
-        reachable = [frozenset(initial_regimes) & self.active_regimes_by_period[0]]
+        reachable = [frozenset(initial_regime_names) & self.active_regimes_by_period[0]]
         for period in range(self.n_periods - 1):
             targets = {
                 target
@@ -171,7 +170,7 @@ def candidate_targets_from_transition(
 
     * `None`: terminal, no targets.
     * per-target mapping: its keys are the declared candidate universe.
-    * vector `MarkovTransition` with `targets`: its declared targets.
+    * vector `StochasticTransition` with `targets`: its declared targets.
     * any other lowered callable or Markov transition: all regimes are
       candidates.
 
@@ -187,8 +186,9 @@ def candidate_targets_from_transition(
         # regime names by construction.
         per_target = cast("Mapping[RegimeName, object]", transition)
         return tuple(sorted(per_target))
-    if isinstance(transition, MarkovTransition) and transition.targets is not None:
-        return tuple(sorted(transition.targets))
+    targets = getattr(transition, "targets", None)
+    if isinstance(transition, StochasticTransition) and targets is not None:
+        return tuple(sorted(targets))
     return tuple(sorted(all_regime_names))
 
 

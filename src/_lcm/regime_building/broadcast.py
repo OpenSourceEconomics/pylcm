@@ -12,7 +12,9 @@ slice. Regime-level declarations are never pruned. The needed-set is a
 cross-regime, cross-phase fixed point: a state unused inside a regime is
 still required when a candidate target keeps it and the law of motion toward
 that target reads it, and the target may keep it on the strength of the other
-phase slice.
+phase slice. A random state — a process or a Markov state — is also needed where
+its next-period draw is read, since the draw is taken from the state, and so is
+every input of the Markov law the draw is taken from.
 
 `root_functions` is the single definition of those root computations. The
 pruning walk here and the variable-usage check in `_lcm.model_processing`
@@ -21,7 +23,7 @@ as a read.
 """
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast, no_type_check
@@ -44,7 +46,11 @@ from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedFunction, JointTransition
+from lcm.transition import (
+    AgeSpecializedFunction,
+    JointTransition,
+    StochasticTransition,
+)
 from lcm.typing import UserFunction
 
 # Which `Phased` side each `PhasedRegimeSpec` slice is built from.
@@ -165,7 +171,9 @@ def prune_broadcast_variables(
 
     A broadcast variable is pruned from a regime when no root computation of
     either phase slice transitively reads it — in that regime or through a
-    law of motion toward a candidate target that keeps it. Pruning drops the
+    law of motion toward a candidate target that keeps it. A read of a random
+    state's next-period draw `next_<state>` is a read of the state, because the
+    draw is taken from it. Pruning drops the
     variable's grid, and for states the part of the regime's law entry that
     the pruned state took with it — an entry law toward a target that retains
     the state stays, so which entry laws a model has does not depend on
@@ -564,6 +572,7 @@ def _phase_fixed_point(
                 candidates=broadcast_variables[regime_name],
                 grown_here=grown[regime_name],
             )
+            needed |= states_read_through_their_draw(regime=user_regime, reads=needed)
             newly_kept = candidates & needed
             if newly_kept:
                 grown[regime_name] = grown[regime_name] | newly_kept
@@ -623,6 +632,54 @@ def _state_conditioned_names(
     return frozenset(names)
 
 
+def states_read_through_their_draw(
+    *, regime: UserRegime, reads: Collection[str]
+) -> frozenset[StateName]:
+    """Collect the random states whose next-period draw is among `reads`.
+
+    A random state is a process or a Markov state, whose law of motion is a
+    probability distribution rather than a function: no function node
+    `next_<state>` exists for a DAG walk to step through to the state, so a read
+    of the draw ends in a leaf. The draw is still taken from the state's law at
+    the state's current value — conditionally on it for a persistent law — so
+    reading the draw is a read of the state, and the regime that reads it keeps
+    the state. That holds for an IID process too: its lagged value does not
+    inform the draw, but the engine draws `next_<state>` from the carried state,
+    so the axis stays and the value is constant along it.
+
+    Args:
+        regime: The regime whose states are inspected.
+        reads: Names the regime's computations read, including `next_<state>`
+            leaves.
+
+    Returns:
+        Names of the regime's random states whose `next_<state>` is read.
+
+    """
+    return frozenset(
+        name
+        for name, grid in regime.states.items()
+        if f"next_{name}" in reads
+        and (_is_process(grid) or _is_markov_law(regime.state_transitions.get(name)))
+    )
+
+
+def _is_process(grid: object) -> bool:
+    """Whether a state declaration is a process in either phase."""
+    if isinstance(grid, Phased):
+        return _is_process(grid.solve) or _is_process(grid.simulate)
+    return isinstance(grid, _ContinuousStochasticProcess)
+
+
+def _is_markov_law(law: object) -> bool:
+    """Whether a law of motion is a Markov law, toward any target in either phase."""
+    if isinstance(law, Phased):
+        return _is_markov_law(law.solve) or _is_markov_law(law.simulate)
+    if isinstance(law, Mapping):
+        return any(_is_markov_law(cell) for cell in law.values())
+    return isinstance(law, StochasticTransition)
+
+
 def _resolved_at_representative_age(
     *,
     mapping: Mapping[str, UserFunction],
@@ -674,6 +731,9 @@ def _needed_names(
     pruning's own: whatever such a law reads has to stay alive here so the
     target can be handed its value.
 
+    A Markov state whose draw is read roots its law too, since the draw is
+    taken from it; the walk repeats until no further draw is read.
+
     The whole pool is resolved at a representative active period before the DAG
     walk, so `get_ancestors` sees a marked node's real argument names instead of
     `AgeSpecializedFunction.__call__`'s generic `(*args, **kwargs)`.
@@ -696,13 +756,41 @@ def _needed_names(
     )
     pool |= roots
 
-    targets = list(roots)
-    if not targets:
+    if not roots:
         return set()
-    resolved_pool = _resolved_at_representative_age(
-        mapping=pool, ages=ages, active_periods=active_periods
-    )
-    return set(get_ancestors(resolved_pool, targets=targets, include_targets=True))
+    while True:
+        resolved_pool = _resolved_at_representative_age(
+            mapping=pool, ages=ages, active_periods=active_periods
+        )
+        needed = set(
+            get_ancestors(resolved_pool, targets=list(roots), include_targets=True)
+        )
+        draw_roots = _draw_law_roots(
+            phase_slice=phase_slice, regime=user_regime, reads=needed
+        )
+        if draw_roots.keys() <= roots.keys():
+            return needed
+        roots |= draw_roots
+        pool |= draw_roots
+
+
+def _draw_law_roots(
+    *, phase_slice: RegimePhaseSpec, regime: UserRegime, reads: Collection[str]
+) -> dict[str, UserFunction]:
+    """Key the Markov laws whose draws `reads` contains as pruning roots.
+
+    A draw toward a target that does not carry the state is taken from the
+    state's law declared once for every target, at the source's current
+    values, so every name that law reads is read here. A per-target law cell
+    feeds only a target carrying the state; `_law_roots` roots it there.
+    """
+    return {
+        f"__draw_law_{name}": cast("UserFunction", law)
+        for name in states_read_through_their_draw(regime=regime, reads=reads)
+        if isinstance(
+            law := phase_slice.state_transitions.get(name), StochasticTransition
+        )
+    }
 
 
 def _composed_resources_edge(

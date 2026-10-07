@@ -48,7 +48,7 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 
@@ -110,7 +110,7 @@ def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
     }
 
 
-_AGES_2P = AgeGrid(start=0, stop=2, step="Y")
+_AGES_2P = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
 
 def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
@@ -118,9 +118,9 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=_no_dissolution_gate,
                         routes={
                             "only": StakeholderRoute(
@@ -176,7 +176,9 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"reader_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "reader_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -233,9 +235,9 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     source = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
+                AgeRange(exclusive_stop=1): {
                     "target": ValueDependentTransition(
-                        probability=MarkovTransition(func=_prob_one),
+                        probability=StochasticTransition(func=_prob_one),
                         gate=lambda V_ref: V_ref > 0.0,
                         routes={
                             "only": StakeholderRoute(

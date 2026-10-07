@@ -16,10 +16,11 @@ def test_simulation_with_heterogeneous_initial_ages():
     n_periods = 5
     example = get_model(n_periods=n_periods)
     model = Model(
+        edges=example.graph.edges,
         regimes=example.user_regimes,
         ages=example.ages,
         regime_id_class=RegimeId,
-        initial_regimes={(40, 60): "working_life"},
+        initial_nodes={(40, 60): "working_life"},
     )
     params = get_params(n_periods=n_periods)
 

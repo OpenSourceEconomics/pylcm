@@ -101,10 +101,10 @@ from lcm import (
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
     RouwenhorstAR1Process,
+    StochasticTransition,
     UniformIIDProcess,
     categorical,
     fixed_transition,
@@ -124,7 +124,7 @@ from lcm.typing import (
 _DATA_DIR = Path(__file__).parent / "data"
 
 productivity_type_multiplier = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-ages = AgeGrid(start=25, stop=101, step="2Y")
+ages = AgeGrid(start=25, inclusive_stop=101, step="2Y")
 n_periods = ages.n_periods
 retirement_age = 65
 retirement_period = ages.age_to_period(retirement_age)
@@ -566,18 +566,18 @@ def savings_constraint(
     return net_income + wealth * gross_interest_rate >= saving
 
 
-_WORKING_TO_DEAD = MarkovTransition(func=working_to_dead_probability)
-_RETIREMENT_TO_DEAD = MarkovTransition(func=retirement_to_dead_probability)
+_WORKING_TO_DEAD = StochasticTransition(func=working_to_dead_probability)
+_RETIREMENT_TO_DEAD = StochasticTransition(func=retirement_to_dead_probability)
 
 # Work until the age before retirement, then retire or die.
 WORKING_TRANSITIONS = ByAge.until(
     stop_age_exclusive=retirement_age,
     law={
-        "working": MarkovTransition(func=working_to_working_probability),
+        "working": StochasticTransition(func=working_to_working_probability),
         "dead": _WORKING_TO_DEAD,
     },
     then={
-        "retirement": MarkovTransition(func=working_to_retirement_probability),
+        "retirement": StochasticTransition(func=working_to_retirement_probability),
         "dead": _WORKING_TO_DEAD,
     },
 )
@@ -586,12 +586,26 @@ WORKING_TRANSITIONS = ByAge.until(
 RETIREMENT_TRANSITIONS = ByAge.until(
     stop_age_exclusive=ages.exact_values[-1],
     law={
-        "retirement": MarkovTransition(func=retirement_to_retirement_probability),
+        "retirement": StochasticTransition(func=retirement_to_retirement_probability),
         "dead": _RETIREMENT_TO_DEAD,
     },
     then={"dead": _RETIREMENT_TO_DEAD},
     start_age_inclusive=retirement_age,
 )
+
+
+_RETIREMENT_PERIOD = ages.exact_values.index(retirement_age)
+MODEL_EDGES = {
+    "working": {
+        "working": tuple(ages.exact_values[: _RETIREMENT_PERIOD - 1]),
+        "retirement": ages.exact_values[_RETIREMENT_PERIOD - 1],
+        "dead": tuple(ages.exact_values[:_RETIREMENT_PERIOD]),
+    },
+    "retirement": {
+        "retirement": tuple(ages.exact_values[_RETIREMENT_PERIOD:-2]),
+        "dead": tuple(ages.exact_values[_RETIREMENT_PERIOD:-1]),
+    },
+}
 
 
 WORKING_REGIME = Regime(
@@ -609,7 +623,7 @@ WORKING_REGIME = Regime(
     },
     state_transitions={
         "wealth": next_wealth,
-        "health": MarkovTransition(func=next_health),
+        "health": StochasticTransition(func=next_health),
         "lagged_effort": next_lagged_effort,
         "education": fixed_transition("education"),
         "productivity": fixed_transition("productivity"),
@@ -661,7 +675,7 @@ RETIREMENT_REGIME = Regime(
     },
     state_transitions={
         "wealth": next_wealth,
-        "health": MarkovTransition(func=next_health),
+        "health": StochasticTransition(func=next_health),
         "lagged_effort": next_lagged_effort,
         "education": fixed_transition("education"),
         "health_type": fixed_transition("health_type"),
@@ -722,6 +736,7 @@ def create_model(
 ) -> Model:
     """Build the lifecycle model with the requested hardware-local controls."""
     return Model(
+        edges=MODEL_EDGES,
         regimes={
             "working": WORKING_REGIME,
             "retirement": RETIREMENT_REGIME,
@@ -729,7 +744,7 @@ def create_model(
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working"},
+        initial_nodes={ages.exact_values[0]: "working"},
         fixed_params={
             "effort_grid": effort_grid,
             "productivity_type_multiplier": productivity_type_multiplier,

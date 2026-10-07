@@ -19,13 +19,14 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_model,
     get_retirement_only_params,
 )
+from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
 def _numeric_retirement_model(n_periods: int) -> Model:
     """The DC-EGM retirement model with `inverse_marginal_utility` removed."""
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     functions_without_inverse = {
         name: func
@@ -36,11 +37,11 @@ def _numeric_retirement_model(n_periods: int) -> Model:
         regime_transitions=retirement_only.retirement_transitions(last_age=last_age),
         functions=functions_without_inverse,
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": numeric_regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
-        initial_regimes={ages.exact_values[0]: "retirement"},
+        initial_nodes={ages.exact_values[0]: "retirement"},
     )
 
 

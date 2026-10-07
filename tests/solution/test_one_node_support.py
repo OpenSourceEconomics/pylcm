@@ -11,13 +11,14 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Regime,
+    StochasticTransition,
     UniformIIDProcess,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _ONE_NODE = UniformIIDProcess(n_points=1, start=0.0, stop=2.0)
@@ -75,12 +76,12 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     The target's terminal utility is `shock + 10` and its only node is at zero, so the
     continuation is 10 and the source's zero utility leaves `V = 10`.
     """
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 state_transitions={"shock": {"target": _enter_at_the_node}},
@@ -92,9 +93,9 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
                 functions={"utility": _shock_plus_ten},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     V = model.solve(
@@ -109,12 +110,12 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
 
 def _model_entering_at(enter_law) -> Model:
     """Source entering the one-node target through a state-dependent law."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states={"wealth": _WEALTH},
@@ -130,9 +131,9 @@ def _model_entering_at(enter_law) -> Model:
                 functions={"utility": _shock_and_wealth},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 

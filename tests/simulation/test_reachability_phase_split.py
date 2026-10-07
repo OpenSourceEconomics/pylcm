@@ -14,9 +14,17 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, ExecutionConfig, MarkovTransition, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    Model,
+    Regime,
+    StochasticTransition,
+    categorical,
+)
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -47,12 +55,12 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions={
-                    "low": MarkovTransition(func=_probability_low),
-                    "high": MarkovTransition(func=_probability_high),
+                    "low": StochasticTransition(func=_probability_low),
+                    "high": StochasticTransition(func=_probability_high),
                 },
                 functions={"utility": _zero_utility},
             ),
@@ -65,11 +73,11 @@ def _build_model() -> Model:
                 functions={"utility": _high_utility},
             ),
         },
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 

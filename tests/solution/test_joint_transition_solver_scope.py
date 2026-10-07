@@ -8,16 +8,16 @@ from lcm import (
     ExecutionConfig,
     JointTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
-    fixed_transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import EGM, GridSearch
+from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -39,6 +39,10 @@ def _savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> Float
     return wealth - consumption
 
 
+def _next_wealth(savings: FloatND) -> ContinuousState:
+    return savings
+
+
 def _certain_target() -> FloatND:
     return jnp.asarray(1.0)
 
@@ -51,14 +55,16 @@ def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
     return savings + match
 
 
-def _model(solver: EGM | GridSearch) -> Model:
+def _model(solver: OneMarginSolver | GridSearch) -> Model:
     source = ConsumptionSavingsRegime(
         regime_transitions=until_exit(
-            1, law={"target": MarkovTransition(func=_certain_target)}, exits=("target",)
+            1,
+            law={"target": StochasticTransition(func=_certain_target)},
+            exits=("target",),
         ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=10)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20)},
-        state_transitions={"wealth": fixed_transition("wealth")},
+        state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility, "savings": _savings},
         joint_transitions={
             "target": {
@@ -83,13 +89,13 @@ def _model(solver: EGM | GridSearch) -> Model:
         states={"estate": LinSpacedGrid(start=0.1, stop=20.0, n_points=40)},
         functions={"utility": _target_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"source": source, "target": target},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "source"},
+        initial_nodes={0: "source"},
     )
 
 
@@ -102,12 +108,24 @@ def test_grid_search_admits_transition_local_joint_lotteries() -> None:
     ) == ["match"]
 
 
-def test_egm_rejects_transition_local_joint_lotteries_during_construction() -> None:
-    """Unsupported EGM fails closed rather than reaching `KeyError` in solve."""
-    solver = EGM(savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=20))
+_SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=20)
 
+
+@pytest.mark.parametrize(
+    "solver",
+    [
+        EGM(savings_grid=_SAVINGS_GRID),
+        DCEGM(savings_grid=_SAVINGS_GRID),
+        NBEGM(savings_grid=_SAVINGS_GRID),
+    ],
+    ids=["EGM", "DCEGM", "NBEGM"],
+)
+def test_egm_family_rejects_transition_local_joint_lotteries_during_construction(
+    solver: OneMarginSolver,
+) -> None:
+    """An EGM-family solver refuses a joint lottery rather than failing in solve."""
     with pytest.raises(
         ModelInitializationError,
-        match=r"EGM.*transition-local.*JointTransition.*GridSearch",
+        match=rf"{type(solver).__name__}.*transition-local.*JointTransition.*GridSearch",
     ):
         _model(solver)

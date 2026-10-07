@@ -20,17 +20,17 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
+from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from lcm import (
     AgeGrid,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
     Regime,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -55,6 +55,7 @@ from tests.solution.test_fixed_component_markov import (
 from tests.solution.test_fixed_component_markov import (
     _model as _fixed_component_model,
 )
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -156,7 +157,9 @@ def _next_regime(age: float) -> ScalarInt:
 def _work_dead_transition() -> ByAge:
     return until_exit(
         3,
-        law=Choose(func=_next_regime, targets=("work", "dead")),
+        law=_SupportedDeterministicTransition(
+            func=_next_regime, targets=("work", "dead")
+        ),
         exits=("dead",),
     )
 
@@ -183,11 +186,11 @@ def _model(
 
     """
     work_states: dict[str, DiscreteGrid] = {}
-    work_laws: dict[str, MarkovTransition] = {}
+    work_laws: dict[str, StochasticTransition] = {}
     if typed_health:
         work_states["health"] = DiscreteGrid(_Health)
-        work_laws["health"] = MarkovTransition(func=_next_health)
-    return Model(
+        work_laws["health"] = StochasticTransition(func=_next_health)
+    return with_fixture_graph(
         regimes={
             "work": Regime(
                 regime_transitions=_work_dead_transition(),
@@ -208,7 +211,7 @@ def _model(
                 },
             ),
         },
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_RegimeId,
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -221,7 +224,7 @@ def _model(
             else pref_law,
         },
         execution_config=ExecutionConfig(sharded_states=sharded_states),
-        initial_regimes={0: ("work", "dead")},
+        initial_nodes={0: ("work", "dead")},
     )
 
 
@@ -237,7 +240,7 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
 
     """
     consumption = {"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)}
-    entry_law = MarkovTransition(func=_draw_pref_type)
+    entry_law = StochasticTransition(func=_draw_pref_type)
     regime_id = _ReentryRegimeId if drop_and_reenter else _EntryRegimeId
     work_targets = ("work", "gap", "dead") if drop_and_reenter else ("work", "dead")
     to_work = _reentry_to_work if drop_and_reenter else _entry_to_work
@@ -245,7 +248,9 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
     regimes = {
         "young": Regime(
             regime_transitions=until_exit(
-                1, law=Choose(func=to_work, targets=("work",)), exits=("work",)
+                1,
+                law=_SupportedDeterministicTransition(func=to_work, targets=("work",)),
+                exits=("work",),
             ),
             actions=consumption,
             functions={"utility": _type_free_young_utility},
@@ -255,7 +260,9 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
         "work": Regime(
             regime_transitions=until_exit(
                 3,
-                law=Choose(func=next_work_regime, targets=work_targets),
+                law=_SupportedDeterministicTransition(
+                    func=next_work_regime, targets=work_targets
+                ),
                 exits=("dead",),
                 start=1,
             ),
@@ -271,7 +278,9 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
         "gap": Regime(
             regime_transitions=until_exit(
                 3,
-                law=Choose(func=to_work, targets=("work", "dead")),
+                law=_SupportedDeterministicTransition(
+                    func=to_work, targets=("work", "dead")
+                ),
                 exits=("dead",),
                 start=2,
             ),
@@ -286,12 +295,12 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
     }
     if not drop_and_reenter:
         del regimes["gap"]
-    return Model(
+    return with_fixture_graph(
         regimes=regimes,
-        ages=AgeGrid(start=0, stop=4, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=regime_id,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        initial_regimes={0: "young"},
+        initial_nodes={0: "young"},
     )
 
 
@@ -410,7 +419,7 @@ _PER_TARGET_RESET = {"work": _reset_pref_type, "dead": fixed_transition("pref_ty
         pytest.param(_reset_pref_type, id="reset"),
         pytest.param(_rotate_pref_type, id="cross-type"),
         pytest.param(
-            MarkovTransition(func=_stay_with_certainty),
+            StochasticTransition(func=_stay_with_certainty),
             id="zero-probability-off-diagonal",
         ),
     ],
@@ -483,20 +492,18 @@ def test_eligibility_does_not_depend_on_sharded_states():
 
 def test_same_period_reference_is_an_unsupported_channel():
     """A same-period value reference touching a carrier refuses the coordinate."""
-    model = _make_same_period_ref_model(
-        later_ceiling=10.0, initial_regimes={0: "couple"}
-    )
+    model = _make_same_period_ref_model(later_ceiling=10.0, initial_nodes={0: "couple"})
     refusals = _components(model)["wealth"].solve.refusals
     assert any("same-period reference" in refusal for refusal in refusals)
 
 
 def test_gated_edge_is_an_unsupported_channel():
     """A gated edge touching a carrier refuses the coordinate."""
-    model = Model(
+    model = with_fixture_graph(
         regimes=_make_gated_self_loop_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GatedRegimeId,
-        initial_regimes={0: "src"},
+        initial_nodes={0: "src"},
     )
     refusals = _components(model)["wage"].solve.refusals
     assert any("gated edge" in refusal for refusal in refusals)
@@ -511,9 +518,7 @@ class _GatedRegimeId:
 
 def test_continuous_fixed_state_has_no_code_mapping():
     """Blocking needs codes, so a continuous identity-law state is refused."""
-    model = _make_same_period_ref_model(
-        later_ceiling=10.0, initial_regimes={0: "couple"}
-    )
+    model = _make_same_period_ref_model(later_ceiling=10.0, initial_nodes={0: "couple"})
     refusals = _components(model)["wealth"].solve.refusals
     assert any("discrete grid" in refusal for refusal in refusals)
 

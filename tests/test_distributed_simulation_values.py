@@ -5,7 +5,6 @@ Run this module alone so its four-CPU-device topology precedes JAX initializatio
 
 # Test-model declarations must run after the four-device configuration below.
 # ruff: noqa: PLC0415
-
 from functools import cache
 from typing import cast
 
@@ -14,10 +13,12 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -29,7 +30,10 @@ from lcm.regime import Regime
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
-from tests.conftest import assert_agrees_to_ulp
+from tests.simulation._profile_comparison import (
+    assert_values_agree as assert_agrees_to_ulp,
+)
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 try:
@@ -243,12 +247,14 @@ def _build_model(
 ) -> Model:
     """Build a sharded preference axis beside an unsharded terminal regime."""
     wealth = LinSpacedGrid(start=1, stop=20, n_points=6)
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working": Regime(
                 regime_transitions=until_exit(
                     3,
-                    law=Choose(func=_transition, targets=("working", "retired")),
+                    law=_SupportedDeterministicTransition(
+                        func=_transition, targets=("working", "retired")
+                    ),
                     exits=("retired",),
                 ),
                 states={"wealth": wealth},
@@ -266,7 +272,7 @@ def _build_model(
             "preference": DiscreteGrid(_ThreeTypes if n_types == 3 else _FourTypes)
         },
         state_transitions={"preference": fixed_transition("preference")},
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(
             sharded_states=("preference",) if sharded else (),
@@ -274,7 +280,7 @@ def _build_model(
             axis_widths={} if subject_width is None else {"subject": subject_width},
             device_memory_bytes=budget,
         ),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

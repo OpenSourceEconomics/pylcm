@@ -41,6 +41,7 @@ from tests.test_models.dcegm_paper_twin import (
     done_retired,
     get_params,
 )
+from tests.test_models.graph import with_fixture_graph
 
 _NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
     reason=EXACT_KERNEL_SKIP_REASON
@@ -82,16 +83,16 @@ def _twin(
         working = working.replace(
             functions={**dict(working.functions), "utility": utility}
         )
-    return Model(
+    return with_fixture_graph(
         regimes={
             "working_life": working,
             "retirement": retirement,
             "done_from_working": done_from_working,
             "done_retired": done_retired,
         },
-        ages=AgeGrid(start=MIN_AGE, stop=MIN_AGE + N_PERIODS - 1, step="Y"),
+        ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
-        initial_regimes={20: "working_life"},
+        initial_nodes={20: "working_life"},
     )
 
 

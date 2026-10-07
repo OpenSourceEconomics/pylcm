@@ -21,6 +21,9 @@ import pytest
 from _lcm.execution.scheduler import BufferRegistry, shard_identities
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.grids.base import Grid
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from _lcm.solution import backward_induction
 from _lcm.solution.kernel_output import ConsumedKernelOutput
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
@@ -29,7 +32,6 @@ from lcm import (
     AgeRange,
     AgeSpecializedGrid,
     ByAge,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -48,6 +50,7 @@ from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 def _params() -> dict[str, float]:
@@ -68,11 +71,11 @@ class _Records(logging.Handler):
 
 
 def _model() -> Model:
-    return Model(
+    return with_fixture_graph(
         regimes=_make_full_topology_regimes(),
-        ages=AgeGrid(start=0, stop=3, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
-        initial_regimes={0: ("single_f", "single_m")},
+        initial_nodes={0: ("single_f", "single_m")},
     )
 
 
@@ -197,7 +200,7 @@ def _pass_through_model(
     working = ConsumptionSavingsRegime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(start=0, stop=1): Choose(
+                AgeRange(start=0, exclusive_stop=1): _SupportedDeterministicTransition(
                     func=_pass_through_next_regime, targets=("dead",)
                 )
             }
@@ -220,13 +223,13 @@ def _pass_through_model(
         states={"wealth": wealth_grid},
         functions={"utility": _pass_through_terminal_utility},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working": working, "dead": dead},
         regime_id_class=_PassThroughRegimeId,
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
 
 

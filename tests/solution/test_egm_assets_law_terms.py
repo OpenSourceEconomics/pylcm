@@ -19,16 +19,18 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    MarkovTransition,
     Model,
     Phased,
+    StochasticTransition,
     categorical,
     fixed_transition,
 )
@@ -46,6 +48,7 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -217,7 +220,7 @@ def next_aime(*, aime: ContinuousState, is_working: BoolND) -> ContinuousState:
 
 
 def _ages() -> AgeGrid:
-    return AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
+    return AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
 
 
 DCEGM_SOLVER = DCEGM(
@@ -281,7 +284,9 @@ def _health_insurance_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         actions={
@@ -313,11 +318,11 @@ def _health_insurance_model(solver: str) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 
@@ -365,7 +370,9 @@ def _means_test_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -393,11 +400,11 @@ def _means_test_model(solver: str) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 
@@ -464,8 +471,8 @@ def _per_target_model(solver: str) -> Model:
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
             law={
-                "working_life": MarkovTransition(func=_stay_prob),
-                "dead": MarkovTransition(func=_death_prob),
+                "working_life": StochasticTransition(func=_stay_prob),
+                "dead": StochasticTransition(func=_death_prob),
             },
             exits=("dead",),
         ),
@@ -505,11 +512,11 @@ def _per_target_model(solver: str) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": bequest},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 
@@ -558,7 +565,9 @@ def _phased_law_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         actions={"consumption": CONSUMPTION_GRID},
@@ -592,11 +601,11 @@ def _phased_law_model(solver: str) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 
@@ -643,7 +652,9 @@ def _chained_law_model(solver: str) -> Model:
     working = regime_type(
         regime_transitions=until_exit(
             40 + (N_PERIODS - 1) * 10,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         actions={
@@ -675,11 +686,11 @@ def _chained_law_model(solver: str) -> Model:
             else {}
         ),
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
         regime_id_class=LawTermRegimeId,
-        initial_regimes={40: "working_life"},
+        initial_nodes={40: "working_life"},
     )
 
 

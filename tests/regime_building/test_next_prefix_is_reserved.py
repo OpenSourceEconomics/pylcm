@@ -18,16 +18,17 @@ import pytest
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     NormalIIDProcess,
     QuasiArithmeticMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.typing import ScalarFloat, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
@@ -60,12 +61,12 @@ def _build(
     state_transitions=None,
 ) -> Model:
     """Two-regime model whose source is configurable, target always terminal."""
-    return Model(
+    return with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states={"wealth": _WEALTH} if states is None else states,
@@ -83,9 +84,9 @@ def _build(
                 functions={"utility": _wealth_and_shock},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
 
@@ -151,12 +152,12 @@ def test_a_state_this_regime_moves_is_also_rejected_outside_a_transition() -> No
 def test_a_constraint_may_not_read_a_targets_draw() -> None:
     """A constraint is evaluated before any target is entered."""
     with pytest.raises(InvalidNameError, match="next_shock"):
-        Model(
+        with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(func=_to_target)},
+                        law={"target": StochasticTransition(func=_to_target)},
                         exits=("target",),
                     ),
                     states={"wealth": _WEALTH},
@@ -170,9 +171,9 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
                     functions={"utility": _wealth_and_shock},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
 
@@ -222,12 +223,12 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     extrapolation enters.
     """
     aime = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
-    model = Model(
+    model = with_fixture_graph(
         regimes={
             "source": Regime(
                 regime_transitions=until_exit(
                     22,
-                    law={"target": MarkovTransition(func=_to_target)},
+                    law={"target": StochasticTransition(func=_to_target)},
                     exits=("target",),
                 ),
                 states={"wealth": _WEALTH, "aime": aime},
@@ -243,9 +244,9 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
                 functions={"utility": _wealth_and_aime},
             ),
         },
-        ages=AgeGrid(start=20, stop=22, step="Y"),
+        ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
-        initial_regimes={20: "source"},
+        initial_nodes={20: "source"},
     )
 
     V = model.solve(
@@ -340,13 +341,13 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
     for a value whose destination it is still choosing.
     """
     with pytest.raises(InvalidNameError, match=r"next_regime|next_wealth"):
-        Model(
+        with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
                         law={
-                            "target": MarkovTransition(
+                            "target": StochasticTransition(
                                 func=_probability_reading_a_next_name
                             )
                         },
@@ -362,9 +363,9 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
                     functions={"utility": _wealth_and_shock},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )
 
 
@@ -382,12 +383,12 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
     next-period value.
     """
     with pytest.raises(InvalidNameError, match=r"certainty_equivalent|next_wealth"):
-        Model(
+        with_fixture_graph(
             regimes={
                 "source": Regime(
                     regime_transitions=until_exit(
                         22,
-                        law={"target": MarkovTransition(func=_to_target)},
+                        law={"target": StochasticTransition(func=_to_target)},
                         exits=("target",),
                     ),
                     states={"wealth": _WEALTH},
@@ -404,7 +405,7 @@ def test_a_certainty_equivalent_may_not_declare_a_next_prefixed_parameter() -> N
                     functions={"utility": _wealth_and_shock},
                 ),
             },
-            ages=AgeGrid(start=20, stop=22, step="Y"),
+            ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=RegimeId,
-            initial_regimes={20: "source"},
+            initial_nodes={20: "source"},
         )

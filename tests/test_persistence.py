@@ -12,9 +12,11 @@ import lcm
 from _lcm import variables as _variables
 from _lcm.persistence import snapshots as _snapshot_module
 from _lcm.persistence.io import _get_platform
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -29,6 +31,7 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
 from lcm.solver_api import SolutionResult, ValueStore
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 
@@ -70,7 +73,9 @@ def _build_tiny_model(*, enable_jit: bool):
     working = UserRegime(
         regime_transitions=until_exit(
             2,
-            law=Choose(func=next_regime, targets=("working", "retired")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working", "retired")
+            ),
             exits=("retired",),
         ),
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
@@ -83,15 +88,15 @@ def _build_tiny_model(*, enable_jit: bool):
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=3)},
         functions={"utility": _retired_utility},
     )
-    ages = AgeGrid(start=0, stop=3, step="Y")
-    model = Model(
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    model = with_fixture_graph(
         regimes={"working": working, "retired": retired},
         ages=ages,
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         # The simulation starts at age zero; an empty later period is intentional.
-        initial_regimes={0: "working"},
+        initial_nodes={0: "working"},
     )
     params = {"discount_factor": 0.95}
     return model, params

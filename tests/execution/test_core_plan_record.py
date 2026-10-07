@@ -93,7 +93,8 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=tiny.RegimeId,
-        initial_regimes={model.ages.exact_values[0]: "working_life"},
+        initial_nodes={model.ages.exact_values[0]: "working_life"},
+        edges=model.graph.edges,
         execution_config=execution_config,
     )
 

@@ -1,4 +1,4 @@
-"""Required `initial_regimes`, keyword-only declarations, and `ByAge` availability."""
+"""Required `initial_nodes`, keyword-only declarations, and `ByAge` availability."""
 
 import inspect
 from fractions import Fraction
@@ -11,17 +11,18 @@ from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
+    DeterministicTransition,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 
-AGES = AgeGrid(start=25, stop=75, step="10Y")
+AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 
 
 @categorical(ordered=False)
@@ -58,43 +59,47 @@ def _regimes() -> dict[str, Regime]:
             regime_transitions=ByAge.until(
                 stop_age_exclusive=65,
                 law={
-                    "working": MarkovTransition(func=_stay),
-                    "dead": MarkovTransition(func=_die),
+                    "working": StochasticTransition(func=_stay),
+                    "dead": StochasticTransition(func=_die),
                 },
                 then="retirement",
             )
         ),
         "retirement": _regime(
-            regime_transitions=ByAge(cases={AgeRange(start=65, stop=75): "dead"})
+            regime_transitions=ByAge(
+                cases={AgeRange(start=65, exclusive_stop=75): "dead"}
+            )
         ),
         "dead": Regime(regime_transitions=None, functions={"utility": lambda: 0.0}),
     }
 
 
 def _model(**kwargs: Any) -> Model:
-    return Model(regimes=_regimes(), ages=AGES, regime_id_class=RegimeId, **kwargs)
+    return with_fixture_graph(
+        regimes=_regimes(), ages=AGES, regime_id_class=RegimeId, **kwargs
+    )
 
 
-def test_model_without_initial_regimes_is_a_signature_error() -> None:
-    """`initial_regimes` is a required keyword with no default."""
-    with pytest.raises(TypeError, match="initial_regimes"):
+def test_model_without_initial_nodes_is_a_signature_error() -> None:
+    """`initial_nodes` is a required keyword with no default."""
+    with pytest.raises(TypeError, match="initial_nodes"):
         _model()
 
 
-def test_model_initial_regimes_has_no_default() -> None:
+def test_model_initial_nodes_has_no_default() -> None:
     """The signature itself carries no fallback root universe."""
-    parameter = inspect.signature(Model.__init__).parameters["initial_regimes"]
+    parameter = inspect.signature(Model.__init__).parameters["initial_nodes"]
     assert parameter.default is inspect.Parameter.empty
 
 
-_NOT_A_MAPPING = r"parameter initial_regimes=.* violates type hint InitialRegimes"
+_NOT_A_MAPPING = r"parameter initial_nodes=.* violates type hint InitialNodes"
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "match"),
+    ("initial_nodes", "match"),
     [
         (None, _NOT_A_MAPPING),
-        ({}, r"^`initial_regimes` must be a nonempty mapping .*; got \{\}\.$"),
+        ({}, r"^`initial_nodes` must be a nonempty mapping .*; got \{\}\.$"),
         ("working", _NOT_A_MAPPING),
         (("working", "retirement"), _NOT_A_MAPPING),
         ({25: ()}, r"a nonempty sequence of names; got \(\)\.$"),
@@ -102,16 +107,16 @@ _NOT_A_MAPPING = r"parameter initial_regimes=.* violates type hint InitialRegime
     ],
     ids=["none", "empty", "bare-name", "bare-sequence", "empty-rule", "unknown"],
 )
-def test_model_rejects_malformed_initial_regimes(
-    *, initial_regimes: Any, match: str
+def test_model_rejects_malformed_initial_nodes(
+    *, initial_nodes: Any, match: str
 ) -> None:
     """`None`, empty, bare-name and unknown-name roots all fail at construction."""
     with pytest.raises(ModelInitializationError, match=match):
-        _model(initial_regimes=initial_regimes)
+        _model(initial_nodes=initial_nodes)
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "match"),
+    ("initial_nodes", "match"),
     [
         ({61: "working"}, r"^Age 61 in selector 61 is not an age of the model"),
         ({True: "working"}, r"^Age selector True must name numeric ages"),
@@ -119,18 +124,21 @@ def test_model_rejects_malformed_initial_regimes(
     ],
     ids=["off-grid", "boolean-age", "string-age"],
 )
-def test_model_rejects_malformed_root_ages(*, initial_regimes: Any, match: str) -> None:
+def test_model_rejects_malformed_root_ages(*, initial_nodes: Any, match: str) -> None:
     """Root ages are exact grid coordinates; nothing is rounded onto the clock."""
     with pytest.raises(ModelInitializationError, match=match):
-        _model(initial_regimes=initial_regimes)
+        _model(initial_nodes=initial_nodes)
 
 
 @pytest.mark.parametrize(
-    ("initial_regimes", "expected"),
+    ("initial_nodes", "expected"),
     [
         ({25: "working"}, frozenset({(25, "working")})),
         (
-            {(25, 45): "working", AgeRange(start=65, stop=75): ("retirement",)},
+            {
+                (25, 45): "working",
+                AgeRange(start=65, exclusive_stop=75): ("retirement",),
+            },
             frozenset({(25, "working"), (45, "working"), (65, "retirement")}),
         ),
         (
@@ -141,27 +149,33 @@ def test_model_rejects_malformed_root_ages(*, initial_regimes: Any, match: str) 
     ids=["one-pair", "tuple-and-range", "overlapping-rules-union"],
 )
 def test_initial_nodes_are_the_cartesian_union_of_rules(
-    *, initial_regimes: Any, expected: frozenset
+    *, initial_nodes: Any, expected: frozenset
 ) -> None:
     """Each rule contributes ages times names; rules are unioned."""
-    assert _model(initial_regimes=initial_regimes).initial_nodes == expected
+    assert _model(initial_nodes=initial_nodes).initial_nodes == expected
 
 
 def test_initial_nodes_are_immutable() -> None:
     """`model.initial_nodes` is an immutable snapshot of the admissible starts."""
-    assert isinstance(_model(initial_regimes={25: "working"}).initial_nodes, frozenset)
+    assert isinstance(_model(initial_nodes={25: "working"}).initial_nodes, frozenset)
 
 
 @pytest.mark.parametrize(
     ("call", "kwargs"),
     [
-        (MarkovTransition, {"func": _stay}),
-        (Choose, {"func": _stay, "targets": ("dead",)}),
+        (StochasticTransition, {"func": _stay}),
+        (DeterministicTransition, {"func": _stay}),
         (ByAge, {"cases": {25: "dead"}}),
-        (AgeRange, {"start": 25, "stop": 35}),
+        (AgeRange, {"start": 25, "exclusive_stop": 35}),
         (ByAge.until, {"stop_age_exclusive": 65, "law": "dead", "then": "dead"}),
     ],
-    ids=["MarkovTransition", "Choose", "ByAge", "AgeRange", "ByAge.until"],
+    ids=[
+        "StochasticTransition",
+        "DeterministicTransition",
+        "ByAge",
+        "AgeRange",
+        "ByAge.until",
+    ],
 )
 def test_declarations_reject_positional_arguments(*, call: Any, kwargs: dict) -> None:
     """Declaration constructors take keyword arguments only."""
@@ -184,12 +198,12 @@ def _until_periods(*, ages: AgeGrid, stop: Any, start: Any = None) -> dict[Any, 
     ("ages", "start", "expected"),
     [
         (
-            AgeGrid(start=58, stop=64, step="Y"),
+            AgeGrid(start=58, inclusive_stop=64, step="Y"),
             59,
             {59: "law", 60: "law", 61: "then"},
         ),
         (
-            AgeGrid(start=61, stop=63, step="Q"),
+            AgeGrid(start=61, inclusive_stop=63, step="Q"),
             Fraction(245, 4),
             {
                 Fraction(245, 4): "law",
@@ -202,7 +216,7 @@ def _until_periods(*, ages: AgeGrid, stop: Any, start: Any = None) -> dict[Any, 
             58,
             {58: "law", 60: "law", Fraction(123, 2): "then"},
         ),
-        (AgeGrid(start=58, stop=64, step="Y"), 61, {61: "then"}),
+        (AgeGrid(start=58, inclusive_stop=64, step="Y"), 61, {61: "then"}),
     ],
     ids=["annual", "quarterly", "irregular", "one-source-interval"],
 )
@@ -215,13 +229,13 @@ def test_until_selects_law_from_start_and_then_at_the_stop_predecessor(
 
 def test_until_without_start_begins_at_the_first_age() -> None:
     """An omitted `start_age_inclusive` selects the first clock coordinate."""
-    ages = AgeGrid(start=59, stop=64, step="Y")
+    ages = AgeGrid(start=59, inclusive_stop=64, step="Y")
     assert _until_periods(ages=ages, stop=62) == {59: "law", 60: "law", 61: "then"}
 
 
 def test_by_age_default_is_available_at_the_final_age() -> None:
     """An explicit fallback law may be selected at the last clock position."""
-    ages = AgeGrid(start=25, stop=45, step="10Y")
+    ages = AgeGrid(start=25, inclusive_stop=45, step="10Y")
     resolved = ByAge(cases={}, default="dead").resolve(ages)
     assert tuple(resolved.law_by_period) == (0, 1, 2)
 
@@ -232,11 +246,11 @@ def test_unused_final_age_law_does_not_fail_model_construction() -> None:
     regimes["retirement"] = _regime(
         regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
     )
-    model = Model(
+    model = with_fixture_graph(
         regimes=regimes,
         ages=AGES,
         regime_id_class=RegimeId,
-        initial_regimes={25: "working"},
+        initial_nodes={25: "working"},
     )
     assert model.initial_nodes == frozenset({(25, "working")})
 
@@ -248,9 +262,9 @@ def test_root_at_final_age_of_a_nonterminal_regime_fails() -> None:
         regime_transitions=ByAge(cases={AgeRange(start=65): "dead"})
     )
     with pytest.raises(ModelInitializationError, match="75"):
-        Model(
+        with_fixture_graph(
             regimes=regimes,
             ages=AGES,
             regime_id_class=RegimeId,
-            initial_regimes={75: "retirement"},
+            initial_nodes={75: "retirement"},
         )

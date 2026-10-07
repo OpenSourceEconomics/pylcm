@@ -10,13 +10,14 @@ or nested inside `NNBEGM` — is rejected at model build.
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
-    Choose,
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinSpacedGrid,
-    Model,
     Regime,
     categorical,
 )
@@ -37,6 +38,7 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
@@ -101,7 +103,11 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             "labor_supply": DiscreteGrid(category_class=Work),
         },
         regime_transitions=until_exit(
-            25, law=Choose(func=next_regime, targets=("alive", "dead")), exits=("dead",)
+            25,
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("alive", "dead")
+            ),
+            exits=("dead",),
         ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
@@ -124,11 +130,11 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
         functions={"utility": terminal_utility},
     )
     with pytest.raises(RegimeInitializationError, match="does not implement taste"):
-        Model(
+        with_fixture_graph(
             regimes={"alive": alive, "dead": dead},
             regime_id_class=RegimeId,
-            ages=AgeGrid(start=20, stop=25, step="5Y"),
-            initial_regimes={20: "alive"},
+            ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
+            initial_nodes={20: "alive"},
         )
 
 
@@ -150,7 +156,9 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         },
         regime_transitions=until_exit(
             25,
-            law=Choose(func=n_nbegm_toy.next_regime, targets=("alive", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=n_nbegm_toy.next_regime, targets=("alive", "dead")
+            ),
             exits=("dead",),
         ),
         taste_shocks=ExtremeValueTasteShocks(),
@@ -185,10 +193,10 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         functions={"utility": n_nbegm_toy.terminal_utility},
     )
     with pytest.raises(RegimeInitializationError, match="does not implement taste"):
-        Model(
+        with_fixture_graph(
             regimes={"alive": alive, "dead": dead},
             regime_id_class=RegimeId,
-            ages=AgeGrid(start=20, stop=25, step="5Y"),
+            ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
-            initial_regimes={20: "alive"},
+            initial_nodes={20: "alive"},
         )

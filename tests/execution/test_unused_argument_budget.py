@@ -231,7 +231,7 @@ def _compile_solve_read(
         },
         internal_templates={candidate: {}},
         donations={candidate: ()},
-        ages=AgeGrid(start=0, stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         n_triples_per_lowering={"shape-only": 1},
         log_kernel_memory=False,
         n_workers=1,

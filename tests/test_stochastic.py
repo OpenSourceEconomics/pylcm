@@ -5,16 +5,18 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_allclose, assert_array_almost_equal
 
+from _lcm.regime_building.transition_support import (
+    _SupportedDeterministicTransition,
+)
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
-    Choose,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
+    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -27,10 +29,11 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserAge,
     UserParams,
 )
-from lcm_examples.mortality import retirement_transitions, working_life_transitions
 from tests.conftest import X64_ENABLED
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import (
     RegimeId,
@@ -43,6 +46,23 @@ from tests.test_models.stochastic import (
 
 # Splayed and unsplayed solves agree to float eps at the active precision.
 _SPLAY_ATOL = 1e-10 if X64_ENABLED else 1e-5
+
+
+def _lifecycle_edges(
+    *, ages: AgeGrid
+) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+    """Keep work and retirement before the final death-only source age."""
+    return {
+        "working_life": {
+            "working_life": tuple(ages.exact_values[:-2]),
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+        "retirement": {
+            "retirement": tuple(ages.exact_values[:-2]),
+            "dead": tuple(ages.exact_values[:-1]),
+        },
+    }
 
 
 def test_model_simulate_with_stochastic_model():
@@ -109,8 +129,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         return health
 
     n_periods = 4
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
+    ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working_life.replace(
@@ -118,33 +137,30 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     # Create stochastic model with identity transition function
     working_stochastic = working_life.replace(
         state_transitions={
             **working_life.state_transitions,
-            "health": MarkovTransition(func=next_health_stochastic),
+            "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
-            "health": MarkovTransition(func=next_health_stochastic),
+            "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     model_deterministic = Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": working_deterministic,
             "retirement": retirement_deterministic,
@@ -152,10 +168,11 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
     model_stochastic = Model(
+        edges=_lifecycle_edges(ages=ages),
         regimes={
             "working_life": working_stochastic,
             "retirement": retirement_stochastic,
@@ -163,7 +180,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         },
         ages=ages,
         regime_id_class=RegimeId,
-        initial_regimes={ages.exact_values[0]: "working_life"},
+        initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
     # Use survival_probs=1.0 for all but the last period so no subject dies early.
@@ -271,13 +288,15 @@ def _make_minimal_stochastic_model(
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
-            "draw": MarkovTransition(func=next_draw),
+            "draw": StochasticTransition(func=next_draw),
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         regime_transitions=until_exit(
             final_age + 1,
-            law=Choose(func=next_regime, targets=("working_life", "dead")),
+            law=_SupportedDeterministicTransition(
+                func=next_regime, targets=("working_life", "dead")
+            ),
             exits=("dead",),
         ),
         functions={"utility": utility},
@@ -286,14 +305,14 @@ def _make_minimal_stochastic_model(
         regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"working_life": working_regime, "dead": dead_regime},
-        ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
         execution_config=ExecutionConfig(
             axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
         ),
-        initial_regimes={0: "working_life"},
+        initial_nodes={0: "working_life"},
     )
 
 
@@ -303,7 +322,7 @@ def _always_bad_draw() -> FloatND:
 
 
 def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
-    """A zero-argument `MarkovTransition` weight feeds its probabilities into `V`.
+    """A zero-argument `StochasticTransition` weight feeds its probabilities into `V`.
 
     In `_make_minimal_stochastic_model` the `good` outcome of `draw` adds a
     utility bonus of 1.0 and `draw` is otherwise additively separable from the
@@ -336,7 +355,7 @@ def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
 
 
 def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -> None:
-    """A `MarkovTransition` weight may depend on a continuous state.
+    """A `StochasticTransition` weight may depend on a continuous state.
 
     `next_draw` sets `P(good)` to `clip(wealth / 10, 0.1, 0.9)`, so the
     discounted expected bonus in period-0 `V` varies across the wealth grid:
@@ -408,19 +427,17 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
     there is no age left to transition into.
     """
     with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
-        Model(
+        with_fixture_graph(
             regimes={
                 "working_life": working_life.replace(
                     regime_transitions=ByAge(
-                        cases={AgeRange(start=40, stop=80): "dead"}
+                        cases={AgeRange(start=40, exclusive_stop=80): "dead"}
                     )
                 ),
-                "retirement": retirement.replace(
-                    regime_transitions=retirement_transitions(last_age=70)
-                ),
+                "retirement": retirement,
                 "dead": dead,
             },
-            ages=AgeGrid(start=40, stop=70, step="10Y"),
+            ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),
             regime_id_class=RegimeId,
-            initial_regimes={70: "working_life"},
+            initial_nodes={70: "working_life"},
         )

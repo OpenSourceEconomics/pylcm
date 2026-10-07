@@ -24,10 +24,10 @@ from lcm import (
     AgeGrid,
     CESAggregator,
     LinSpacedGrid,
-    MarkovTransition,
     Model,
     PowerMean,
     Regime,
+    StochasticTransition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -38,6 +38,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from tests.test_models.graph import with_fixture_graph
 from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
@@ -171,8 +172,8 @@ def _build_model(*, variant: str) -> Model:
     transition = until_exit(
         _FIRST_AGE + (_N_PERIODS - 1) * 5,
         law={
-            "alive": MarkovTransition(func=_prob_alive),
-            "dead": MarkovTransition(func=_prob_dead),
+            "alive": StochasticTransition(func=_prob_alive),
+            "dead": StochasticTransition(func=_prob_dead),
         },
         exits=("dead",),
     )
@@ -228,16 +229,16 @@ def _build_model(*, variant: str) -> Model:
         states={"wealth": _WEALTH_GRID, "illiquid": _ILLIQUID_GRID},
         functions={"utility": _bequest},
     )
-    return Model(
+    return with_fixture_graph(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
         ages=AgeGrid(
             start=_FIRST_AGE,
-            stop=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+            inclusive_stop=_FIRST_AGE + (_N_PERIODS - 1) * 5,
             step="5Y",
         ),
         fixed_params={"final_age_alive": final_age_alive},
-        initial_regimes={20: "alive"},
+        initial_nodes={20: "alive"},
     )
 
 

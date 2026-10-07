@@ -9,6 +9,7 @@ live in `_lcm.typing`.
 """
 
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from fractions import Fraction
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -75,13 +76,18 @@ type ReferenceName = (
 type TransitionFunctionName = str
 
 
-# Boundary form accepted by `AgeGrid.__init__` for `start`, `stop`, and
+# Boundary form accepted by `AgeGrid.__init__` for `start`, `inclusive_stop`, and
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
 
-# Admissible starts accepted by `Model(initial_regimes=...)`: a mapping from
-# `ByAge`-style age selectors to a regime name or a sequence of names.
-type InitialRegimes = Mapping[object, str | Sequence[str]]
+# Admissible starts accepted by `Model(initial_nodes=...)`: a mapping from
+# `ByAge`-style age selectors to a regime name or a sequence of names, or a
+# sequence or set of exact `(age, regime)` pairs.
+type InitialNodes = (
+    Sequence[tuple[object, str]]
+    | AbstractSet[tuple[object, str]]
+    | Mapping[object, str | Sequence[str]]
+)
 
 
 # Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching

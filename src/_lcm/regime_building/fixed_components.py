@@ -32,7 +32,7 @@ from lcm.regime import Regime
 from lcm.transition import (
     AgeSpecializedFunction,
     JointTransition,
-    MarkovTransition,
+    StochasticTransition,
     fixed_transition,
 )
 from lcm.typing import (
@@ -317,7 +317,7 @@ def _lower_next_output_reads(  # noqa: PLR0911 — one return per declaration ki
                 for name, child in node.items()
             }
         )
-    if isinstance(node, MarkovTransition):
+    if isinstance(node, StochasticTransition):
         return dataclasses.replace(
             node,
             func=_lower_next_output_reads(node=node.func, next_outputs=next_outputs),
@@ -414,13 +414,14 @@ def _collect_groups(
         for name, law in laws.items():
             for leaf in _law_leaves(law):
                 if (
-                    isinstance(leaf, MarkovTransition)
+                    isinstance(leaf, StochasticTransition)
                     and leaf.fixed_component is not None
                 ):
                     previous = groups.setdefault(name, leaf.fixed_component)
                     if previous != leaf.fixed_component:
                         raise RegimeInitializationError(
-                            f"MarkovTransition.fixed_component for {name!r} differs "
+                            f"StochasticTransition.fixed_component for {name!r} "
+                            "differs "
                             "between declarations; one state needs one grouping."
                         )
     return groups
@@ -454,7 +455,7 @@ def _create_splits(
             grid = regime.states[name]
             if not isinstance(grid, DiscreteGrid):
                 raise RegimeInitializationError(
-                    f"MarkovTransition.fixed_component on {name!r} in regime "
+                    f"StochasticTransition.fixed_component on {name!r} in regime "
                     f"{regime_name!r} needs a DiscreteGrid state."
                 )
             _, table = _group_codes(
@@ -549,7 +550,7 @@ def _lower_law(
     if isinstance(law, _IdentityTransition):
         return fixed_transition(f"{name}_rest")
     if (
-        not isinstance(law, MarkovTransition)
+        not isinstance(law, StochasticTransition)
         or law.fixed_component != split.fixed_of_code
     ):
         raise RegimeInitializationError(
@@ -571,7 +572,7 @@ def _lower_law(
             probabilities=law.func,
         ),
     )
-    return MarkovTransition(func=_publish_fixed_component_law(provenance))
+    return StochasticTransition(func=_publish_fixed_component_law(provenance))
 
 
 def _publish_fixed_component_law(
@@ -607,14 +608,16 @@ def _group_codes(
     fixed_of_code = np.asarray(fixed_component, dtype=np.int32)
     if fixed_of_code.shape != (n_codes,):
         msg = (
-            f"MarkovTransition.fixed_component for {name!r} has {fixed_of_code.size} "
+            f"StochasticTransition.fixed_component for {name!r} has "
+            f"{fixed_of_code.size} "
             f"entries; the state has {n_codes} codes."
         )
         raise RegimeInitializationError(msg)
     groups, sizes = np.unique(fixed_of_code, return_counts=True)
     if groups.tolist() != list(range(groups.size)) or len(set(sizes.tolist())) != 1:
         msg = (
-            f"MarkovTransition.fixed_component for {name!r} must label groups 0..k-1 "
+            f"StochasticTransition.fixed_component for {name!r} must label "
+            "groups 0..k-1 "
             f"of equal size; found groups {groups.tolist()} with sizes "
             f"{sizes.tolist()}."
         )

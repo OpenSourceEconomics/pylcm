@@ -9,9 +9,6 @@ the key in the `regimes` dict passed to `Model`:
 # Non-terminal regime
 Regime(
     regime_transitions=next_regime_func,  # Required: regime transition function (None → terminal)
-    active=lambda age: (
-        25 <= age < 65
-    ),  # Optional: age-based predicate (default: always True)
     states={  # Pure outcome-space grids
         "wealth": LinSpacedGrid(...),
         "education": DiscreteGrid(EduStatus),
@@ -43,8 +40,8 @@ Regime(
     states={"health": DiscreteGrid(Health)},
     state_transitions={
         "health": {
-            "working": MarkovTransition(func=health_probs_working),
-            "retired": MarkovTransition(func=health_probs_retired),
+            "working": StochasticTransition(func=health_probs_working),
+            "retired": StochasticTransition(func=health_probs_retired),
         },
     },
     # Additional configuration may follow.
@@ -54,18 +51,13 @@ Regime(
 **Regime Requirements:**
 
 - `regime_transitions` is required: the regime transition, or `None` for terminal regimes.
-  `terminal` is a derived property (`self.regime_transitions is None`). Three forms:
-  - bare callable ⇒ deterministic, returns the target regime id; every regime is
-    reachable
-  - `MarkovTransition` ⇒ stochastic, returns a probability vector over all regimes;
-    every regime is reachable
-  - per-target dict `{target_regime: MarkovTransition(func=prob_func)}` ⇒ stochastic; each
-    cell returns that target's probability and the key set declares the regime's
-    reachable targets — omitted regimes are structurally unreachable. Cells must be
-    `MarkovTransition`-wrapped; `regime_transitions={}` is rejected (terminality is `None`).
-    Cell params nest under the target in the template
-    (`template[regime][target]["next_regime"]`).
-- `active` is optional; defaults to `lambda _age: True` (always active)
+  `terminal` is a derived property (`self.regime_transitions is None`). A regime name,
+  plain deterministic function, `DeterministicTransition(func=...)`, full-vector
+  `StochasticTransition(func=...)`, or per-target scalar probability mapping supplies
+  numerical behavior. `ByAge` selects complete laws. None of these forms owns topology:
+  `Model.edges` supplies every source–destination edge and its source-age selector.
+  Ordinary scalar probability cells require `StochasticTransition`; their parameters
+  nest under the target (`template[regime][target]["next_regime"]`).
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
   takes the model-level value. Declaring either at the regime level requires declaring
   it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
@@ -75,13 +67,13 @@ Regime(
 - `state_transitions` maps state names to transition functions. Every non-process state
   in a non-terminal regime must have an entry (checked at model build).
   `fixed_transition(state_name)` marks a fixed state (identity law; its argument must
-  match the dict key). `None` is rejected. Wrap in `MarkovTransition` for stochastic
+  match the dict key). `None` is rejected. Wrap in `StochasticTransition` for stochastic
   transitions.
 - Per-target dicts in `state_transitions` map target regime names to transition
   functions — every reachable target carrying the state must be listed, and no
   unreachable or unknown target may be (checked at model build; narrow reachability with
-  a per-target regime transition). Within a per-target dict, stochasticity must be
-  consistent (all `MarkovTransition` or none).
+  `Model.edges`). Within a per-target dict, stochasticity must be
+  consistent (all `StochasticTransition` or none).
 - Stochastic processes have intrinsic transitions and must NOT appear in
   `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
@@ -104,9 +96,10 @@ Model(
         "working": working_regime,
         "retired": retired_regime,
     },
-    ages=AgeGrid(start=25, stop=75, step="Y"),  # Required: lifecycle age grid
+    ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),  # Required: lifecycle age grid
     regime_id_class=RegimeId,  # Required: dataclass mapping names to indices
-    initial_regimes={25: "working"},  # Required: admissible starting age-regime pairs
+    edges={"working": {"retired": 25}},  # Source → destination → source ages
+    initial_nodes=((25, "working"),),  # Required: admissible starting age-regime pairs
     description="Optional description",
     enable_jit=True,  # Control JAX compilation (default: True)
 )
@@ -150,17 +143,24 @@ model's actual core programs declare.
 
 **Model Requirements:**
 
-- `initial_regimes` is required and has no default: a mapping from age selectors (exact
-  age, tuple, `range`, `AgeRange(start=..., stop=...)`) to one regime name or a nonempty
-  sequence of names. Its Cartesian pairs are the admissible roots, published as
-  `model.initial_nodes`. Solved problems are derived from these roots (physical
-  successors plus value reads), not from transition schedules; `ByAge` selects laws
-  only. Terminality is exactly `regime_transitions is None`.
-- Declarations are keyword-only: `ByAge(cases=..., default=...)`,
-  `ByAge.until(stop_age_exclusive=..., law=..., then=..., start_age_inclusive=...)`
-  (`then` at the last source age below the stop), `AgeRange(start=..., stop=...)`,
-  `Choose(func=..., targets=...)`, `MarkovTransition(func=..., targets=...)`.
-- Must have at least one terminal regime and one non-terminal regime
+- `edges` is required: `{source: {target: source_age_selector}}`, or
+  `Phased(solve=..., simulate=...)` with one such mapping per phase. Selectors are exact
+  ages, nonempty tuples, integer ranges, or `AgeRange(start=..., exclusive_stop=...)`.
+  An edge lands at the next `AgeGrid` coordinate. Terminal regimes have no outgoing edges.
+- `initial_nodes` is required with no default. Prefer explicit pairs such as
+  `((25, "working"),)`. A mapping from age selectors to a regime name or nonempty
+  sequence of names is also accepted. The normalized immutable pairs are admissible
+  roots; solve demand includes realized visits and their perceived value dependencies.
+- Wrappers and decorator factories are targetless and shared by state and regime laws:
+  `DeterministicTransition(func=...)`, `StochasticTransition(func=...)`,
+  `@deterministic_transition()`, and `@stochastic_transition()`.
+- `ByAge` selects numerical laws; it never declares roots or connectivity.
+- `model.graph` is an immutable inspection result, not a user-constructed graph class.
+  `graph.edges.solve` / `.simulate` retain declared edges with exact source ages;
+  `.solution` / `.simulation` expose effective period-indexed graphs. `.nodes` contains
+  valued age–regime pairs and `.visited_nodes` contains realized reachable pairs.
+  `.pruned_edges["solve" or "simulate"]` maps `(source_age, source, target)` to
+  `"fixed_zero_probability"` for construction-fixed zero proofs.
 - `regime_id_class` must be a dataclass with fields matching regime names (use
   `@categorical`)
 - Field values are consecutive `ScalarInt` (0-d `jnp.int32`) scalars starting from 0,
@@ -210,7 +210,7 @@ array. Everything is declared in a slot the regime already has:
 Regime(
     regime_transitions={
         "couple": ValueDependentTransition(  # goes in `regime_transitions`, keyed by TARGET
-            probability=MarkovTransition(func=stays_married),
+            probability=StochasticTransition(func=stays_married),
             gate=no_dissolution,  # Boolean predicate on the target's grid
             routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},
             gate_references={

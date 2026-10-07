@@ -70,7 +70,7 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
-from lcm.transition import MarkovTransition
+from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure, lower_declarations
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
@@ -97,7 +97,7 @@ def _prob_one(age: FloatND) -> FloatND:
 # Nodes: linspace(mu - n_std*sigma, mu + n_std*sigma, n_points) = [-2, -1, 0, 1, 2].
 _SHOCK = NormalIIDProcess(n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 _WAGE = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)  # {0.0, 2.0}
-_AGES = AgeGrid(start=0, stop=2, step="Y")
+_AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 _REGIME_NAMES_TO_IDS = MappingProxyType(
     {
         "shock_ref": jnp.int32(0),
@@ -125,8 +125,8 @@ def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {
-                    "shock_ref_terminal": MarkovTransition(func=_prob_one)
+                AgeRange(exclusive_stop=1): {
+                    "shock_ref_terminal": StochasticTransition(func=_prob_one)
                 }
             }
         ),
@@ -252,7 +252,9 @@ def _make_regimes() -> dict[str, Regime]:
     married = Regime(
         regime_transitions=ByAge(
             cases={
-                AgeRange(stop=1): {"married_terminal": MarkovTransition(func=_prob_one)}
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
             }
         ),
         states={"wage": _WAGE},

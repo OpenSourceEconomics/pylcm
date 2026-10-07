@@ -27,6 +27,7 @@ from tests.test_models.deterministic.retirement_only import (
     get_params,
     retirement_transitions,
 )
+from tests.test_models.graph import with_fixture_graph
 
 
 def _law_reading_current_wealth(
@@ -61,14 +62,14 @@ def _model(
         retirement = retirement.replace(
             state_transitions={"wealth": _law_reading_current_wealth}
         )
-    return Model(
+    return with_fixture_graph(
         regimes={"retirement": retirement, "dead": dead},
-        ages=AgeGrid(start=60 - 10 * (n_periods - 1), stop=60, step="10Y"),
+        ages=AgeGrid(start=60 - 10 * (n_periods - 1), inclusive_stop=60, step="10Y"),
         regime_id_class=RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(
             axis_widths=widths, device_memory_bytes=device_memory_bytes
         ),
-        initial_regimes={60 - 10 * (n_periods - 1): "retirement"},
+        initial_nodes={60 - 10 * (n_periods - 1): "retirement"},
     )
 
 

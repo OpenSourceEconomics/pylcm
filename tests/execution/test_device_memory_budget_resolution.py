@@ -22,7 +22,7 @@ from benchmarks.asv._simulation_witnesses import MULTI_INITIAL_CONDITIONS
 from lcm import Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
-from tests.test_models.initial_regimes import initial_regimes_of
+from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import (
     MultiRegimeId,
     get_multi_regime_model,
@@ -547,12 +547,13 @@ def test_model_construction_caps_the_budget_against_the_real_devices(
     )
 
     model = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(device_memory_bytes=_POOL_LIMIT),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
 
     assert model._execution.device_memory_bytes == _POOL_LIMIT - 7_200_000_000
@@ -569,12 +570,13 @@ def test_model_construction_records_the_requested_budget(
     )
 
     model = Model(
+        edges=base.graph.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(device_memory_bytes=_POOL_LIMIT),
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
     )
 
     assert model._execution.requested_device_memory_bytes == _POOL_LIMIT
@@ -599,7 +601,8 @@ def _model_with_pool_limit(
         fixed_params=dict(base.fixed_params),
         execution_config=execution_config,
         enable_jit=enable_jit,
-        initial_regimes=initial_regimes_of(model=base),
+        initial_nodes=initial_nodes_of(model=base),
+        edges=base.graph.edges,
     )
 
 
