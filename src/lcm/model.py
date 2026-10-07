@@ -62,6 +62,7 @@ from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     materialize_granular_transition_params,
 )
+from _lcm.params.regime_template import create_edge_vocabulary
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -767,6 +768,9 @@ class Model:
             model_slots=model_slots,
         )
         validate_regimes(regimes=merged_regimes, laws=laws)
+        # What each regime declares before demand prunes any: a declared law
+        # reads these as variables at every horizon, never as parameters.
+        declared_edge_vocabulary = create_edge_vocabulary(merged_regimes)
         prepared_graph = prepare_graph(
             regimes=merged_regimes,
             laws=laws,
@@ -899,6 +903,7 @@ class Model:
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             declared_laws=self._declared_laws,
+            declared_edge_vocabulary=declared_edge_vocabulary,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,

@@ -12,6 +12,7 @@ fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -251,12 +252,54 @@ def create_regime_params_template(
     )
 
 
+@dataclass(frozen=True)
+class EdgeVocabulary:
+    """The names a regime gives the edge callables that read it."""
+
+    variables: frozenset[str]
+    """Names a law of this source reads that the engine binds: its states,
+    actions and functions, `period`, `age`, `CE` and a collective regime's
+    aggregator inputs."""
+
+    states: frozenset[StateName]
+    """Its states, which a gate or projection with this regime as target reads
+    off the target grid."""
+
+    def __or__(self, other: EdgeVocabulary) -> EdgeVocabulary:
+        return EdgeVocabulary(
+            variables=self.variables | other.variables,
+            states=self.states | other.states,
+        )
+
+
+def create_edge_vocabulary(
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> MappingProxyType[RegimeName, EdgeVocabulary]:
+    """Return the edge vocabulary of each regime.
+
+    Args:
+        user_regimes: User-form regimes, keyed by name.
+
+    Returns:
+        Each regime's states, actions, functions and engine-wired names.
+
+    """
+    return MappingProxyType(
+        {
+            name: EdgeVocabulary(
+                variables=frozenset(_wired_names(regime)),
+                states=frozenset(regime.states),
+            )
+            for name, regime in user_regimes.items()
+        }
+    )
+
+
 def create_edge_params_template(
     *,
     source: RegimeName,
-    user_regime: UserRegime,
     declared_laws: tuple[RegimeLawDeclaration, ...],
-    state_names_by_regime: Mapping[RegimeName, frozenset[StateName]],
+    vocabulary_by_regime: Mapping[RegimeName, EdgeVocabulary],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
 
@@ -277,14 +320,15 @@ def create_edge_params_template(
     a fixed zero prunes. A law reads the source regime's variables; a gate and a
     projection run on the target regime's grid and also read its states, its
     `V_target` value components, `D_target` and the cell's gate-reference keys.
-    None of those is a parameter.
+    None of those is a parameter. The vocabulary holds what a regime declares
+    even where no demanded law reads it, so a variable that only a case no age
+    selects reads is never mistaken for a parameter.
 
     Args:
         source: The source regime's name.
-        user_regime: The source regime, whose engine-wired names the law reads.
         declared_laws: The `Transition` laws declared for the source, one per
             phase of `Model(edges=...)`.
-        state_names_by_regime: State names declared by each regime of the model.
+        vocabulary_by_regime: The edge vocabulary of each regime of the model.
 
     Returns:
         The nested template, empty for a source whose edges declare no parameter.
@@ -297,7 +341,7 @@ def create_edge_params_template(
             all targets and per target.
 
     """
-    variables = _wired_names(user_regime)
+    variables = set(vocabulary_by_regime[source].variables)
     params_by_path: list[tuple[tuple[str, ...], dict[str, str]]] = []
     for law in declared_laws:
         for path, func, cell in iter_edge_callables(law=law, path=()):
@@ -307,7 +351,11 @@ def create_edge_params_template(
                 else variables
                 | _gated_edge_wired_names(
                     gate_reference_names=frozenset(cell.gate_references),
-                    target_state_names=state_names_by_regime.get(path[0], frozenset()),
+                    target_state_names=(
+                        vocabulary_by_regime[path[0]].states
+                        if path[0] in vocabulary_by_regime
+                        else frozenset()
+                    ),
                 )
             )
             params_by_path.append(

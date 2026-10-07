@@ -21,6 +21,7 @@ from numpy.typing import ArrayLike
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
+from _lcm.params.regime_template import create_edge_vocabulary
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
@@ -692,6 +693,7 @@ def build_prepared_structure(
             for name, law in bound.items()
             if not law.terminal
         },
+        declared_edge_vocabulary=create_edge_vocabulary(user_regimes),
     )
 
 

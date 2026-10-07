@@ -94,7 +94,9 @@ from _lcm.params.edges import (
 )
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import (
+    EdgeVocabulary,
     create_edge_params_template,
+    create_edge_vocabulary,
     create_regime_params_template,
 )
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
@@ -336,6 +338,10 @@ class PreparedModelStructure:
     """Per source regime, its laws as declared in `Model(edges=...)`, which the
     `edges` parameter template is read off."""
 
+    declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
+    """Per regime, the names it declares before demand prunes any, which the
+    declared laws read as variables rather than parameters."""
+
 
 def prepare_model_structure(
     *,
@@ -350,6 +356,7 @@ def prepare_model_structure(
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
     declared_laws: Mapping[RegimeName, tuple[RegimeLawDeclaration, ...]],
+    declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
@@ -359,7 +366,8 @@ def prepare_model_structure(
     periods resolved once from the declarations by the caller;
     `visited_periods_by_regime` are the periods a subject can occupy, where the
     simulate graph is active. `declared_laws` are the laws as `Model(edges=...)`
-    declares them.
+    declares them and `declared_edge_vocabulary` the names each regime declares
+    before demand prunes any.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -390,6 +398,7 @@ def prepare_model_structure(
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
         declared_laws=MappingProxyType(dict(declared_laws)),
+        declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
     )
 
 
@@ -685,12 +694,14 @@ def process_regimes(
     # pension factor the source itself never reads); the kernel binds them from
     # the union of the source and its reachable carry targets' fixed params.
     # A gated edge's callables are discovered against the ONE regime they run on,
-    # so the per-regime breakdown is passed alongside the model-wide union the
-    # `next_<state>` classification needs.
-    state_names_by_regime = MappingProxyType(
+    # so the edge template reads a per-regime vocabulary. It joins the
+    # representative regime's names with those the regime declares before demand
+    # prunes any: a declared law keeps every variable it reads as a variable.
+    runtime_edge_vocabulary = create_edge_vocabulary(representative_user_regimes)
+    edge_vocabulary = MappingProxyType(
         {
-            other_name: frozenset(other.states)
-            for other_name, other in representative_user_regimes.items()
+            name: vocabulary | prepared_structure.declared_edge_vocabulary[name]
+            for name, vocabulary in runtime_edge_vocabulary.items()
         }
     )
     regime_to_params_template = MappingProxyType(
@@ -719,11 +730,10 @@ def process_regimes(
         {
             regime_name: create_edge_params_template(
                 source=regime_name,
-                user_regime=user_regime,
                 declared_laws=prepared_structure.declared_laws.get(regime_name, ()),
-                state_names_by_regime=state_names_by_regime,
+                vocabulary_by_regime=edge_vocabulary,
             )
-            for regime_name, user_regime in representative_user_regimes.items()
+            for regime_name in representative_user_regimes
         }
     )
     regime_to_granular_param_expansions = MappingProxyType(
