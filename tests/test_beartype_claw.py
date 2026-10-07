@@ -39,7 +39,7 @@ from _lcm.simulation.simulate import _compute_starting_periods
 from _lcm.solution.diagnostics import _log_per_period_stats
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.transition_checks import _validate_regime_transition_probs
-from lcm import AgeGrid, LinSpacedGrid
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.exceptions import (
     GridInitializationError,
     ModelInitializationError,
@@ -47,7 +47,6 @@ from lcm.exceptions import (
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
-from tests.test_models.graph import with_fixture_graph
 
 
 def test_claw_checks_lcm_simulation() -> None:
@@ -270,7 +269,6 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
     """A bad `Regime` argument surfaces as `RegimeInitializationError`."""
     with pytest.raises(RegimeInitializationError):
         UserRegime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
             functions="not a mapping",  # ty: ignore[invalid-argument-type]
         )
@@ -279,11 +277,12 @@ def test_regime_with_bad_arg_raises_project_exception() -> None:
 def test_model_with_bad_arg_raises_project_exception() -> None:
     """A bad `Model` argument surfaces as `ModelInitializationError`."""
     with pytest.raises(ModelInitializationError):
-        with_fixture_graph(
+        Model(
             ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
             regimes="not a mapping",  # ty: ignore[invalid-argument-type]
             regime_id_class=int,
             initial_nodes={25: "n"},
+            edges={},
         )
 
 

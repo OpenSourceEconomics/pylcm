@@ -16,7 +16,6 @@ import pytest
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     Model,
@@ -56,10 +55,6 @@ def _terminal(*, pref_type: DiscreteState, weights: FloatND) -> FloatND:
     return weights[pref_type]
 
 
-def _to_terminal() -> ScalarInt:
-    return RegimeId.terminal
-
-
 def _model(
     *, blocked: bool, enable_jit: bool = True, device_memory_bytes: int | None = 2**30
 ) -> Model:
@@ -72,12 +67,10 @@ def _model(
                 state_transitions={"pref_type": fixed_transition("pref_type")},
                 actions={"choice": DiscreteGrid(category_class=_OneAction)},
                 functions={"utility": _flow},
-                regime_transitions=DeterministicTransition(func=_to_terminal),
             ),
             "terminal": Regime(
                 states={"pref_type": grid},
                 functions={"utility": _terminal},
-                regime_transitions=None,
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -164,7 +157,7 @@ def test_eager_schedules_and_action_partitions_preserve_all_literal_type_values(
             actions={"choice": DiscreteGrid(category_class=Actions)}
         )
         model = Model(
-            edges=base.graph.edges,
+            edges=base.edges,
             regimes={**base.user_regimes, "working": working},
             ages=base.ages,
             regime_id_class=RegimeId,
@@ -293,7 +286,7 @@ def test_eager_state_sharded_blocks_preserve_all_literal_type_values(
 
         base = _model(blocked=True, enable_jit=False, device_memory_bytes=None)
         model = Model(
-            edges=base.graph.edges,
+            edges=base.edges,
             regimes={
                 "working": dataclasses.replace(base.user_regimes["working"],
                                                 functions={"utility": flow}),

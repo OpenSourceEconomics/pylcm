@@ -39,9 +39,6 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
 )
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import backward_induction
 from _lcm.solution.solve_inputs import SolveInputMappings
 from lcm import (
@@ -57,8 +54,6 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Points of the wealth grid, so one regime value is this many elements.
 _N_WEALTH = 64
@@ -84,11 +79,6 @@ class Work:
     working: ScalarInt
 
 
-def _next_regime(*, age: int) -> ScalarInt:
-    """Leave the acting regime after the last acting age."""
-    return jnp.where(age < 2, RegimeId.acting, RegimeId.done)
-
-
 def _utility(*, consumption: float, work: ScalarInt, wealth: float) -> FloatND:
     """Value one action cell at one wealth node."""
     return jnp.log(consumption) - 0.1 * work + 0.01 * wealth
@@ -105,13 +95,6 @@ def _build_model(
 ) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("acting",)
-            ),
-            exits=("done",),
-        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },
@@ -123,18 +106,18 @@ def _build_model(
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH),
         },
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"acting": acting, "done": done},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={0: "acting"},
+        edges={"acting": {"acting": (0, 1), "done": 2}},
     )
 
 

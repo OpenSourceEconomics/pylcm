@@ -144,7 +144,8 @@ def build_params(
     premium: float = 1.5,
     tax_exemption: float = 12.0,
     tax_lump: float = 1.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
     mixed_schedule: bool = False,
     tax_bracket: float = 18.0,
     tax_rate: float = 0.2,
@@ -162,7 +163,6 @@ def build_params(
             "tax": tax_params,
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

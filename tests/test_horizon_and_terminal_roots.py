@@ -15,18 +15,19 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     ByAge,
     LinSpacedGrid,
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import _gated_model
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -49,9 +50,8 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _nonterminal(transition: Any) -> Regime:
+def _nonterminal() -> Regime:
     return Regime(
-        regime_transitions=transition,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
@@ -60,7 +60,6 @@ def _nonterminal(transition: Any) -> Regime:
 
 def _terminal(utility: Any = _utility) -> Regime:
     return Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": utility},
     )
@@ -79,18 +78,34 @@ _ZERO_SELF_LOOP = {
     "working": StochasticTransition(func=_never),
     "dead": StochasticTransition(func=_always),
 }
+_EVERY_SOURCE_AGE = AgeRange(exclusive_stop=75)
+_EXIT_EDGES = {"dead": _EVERY_SOURCE_AGE}
+_SELF_LOOP_EDGES = {"working": _EVERY_SOURCE_AGE, "dead": _EVERY_SOURCE_AGE}
+_UNTIL_EXIT_EDGES = {"working": AgeRange(exclusive_stop=65), "dead": _EVERY_SOURCE_AGE}
 
 
-def _life_model(*, working: Any, initial_nodes: Any, dead: Regime | None = None):
-    return with_fixture_graph(
+def _life_model(
+    *,
+    working_edges: Any,
+    initial_nodes: Any,
+    working_law: Any = None,
+    dead: Regime | None = None,
+):
+    return Model(
         regimes={
-            "working": _nonterminal(working),
-            "retirement": _nonterminal(ByAge(cases={65: "dead"})),
+            "working": _nonterminal(),
+            "retirement": _nonterminal(),
             "dead": dead or _terminal(),
         },
         ages=_AGES,
         regime_id_class=_LifeId,
         initial_nodes=initial_nodes,
+        edges={
+            "working": working_edges
+            if working_law is None
+            else Transition(targets=working_edges, law=working_law),
+            "retirement": {"dead": 65},
+        },
     )
 
 
@@ -105,11 +120,12 @@ def _solved_pairs(*, model: Model, params: dict) -> frozenset[tuple[Any, str]]:
 
 def test_one_period_terminal_root_model_solves() -> None:
     """A model with one age and one terminal regime solves its single start."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={"dead": _terminal()},
         ages=AgeGrid(exact_values=(75,)),
         regime_id_class=_DeadId,
         initial_nodes={75: "dead"},
+        edges={},
     )
     np.testing.assert_array_equal(
         np.asarray(model.solve(params={}, log_level="off").values[0]["dead"]),
@@ -119,11 +135,12 @@ def test_one_period_terminal_root_model_solves() -> None:
 
 def test_terminal_only_model_over_several_ages_solves_its_root() -> None:
     """A terminal-only model is solved exactly at its declared start."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={"dead": _terminal()},
         ages=AgeGrid(start=25, inclusive_stop=45, step="10Y"),
         regime_id_class=_DeadId,
         initial_nodes={35: "dead"},
+        edges={},
     )
     assert _solved_pairs(model=model, params={}) == frozenset({(35, "dead")})
 
@@ -131,27 +148,30 @@ def test_terminal_only_model_over_several_ages_solves_its_root() -> None:
 def test_terminal_root_at_the_final_age_solves() -> None:
     """A terminal start at the last age is valid and solved only there."""
     model = _life_model(
-        working=ByAge(cases={}, default="dead"), initial_nodes={75: "dead"}
+        working_edges=_EXIT_EDGES,
+        initial_nodes={75: "dead"},
     )
     assert _solved_pairs(model=model, params={}) == frozenset({(75, "dead")})
 
 
-def test_unused_final_age_default_law_builds() -> None:
-    """A fallback law selected at the last age is harmless while unrequired."""
+def test_unused_final_age_nonterminal_regime_builds() -> None:
+    """A nonterminal regime without a last-age edge is harmless while unrequired."""
     model = _life_model(
-        working=ByAge(cases={}, default="dead"), initial_nodes={65: "working"}
+        working_edges=_EXIT_EDGES,
+        initial_nodes={65: "working"},
     )
     assert model.reachability.nodes == frozenset({(65, "working"), (75, "dead")})
 
 
-def test_requested_final_age_default_law_fails() -> None:
-    """Requiring the same fallback law at the last age names the start and age."""
+def test_requested_final_age_nonterminal_regime_fails() -> None:
+    """Requiring the same regime at the last age names the start and age."""
     with pytest.raises(
         ModelInitializationError,
         match=r"requires 'working' at age 75, which is nonterminal at the last age",
     ):
         _life_model(
-            working=ByAge(cases={}, default="dead"), initial_nodes={75: "working"}
+            working_edges=_EXIT_EDGES,
+            initial_nodes={75: "working"},
         )
 
 
@@ -161,13 +181,20 @@ def test_zero_probability_self_loop_at_the_horizon_fails_structurally() -> None:
         ModelInitializationError,
         match=r"\(65, 'working'\) requires 'working' at age 75, which is nonterminal",
     ):
-        _life_model(working=_ZERO_SELF_LOOP, initial_nodes={25: "working"})
+        _life_model(
+            working_law=_ZERO_SELF_LOOP,
+            working_edges=_SELF_LOOP_EDGES,
+            initial_nodes={25: "working"},
+        )
 
 
 def test_named_terminal_exit_at_the_horizon_solves() -> None:
     """Replacing the last-source law by a named terminal exit ends the schedule."""
     model = _life_model(
-        working=ByAge.until(stop_age_exclusive=75, law=_ZERO_SELF_LOOP, then="dead"),
+        working_law=ByAge.until(
+            stop_age_exclusive=75, law=_ZERO_SELF_LOOP, then="dead"
+        ),
+        working_edges=_UNTIL_EXIT_EDGES,
         initial_nodes={25: "working"},
     )
     assert _solved_pairs(model=model, params=_PARAMS) == frozenset(
@@ -179,12 +206,15 @@ def test_named_terminal_exit_at_the_horizon_solves() -> None:
 def test_named_terminal_exit_keeps_terminality() -> None:
     """The exit does not make its target nonterminal or the source terminal."""
     model = _life_model(
-        working=ByAge.until(stop_age_exclusive=75, law=_ZERO_SELF_LOOP, then="dead"),
+        working_law=ByAge.until(
+            stop_age_exclusive=75, law=_ZERO_SELF_LOOP, then="dead"
+        ),
+        working_edges=_UNTIL_EXIT_EDGES,
         initial_nodes={25: "working"},
     )
     assert (
-        model._engine_user_regimes["working"].terminal,
-        model._engine_user_regimes["dead"].terminal,
+        model.graph.laws["working"].terminal,
+        model.graph.laws["dead"].terminal,
     ) == (False, True)
 
 
@@ -202,7 +232,7 @@ def test_terminal_utility_is_not_evaluated_at_unrequired_ages(
 ) -> None:
     """A terminal utility that is NaN off age 75 passes the debug NaN check."""
     model = _life_model(
-        working=ByAge(cases={}, default="dead"),
+        working_edges=_EXIT_EDGES,
         initial_nodes=initial_nodes,
         dead=_terminal(_finite_only_at_75),
     )
@@ -214,7 +244,7 @@ def test_terminal_utility_is_not_evaluated_at_unrequired_ages(
 def test_terminal_utility_required_at_an_unfinite_age_trips_the_nan_check() -> None:
     """The control: requiring the same terminal regime at 55 reports its NaN."""
     model = _life_model(
-        working=ByAge(cases={}, default="dead"),
+        working_edges=_EXIT_EDGES,
         initial_nodes={55: "dead"},
         dead=_terminal(_finite_only_at_75),
     )

@@ -22,6 +22,7 @@ from _lcm.solution import period_replay as period_replay_module
 from _lcm.solution.fingerprint import fingerprint_solution_support
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedGrid,
     DiscreteGrid,
     LinSpacedGrid,
@@ -29,6 +30,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
@@ -97,8 +99,6 @@ from tests.conformance_solver import (
     TerminalCounterSolver,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _WEALTH_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
@@ -386,17 +386,9 @@ def _model(
     utility: Callable[..., object] = _utility,
 ) -> Model:
     """Build the same tiny lifecycle around any solver under comparison."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "active": Regime(
-                regime_transitions=until_exit(
-                    _N_PERIODS,
-                    law={
-                        "active": StochasticTransition(func=_stay_active),
-                        "retired": StochasticTransition(func=_enter_retirement),
-                    },
-                    exits=("retired",),
-                ),
                 states={
                     "wealth": wealth_grid,
                     "productivity": _PRODUCTIVITY_GRID,
@@ -425,7 +417,6 @@ def _model(
                 solver=solver,
             ),
             "retired": Regime(
-                regime_transitions=None,
                 functions={"utility": _retired_utility},
                 solver=TerminalCounterSolver(),
             ),
@@ -433,6 +424,18 @@ def _model(
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "active"},
+        edges={
+            "active": Transition(
+                targets={
+                    "active": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    "retired": AgeRange(exclusive_stop=_N_PERIODS),
+                },
+                law={
+                    "active": StochasticTransition(func=_stay_active),
+                    "retired": StochasticTransition(func=_enter_retirement),
+                },
+            )
+        },
     )
 
 
@@ -994,6 +997,7 @@ def test_opaque_solver_marker_cannot_hide_a_distinct_accepted_core() -> None:
         ages=stateless.ages,
         regimes=stateless._regimes,
         user_regimes=stateless.user_regimes,
+        laws=stateless.graph.laws,
         regime_names_to_ids=stateless.regime_names_to_ids,
         flat_params=stateless_flat_params,
     )

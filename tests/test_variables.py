@@ -153,6 +153,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
         return x
 
     regime = MockRegime(
+        terminal=True,
         states={
             "a_discrete": DiscreteGrid(category_class=binary_category_class),
             "b_continuous": LinSpacedGrid(start=0, stop=1, n_points=5),
@@ -179,6 +180,7 @@ def test_from_regime_preserves_declaration_order_within_state_groups(
         return x
 
     regime = MockRegime(
+        terminal=True,
         states={
             "third": DiscreteGrid(category_class=binary_category_class),
             "first": DiscreteGrid(category_class=binary_category_class),
@@ -210,6 +212,7 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
         return x
 
     regime = MockRegime(
+        terminal=True,
         states={
             "first_discrete": DiscreteGrid(category_class=binary_category_class),
             "sharded_discrete": DiscreteGrid(category_class=binary_category_class),

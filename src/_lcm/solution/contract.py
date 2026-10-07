@@ -61,7 +61,7 @@ from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.transition_plans import TargetTransitionPlans
+from _lcm.transition_plans import SupportOrigin, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -122,6 +122,9 @@ from lcm.typing import Float1D, FloatND, UserFunction
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
+    from _lcm.regime_law import RegimeLaw
+
+    RegimeLawsMapping: TypeAlias = Mapping[RegimeName, RegimeLaw]  # noqa: UP040
 
     UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
         RegimeName, FinalizedUserRegime
@@ -134,6 +137,7 @@ else:
     # which re-exports `Solver` from this module. ty reads the precise types
     # above; the beartype claw checks only the outer container at runtime.
     UserRegimesMapping = Mapping
+    RegimeLawsMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
 
 
@@ -146,6 +150,9 @@ class SolverModelContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of every finalized user regime in the model."""
+
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized solve-phase declarations for this regime.
@@ -224,6 +231,9 @@ class SolverBuildContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
+
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
 
     continuation_specs: MappingProxyType[RegimeName, ContinuationSpec] = (
         MappingProxyType({})
@@ -447,8 +457,8 @@ class SolverBuildContext:
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`. The grid-search kernel then substitutes each such target's
+    Non-empty only for a source regime with
+    gated edges. The grid-search kernel then substitutes each such target's
     gated continuation object `Wbar` (supplied by the solve loop under
     `edge_regime_to_V_arr`) for the raw target V in the `next_regime_to_V_arr`
     mapping it reads and lowers against. Empty for every other regime.
@@ -995,17 +1005,20 @@ class Solver(ABC):
         return None
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
-        """Whether this solver consumes transition-local lottery axes.
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """The support origins of the transition-local lotteries this solver consumes.
 
-        A ``JointTransition`` is enumerated inside the source action value.  The
-        grid-search Q kernel implements that dataflow.  Continuation-based
-        solvers must opt in only after their own child-read representation also
-        enumerates the canonical ``TargetTransitionPlan`` lotteries; accepting
-        the declaration without doing so would defer a semantic mismatch to a
-        runtime missing-node failure.
+        - `SupportOrigin.DECLARED` ⇒ a `JointTransition`, enumerated inside the
+          source action value; the grid-search Q kernel implements that dataflow.
+        - `SupportOrigin.SOURCE_PROCESS` ⇒ an edge's draw of a source random
+          state, enumerated as a node axis of the child read.
+
+        A continuation-based solver lists an origin only once its own child-read
+        representation enumerates those `TargetTransitionPlan` lotteries;
+        accepting the declaration without doing so would defer a semantic
+        mismatch to a runtime missing-node failure.
         """
-        return False
+        return frozenset()
 
     @property
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:

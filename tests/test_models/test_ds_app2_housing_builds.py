@@ -98,7 +98,7 @@ def test_expected_regimes_states_and_actions_are_present():
     assert "wage" not in retired.states
 
     dead = model.user_regimes["dead"]
-    assert dead.regime_transitions is None
+    assert model.graph.laws["dead"].terminal
     assert {"liquid", "housing"} <= set(dead.states)
 
 

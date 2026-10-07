@@ -15,17 +15,17 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
+from _lcm.regime_law import UNBOUND_LAW
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
     Phased,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -38,8 +38,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -77,11 +75,20 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
+_EDGES = {
+    "alive": Transition(
+        targets={"alive": 0, "dead": (0, 1)},
+        law=DeterministicTransition(func=_next_regime),
+    )
+}
+
+
 def _finalized_regime(**kwargs: object) -> UserRegime:
     """Finalize a single regime, running the model's completeness validation."""
     regime = UserRegime(**kwargs)  # ty: ignore[invalid-argument-type]
     return finalize_regimes(
         user_regimes={"regime": regime},
+        laws={"regime": UNBOUND_LAW},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -97,23 +104,16 @@ def _make_clashing_model() -> Model:
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
 
 
@@ -148,23 +148,16 @@ def test_safe_pattern_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    with_fixture_graph(
+    Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
 
 
@@ -188,23 +181,16 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    with_fixture_graph(
+    Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
 
 
@@ -253,13 +239,6 @@ def test_function_output_indexed_by_derived_categorical_raises():
             state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
-            regime_transitions=until_exit(
-                2,
-                law=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("dead", "alive")
-                ),
-                exits=("dead",),
-            ),
         )
 
 
@@ -299,13 +278,6 @@ def test_function_output_indexed_by_discrete_action_raises():
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
                 "labor_supply": DiscreteGrid(category_class=WorkChoice),
             },
-            regime_transitions=until_exit(
-                2,
-                law=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("dead", "alive")
-                ),
-                exits=("dead",),
-            ),
         )
 
 
@@ -335,13 +307,6 @@ def test_constraint_indexing_function_output_by_state_raises():
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
-            regime_transitions=until_exit(
-                2,
-                law=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("dead", "alive")
-                ),
-                exits=("dead",),
-            ),
         )
 
 
@@ -370,23 +335,16 @@ def test_phased_function_in_functions_does_not_crash_validation():
         states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    with_fixture_graph(
+    Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
 
 
@@ -418,11 +376,4 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
             states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-            regime_transitions=until_exit(
-                2,
-                law=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("dead", "alive")
-                ),
-                exits=("dead",),
-            ),
         )

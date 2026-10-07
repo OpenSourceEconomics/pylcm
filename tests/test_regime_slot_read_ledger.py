@@ -1,6 +1,7 @@
 """Every read of a regime's three declaring slots is accounted for, by name.
 
-`functions`, `constraints` and `transition` hold what a model author wrote,
+`functions` and `constraints` on a regime, and `transition` on the law
+the model graph binds for it, hold what a model author wrote,
 declarations included; `decomposed_functions`, `decomposed_constraints` and
 `decomposed_transition` hold what the engine runs. Which of the two a given
 line wants is a per-line judgement, and getting it wrong is usually silent — a
@@ -26,14 +27,18 @@ _LEDGER = pathlib.Path(__file__).parent / "regime_slot_read_ledger.csv"
 _SLOT_OF_ACCESSOR = {
     "functions": "functions",
     "constraints": "constraints",
-    "regime_transitions": "regime_transitions",
+    "transition": "transition",
     "decomposed_functions": "functions",
     "decomposed_constraints": "constraints",
-    "decomposed_transition": "regime_transitions",
+    "decomposed_transition": "transition",
 }
 
-# Receivers that name a regime. `self` counts only inside the class itself.
-_RECEIVERS = frozenset({"user_regime", "regime", "target_regime", "source", "self"})
+# Receivers that name a regime or the law the model graph binds for one. `self`
+# counts only inside those classes themselves.
+_RECEIVERS = frozenset(
+    {"user_regime", "regime", "target_regime", "source", "law", "source_law", "self"}
+)
+_SELF_MODULES = frozenset({"src/lcm/regime.py", "src/_lcm/regime_law.py"})
 
 _CLASSIFICATIONS = frozenset({"decomposed", "raw", "indifferent", "not_a_user_regime"})
 
@@ -91,7 +96,7 @@ def _scan_slot_reads() -> dict[tuple[str, ...], int]:
             receiver = _receiver_name(node.value)
             if receiver not in _RECEIVERS:
                 continue
-            if receiver == "self" and relative != "src/lcm/regime.py":
+            if receiver == "self" and relative not in _SELF_MODULES:
                 continue
             key = (
                 relative,

@@ -95,7 +95,7 @@ def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete)
     factory = discrete_toy if discrete else toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=toy.RegimeId,

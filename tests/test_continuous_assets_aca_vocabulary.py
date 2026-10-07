@@ -15,12 +15,8 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     GridBreakpoint,
@@ -38,7 +34,6 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -101,10 +96,6 @@ def _next_aime(aime: FloatND) -> FloatND:
     return 3 - aime / 2
 
 
-def _next_regime(age: FloatND) -> FloatND:
-    return jnp.where(age < 1, _RegimeId.working, _RegimeId.dead)
-
-
 def _model(
     *,
     sharded: bool = True,
@@ -115,18 +106,9 @@ def _model(
     budget: int = 2**30,
 ) -> Model:
     devices = tuple(device.id for device in jax.devices()[:8]) if sharded else (0,)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("working",)
-                    ),
-                    then=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("dead",)
-                    ),
-                ),
                 actions={"decision": DiscreteGrid(_Decision)},
                 functions={"utility": _utility},
                 state_transitions={
@@ -137,7 +119,6 @@ def _model(
                 },
             ),
             "dead": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal},
                 states={"pension": None},
             ),
@@ -181,6 +162,7 @@ def _model(
             device_memory_bytes=budget,
         ),
         initial_nodes={0: "working"},
+        edges={"working": {"working": 0, "dead": 1}},
     )
 
 

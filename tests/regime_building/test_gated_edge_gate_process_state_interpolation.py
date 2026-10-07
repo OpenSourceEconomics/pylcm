@@ -57,6 +57,7 @@ import numpy as np
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
@@ -84,7 +85,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
@@ -176,52 +177,20 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                        gate_references={
-                            "V_single_f_ref": ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                            "V_single_m_ref": ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE, "shock": _SHOCK},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE, "shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -238,6 +207,46 @@ def _make_regimes() -> dict[str, Regime]:
     }
 
 
+def _make_laws() -> RegimeLaws:
+    """`single_f` consents into `married_terminal` at age 0; the rest are terminal."""
+    return bind_laws(
+        {
+            "single_f": ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married_terminal": ValueDependentTransition(
+                            probability=StochasticTransition(func=_prob_one),
+                            gate=_consent_gate,
+                            routes={
+                                "f": StakeholderRoute(
+                                    target_stakeholder="f",
+                                    fallback=ProjectedRegimeValue(
+                                        regime="single_f_terminal",
+                                        projection={"wage": _identity_wage},
+                                    ),
+                                )
+                            },
+                            gate_references={
+                                "V_single_f_ref": ProjectedRegimeValue(
+                                    regime="single_f_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                                "V_single_m_ref": ProjectedRegimeValue(
+                                    regime="single_m_terminal",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            },
+                        )
+                    }
+                }
+            ),
+            "single_f_terminal": None,
+            "single_m_terminal": None,
+            "married_terminal": None,
+        }
+    )
+
+
 def _flat_params() -> MappingProxyType:
     return MappingProxyType(
         {
@@ -252,25 +261,19 @@ def _flat_params() -> MappingProxyType:
 
 
 def _build_solve_and_simulate(*, n_subjects: int, seed: int):
+    laws = _make_laws()
+    finalized = finalize_regimes(
+        user_regimes=_make_regimes(),
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_make_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
+            user_regimes=finalized, laws=laws, ages=_AGES
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=_make_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-        ),
+        user_regimes=finalized,
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,

@@ -105,6 +105,7 @@ from lcm import (
     Regime,
     RouwenhorstAR1Process,
     StochasticTransition,
+    Transition,
     UniformIIDProcess,
     categorical,
     fixed_transition,
@@ -596,20 +597,25 @@ RETIREMENT_TRANSITIONS = ByAge.until(
 
 _RETIREMENT_PERIOD = ages.exact_values.index(retirement_age)
 MODEL_EDGES = {
-    "working": {
-        "working": tuple(ages.exact_values[: _RETIREMENT_PERIOD - 1]),
-        "retirement": ages.exact_values[_RETIREMENT_PERIOD - 1],
-        "dead": tuple(ages.exact_values[:_RETIREMENT_PERIOD]),
-    },
-    "retirement": {
-        "retirement": tuple(ages.exact_values[_RETIREMENT_PERIOD:-2]),
-        "dead": tuple(ages.exact_values[_RETIREMENT_PERIOD:-1]),
-    },
+    "working": Transition(
+        targets={
+            "working": tuple(ages.exact_values[: _RETIREMENT_PERIOD - 1]),
+            "retirement": ages.exact_values[_RETIREMENT_PERIOD - 1],
+            "dead": tuple(ages.exact_values[:_RETIREMENT_PERIOD]),
+        },
+        law=WORKING_TRANSITIONS,
+    ),
+    "retirement": Transition(
+        targets={
+            "retirement": tuple(ages.exact_values[_RETIREMENT_PERIOD:-2]),
+            "dead": tuple(ages.exact_values[_RETIREMENT_PERIOD:-1]),
+        },
+        law=RETIREMENT_TRANSITIONS,
+    ),
 }
 
 
 WORKING_REGIME = Regime(
-    regime_transitions=WORKING_TRANSITIONS,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
         "health": DiscreteGrid(category_class=Health),
@@ -663,7 +669,6 @@ WORKING_REGIME = Regime(
 
 
 RETIREMENT_REGIME = Regime(
-    regime_transitions=RETIREMENT_TRANSITIONS,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
         "health": DiscreteGrid(category_class=Health),
@@ -718,7 +723,6 @@ def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
 
 
 DEAD_REGIME = Regime(
-    regime_transitions=None,
     states={
         # Mirrors the living regimes' `discount_type` so the dead value is
         # indexable along the same fixed-state axis. See `dead_utility`.

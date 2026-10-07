@@ -7,9 +7,6 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -33,8 +30,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -65,10 +60,6 @@ def _feasible(first: ContinuousState) -> BoolND:
     return first > 1.0
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
-
-
 def _model(*, kind: str, width: int) -> Model:
     """Use two state axes and an unchanged action reducer of each supported kind."""
     utility = (
@@ -87,25 +78,19 @@ def _model(*, kind: str, width: int) -> Model:
         "constraints": {"feasible": _feasible} if kind == "collective" else {},
         "taste_shocks": ExtremeValueTasteShocks() if kind == "ev1" else None,
     }
-    return with_fixture_graph(
+    return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": width}),
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
 
@@ -201,25 +186,19 @@ def _collision_model() -> Model:
         },
         "functions": {"utility": _collision_utility},
     }
-    return with_fixture_graph(
+    return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
 
@@ -262,24 +241,18 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
             "utility": _single_state_utility if with_state else _constant_utility
         },
     }
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]

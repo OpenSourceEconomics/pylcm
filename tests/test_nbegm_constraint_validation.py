@@ -161,21 +161,14 @@ def _build_scheduled_model(
 def _smooth_params(*, asset_limit: float | None = 4.0) -> dict:
     """Return the complete parameter tree for the smooth feasibility toy."""
     transition = {"return_liquid": 0.03, "income": 1.0}
-    next_regime = {"final_age_alive": 2.0}
     constraint_params = {} if asset_limit is None else {"asset_limit": asset_limit}
     return {
         "alive": {
             "utility": {"crra": 2.0},
             "koopmans_aggregator": {"discount_factor": 0.95},
             "asset_test": constraint_params,
-            "alive": {
-                "next_liquid": transition,
-                "next_regime": next_regime,
-            },
-            "dead": {
-                "next_liquid": transition,
-                "next_regime": next_regime,
-            },
+            "alive": {"next_liquid": transition},
+            "dead": {"next_liquid": transition},
         },
         "dead": {"utility": {"crra": 2.0}},
     }
@@ -223,9 +216,6 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
     )
 
     params = _smooth_params(asset_limit=None)
-    # With two periods the alive regime's only law is its exit into `dead`.
-    del params["alive"]["alive"]["next_regime"]
-    params["alive"]["dead"]["next_regime"] = {"final_age_alive": 1.0}
 
     nbegm_value = np.asarray(
         nbegm.solve(params=params, log_level="off").values[0]["alive"]

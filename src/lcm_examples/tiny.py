@@ -11,13 +11,13 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -27,7 +27,6 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     ScalarInt,
-    UserAge,
 )
 
 
@@ -107,21 +106,10 @@ WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
 
-_DEFAULT_AGE_GRID = AgeGrid(start=25, inclusive_stop=65, step="20Y")
-_RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
-
-
-def working_life_transitions(*, retirement_age: UserAge | float) -> ByAge:
-    """Work until the age before `retirement_age`, then retire."""
-    return ByAge.until(
-        stop_age_exclusive=retirement_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
+# Law of the `working_life` edges at ages with both outgoing edges.
+WORKING_LIFE_LAW = DeterministicTransition(func=next_regime)
 
 working_life = Regime(
-    regime_transitions=working_life_transitions(retirement_age=_RETIREMENT_AGE),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -138,7 +126,6 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_retirement},
 )
@@ -162,24 +149,24 @@ def get_model(
     age_grid = AgeGrid(
         start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
     )
-    retirement_age = age_grid.exact_values[-1]
 
-    wl = working_life.replace(
-        regime_transitions=working_life_transitions(retirement_age=retirement_age),
-    )
-
+    working_targets = {
+        "retirement": tuple(age_grid.exact_values[:-1]),
+        **(
+            {"working_life": tuple(age_grid.exact_values[:-2])}
+            if age_grid.exact_values[:-2]
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "retirement": tuple(age_grid.exact_values[:-1]),
-                **(
-                    {"working_life": tuple(age_grid.exact_values[:-2])}
-                    if age_grid.exact_values[:-2]
-                    else {}
-                ),
-            },
+            "working_life": (
+                Transition(targets=working_targets, law=WORKING_LIFE_LAW)
+                if len(working_targets) > 1
+                else working_targets
+            )
         },
-        regimes={"working_life": wl, "retirement": retirement},
+        regimes={"working_life": working_life, "retirement": retirement},
         ages=age_grid,
         regime_id_class=RegimeId,
         initial_nodes={age_grid.exact_values[0]: "working_life"},
@@ -205,14 +192,18 @@ def get_params(
     age_grid = AgeGrid(
         start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
     )
+    working_life_params = {
+        "utility": {"disutility_of_work": 1.0},
+        "earnings": {"wage": 20.0},
+        "taxes_transfers": {"consumption_floor": 2.0, "tax_rate": 0.2},
+    }
+    if age_grid.exact_values[:-2]:
+        working_life_params["next_regime"] = {
+            "last_working_age": age_grid.exact_values[-2]
+        }
     return {
         "discount_factor": 0.95,
         "risk_aversion": 1.5,
         "interest_rate": 0.03,
-        "working_life": {
-            "utility": {"disutility_of_work": 1.0},
-            "earnings": {"wage": 20.0},
-            "taxes_transfers": {"consumption_floor": 2.0, "tax_rate": 0.2},
-            "next_regime": {"last_working_age": age_grid.exact_values[-2]},
-        },
+        "working_life": working_life_params,
     }

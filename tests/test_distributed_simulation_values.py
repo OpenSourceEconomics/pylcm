@@ -13,16 +13,15 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -33,8 +32,6 @@ from lcm.typing import ContinuousState, ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 try:
     jax.config.update("jax_num_cpu_devices", 4)
@@ -247,23 +244,15 @@ def _build_model(
 ) -> Model:
     """Build a sharded preference axis beside an unsharded terminal regime."""
     wealth = LinSpacedGrid(start=1, stop=20, n_points=6)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
-                regime_transitions=until_exit(
-                    3,
-                    law=_SupportedDeterministicTransition(
-                        func=_transition, targets=("working", "retired")
-                    ),
-                    exits=("retired",),
-                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": _next_wealth},
                 actions={"consumption": LinSpacedGrid(start=1, stop=5, n_points=5)},
                 functions={"utility": _utility},
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _terminal_utility},
             ),
@@ -281,6 +270,12 @@ def _build_model(
             device_memory_bytes=budget,
         ),
         initial_nodes={0: "working"},
+        edges={
+            "working": Transition(
+                targets={"working": (0, 1), "retired": (0, 1, 2)},
+                law=DeterministicTransition(func=_transition),
+            )
+        },
     )
 
 

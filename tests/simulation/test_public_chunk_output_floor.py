@@ -59,7 +59,7 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
         )
     )
     budgeted = Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=dict(model.user_regimes),
         ages=model.ages,
         regime_id_class=_LifecycleRegimeId,

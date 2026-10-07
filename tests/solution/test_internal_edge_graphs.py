@@ -44,7 +44,14 @@ from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.solution.period_replay import replay_period
 from _lcm.typing import FlatParams, FloatND
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
     KernelOutput,
@@ -59,10 +66,9 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _CANDIDATES = 5
@@ -487,10 +493,9 @@ def _model(
 ) -> Model:
     """Build the regression regime with its solver replaced by a graph solver."""
     last_age = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age + 1),
                 states={
                     "wealth": LinSpacedGrid(
                         start=1, stop=float(n_wealth), n_points=n_wealth
@@ -515,6 +520,12 @@ def _model(
         enable_jit=enable_jit,
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": START_AGE, "dead": (START_AGE, last_age)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

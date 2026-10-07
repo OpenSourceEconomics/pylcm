@@ -12,10 +12,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from lcm import (
     AgeGrid,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -33,7 +31,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
 
 N_WEALTH_POINTS = 8
 N_CONSUMPTION_POINTS = 21
@@ -112,18 +109,8 @@ def get_model(
     """
     regime_type = typed and not type_at_model_level
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    last_age = ages.exact_values[-1]
     pref_type = DiscreteGrid(category_class=PrefType)
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=_SupportedDeterministicTransition(
-                func=lambda: RegimeId.working, targets=("working",)
-            ),
-            then=_SupportedDeterministicTransition(
-                func=lambda: RegimeId.dead, targets=("dead",)
-            ),
-        ),
         states={"pref_type": pref_type} if regime_type else {},
         state_transitions={
             "wealth": _next_wealth,
@@ -139,11 +126,10 @@ def get_model(
         constraints={"borrowing": _borrowing},
     )
     dead = Regime(
-        regime_transitions=None,
         states={"pref_type": pref_type} if regime_type else {},
         functions={"utility": _typed_bequest if typed else _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=N_WEALTH_POINTS),
@@ -152,6 +138,7 @@ def get_model(
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges={"working": {"working": (0, 1), "dead": 2}},
         execution_config=execution_config or ExecutionConfig(),
     )
 

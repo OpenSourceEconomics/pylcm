@@ -42,6 +42,7 @@ from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import bind_regime_law
 from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
@@ -68,7 +69,9 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from tests.conftest import bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
+    _dissolution_laws,
     _make_dissolution_regimes,
     _solve_and_process,
     _solve_dissolution,
@@ -221,7 +224,39 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     different projections -- the topology model construction must reject.
     """
     married = Regime(
-        regime_transitions=ByAge(
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    )
+    married_ir = Regime(
+        states={"wage": _WAGE_3},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    )
+    single_shared = Regime(
+        states={"wage": _WAGE_3},
+        functions={"utility": _u_shared},
+    )
+    return {
+        "married": married,
+        "married_ir": married_ir,
+        "single_shared": single_shared,
+    }
+
+
+def _shared_fallback_laws() -> dict[str, object]:
+    """The regimes' laws, as `Model(edges=...)` would bind them."""
+    return {
+        "married": ByAge(
             cases={
                 AgeRange(exclusive_stop=1): {
                     "married_ir": ValueDependentTransition(
@@ -247,34 +282,8 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
                 }
             }
         ),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
-    )
-    married_ir = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_3},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
-    )
-    single_shared = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_3},
-        functions={"utility": _u_shared},
-    )
-    return {
-        "married": married,
-        "married_ir": married_ir,
-        "single_shared": single_shared,
+        "married_ir": None,
+        "single_shared": None,
     }
 
 
@@ -291,7 +300,10 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
     regimes_dict = _make_shared_fallback_regimes()
     with pytest.raises(ModelInitializationError, match="single_shared"):
         _solve_and_process(
-            regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+            regimes_dict=regimes_dict,
+            laws=_shared_fallback_laws(),
+            ages=ages,
+            regime_names=list(regimes_dict),
         )
 
 
@@ -302,12 +314,16 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
-    married_edge = regimes_dict["married"].gated_edges["married_ir"]
+    laws = _dissolution_laws()
+    married_edge = bind_regime_law(laws["married"]).gated_edges["married_ir"]
     fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.
     _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=laws,
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
 
 
@@ -427,13 +443,6 @@ _WAGE_GRID_2 = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
-                )
-            }
-        ),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -442,7 +451,6 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -452,11 +460,28 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
     return {"couple": couple, "couple_terminal": couple_terminal}
 
 
+def _all_collective_laws() -> dict[str, object]:
+    """The regimes' laws, as `Model(edges=...)` would bind them."""
+    return {
+        "couple": ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                    func=lambda: jnp.int32(1), targets=("couple_terminal",)
+                )
+            }
+        ),
+        "couple_terminal": None,
+    }
+
+
 def _solve_all_collective():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_all_collective_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_all_collective_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -534,7 +559,6 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
-        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -543,6 +567,13 @@ def _make_stateless_collective_regime() -> dict[str, Regime]:
         },
     )
     return {"stateless_couple": regime}
+
+
+def _stateless_collective_laws() -> dict[str, object]:
+    """The regimes' laws, as `Model(edges=...)` would bind them."""
+    return {
+        "stateless_couple": None,
+    }
 
 
 def test_stateless_collective_regime_simulate_carries_subject_axis():
@@ -556,7 +587,10 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     regimes_dict = _make_stateless_collective_regime()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_stateless_collective_laws(),
+        ages=ages,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType({"stateless_couple": MappingProxyType({})})
     _bi_result = solve(
@@ -616,7 +650,6 @@ def test_stateless_collective_without_any_action_finalizes():
     finalized = finalize_regimes(
         user_regimes={
             "couple": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": CollectiveUtility(
                         utilities={
@@ -630,6 +663,7 @@ def test_stateless_collective_without_any_action_finalizes():
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
+        laws=bind_laws({"couple": None}),
     )
 
     assert dict(finalized["couple"].actions) == {}

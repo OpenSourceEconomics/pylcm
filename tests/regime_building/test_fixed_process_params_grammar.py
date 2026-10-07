@@ -18,11 +18,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -30,7 +28,7 @@ from lcm import (
     NormalIIDProcess,
     Phased,
     Regime,
-    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -40,8 +38,6 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts equidistant nodes on
 # `(0, 1, 2)`, so entering at the process's own law is worth `mu`.
@@ -64,10 +60,6 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _impute_carried(wealth: ScalarFloat) -> ScalarFloat:
     """Solve-phase value of the carried state, imputed rather than gridded."""
     return wealth * 0.5
@@ -79,18 +71,12 @@ def _evolve_carried(carried: ScalarFloat) -> ScalarFloat:
 
 def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> Model:
     """Build a source entering a target process whose law it does not carry."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -101,6 +87,7 @@ def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> M
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 
@@ -176,18 +163,12 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
     def _mu_utility(mu: ScalarFloat) -> ScalarFloat:
         return mu
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
                 functions={"utility": _mu_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -198,6 +179,7 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -235,18 +217,12 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
     differs from `exp(mu)`, so the value also shows the bound law reached the
     nodes rather than merely satisfying the build.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": LogNormalIIDProcess(n_points=3, gauss_hermite=True)},
                 functions={"utility": _shock_utility},
             ),
@@ -257,6 +233,7 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -271,27 +248,19 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
 def test_a_coarse_regime_transition_pins_the_same_law() -> None:
     """The binder does not depend on how the source names its target.
 
-    A bare callable makes every regime reachable, where a per-target dict names
-    one; the law is a property of the target's process either way.
+    A regime selector with two destinations binds it as a per-target dict with
+    one does; the law is a property of the target's process either way.
     """
 
     def _always_target() -> ScalarInt:
         return RegimeId.target
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law=_SupportedDeterministicTransition(
-                        func=_always_target, targets=("source", "target")
-                    ),
-                    exits=("target",),
-                ),
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -302,6 +271,12 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={
+            "source": Transition(
+                targets={"source": 20, "target": (20, 21)},
+                law=DeterministicTransition(func=_always_target),
+            )
+        },
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
@@ -336,14 +311,9 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
     survive that shape wherever it appears — a model that happens to carry a
     state must still be able to pin a process's law by fixed parameter.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
                 states={
                     "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
                     "carried": Phased(
@@ -358,7 +328,6 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": NormalIIDProcess(n_points=3, gauss_hermite=False)},
                 functions={"utility": _shock_utility},
             ),
@@ -369,6 +338,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values

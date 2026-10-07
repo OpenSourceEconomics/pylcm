@@ -78,6 +78,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
+from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
@@ -190,9 +191,9 @@ class GridSearch(Solver):
         )
 
     @property
-    def supports_transition_local_lotteries(self) -> bool:
-        """Grid search enumerates transition-local lotteries inside Q."""
-        return True
+    def transition_local_lottery_origins(self) -> frozenset[SupportOrigin]:
+        """Grid search enumerates every transition-local lottery inside Q."""
+        return frozenset({SupportOrigin.DECLARED, SupportOrigin.SOURCE_PROCESS})
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
@@ -595,10 +596,10 @@ def _edge_reference_regimes_for_targets(
     target_regimes: tuple[RegimeName, ...],
 ) -> tuple[RegimeName, ...]:
     """Return only edge references read by targets reachable this period."""
-    source = context.user_regimes[context.regime_name]
+    law = context.laws[context.regime_name]
     references: list[RegimeName] = []
     for target in target_regimes:
-        edge = source.gated_edges.get(target)
+        edge = law.gated_edges.get(target)
         if edge is None:
             continue
         references.extend(ref.regime for ref in edge.gate_refs.values())
@@ -885,7 +886,7 @@ class _GridSearchPeriodKernel:
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
         regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
-        a regime declaring `gated_edges` (substituted into
+        a regime with gated edges (substituted into
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
 

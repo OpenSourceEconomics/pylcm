@@ -12,23 +12,21 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ByAge,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -56,11 +54,10 @@ def _int_choice(*, realized_rate: int) -> IntND:
     return jnp.where(realized_rate >= 1, DemandId.end, DemandId.other_end)
 
 
-def _wealth_regime(*, law: Any, utility: UserFunction = _wealth) -> Regime:
+def _wealth_regime(*, terminal: bool, utility: UserFunction = _wealth) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": utility},
     )
 
@@ -81,35 +78,37 @@ def _demand_model(
     if reverse_cases:
         choices = choices[::-1]
     perceived = ByAge(
-        cases={
-            age: Phased(
-                solve="end",
-                simulate=_SupportedDeterministicTransition(
-                    func=choice, targets=("end", "other_end")
-                ),
-            )
-            for age, choice in choices
-        }
+        cases={age: DeterministicTransition(func=choice) for age, choice in choices}
     )
     roots: dict[object, str] = {(0, 1): "source"}
     if promote:
         roots[promote] = "perceived"
-    return with_fixture_graph(
+    return Model(
+        edges=Phased(
+            solve={
+                "source": {"perceived": (0, 1)},
+                "perceived": {"end": (1, 2)},
+                "realized": {"end": (1, 2)},
+            },
+            simulate={
+                "source": {"realized": (0, 1)},
+                "perceived": Transition(
+                    targets={"end": (1, 2), "other_end": (1, 2)}, law=perceived
+                ),
+                "realized": {"end": (1, 2)},
+            },
+        ),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DemandId,
         initial_nodes=roots,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
-            "source": _wealth_regime(
-                law=ByAge(
-                    cases={(0, 1): Phased(solve="perceived", simulate="realized")}
-                )
-            ),
-            "perceived": _wealth_regime(law=perceived, utility=_bonus),
-            "realized": _wealth_regime(law=ByAge(cases={(1, 2): "end"})),
-            "end": _wealth_regime(law=None),
-            "other_end": _wealth_regime(law=None),
+            "source": _wealth_regime(terminal=False),
+            "perceived": _wealth_regime(terminal=False, utility=_bonus),
+            "realized": _wealth_regime(terminal=False),
+            "end": _wealth_regime(terminal=True),
+            "other_end": _wealth_regime(terminal=True),
         },
     )
 

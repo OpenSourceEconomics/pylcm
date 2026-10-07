@@ -11,13 +11,16 @@ short form an agent needs before editing.
 
 - `Model`: User-facing class for defining dynamic choice models
 - `Regime` (from `lcm.regime`): User-facing regime definition with utility, constraints,
-  functions, actions, states, and state transitions (the `state_transitions` field). The
-  regime transition is set via the `regime_transitions` field.
+  functions, actions, states, and state transitions (the `state_transitions` field).
+  `Regime` takes no regime transition; that lives in `Model.edges`.
 - `Phased(solve=..., simulate=...)`: phase-specific variants of a regime-slot value
-  (functions, states, state transitions, the regime transition). A bare value broadcasts
+  (functions, states, state transitions) or of `Model.edges`. A bare value broadcasts
   to both phases.
-- `Model.edges` is mandatory topology: source → destination → source-age selector,
-  optionally `Phased(solve=..., simulate=...)`. Each edge lands at the next grid age.
+- `Model.edges` is mandatory and declares every regime transition, structure and law.
+  A source maps to a plain `{target: source_ages}` mapping when every source age has one
+  destination (the graph is the law), or to `Transition(targets=..., law=...)` when some
+  source age has several. A regime with no outgoing edges is terminal. The whole mapping
+  may be `Phased(solve=..., simulate=...)`. Each edge lands at the next grid age.
 - `initial_nodes` is mandatory; explicit tuples of `(age, regime)` pairs are preferred.
   Selector-to-regime mappings remain a convenience. These admissible starts are
   normalized to immutable exact pairs and carry no probability weights.
@@ -76,7 +79,8 @@ short form an agent needs before editing.
   applies to both phases, `Phased(solve=..., simulate=...)` specifies each phase
   explicitly:
   - `functions` and `state_transitions` accept `Phased` (per-phase implementations /
-    laws of motion); `regime_transitions` accepts `Phased` with matching forms.
+    laws of motion). `Model.edges` accepts `Phased`, each phase with its own
+    `Transition` laws; a `Transition` law may itself be `Phased` with matching forms.
     Ordinary per-target mappings may have different target sets. Each phase
     supplies probabilities and handoffs for its own edges; gated value-dependent
     targets retain shared gates, routes and references.

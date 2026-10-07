@@ -73,16 +73,15 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     RouwenhorstAR1Process,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -98,8 +97,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Lifecycle: T = 20 periods. The last period is the terminal bequest regime, so
 # there are 19 decision periods. Ages are abstract unit steps from 0.
@@ -515,7 +512,18 @@ def build_model(
     """
     n_periods = N_PERIODS if n_periods is None else n_periods
     ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y")
-    final_age_alive = int(ages.exact_values[-1])
+    stays = ages.exact_values[:-2]
+    dies = ages.exact_values[:-1]
+    edges = {
+        "working": (
+            Transition(
+                targets={"working": stays, "dead": dies},
+                law=DeterministicTransition(func=next_regime),
+            )
+            if stays
+            else {"dead": dies}
+        )
+    }
 
     assets_grid = LinSpacedGrid(start=0.0, stop=asset_max, n_points=n_assets)
     consumption_grid = LinSpacedGrid(start=0.05, stop=asset_max, n_points=n_consumption)
@@ -532,20 +540,12 @@ def build_model(
     borrowing = borrowing_constraint_taxed if use_taxes else borrowing_constraint
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
     )
 
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=until_exit(
-                final_age_alive,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working", "dead")
-                ),
-                exits=("dead",),
-            ),
             states={
                 "assets": assets_grid,
                 "housing": DiscreteGrid(category_class=Housing),
@@ -568,21 +568,15 @@ def build_model(
             },
             solver=GridSearch(),
         )
-        return with_fixture_graph(
+        return Model(
             regimes={"working": working, "dead": dead},
             ages=ages,
             regime_id_class=DiscreteHousingRegimeId,
             initial_nodes={ages.exact_values[0]: "working"},
+            edges=edges,
         )
 
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            final_age_alive,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "assets": assets_grid,
             "housing": DiscreteGrid(category_class=Housing),
@@ -617,11 +611,12 @@ def build_model(
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=DiscreteHousingRegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges=edges,
     )
 
 
@@ -715,7 +710,9 @@ def build_params(
         }
     return {
         "discount_factor": discount_factor,
-        "final_age_alive": final_age_alive,
+        # The law reading `final_age_alive` exists only where some age has two
+        # outgoing edges, which takes at least three periods.
+        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
         "working": working,
         "dead": {
             "utility": {"interest_rate": interest_rate, "theta": theta},

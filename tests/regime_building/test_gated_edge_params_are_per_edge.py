@@ -20,14 +20,13 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -88,8 +87,31 @@ def _gate(*, V_target: FloatND, marriage_bonus: float) -> BoolND:
 def _build_model(*, with_bystander: bool) -> Model:
     regimes = {
         "source": Regime(
-            regime_transitions=until_exit(
-                45,
+            states={"x": X},
+            state_transitions={"x": fixed_transition("x")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _utility_source},
+        ),
+        "target": Regime(
+            states={"x": X},
+            functions={"utility": _utility_target},
+        ),
+        "fallback": Regime(
+            states={"x": X},
+            functions={"utility": _utility_fallback},
+        ),
+    }
+    if with_bystander:
+        regimes["bystander"] = Regime(
+            states={"marriage_bonus": BONUS_GRID},
+            functions={"utility": _utility_bystander},
+        )
+    return Model(
+        regimes=regimes,
+        ages=AGES,
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
                 law={
                     "target": ValueDependentTransition(
                         probability=StochasticTransition(func=_certain_target),
@@ -103,33 +125,8 @@ def _build_model(*, with_bystander: bool) -> Model:
                         },
                     )
                 },
-                exits=("target",),
-            ),
-            states={"x": X},
-            state_transitions={"x": fixed_transition("x")},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _utility_source},
-        ),
-        "target": Regime(
-            regime_transitions=None,
-            states={"x": X},
-            functions={"utility": _utility_target},
-        ),
-        "fallback": Regime(
-            regime_transitions=None,
-            states={"x": X},
-            functions={"utility": _utility_fallback},
-        ),
-    }
-    if with_bystander:
-        regimes["bystander"] = Regime(
-            regime_transitions=None,
-            states={"marriage_bonus": BONUS_GRID},
-            functions={"utility": _utility_bystander},
-        )
-    return with_fixture_graph(
-        regimes=regimes,
-        ages=AGES,
+            )
+        },
         regime_id_class=RegimeIdWithBystander if with_bystander else RegimeId,
         # Nothing transitions into the bystander; it is solved only as a start.
         initial_nodes=(

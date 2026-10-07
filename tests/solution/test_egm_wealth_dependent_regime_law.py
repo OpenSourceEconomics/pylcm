@@ -1,27 +1,31 @@
 """A regime law that reads the liquid state keeps its mass on the one-row EGM kernel.
 
-A deterministic next-regime ID that depends on wealth publishes the same values
-as the equivalent per-target Markov law.
+The one-row EGM kernel needs one active target per source age. A source with one
+outgoing edge at every age takes the graph as its law, so a wealth-reading law is
+not declarable there. With a second edge whose probability is a fixed zero, the
+same wealth-reading law is declarable, its support stays one target per age, and
+it publishes the values of the graph-only lifecycle.
 """
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     Regime,
     StochasticTransition,
+    Transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.exceptions import ModelInitializationError
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.solution import test_egm_solver as egm_toy
-from tests.test_models.graph import with_fixture_graph
 
 _PER_TARGET_LAW = "per_target"
 _DETERMINISTIC_LAW = "deterministic"
@@ -53,28 +57,29 @@ def _next_regime_by_wealth(
     )
 
 
-def _wealth_law_saving_values(*, law: str) -> np.ndarray:
-    """Solve the EGM lifecycle whose regime law reads wealth, stacking its values.
+def _never() -> FloatND:
+    return jnp.asarray(0.0)
 
-    The law sends every node to the saving regime at ages 0 and 1 and to the
-    done regime at age 2, so each node's single declared target carries weight one.
+
+def _per_target_wealth_law() -> ByAge:
+    """Keep saving while wealth is positive before the last age, then stop."""
+    return ByAge.until(
+        stop_age_exclusive=3.0,
+        law={
+            "saving": StochasticTransition(func=_prob_keep_saving),
+            "done": StochasticTransition(func=_never),
+        },
+        then={"done": StochasticTransition(func=_prob_stop_saving)},
+    )
+
+
+def _build_model(*, edges: object, reads_last_age: bool = True) -> Model:
+    """Build the EGM lifecycle that saves at ages 0 and 1 and stops at age 2.
+
+    `reads_last_age` fixes the `last_age` parameter the wealth laws read; a
+    graph-only lifecycle declares no law and so reads no such parameter.
     """
     wealth_grid = LinSpacedGrid(start=2.0, stop=60.0, n_points=8)
-    keep, stop = (
-        (
-            _SupportedDeterministicTransition(
-                func=_next_regime_by_wealth, targets=("saving",)
-            ),
-            _SupportedDeterministicTransition(
-                func=_next_regime_by_wealth, targets=("done",)
-            ),
-        )
-        if law == _DETERMINISTIC_LAW
-        else (
-            {"saving": StochasticTransition(func=_prob_keep_saving)},
-            {"done": StochasticTransition(func=_prob_stop_saving)},
-        )
-    )
     saving = ConsumptionSavingsRegime(
         states={"wealth": wealth_grid},
         actions={"consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=40)},
@@ -83,7 +88,6 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
             "wealth": {"saving": egm_toy.next_wealth, "done": egm_toy.next_wealth}
         },
         constraints={},
-        regime_transitions=ByAge.until(stop_age_exclusive=3.0, law=keep, then=stop),
         solver=EGM(savings_grid=LinSpacedGrid(start=0.0, stop=60.0, n_points=40)),
         liquid=LiquidMargin(
             state="wealth",
@@ -93,18 +97,44 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
         ),
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": egm_toy.terminal_utility},
         solver=GridSearch(),
     )
-    model = with_fixture_graph(
+    return Model(
         regimes={"saving": saving, "done": done},
         regime_id_class=egm_toy.RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        fixed_params={"last_age": 3.0},
+        fixed_params={"last_age": 3.0} if reads_last_age else {},
         initial_nodes={0: "saving"},
+        edges=edges,
     )
+
+
+def _build_wealth_law_model(*, law: str) -> Model:
+    """Build the lifecycle whose single-destination source carries a wealth law.
+
+    The law sends every node to the saving regime at ages 0 and 1 and to the
+    done regime at age 2, matching the source's one outgoing edge at each age.
+    """
+    regime_law = (
+        DeterministicTransition(func=_next_regime_by_wealth)
+        if law == _DETERMINISTIC_LAW
+        else ByAge.until(
+            stop_age_exclusive=3.0,
+            law={"saving": StochasticTransition(func=_prob_keep_saving)},
+            then={"done": StochasticTransition(func=_prob_stop_saving)},
+        )
+    )
+    return _build_model(
+        edges={
+            "saving": Transition(targets={"saving": (0, 1), "done": 2}, law=regime_law)
+        }
+    )
+
+
+def _saving_values(model: Model) -> np.ndarray:
+    """Solve the lifecycle and stack the saving regime's values over its ages."""
     law_params = {"return_liquid": 0.03, "retirement_income": 0.0}
     params = {
         "saving": {
@@ -119,15 +149,36 @@ def _wealth_law_saving_values(*, law: str) -> np.ndarray:
     return np.stack([np.asarray(values[period]["saving"]) for period in (0, 1, 2)])
 
 
-def test_one_row_deterministic_wealth_law_matches_per_target_law() -> None:
-    """A deterministic regime law that reads the liquid state keeps its mass.
+def test_one_row_wealth_law_matches_the_graph_only_lifecycle() -> None:
+    """A per-target law that reads the liquid state keeps its mass.
 
-    At every node the law's single declared target carries probability one, so
-    the one-row EGM kernel publishes the same finite values as the equivalent
-    per-target Markov law, within 8 ULP.
+    The law's second edge carries a fixed zero, so each age keeps one target, and
+    at every node that target carries probability one. The one-row EGM kernel
+    therefore publishes the same values as the lifecycle whose graph alone is the
+    law, within 8 ULP.
     """
-    np.testing.assert_array_max_ulp(
-        _wealth_law_saving_values(law=_DETERMINISTIC_LAW),
-        _wealth_law_saving_values(law=_PER_TARGET_LAW),
-        maxulp=8,
+    with_law = _build_model(
+        edges={
+            "saving": Transition(
+                targets={"saving": (0, 1), "done": (0, 1, 2)},
+                law=_per_target_wealth_law(),
+            )
+        }
     )
+    graph_only = _build_model(
+        edges={"saving": {"saving": (0, 1), "done": 2}}, reads_last_age=False
+    )
+    np.testing.assert_array_max_ulp(
+        _saving_values(with_law), _saving_values(graph_only), maxulp=8
+    )
+
+
+@pytest.mark.parametrize("law", [_DETERMINISTIC_LAW, _PER_TARGET_LAW])
+def test_wealth_law_on_one_destination_egm_source_is_rejected(law: str) -> None:
+    """A wealth-reading law on a source with one destination per age is rejected.
+
+    The graph alone fixes the one-row EGM kernel's single target, so `Model`
+    asks for the plain `{target: source_ages}` mapping instead.
+    """
+    with pytest.raises(ModelInitializationError, match="graph is its law"):
+        _build_wealth_law_model(law=law)

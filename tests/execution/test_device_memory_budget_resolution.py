@@ -547,7 +547,7 @@ def test_model_construction_caps_the_budget_against_the_real_devices(
     )
 
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
@@ -570,7 +570,7 @@ def test_model_construction_records_the_requested_budget(
     )
 
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,
@@ -602,7 +602,7 @@ def _model_with_pool_limit(
         execution_config=execution_config,
         enable_jit=enable_jit,
         initial_nodes=initial_nodes_of(model=base),
-        edges=base.graph.edges,
+        edges=base.edges,
     )
 
 

@@ -14,7 +14,14 @@ import pytest
 
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _lowering_key, _program_identity
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import GridSearch
 from lcm.typing import RegimeName
@@ -31,7 +38,6 @@ from tests.test_models.deterministic.regression import (
     working_life,
     working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 3
 _IDENTITY = ("program", "fingerprint", "working_life", "main", ("signature",), None)
@@ -86,12 +92,9 @@ def _model(
 ) -> Model:
     """A two-regime grid-search toy whose wealth grid size is a build input."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={
                     "wealth": LinSpacedGrid(start=1, stop=3, n_points=n_wealth_points)
                 },
@@ -107,6 +110,12 @@ def _model(
         regime_id_class=RegimeId,
         execution_config=execution_config,
         initial_nodes={18: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": 18, "dead": (18, 19)},
+                law=working_life_transitions(last_age=final_age_alive + 1),
+            )
+        },
     )
 
 

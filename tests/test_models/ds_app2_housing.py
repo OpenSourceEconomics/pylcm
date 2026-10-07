@@ -45,9 +45,6 @@ question Q4): the standard form is concave and consistent with the listed
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -77,8 +74,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors (years). Working life starts at 20, retirement at 60, and
 # the terminal bequest regime is entered at T = 70.
@@ -269,28 +264,6 @@ def bequest(
     return theta_bar * (estate ** (1.0 - gamma_c) - 1.0) / (1.0 - gamma_c)
 
 
-def next_regime(age: int) -> ScalarInt:
-    """Working → retired at the retirement age, → dead at the terminal age."""
-    return jnp.where(
-        age + 1 >= TERMINAL_AGE,
-        HousingRegimeId.dead,
-        jnp.where(
-            age + 1 >= RETIREMENT_AGE,
-            HousingRegimeId.retired,
-            HousingRegimeId.working,
-        ),
-    )
-
-
-def next_regime_from_retired(age: int) -> ScalarInt:
-    """Retired → dead at the terminal age, else stay retired."""
-    return jnp.where(
-        age + 1 >= TERMINAL_AGE,
-        HousingRegimeId.dead,
-        HousingRegimeId.retired,
-    )
-
-
 def _working_income(wage_income: FloatND) -> FloatND:
     """Working-life income: the AR1 wage level."""
     return wage_income
@@ -358,6 +331,7 @@ def build_model(
         )
     final_age = int(ages.exact_values[-1])
     retirement_age = min(RETIREMENT_AGE, final_age - 1)
+    edges = _edges(retirement_age=retirement_age, final_age=final_age)
 
     # Housing must stay strictly positive: the CES service flow
     # `H^{1-gamma_H}` diverges to -inf at `H = 0` (you cannot live in zero
@@ -433,13 +407,6 @@ def build_model(
     )
 
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            retirement_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working",)
-            ),
-            exits=("retired",),
-        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -465,14 +432,6 @@ def build_model(
     )
 
     retired = NestedConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            final_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retired, targets=("retired",)
-            ),
-            exits=("dead",),
-            start=retirement_age,
-        ),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={
             "liquid": inner_liquid_law,
@@ -490,18 +449,36 @@ def build_model(
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingRegimeId,
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges=edges,
     )
+
+
+def _edges(
+    *, retirement_age: int, final_age: int
+) -> dict[str, dict[str, int | tuple[int, ...]]]:
+    """Work until retiring, stay retired until the last alive age, then die."""
+    stay_working = tuple(range(START_AGE, retirement_age - 1))
+    stay_retired = tuple(range(retirement_age, final_age - 1))
+    return {
+        "working": {
+            **({"working": stay_working} if stay_working else {}),
+            "retired": retirement_age - 1,
+        },
+        "retired": {
+            **({"retired": stay_retired} if stay_retired else {}),
+            "dead": final_age - 1,
+        },
+    }
 
 
 def build_params(

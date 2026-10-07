@@ -45,6 +45,7 @@ def test_series_uploads_use_the_entry_writer(
         pandas_utils.convert_series_in_params,
         flat_params={"working_life": {key: value}},
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )

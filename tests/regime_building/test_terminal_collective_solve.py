@@ -27,7 +27,7 @@ from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -50,13 +50,13 @@ def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
 
 def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
-        regime_transitions=None,  # terminal
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
     )
+    laws = bind_laws({"couple": None})
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
@@ -65,17 +65,17 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
+                laws=laws,
             ),
             ages=ages,
+            laws=laws,
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes={"couple": regime},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+        user_regimes=finalize_regimes(
+            user_regimes={"couple": regime},
+            derived_categoricals={},
+            koopmans_aggregator=LinearAggregator(),
+            certainty_equivalent=LinearExpectation(),
+            laws=laws,
         ),
         ages=ages,
         regime_names_to_ids=MappingProxyType({"couple": jnp.int32(0)}),

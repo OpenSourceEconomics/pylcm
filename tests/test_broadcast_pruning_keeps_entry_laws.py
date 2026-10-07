@@ -17,8 +17,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -29,7 +27,6 @@ from lcm import (
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -70,10 +67,6 @@ def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _always_retire() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _entry_health(wealth: float) -> FloatND:
     """Probabilities over `_Health`, richer agents arriving healthier."""
     good = jnp.clip(wealth / 100.0, 0.0, 1.0)
@@ -82,13 +75,6 @@ def _entry_health(wealth: float) -> FloatND:
 
 def _working_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "retired": StochasticTransition(func=_always_retire)
-                }
-            }
-        ),
         "states": {"wealth": _WEALTH_GRID},
         "state_transitions": {
             "wealth": _next_wealth,
@@ -103,7 +89,6 @@ def _working_regime(**overrides: Any) -> Regime:
 
 def _retired_regime(**overrides: Any) -> Regime:
     spec: dict[str, Any] = {
-        "regime_transitions": None,
         "states": {"wealth": _WEALTH_GRID},
         "functions": {"utility": _utility_with_health},
     }
@@ -119,11 +104,12 @@ def _entry_targets(*, regime: Regime, state_name: str) -> set[str]:
 
 
 def _build(*, regimes: dict[str, Regime], **model_slots: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
         **model_slots,
     )
 

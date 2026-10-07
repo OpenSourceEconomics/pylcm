@@ -4,7 +4,7 @@ Called from `Model.solve()` and `Model.simulate()` before backward induction
 runs. Two families:
 
 - **Regime transition probability check** keyed on
-  `validate_regime_transitions_all_periods`. Iterates active non-terminal
+  `validate_regime_transition_probs_all_periods`. Iterates active non-terminal
   regimes across periods, evaluates the regime transition function on the
   Cartesian product of its accepted grid variables, and verifies finiteness,
   [0, 1] range, sum-to-1, and no probability mass to inactive regimes.
@@ -355,7 +355,7 @@ def _validate_transition_sequence(
         if summary is not None and summary.memory is not None
         else simulation_memory
     )
-    validate_regime_transitions_all_periods(
+    validate_regime_transition_probs_all_periods(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -463,7 +463,7 @@ def validate_regime_selection(
         InvalidRegimeTransitionProbabilitiesError: On the first invalid row.
 
     """
-    validate_regime_transitions_all_periods(
+    validate_regime_transition_probs_all_periods(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -473,7 +473,7 @@ def validate_regime_selection(
     )
 
 
-def validate_regime_transitions_all_periods(
+def validate_regime_transition_probs_all_periods(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,

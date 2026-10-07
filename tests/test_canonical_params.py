@@ -11,9 +11,6 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -21,12 +18,12 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -52,20 +49,27 @@ def _prob_dead(*, age: float, hazard: float) -> FloatND:
     return jnp.clip(hazard * age, 0.0, 1.0)
 
 
+_WORK_LAW = ByAge(
+    cases={
+        AgeRange(exclusive_stop=2): {
+            "retired": StochasticTransition(
+                func=lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
+            ),
+            "dead": StochasticTransition(func=_prob_dead),
+        }
+    }
+)
+
+
+def _edges(*, work_law: object = _WORK_LAW) -> dict:
+    return {
+        "work": Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=work_law),
+        "retired": {"dead": (0, 1, 2)},
+    }
+
+
 def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=2): {
-                    "retired": StochasticTransition(
-                        func=lambda age, hazard: (
-                            1.0 - _prob_dead(age=age, hazard=hazard)
-                        )
-                    ),
-                    "dead": StochasticTransition(func=_prob_dead),
-                }
-            }
-        ),
         "states": {"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         "state_transitions": {
             "wealth": {
@@ -79,20 +83,8 @@ def _work_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _certain_death(age: float) -> FloatND:
-    """`dead` is `retired`'s only declared target, so it takes the whole mass."""
-    return jnp.ones_like(jnp.asarray(age, dtype=float))
-
-
 def _retired_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=3): {
-                    "dead": StochasticTransition(func=_certain_death),
-                }
-            }
-        ),
         # Outlives `work` by one age, so the mass `work` sends it in its final
         # transition lands on an active regime.
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
@@ -102,31 +94,30 @@ def _retired_regime() -> UserRegime:
     )
 
 
-def _build_model(work: UserRegime) -> Model:
-    return with_fixture_graph(
+def _build_model(*, work: UserRegime, work_law: object = _WORK_LAW) -> Model:
+    return Model(
         regimes={
             "work": work,
             "retired": _retired_regime(),
-            "dead": UserRegime(
-                regime_transitions=None, functions={"utility": lambda: 0.0}
-            ),
+            "dead": UserRegime(functions={"utility": lambda: 0.0}),
         },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges=_edges(work_law=work_law),
     )
 
 
 def test_per_target_state_law_params_nest_under_the_target() -> None:
     """A per-target law's params live at `template[regime][target][func]`."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     template = model.get_params_template()
     assert "exit_tax" in template["work"]["retired"]["next_wealth"]
 
 
 def test_per_target_regime_transition_params_nest_under_the_target() -> None:
     """A granular cell's params live at `template[regime][target]["next_regime"]`."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     template = model.get_params_template()
     assert "hazard" in template["work"]["retired"]["next_regime"]
     assert "hazard" in template["work"]["dead"]["next_regime"]
@@ -135,7 +126,7 @@ def test_per_target_regime_transition_params_nest_under_the_target() -> None:
 def test_broadcast_law_params_stay_coarse_in_the_template() -> None:
     """The template mirrors the user's coarseness: a bare law keeps one
     unnested `next_<state>` key."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     template = model.get_params_template()
     assert "next_wealth" in template["retired"]
 
@@ -144,7 +135,7 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
     """Per-target param values reach their target's law: solve succeeds with
     target-nested params and a coarse spelling for the same model errors
     nowhere else."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     params = {
         "work": {
             "discount_factor": 0.95,
@@ -163,7 +154,7 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
 
 def test_old_mangled_spelling_is_gone() -> None:
     """The `to_<target>_…` template spelling does not exist."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     template = model.get_params_template()
     assert not any(key.startswith("to_") for key in template["work"])
 
@@ -180,15 +171,15 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
 
     work = _work_regime(state_transitions={"wealth": _next_wealth_growth})
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10)},
         functions={"utility": lambda wealth: 0.1 * wealth},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"work": work, "retired": _retired_regime(), "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "work"},
+        edges=_edges(),
     )
     params = {
         "work": {
@@ -222,7 +213,7 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
 def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
     """A function-level value broadcast over per-target template slots lands
     in every target as the same leaf object."""
-    model = _build_model(_work_regime())
+    model = _build_model(work=_work_regime())
     params = {
         "work": {
             "discount_factor": 0.95,
@@ -256,17 +247,13 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
         dead = jnp.clip(hazard * age, 0.0, 1.0)
         return jnp.stack([1.0 - dead, dead])
 
-    work = _work_regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=2): _SupportedStochasticTransition(
-                    func=_prob_vector, targets=("retired", "dead")
-                )
-            }
+    work = _work_regime(state_transitions={"wealth": _next_wealth})
+    model = _build_model(
+        work=work,
+        work_law=ByAge(
+            cases={AgeRange(exclusive_stop=2): StochasticTransition(func=_prob_vector)}
         ),
-        state_transitions={"wealth": _next_wealth},
     )
-    model = _build_model(work)
     params = {
         "work": {
             "discount_factor": 0.95,

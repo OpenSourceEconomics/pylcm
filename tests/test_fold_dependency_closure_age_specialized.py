@@ -14,9 +14,6 @@ from collections.abc import Hashable
 
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeSpecializedFunction,
     DiscreteGrid,
@@ -29,12 +26,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
-    ScalarInt,
     UserFunction,
 )
 from tests.collective_fixtures import AGES, FOLDED_SHOCK, ShockRegimeId, Work
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # The two-node liquid state whose law of motion does the offending read.
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=5.0, n_points=2)
@@ -78,28 +72,21 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
 
     """
     shocked = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("shocked", "shocked_terminal")
-            ),
-            exits=("shocked_terminal",),
-        ),
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility, "net_wage": net_wage},
         state_transitions={"wealth": _next_wealth},
     )
     shocked_terminal = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"shocked": shocked, "shocked_terminal": shocked_terminal},
         ages=AGES,
         regime_id_class=ShockRegimeId,
         initial_nodes={0: "shocked"},
+        edges={"shocked": {"shocked_terminal": 0}},
     )
 
 
@@ -138,8 +125,3 @@ def _terminal_utility(wealth: ContinuousState) -> FloatND:
 def _next_wealth(*, wealth: ContinuousState, net_wage: FloatND) -> ContinuousState:
     """Return next period's wealth: today's wealth plus the net wage."""
     return wealth + net_wage
-
-
-def _next_regime() -> ScalarInt:
-    """Return the target regime: `shocked` becomes `shocked_terminal`."""
-    return ShockRegimeId.shocked_terminal

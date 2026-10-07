@@ -137,7 +137,8 @@ def build_params(
     subsidy_high: float = 3.0,
     fpl_cliff_lo: float = 14.0,
     fpl_cliff_hi: float = 11.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the kind-indexed-threshold subsidy-cliff toy.
 
@@ -162,7 +163,6 @@ def build_params(
             },
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

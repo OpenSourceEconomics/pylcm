@@ -26,13 +26,12 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Regime,
     StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
 _WEALTH_VALUES = np.array([1.0, 2.0, 3.0, 4.0])
@@ -48,10 +47,6 @@ class _RegimeId:
 class _Binary:
     low: ScalarInt
     high: ScalarInt
-
-
-def _certain() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _no_utility(*, health: DiscreteState, mood: DiscreteState) -> FloatND:
@@ -226,14 +221,10 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     def _mood_probs() -> FloatND:
         return jnp.asarray([small, 1.0 - small], dtype=active)
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"alive": {"dead": 20}},
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"dead": StochasticTransition(func=_certain)},
-                    exits=("dead",),
-                ),
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),
@@ -247,7 +238,6 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 functions={"utility": _no_utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=_Binary),

@@ -5,8 +5,6 @@ parity test actually calls and requires it to be rejected, so a comparator that
 admits the defect is caught here rather than by a silently green parity test.
 """
 
-from collections.abc import Iterator
-from functools import partial
 from itertools import product
 from types import SimpleNamespace
 
@@ -125,23 +123,16 @@ def test_value_gate_rejects_the_recorded_cancellation_pair() -> None:
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_axis_width_gate_never_borrows_another_elements_magnitude(
-    *, dtype: type[np.floating], monkeypatch: pytest.MonkeyPatch
+    *, dtype: type[np.floating]
 ) -> None:
-    """The real axis-width parity test holds an ordinary leaf to its own steps.
+    """The axis-width operand bound holds each element to its own operands.
 
-    No solve runs: two well-formed solution views supply the exact result leaves
-    at a leaf other than the cancellation leaf. At scale / 64, eight scale
-    spacings are 512 of the small value's own steps. The real test must accept
-    eight, and reject nine, sixteen and 512 regardless of sign, scale, element
-    order or leaf shape.
+    Each element is its own sole operand here, so its bound is its own eight
+    steps however large another element of the leaf is. At scale / 64, eight
+    scale spacings are 512 of the small value's own steps. The bound must
+    accept eight, and reject nine, sixteen and 512 regardless of sign, scale,
+    element order or leaf shape.
     """
-
-    def supply_solution(
-        *, config: object, solutions: Iterator[SimpleNamespace]
-    ) -> tuple[dict[object, object], SimpleNamespace]:
-        del config
-        return {}, next(solutions)
-
     for sign, exponent, steps, reverse, shape in product(
         (-1, 1),
         (-16, 0, 16),
@@ -157,21 +148,22 @@ def test_axis_width_gate_never_borrows_another_elements_magnitude(
         if reverse:
             expected, got = expected[::-1], got[::-1]
         expected, got = expected.reshape(shape), got.reshape(shape)
-        solutions = iter(
-            SimpleNamespace(_engine_view=SimpleNamespace(values={1: {"work": leaf}}))
-            for leaf in (expected, got)
-        )
 
-        monkeypatch.setattr(
-            axis_parity,
-            "_solve_and_collect_widths",
-            partial(supply_solution, solutions=solutions),
-        )
+        def check(*, got: np.ndarray, expected: np.ndarray) -> None:
+            axis_parity._assert_within_operand_rounding_bound(
+                got=got,
+                expected=expected,
+                flow=expected.astype(np.float64),
+                continuation=np.zeros(expected.shape),
+                n_ulp=8,
+                err_msg="",
+            )
+
         if steps <= 8:
-            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+            check(got=got, expected=expected)
         else:
             with pytest.raises(AssertionError):
-                axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+                check(got=got, expected=expected)
 
 
 @pytest.mark.parametrize(("steps", "accepted"), [(16, True), (512, False)])
@@ -187,7 +179,7 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
     """
     _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
     expected_values = solution._engine_view.values
-    period, regime = axis_parity._CANCELLATION_LEAF
+    period, regime = 2, "work"
     leaf = np.array(expected_values[period][regime])
     for _ in range(steps):
         leaf[0, 0, 0] = np.nextafter(leaf[0, 0, 0], leaf.dtype.type(np.inf))

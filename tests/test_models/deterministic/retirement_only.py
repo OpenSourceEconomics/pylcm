@@ -11,10 +11,14 @@ import functools
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from lcm import (
+    AgeGrid,
+    ByAge,
+    DeterministicTransition,
+    Model,
+    Transition,
+    categorical,
 )
-from lcm import AgeGrid, ByAge, Model, categorical
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt, UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
@@ -25,7 +29,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
     next_wealth,
     utility_retirement,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -46,17 +49,31 @@ def retirement_transitions(*, last_age: UserAge | float) -> ByAge:
     """Stay retired or die until the age before `last_age`, then die."""
     return ByAge.until(
         stop_age_exclusive=last_age,
-        law=_SupportedDeterministicTransition(
-            func=next_regime_from_retirement, targets=("retirement", "dead")
-        ),
-        then=_SupportedDeterministicTransition(
-            func=next_regime_from_retirement, targets=("dead",)
-        ),
+        law=DeterministicTransition(func=next_regime_from_retirement),
+        then=DeterministicTransition(func=next_regime_from_retirement),
     )
 
 
+def retirement_edges(
+    ages: AgeGrid,
+) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
+    """Stay retired before the second-to-last age; die from every non-final age.
+
+    Where both edges leave an age, `retirement_transitions` chooses between them.
+    """
+    stays = tuple(ages.exact_values[:-2])
+    dies = tuple(ages.exact_values[:-1])
+    if not stays:
+        return {"retirement": {"dead": dies}}
+    return {
+        "retirement": Transition(
+            targets={"retirement": stays, "dead": dies},
+            law=retirement_transitions(last_age=ages.exact_values[-1]),
+        )
+    }
+
+
 retirement = UserRegime(
-    regime_transitions=retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -68,17 +85,15 @@ retirement = UserRegime(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=retirement_edges(ages),
     )
 
 
@@ -92,7 +107,9 @@ def get_params(
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
-        "final_age_alive": final_age_alive,
+        # The law reading `final_age_alive` exists only where some age has two
+        # outgoing edges, which takes at least three periods.
+        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
         "retirement": {"next_wealth": {"labor_income": 0.0}},
     }
 
@@ -103,5 +120,6 @@ __all__ = [
     "get_params",
     "next_regime_from_retirement",
     "retirement",
+    "retirement_edges",
     "retirement_transitions",
 ]

@@ -17,14 +17,14 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import Model
+from lcm import Model, Transition
 from lcm.ages import AgeGrid
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     DissolutionRegimeId,
     _make_dissolution_regimes,
+    _married_dissolution_law,
 )
-from tests.test_models.graph import with_fixture_graph
 
 #: Every parameter this model consumes, as `regime__function__parameter`. A
 #: gated edge contributes a branch per target — the gate, one fallback
@@ -54,11 +54,20 @@ _N_LIVE_PERIODS = 3
 
 def _make_model() -> Model:
     """Build the dissolution model for call-time simulation populations."""
-    return with_fixture_graph(
+    return Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=_married_dissolution_law(),
+            ),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
 
 

@@ -12,13 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -28,7 +23,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
@@ -51,14 +45,6 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def _next_bonus() -> ScalarInt:
-    return RegimeId.bonus
-
-
-def _next_terminal() -> ScalarInt:
-    return RegimeId.terminal
-
-
 def _utility_start(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """No payoff of its own — `start` exists only to route into `bonus`."""
     return 0.0 * wealth + 0.0 * work
@@ -71,26 +57,12 @@ def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
 
 def _build_model(*, fold: bool) -> Model:
     start = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_bonus, targets=("bonus",)
-                )
-            }
-        ),
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_start},
     )
     bonus = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=_next_terminal, targets=("terminal",)
-                )
-            }
-        ),
         states={
             "bonus_shock": NormalIIDProcess(
                 n_points=N_POINTS,
@@ -105,11 +77,11 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility_bonus},
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"start": start, "bonus": bonus, "terminal": terminal},
+        edges={"start": {"bonus": 0}, "bonus": {"terminal": 1}},
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "start"},

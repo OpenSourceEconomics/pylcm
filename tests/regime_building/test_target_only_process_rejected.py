@@ -2,13 +2,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -17,12 +13,12 @@ from lcm import (
     Regime,
     StochasticTransition,
     TauchenAR1Process,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -37,10 +33,6 @@ def _zero_utility() -> ScalarFloat:
 
 def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
-
-
-def _one_probability() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _next_target() -> ScalarInt:
@@ -63,22 +55,28 @@ _PROCESS_SOLVE_PARAMS = {
 def _build_overlapping_model(*, coarse: bool, carry_process: bool = False) -> Model:
     process = TauchenAR1Process(n_points=3, gauss_hermite=False)
     source_states = {"shock": process} if carry_process else {}
-    transition = (
-        _SupportedDeterministicTransition(func=_next_target, targets=("target",))
+    # A coarse law picks among several declared candidates; the source also
+    # loops onto itself at age 20, so its law there chooses between two edges.
+    edges = (
+        {
+            "source": Transition(
+                targets={"source": 20, "target": (20, 21)},
+                law=DeterministicTransition(func=_next_target),
+            )
+        }
         if coarse
-        else {"target": StochasticTransition(func=_one_probability)}
+        else {"source": {"target": (20, 21)}}
     )
-    return with_fixture_graph(
+    return Model(
+        edges=edges,
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 states=source_states,
                 functions={
                     "utility": _shock_utility if carry_process else _zero_utility
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -95,16 +93,13 @@ def _target_only_process_model(
     process: TauchenAR1Process | NormalIIDProcess,
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -211,17 +206,14 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     )
 
     def _process_only_model() -> Model:
-        return with_fixture_graph(
+        return Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={"shock": process},
                     functions={"utility": _shock_utility},
                 ),
@@ -239,12 +231,10 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
         return shock + jnp.float32(0) * extra
 
     def _process_and_inert_law_model() -> Model:
-        return with_fixture_graph(
+        return Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": process},
                     state_transitions={
                         "extra": {"target": lambda: jnp.float32(0.0)},
@@ -252,7 +242,6 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
                     functions={"utility": _shock_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={
                         "shock": process,
                         "extra": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -292,19 +281,16 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
 
 def _explicit_entry_model(process: TauchenAR1Process) -> Model:
     """Build a source that enters its target's process at the value `0.0`."""
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": lambda: jnp.float32(0)},
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock_utility},
             ),
@@ -360,16 +346,13 @@ def test_target_only_nonprocess_state_without_entry_law_is_rejected() -> None:
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        with_fixture_graph(
+        Model(
+            edges={"source": {"target": (20, 21)}},
             regimes={
                 "source": Regime(
-                    regime_transitions={
-                        "target": StochasticTransition(func=_one_probability)
-                    },
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    regime_transitions=None,
                     states={
                         "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                     },
@@ -408,22 +391,16 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
         ModelInitializationError,
         match=r"solution phase.*period 0.*source.*target.*shock",
     ):
-        with_fixture_graph(
+        Model(
+            edges={
+                "source": {"target": (20, 21)},
+                "target": {"terminal": (20, 21, 22)},
+            },
             regimes={
                 "source": Regime(
-                    regime_transitions=ByAge(
-                        cases={
-                            AgeRange(start=20, exclusive_stop=22): {
-                                "target": StochasticTransition(func=_one_probability)
-                            }
-                        }
-                    ),
                     functions={"utility": _zero_utility},
                 ),
                 "target": Regime(
-                    regime_transitions={
-                        "terminal": StochasticTransition(func=_one_probability)
-                    },
                     states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
@@ -432,7 +409,6 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                     functions={"utility": _shock_utility},
                 ),
                 "terminal": Regime(
-                    regime_transitions=None,
                     functions={"utility": _zero_utility},
                 ),
             },
@@ -450,17 +426,14 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
     def _enter_shock() -> ScalarFloat:
         return jnp.float32(0.5)
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_shock}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": LinSpacedGrid(start=-1, stop=1, n_points=3),
                 },
@@ -497,19 +470,16 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
@@ -551,19 +521,16 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
     def _outcome_utility(shock: DiscreteState) -> FloatND:
         return 10.0 * shock + 2.0
 
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_entry_probs)}
                 },
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),

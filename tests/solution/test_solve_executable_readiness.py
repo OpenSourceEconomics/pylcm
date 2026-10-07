@@ -14,13 +14,10 @@ from _lcm.execution.compiler_inputs import compiler_input_paths
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.solver_api import KernelOutput, ResultRetention, SolverExecutionCapabilities
@@ -41,7 +38,6 @@ from lcm.solvers import (
 from lcm.typing import ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution import test_donation_solve as counter_fixture
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_solver_api_out_of_tree import _WEALTH
 from tests.test_solver_api_out_of_tree import RegimeId as CounterRegimeId
@@ -188,25 +184,16 @@ class _TwoProgramSolver(Solver):
 
 def _model(*, budget: int | None) -> Model:
     grid = LinSpacedGrid(start=1, stop=2, n_points=2)
-    return with_fixture_graph(
+    return Model(
+        edges={"working": {"terminal": 0}},
         regimes={
             "working": Regime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(start=0, exclusive_stop=1): {
-                            "terminal": StochasticTransition(
-                                func=lambda: jnp.asarray(1.0)
-                            )
-                        }
-                    }
-                ),
                 states={"wealth": grid},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
                 solver=_TwoProgramSolver(),
             ),
             "terminal": Regime(
-                regime_transitions=None,
                 states={"wealth": grid},
                 functions={"utility": lambda wealth: wealth},
             ),
@@ -313,7 +300,7 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         self_looping=True,
     )
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=CounterRegimeId,

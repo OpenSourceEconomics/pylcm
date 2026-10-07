@@ -24,6 +24,7 @@ from _lcm.constraints.processed import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_law import UNBOUND_LAW, RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
@@ -57,7 +58,10 @@ type _PhaseJointTransitions = MappingProxyType[
 ]
 
 
-def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
+# keyword-only-exempt: primary-argument=user_regime
+def normalize_regime_phases(
+    user_regime: lcm.regime.Regime, *, law: RegimeLaw
+) -> PhasedRegimeSpec:
     """Expand a user regime's slots into per-phase specifications.
 
     Every phase-variant slot is split via one rule — `Phased` assigns each
@@ -67,6 +71,8 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 
     Args:
         user_regime: User-form `Regime` instance.
+        law: The regime's law, whose per-phase variants become each slice's
+            regime transition.
 
     Returns:
         The regime expanded into solution / simulation slices.
@@ -124,7 +130,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     ]
 
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
-        user_regime=user_regime
+        law=law
     )
     aggregator = user_regime.koopmans_aggregator
     aggregator_errors: list[str] = []
@@ -144,7 +150,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         ]
     else:
         solve_aggregator = simulate_aggregator = aggregator
-    terminal = user_regime.regime_transitions is None
+    terminal = law.terminal
     terminal_errors = (
         [
             (
@@ -200,6 +206,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 def normalize_all_regime_phases(
     *,
     user_regimes: Mapping[RegimeName, lcm.regime.Regime],
+    laws: RegimeLaws,
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Normalize every regime's `Phased` slots into per-phase specs.
 
@@ -210,6 +217,7 @@ def normalize_all_regime_phases(
 
     Args:
         user_regimes: Mapping of regime names to finalized user regimes.
+        laws: Each regime's law, by regime name.
 
     Returns:
         Immutable mapping of regime names to per-phase specs.
@@ -221,7 +229,7 @@ def normalize_all_regime_phases(
     """
     return MappingProxyType(
         {
-            regime_name: normalize_regime_phases(user_regime)
+            regime_name: normalize_regime_phases(user_regime, law=laws[regime_name])
             for regime_name, user_regime in user_regimes.items()
         }
     )
@@ -270,12 +278,16 @@ def _resolve_solve_functions(
     Keeping that projection at the phase-normalization seam prevents consumers
     from independently unwrapping only a subset of the public phase grammar.
     """
-    return dict(normalize_regime_phases(user_regime).solution.functions)
+    # The solve functions do not depend on the regime's law.
+    return dict(
+        normalize_regime_phases(user_regime, law=UNBOUND_LAW).solution.functions
+    )
 
 
 def phase_variation_paths(
     *,
     user_regime: lcm.regime.Regime,
+    law: RegimeLaw,
 ) -> tuple[str, ...]:
     """Names of public phase-capable slots whose variants differ by identity.
 
@@ -309,9 +321,9 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    transition = user_regime.regime_transitions
+    transition = law.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
-        varied.append("regime_transitions")
+        varied.append("transition")
 
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
@@ -327,7 +339,7 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
     so its declaration keeps the solve variant of every `Phased` slot:
 
     - a `Phased` function, stakeholder utility, state transition, joint
-      transition, regime transition or aggregator becomes its solve variant;
+      transition or aggregator becomes its solve variant;
     - a carried state becomes its solve-phase imputation, a function under the
       state's name, and its carried law of motion is dropped.
 
@@ -362,7 +374,6 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
             target: {name: _solve_variant(kernel) for name, kernel in kernels.items()}
             for target, kernels in user_regime.joint_transitions.items()
         },
-        regime_transitions=_solve_variant(user_regime.regime_transitions),
         koopmans_aggregator=_solve_variant(user_regime.koopmans_aggregator),
     )
 
@@ -396,15 +407,6 @@ class PhasedRegimeSpec:
 
     simulation: RegimePhaseSpec
     """The simulate-phase slice (forward simulation)."""
-
-    @property
-    def terminal(self) -> bool:
-        """Whether the regime is terminal (no regime transition in either phase).
-
-        Terminality is phase-invariant by the slot grammar (`Phased` variants
-        cannot be `None`), so the solution slice is representative.
-        """
-        return self.solution.regime_transition is None
 
     @property
     def carried_only_state_names(self) -> frozenset[StateName]:
@@ -763,14 +765,14 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
 
 
 def _split_regime_transition(
-    *, user_regime: lcm.regime.Regime
+    *, law: RegimeLaw
 ) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition, list[str]]:
-    """Split the regime `regime_transitions` into per-phase variants.
+    """Split a regime's law into per-phase variants.
 
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
     """
-    raw = user_regime.decomposed_transition
+    raw = law.decomposed_transition
     if not isinstance(raw, Phased):
         return (
             cast("_PhaseRegimeTransition", raw),
@@ -783,7 +785,7 @@ def _split_regime_transition(
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
-                "phase-invariant; use `regime_transitions=None` for a terminal regime."
+                "phase-invariant; a regime without outgoing edges is terminal."
             )
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(

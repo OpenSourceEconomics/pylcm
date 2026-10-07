@@ -10,7 +10,15 @@ the error names the missing edge rather than the law.
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, ByAge, Model, Regime, StochasticTransition, categorical
+from lcm import (
+    AgeGrid,
+    ByAge,
+    Model,
+    Regime,
+    StochasticTransition,
+    Transition,
+    categorical,
+)
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import FloatND, ScalarInt
 
@@ -51,13 +59,13 @@ def _model(
     )
     return Model(
         regimes={
-            "A": Regime(regime_transitions=law, functions={"utility": _zero}),
-            "B": Regime(regime_transitions=None, functions={"utility": _ten}),
-            "C": Regime(regime_transitions=None, functions={"utility": _one}),
+            "A": Regime(functions={"utility": _zero}),
+            "B": Regime(functions={"utility": _ten}),
+            "C": Regime(functions={"utility": _one}),
         },
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        edges={"A": {"A": 0, "B": a_to_b_ages, "C": 1}},
+        edges={"A": Transition(targets={"A": 0, "B": a_to_b_ages, "C": 1}, law=law)},
         initial_nodes=((0, "A"),),
         fixed_params={"discount_factor": 1.0},
     )

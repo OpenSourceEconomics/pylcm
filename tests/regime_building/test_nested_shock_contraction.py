@@ -15,6 +15,7 @@ linearly in wealth. It shares nothing with the engine but the model's
 primitives.
 """
 
+import inspect
 import itertools
 import re
 from types import MappingProxyType
@@ -41,6 +42,7 @@ from lcm.regime import Regime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     ScalarInt,
@@ -238,10 +240,6 @@ def _final_utility_np(
     )
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 type _Reads = tuple[str, ...]
 
 
@@ -274,7 +272,6 @@ def _model(
         "pref": DiscreteGrid(category_class=_Pref),
     }
     alive = Regime(
-        regime_transitions={"final": StochasticTransition(func=_certain)},
         states=states,
         state_transitions={"wealth": _WEALTH_LAWS[reads], **laws},
         actions={
@@ -286,7 +283,6 @@ def _model(
         certainty_equivalent=certainty_equivalent,
     )
     final = Regime(
-        regime_transitions=None,
         states=states,
         functions={"utility": _final_utility},
     )
@@ -544,15 +540,30 @@ def _array_shapes_of_the_pointwise_Q(
     *, certainty_equivalent: CertaintyEquivalent | None, power_mean: bool
 ) -> list[tuple[int, ...]]:
     """Return the shape of every array in the traced pointwise `Q` of `alive`."""
-    model = _model(
+    text = _traced_pointwise_Q_of_alive(
         reads=("income",),
+        certainty_equivalent=certainty_equivalent,
+        power_mean=power_mean,
+    )
+    return [
+        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
+    ]
+
+
+def _traced_pointwise_Q_of_alive(
+    *,
+    reads: _Reads,
+    certainty_equivalent: CertaintyEquivalent | None,
+    power_mean: bool,
+) -> str:
+    """Return the jaxpr text of `alive`'s pointwise `Q` with all four states drawn."""
+    model = _model(
+        reads=reads,
         slice_draws=True,
         certainty_equivalent=certainty_equivalent,
     )
     params = _params(power_mean=power_mean)
     solution = model.solve(params=params, log_level="off")
-    regime = model._regimes["alive"]
-    flat_params = model._process_params(params)["alive"]
     rng = np.random.default_rng(seed=0)
     subjects = {
         "wealth": jnp.asarray(rng.uniform(0.0, 4.0, _N_SUBJECTS)),
@@ -562,22 +573,35 @@ def _array_shapes_of_the_pointwise_Q(
             for name, n in _N_NODES.items()
         },
     }
+    return _traced_pointwise_Q(
+        model=model, params=params, solution=solution, subjects=subjects
+    )
+
+
+def _traced_pointwise_Q(
+    *, model: Model, params: Any, solution: Any, subjects: dict[str, Any]
+) -> str:
+    """Return the jaxpr text of the period-0 pointwise `Q` of `alive`.
+
+    Only the `subjects` entries that `Q` takes as arguments are passed to it.
+    """
+    regime = model._regimes["alive"]
+    flat_params = model._process_params(params)["alive"]
     next_regime_to_V_arr = MappingProxyType(dict(solution.values[1]))
     age = jnp.asarray(model.ages.period_to_age(0))
+    Q_and_F = regime.simulation.Q_and_F[0]
+    arguments = inspect.signature(Q_and_F).parameters
 
     def pointwise_Q() -> Any:
-        return regime.simulation.Q_and_F[0](
-            **subjects,
+        return Q_and_F(
+            **{name: value for name, value in subjects.items() if name in arguments},
             next_regime_to_V_arr=next_regime_to_V_arr,
             **flat_params,
             period=jnp.int32(0),
             age=age,
         )
 
-    text = str(jax.make_jaxpr(pointwise_Q)())
-    return [
-        tuple(int(dim) for dim in match.split(",")) for match in _SHAPE.findall(text)
-    ]
+    return str(jax.make_jaxpr(pointwise_Q)())
 
 
 def _carries_the_joint_node_extent(shape: tuple[int, ...]) -> bool:
@@ -605,6 +629,28 @@ def test_plain_expectation_never_forms_the_joint_node_array(
 
 
 @pytest.mark.parametrize(
+    ("reads", "n_slice_nodes", "loops"),
+    [
+        pytest.param((), 280, False, id="coordinate-none"),
+        pytest.param(("income",), 70, True, id="coordinate-one"),
+    ],
+)
+def test_slice_draws_are_looped_over_only_beside_a_coordinate_draw(
+    *, reads: _Reads, n_slice_nodes: int, loops: bool, x64_enabled: None
+) -> None:
+    """Slice draws are summed in a loop only when some draw moves a coordinate.
+
+    Without a coordinate-moving draw the joint node array is the slice nodes
+    alone, so there is no larger array to avoid and the draws stay mapped.
+    """
+    del x64_enabled
+    text = _traced_pointwise_Q_of_alive(
+        reads=reads, certainty_equivalent=None, power_mean=False
+    )
+    assert (re.search(rf"\blength={n_slice_nodes}\b", text) is not None) is loops
+
+
+@pytest.mark.parametrize(
     ("certainty_equivalent", "power_mean"),
     [
         pytest.param(_ExplicitLinearExpectation(), False, id="linear-subclass"),
@@ -627,3 +673,264 @@ def test_other_certainty_equivalents_aggregate_the_whole_joint_lottery(
         certainty_equivalent=certainty_equivalent, power_mean=power_mean
     )
     assert any(_carries_the_joint_node_extent(shape) for shape in shapes)
+
+
+@categorical(ordered=False)
+class _Binary:
+    zero: ScalarInt
+    one: ScalarInt
+
+
+@categorical(ordered=False)
+class _Landing:
+    risky_high: ScalarInt
+    risky_zero: ScalarInt
+    certain: ScalarInt
+
+
+@categorical(ordered=False)
+class _Slice:
+    h00: ScalarInt
+    h01: ScalarInt
+    h02: ScalarInt
+    h03: ScalarInt
+    h04: ScalarInt
+    h05: ScalarInt
+    h06: ScalarInt
+    h07: ScalarInt
+    h08: ScalarInt
+    h09: ScalarInt
+    h10: ScalarInt
+    h11: ScalarInt
+    h12: ScalarInt
+    h13: ScalarInt
+    h14: ScalarInt
+    h15: ScalarInt
+    h16: ScalarInt
+    h17: ScalarInt
+
+
+# Eighteen strictly positive slice probabilities whose exact rational sum is one
+# in the dtype that carries them: seventeen copies of the rounded `1/18` and the
+# exactly representable residual. A row summing to one exactly leaves no
+# rounding headroom for a sum of `p * max` terms to absorb.
+_UNIT_SLICE_ROWS = MappingProxyType(
+    {
+        "float32": (
+            *(float.fromhex("0x1.c71c72p-5"),) * 17,
+            float.fromhex("0x1.c71c6ep-5"),
+        ),
+        "float64": (
+            *(float.fromhex("0x1.c71c71c71c71cp-5"),) * 17,
+            float.fromhex("0x1.c71c71c71c724p-5"),
+        ),
+    }
+)
+
+
+def _coordinate_probabilities() -> FloatND:
+    return jnp.asarray([0.5, 0.5])
+
+
+def _next_landing(*, next_z: DiscreteState) -> DiscreteState:
+    return next_z
+
+
+def _next_landing_with_choice(
+    *, next_z: DiscreteState, choice: DiscreteAction
+) -> DiscreteState:
+    return jnp.where(choice == 0, next_z, jnp.int32(2))
+
+
+def _zero_utility(*, landing: DiscreteState, h: DiscreteState) -> FloatND:
+    # Reading both states makes them used in `alive`; the flow value stays zero.
+    return jnp.where((landing >= 0) & (h >= 0), 0.0, 0.0)
+
+
+def _peak_at_the_first_landing(
+    *, landing: DiscreteState, h: DiscreteState, z: DiscreteState, peak: FloatND
+) -> FloatND:
+    # Reading `h` and `z` keeps both draws on the terminal value's axes; both
+    # conditions hold at every code, so the value depends on `landing` alone.
+    return jnp.where((landing == 0) & (h >= 0) & (z >= 0), peak, 0.0)
+
+
+def _peak_or_three_quarters_for_certain(
+    *, landing: DiscreteState, h: DiscreteState, z: DiscreteState, peak: FloatND
+) -> FloatND:
+    risky = jnp.where((landing == 0) & (h >= 0) & (z >= 0), peak, 0.0)
+    return jnp.where(landing == 2, 0.75 * peak, risky)
+
+
+def _finite_range_model(
+    *, dtype: np.dtype, enable_jit: bool, reverse: bool, with_choice: bool
+) -> Model:
+    """A coordinate draw `z` (one half each) and an 18-node slice draw `h`.
+
+    `landing` copies the `z` draw, so `z` moves the landing coordinate while
+    `h` only selects the value slice read there. The flow utility of `alive`
+    reads `landing` and `h` and is zero; the terminal utility of `final` reads
+    all three states but varies only with `landing`.
+    """
+    row = _UNIT_SLICE_ROWS[dtype.name]
+    if reverse:
+        row = row[::-1]
+
+    def slice_probabilities() -> FloatND:
+        return jnp.asarray(row, dtype=dtype)
+
+    states = {
+        "z": DiscreteGrid(category_class=_Binary),
+        "h": DiscreteGrid(category_class=_Slice),
+        "landing": DiscreteGrid(category_class=_Landing if with_choice else _Binary),
+    }
+    alive = Regime(
+        states=states,
+        state_transitions={
+            "z": StochasticTransition(func=_coordinate_probabilities),
+            "h": StochasticTransition(func=slice_probabilities),
+            "landing": _next_landing_with_choice if with_choice else _next_landing,
+        },
+        actions={"choice": DiscreteGrid(category_class=_Binary)} if with_choice else {},
+        functions={"utility": _zero_utility},
+    )
+    final = Regime(
+        states=states,
+        functions={
+            "utility": _peak_or_three_quarters_for_certain
+            if with_choice
+            else _peak_at_the_first_landing
+        },
+    )
+    return Model(
+        regimes={"alive": alive, "final": final},
+        regime_id_class=_RegimeId,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"final": 0}},
+        initial_nodes=((0, "alive"),),
+        enable_jit=enable_jit,
+    )
+
+
+def _finite_range_params(*, model: Model, peak: np.floating) -> Any:
+    params: Any = model.get_params_template()
+    params["alive"]["koopmans_aggregator"]["discount_factor"] = 1.0
+    params["final"]["utility"]["peak"] = jnp.asarray(peak)
+    return params
+
+
+_FINITE_RANGE_PRECISIONS = [
+    pytest.param("x64_enabled", np.dtype("float64"), id="fp64"),
+    pytest.param("x64_disabled", np.dtype("float32"), id="fp32"),
+]
+
+
+def _peak(*, dtype: np.dtype, level: str) -> np.floating:
+    largest = np.finfo(dtype).max
+    return {
+        "ordinary": dtype.type(16.0),
+        "max": largest,
+        "one-step-below-max": np.nextafter(largest, dtype.type(0.0)),
+        "negative-max": -largest,
+    }[level]
+
+
+_N_SLICE_NODES = len(_UNIT_SLICE_ROWS["float64"])
+
+
+@pytest.mark.parametrize("with_choice", [False, True], ids=["lottery", "choice"])
+def test_finite_range_witness_sums_its_slice_draw_in_a_loop(
+    *, with_choice: bool, x64_enabled: None
+) -> None:
+    """The pointwise `Q` loops over the 18 slice nodes of `h` rather than mapping them.
+
+    This is the nested route the finite-range witnesses below are about.
+    """
+    del x64_enabled
+    model = _finite_range_model(
+        dtype=np.dtype("float64"),
+        enable_jit=True,
+        reverse=False,
+        with_choice=with_choice,
+    )
+    params = _finite_range_params(model=model, peak=np.float64(16.0))
+    solution = model.solve(params=params, log_level="off")
+    subjects = {
+        "z": jnp.zeros(2, dtype=jnp.int32),
+        "h": jnp.zeros(2, dtype=jnp.int32),
+        "landing": jnp.zeros(2, dtype=jnp.int32),
+        **({"choice": jnp.zeros(2, dtype=jnp.int32)} if with_choice else {}),
+    }
+    text = _traced_pointwise_Q(
+        model=model, params=params, solution=solution, subjects=subjects
+    )
+    assert re.search(rf"\blength={_N_SLICE_NODES}\b", text) is not None
+
+
+@pytest.mark.parametrize(
+    ("level", "reverse"),
+    [
+        pytest.param("max", False, id="max"),
+        pytest.param("ordinary", False, id="ordinary"),
+        pytest.param("one-step-below-max", False, id="one-step-below-max"),
+        pytest.param("negative-max", False, id="negative-max"),
+        pytest.param("max", True, id="max-reversed-row"),
+    ],
+)
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_nested_expectation_of_finite_values_is_the_exact_finite_mean(
+    *,
+    level: str,
+    reverse: bool,
+    enable_jit: bool,
+    fixture_name: str,
+    dtype: np.dtype,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Value `peak` at one coordinate node and zero at the other averages to `peak/2`.
+
+    This holds up to the largest finite `peak`, whose every slice term is finite
+    once weighted by its full joint probability.
+    """
+    request.getfixturevalue(fixture_name)
+    peak = _peak(dtype=dtype, level=level)
+    model = _finite_range_model(
+        dtype=dtype, enable_jit=enable_jit, reverse=reverse, with_choice=False
+    )
+    solution = model.solve(
+        params=_finite_range_params(model=model, peak=peak), log_level="off"
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["alive"]),
+        peak / dtype.type(2),
+        rtol=32 * np.finfo(dtype).eps,
+        atol=0.0,
+    )
+
+
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_certain_three_quarters_of_max_beats_a_lottery_worth_half_of_it(
+    *, fixture_name: str, dtype: np.dtype, request: pytest.FixtureRequest
+) -> None:
+    """The certain `3M/4` is chosen over the risky lottery worth `M/2`."""
+    request.getfixturevalue(fixture_name)
+    model = _finite_range_model(
+        dtype=dtype, enable_jit=True, reverse=False, with_choice=True
+    )
+    params = _finite_range_params(model=model, peak=np.finfo(dtype).max)
+    solution = model.solve(params=params, log_level="off")
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="alive",
+        states={
+            "z": jnp.zeros(2, dtype=jnp.int32),
+            "h": jnp.zeros(2, dtype=jnp.int32),
+            "landing": jnp.zeros(2, dtype=jnp.int32),
+        },
+    )
+    np.testing.assert_array_equal(
+        np.asarray(lookup.actions["choice"]), np.ones(2, dtype=np.int32)
+    )

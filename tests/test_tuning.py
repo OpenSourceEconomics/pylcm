@@ -38,9 +38,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _N_WEALTH = 8
@@ -60,12 +58,9 @@ type Block = tuple[float, float, float, float]
 def _build_model(*, config: ExecutionConfig, consumption_stop: float = 3.0) -> Model:
     """Build a two-period GridSearch model whose cell axis has extent `_N_WEALTH`."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=_N_WEALTH)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -81,6 +76,7 @@ def _build_model(*, config: ExecutionConfig, consumption_stop: float = 3.0) -> M
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"dead": final_age_alive}},
     )
 
 

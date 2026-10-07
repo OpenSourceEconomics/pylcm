@@ -14,7 +14,15 @@ from _lcm.egm.upper_envelope import segment_envelope
 from _lcm.execution.core_program import core_program_graph
 from _lcm.solution import backward_induction
 from _lcm.solution import negm as nested_solver
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import DCEGM, NEGM, EnvelopeConfig, ExactEnvelope, FUESEnvelope
 from lcm.typing import ContinuousState, FloatND, ScalarFloat
@@ -25,9 +33,8 @@ from tests.test_models.deterministic.retirement_only import (
     RetirementOnlyRegimeId,
     dead,
     get_params,
-    retirement_transitions,
+    next_regime_from_retirement,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def _law_reading_current_wealth(
@@ -50,7 +57,6 @@ def _model(
 ) -> Model:
     """Small real DC-EGM model exercising either numerical envelope consumer."""
     retirement = dcegm_retirement.replace(
-        regime_transitions=retirement_transitions(last_age=60),
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=6)},
         solver=DCEGM(
             savings_grid=LinSpacedGrid(start=0.0, stop=12.0, n_points=8),
@@ -62,7 +68,7 @@ def _model(
         retirement = retirement.replace(
             state_transitions={"wealth": _law_reading_current_wealth}
         )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": dead},
         ages=AgeGrid(start=60 - 10 * (n_periods - 1), inclusive_stop=60, step="10Y"),
         regime_id_class=RetirementOnlyRegimeId,
@@ -70,6 +76,15 @@ def _model(
             axis_widths=widths, device_memory_bytes=device_memory_bytes
         ),
         initial_nodes={60 - 10 * (n_periods - 1): "retirement"},
+        edges={
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=50),
+                    "dead": AgeRange(exclusive_stop=60),
+                },
+                law=DeterministicTransition(func=next_regime_from_retirement),
+            )
+        },
     )
 
 

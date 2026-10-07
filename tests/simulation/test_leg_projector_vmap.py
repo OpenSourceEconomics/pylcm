@@ -32,6 +32,7 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     evaluate_projected_readers,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
@@ -64,8 +65,8 @@ from lcm.typing import (
 )
 from tests.conftest import (
     DECIMAL_PRECISION,
+    bind_laws,
     build_prepared_structure,
-    lower_declarations,
 )
 
 _BETA = 0.95
@@ -155,40 +156,50 @@ def _settlement_from_health(health: DiscreteState) -> FloatND:
 def _make_regimes() -> dict[str, Regime]:
     """Source with a dissolution edge, its target, and the leg's fallback."""
     source = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_dissolves_everywhere,
-                        routes={
-                            "own": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"settlement": _settlement_from_health},
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"health": DiscreteGrid(category_class=Health)},
         state_transitions={"health": _next_health},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_source},
     )
     target = Regime(
-        regime_transitions=None,
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": _utility_target},
     )
     fallback = Regime(
-        regime_transitions=None,
         states={"settlement": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": _utility_fallback},
     )
     return {"src": source, "target": target, "fallback": fallback}
+
+
+def _laws() -> RegimeLaws:
+    """The regimes' laws, bound as `Model(edges=...)` would bind them."""
+    return bind_laws(
+        {
+            "src": ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": ValueDependentTransition(
+                            probability=StochasticTransition(func=_prob_one),
+                            gate=_gate_dissolves_everywhere,
+                            routes={
+                                "own": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="fallback",
+                                        projection={
+                                            "settlement": _settlement_from_health
+                                        },
+                                    )
+                                )
+                            },
+                        )
+                    }
+                }
+            ),
+            "target": None,
+            "fallback": None,
+        }
+    )
 
 
 def _flat_params() -> MappingProxyType:
@@ -206,6 +217,7 @@ def _flat_params() -> MappingProxyType:
 def _solve_fixture():
     """Process and solve the three regimes, kernel-level."""
     regimes_dict = _make_regimes()
+    laws = _laws()
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(index) for index, name in enumerate(regimes_dict)}
     )
@@ -214,10 +226,13 @@ def _solve_fixture():
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
+        laws=laws,
     )
     regimes = process_regimes(
-        prepared_structure=build_prepared_structure(user_regimes=finalized, ages=_AGES),
-        user_regimes=lower_declarations(finalized, ages=_AGES),
+        prepared_structure=build_prepared_structure(
+            user_regimes=finalized, laws=laws, ages=_AGES
+        ),
+        user_regimes=finalized,
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,

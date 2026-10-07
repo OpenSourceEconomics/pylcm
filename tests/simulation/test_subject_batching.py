@@ -43,7 +43,7 @@ def _simulate_df(
 ) -> pd.DataFrame:
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
@@ -136,7 +136,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
     """
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,

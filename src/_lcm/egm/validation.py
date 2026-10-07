@@ -70,6 +70,7 @@ from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.phases import _resolve_solve_functions
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import (
@@ -100,6 +101,7 @@ _CONTINUITY_SHRINK_FACTOR = 0.4
 def validate_dcegm_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     solution_reachability: PhaseReachability | None = None,
 ) -> None:
     """Validate the DC-EGM contract for every regime with a `DCEGM` solver.
@@ -107,6 +109,7 @@ def validate_dcegm_regimes(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         solution_reachability: Static solution graph. When omitted, run only
             regime-local checks.
 
@@ -121,12 +124,13 @@ def validate_dcegm_regimes(
                 regime_name=regime_name,
                 user_regime=user_regime,
                 user_regimes=user_regimes,
+                laws=laws,
                 solution_reachability=solution_reachability,
             )
 
 
 def savings_stage_reads_euler_state(
-    *, user_regime: UserRegime, solver: _BoundDCEGM
+    *, user_regime: UserRegime, law: RegimeLaw, solver: _BoundDCEGM
 ) -> bool:
     """Whether any savings-stage function reads the current Euler state.
 
@@ -142,6 +146,7 @@ def savings_stage_reads_euler_state(
 
     Args:
         user_regime: The user-provided `Regime` instance.
+        law: The regime's law, bound from `Model(edges=...)`.
         solver: The regime's DC-EGM solver configuration.
 
     Returns:
@@ -152,7 +157,7 @@ def savings_stage_reads_euler_state(
     functions = _resolve_solve_functions(user_regime=user_regime)
     return bool(
         _savings_stage_euler_state_readers(
-            user_regime=user_regime, functions=functions, solver=solver
+            user_regime=user_regime, law=law, functions=functions, solver=solver
         )
     )
 
@@ -203,12 +208,13 @@ def validate_dcegm_regime(
     regime_name: RegimeName,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     solution_reachability: PhaseReachability | None,
 ) -> None:
     """Run all DC-EGM contract checks for a single regime, in order."""
     solver = cast("_BoundDCEGM", user_regime.solver)
 
-    _fail_if_terminal(regime_name=regime_name, user_regime=user_regime)
+    _fail_if_terminal(regime_name=regime_name, law=laws[regime_name])
     _fail_if_state_action_classification_invalid(
         regime_name=regime_name, user_regime=user_regime, solver=solver
     )
@@ -254,6 +260,7 @@ def validate_dcegm_regime(
     _fail_if_savings_stage_function_depends_on_decision(
         regime_name=regime_name,
         user_regime=user_regime,
+        law=laws[regime_name],
         functions=functions,
         solver=solver,
     )
@@ -264,6 +271,7 @@ def validate_dcegm_regime(
         _fail_if_target_regime_incompatible(
             regime_name=regime_name,
             user_regimes=user_regimes,
+            laws=laws,
             solution_reachability=solution_reachability,
             solver=solver,
         )
@@ -271,12 +279,14 @@ def validate_dcegm_regime(
         _fail_if_numeric_spot_checks_fail(
             regime_name=regime_name,
             user_regime=user_regime,
+            law=laws[regime_name],
             functions=functions,
             solver=solver,
         )
         _fail_if_savings_stage_function_jumps_in_euler_state(
             regime_name=regime_name,
             user_regime=user_regime,
+            law=laws[regime_name],
             functions=functions,
             solver=solver,
         )
@@ -289,9 +299,9 @@ def validate_dcegm_regime(
         raise ModelInitializationError(msg) from error
 
 
-def _fail_if_terminal(*, regime_name: RegimeName, user_regime: UserRegime) -> None:
+def _fail_if_terminal(*, regime_name: RegimeName, law: RegimeLaw) -> None:
     """A terminal regime has nothing to solve, so a DCEGM solver is an error."""
-    if user_regime.terminal:
+    if law.terminal:
         msg = (
             f"Regime '{regime_name}' is terminal but configured with the DCEGM "
             "solver. Terminal regimes have no optimization problem; remove the "
@@ -760,6 +770,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
 ) -> None:
@@ -784,7 +795,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
         solver.post_decision_function,
     }
     for role, label, func in _savings_stage_candidates(
-        user_regime=user_regime, solver=solver
+        user_regime=user_regime, law=law, solver=solver
     ):
         if role == "euler_law":
             # The Euler state's own law has its dedicated structural check
@@ -809,6 +820,7 @@ def _fail_if_savings_stage_function_depends_on_decision(
 def _savings_stage_candidates(
     *,
     user_regime: UserRegime,
+    law: RegimeLaw,
     solver: _BoundDCEGM,
     exclude_states: frozenset[StateName] = frozenset(),
 ) -> list[tuple[str, str, UserFunction]]:
@@ -819,6 +831,7 @@ def _savings_stage_candidates(
 
     Args:
         user_regime: The regime whose savings-stage functions are enumerated.
+        law: The regime's law, bound from `Model(edges=...)`.
         solver: The DC-EGM config naming the Euler state. A nested solver passes
             its inner config, so the enumeration is over the inner margin.
         exclude_states: States whose laws of motion are left out. A caller
@@ -841,9 +854,9 @@ def _savings_stage_candidates(
                     transition_func,
                 )
             )
-    if user_regime.decomposed_transition is not None:
+    if law.decomposed_transition is not None:
         for label, regime_transition in _transition_variants(
-            value=user_regime.decomposed_transition
+            value=law.decomposed_transition
         ):
             candidates.append(
                 (
@@ -873,6 +886,7 @@ def _savings_stage_candidates(
 def _savings_stage_euler_state_readers(
     *,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
 ) -> list[tuple[str, str, UserFunction]]:
@@ -892,7 +906,7 @@ def _savings_stage_euler_state_readers(
     return [
         (role, label, func)
         for role, label, func in _savings_stage_candidates(
-            user_regime=user_regime, solver=solver
+            user_regime=user_regime, law=law, solver=solver
         )
         if solver.continuous_state
         in _dag_ancestors(functions=opaque_functions, target_func=func)
@@ -941,6 +955,7 @@ def _fail_if_target_regime_incompatible(
     *,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     solution_reachability: PhaseReachability,
     solver: _BoundDCEGM,
 ) -> None:
@@ -951,7 +966,7 @@ def _fail_if_target_regime_incompatible(
     """
     for target_name in solution_reachability.union_targets(source=regime_name):
         target = user_regimes[target_name]
-        if target.terminal:
+        if laws[target_name].terminal:
             continue
         if not isinstance(target.solver, DCEGM):
             msg = (
@@ -979,6 +994,7 @@ def _fail_if_numeric_spot_checks_fail(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
 ) -> None:
@@ -1026,7 +1042,7 @@ def _fail_if_numeric_spot_checks_fail(
         # marginal non-finite. Require strictly increasing resources in that
         # mode, not merely non-decreasing.
         require_strict = savings_stage_reads_euler_state(
-            user_regime=user_regime, solver=solver
+            user_regime=user_regime, law=law, solver=solver
         )
         bad = [
             (float(w_lo), float(w_hi))
@@ -1209,6 +1225,7 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundDCEGM,
 ) -> None:
@@ -1251,7 +1268,7 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
         functions=functions, names={solver.post_decision_function}
     )
     for role, label, func in _savings_stage_euler_state_readers(
-        user_regime=user_regime, functions=functions, solver=solver
+        user_regime=user_regime, law=law, functions=functions, solver=solver
     ):
         target_name = "__dcegm_validation_target__"
         law_func = concatenate_functions(

@@ -18,9 +18,6 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.preconditions import check_solver_params
 from lcm import (
@@ -45,8 +42,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -91,22 +86,12 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
     def _next_wealth(savings: FloatND) -> ContinuousState:
         return savings
 
-    def _next_regime() -> ScalarInt:
-        return _RegimeId.dead
-
     def _bequest(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     kind = DiscreteGrid(category_class=_Kind)
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": wealth, "kind": kind},
         state_transitions={
             "wealth": _next_wealth,
@@ -132,12 +117,12 @@ def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": wealth, "kind": kind},
         functions={"utility": _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"dead": 40}},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={40: "alive"},

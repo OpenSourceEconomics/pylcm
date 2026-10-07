@@ -26,6 +26,7 @@ from lcm import (
     NormalIIDProcess,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.processes import StateConditioned
@@ -105,6 +106,11 @@ def get_model(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )
+    alive_law = ByAge.until(
+        stop_age_exclusive=final_age_alive + 10,
+        law=DeterministicTransition(func=next_regime),
+        then=DeterministicTransition(func=next_regime),
+    )
     alive = Regime(
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=40.0, n_points=wealth_n_points),
@@ -120,28 +126,27 @@ def get_model(
                 start=0.1, stop=10.0, n_points=consumption_n_points
             )
         },
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=final_age_alive + 10,
-            law=DeterministicTransition(func=next_regime),
-            then=DeterministicTransition(func=next_regime),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
+    alive_targets = {
+        "dead": tuple(range(20, final_age_alive + 1, 10)),
+        **(
+            {"alive": tuple(range(20, final_age_alive, 10))}
+            if tuple(range(20, final_age_alive, 10))
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "alive": {
-                "dead": tuple(range(20, final_age_alive + 1, 10)),
-                **(
-                    {"alive": tuple(range(20, final_age_alive, 10))}
-                    if tuple(range(20, final_age_alive, 10))
-                    else {}
-                ),
-            },
+            "alive": (
+                Transition(targets=alive_targets, law=alive_law)
+                if len(alive_targets) > 1
+                else alive_targets
+            )
         },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,

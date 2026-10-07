@@ -96,7 +96,8 @@ def build_params(
     subsidy_low: float = 0.5,
     cliff_low: float = 6.0,
     cliff_high: float = 14.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the two-cliff one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
@@ -113,7 +114,6 @@ def build_params(
             },
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

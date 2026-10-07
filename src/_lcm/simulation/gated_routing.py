@@ -3,7 +3,7 @@
 The forward-simulation counterpart to the solve-side gated-edge fold
 (`_lcm.regime_building.gated_edges`). pylcm's forward simulation recomputes
 argmaxes against the stored solution rather than storing policies; a source
-regime declaring `gated_edges` needs two things this module provides, both
+regime with gated edges needs two things this module provides, both
 built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
 
 1. **Value substitution** (`substitute_gated_edge_continuations`) — exactly
@@ -16,7 +16,7 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    regime it actually occupies next period and with what states. The gate is
    RECOMPUTED at the subject's candidate target-state draw
    (the states `calculate_next_states` already computed for the target via
-   the regime's ordinary `regime_transitions` declaration — a gated edge's target is
+   the source's ordinary regime law — a gated edge's target is
    always ALSO an ordinary Markov transition target, so those candidate
    states already exist): each VALUE operand the gate predicate reads (the
    target's own value components, every declared `gate_refs` entry) is
@@ -587,7 +587,7 @@ def _route_gated_edges_with_closed_masks(
 
     For each declared edge: RECOMPUTES the gate at the
     candidate target states `calculate_next_states` already computed for the
-    target (the regime's ordinary `regime_transitions` declaration always
+    target (the source's ordinary regime law always
     structurally reaches a gated edge's target — see module docstring) via
     the edge's own `simulate_gate_evaluator` — which
     interpolates the gate predicate's VALUE operands (the target's own value

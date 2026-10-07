@@ -806,13 +806,11 @@ def _build_lcm_model(*, scale: float = 2.0) -> Model:
         edges={"working": {"retired": 0}},
         regimes={
             "working": Regime(
-                regime_transitions="retired",
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": utility},
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 functions={"utility": lambda wealth: wealth * 0.0},
             ),

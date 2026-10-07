@@ -41,10 +41,6 @@ from tests.test_models import (
     nbegm_tax_toy,
 )
 
-# The three-period toys are alive at ages 0 and 1 only, so their survival law
-# ends life after age 1; the toys' own default fits four periods.
-_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
-
 
 @pytest.mark.parametrize(
     "field",
@@ -154,9 +150,7 @@ def _small_model(
                 execution_config=config,
                 nbegm_overrides={"envelope_arithmetic": arithmetic},
             ),
-            nbegm_ride_along_toy.build_params(
-                final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
-            ),
+            nbegm_ride_along_toy.build_params(),
         )
     if route == INTERVAL_AXIS:
         return (
@@ -168,9 +162,7 @@ def _small_model(
                 execution_config=config,
                 envelope_arithmetic=arithmetic,
             ),
-            nbegm_next_asset_cliff_toy.build_params(
-                final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
-            ),
+            nbegm_next_asset_cliff_toy.build_params(),
         )
     if route == BRANCH_AXIS:
         return (
@@ -194,9 +186,7 @@ def _small_model(
             execution_config=config,
             envelope_arithmetic=arithmetic,
         ),
-        nbegm_stochastic_node_toy.build_params(
-            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
-        ),
+        nbegm_stochastic_node_toy.build_params(),
     )
 
 
@@ -385,14 +375,14 @@ def test_planner_width_names_cannot_be_user_names(*, route: str, slot: str) -> N
         )
         declarations: dict[str, Any] = {slot: {axis.width_keyword: value}}
         with pytest.raises(RegimeInitializationError, match="reserved separator"):
-            Regime(regime_transitions=None, **declarations)
+            Regime(**declarations)
 
 
 def test_interval_coordinates_do_not_replace_a_legal_user_state() -> None:
     """Materialization retains user data beside the distinct interval coordinates."""
     name = "_lcm_interval_indices"
     grid = LinSpacedGrid(start=11.0, stop=13.0, n_points=3)
-    Regime(regime_transitions=None, states={name: grid})
+    Regime(states={name: grid})
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic="ordinary", widths={})
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
     points = grid.to_jax()

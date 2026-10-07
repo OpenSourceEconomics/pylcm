@@ -17,7 +17,6 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
 )
 from lcm.case_piece import BoundaryKind
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -26,8 +25,6 @@ from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
 from lcm.typing import FloatND, UserFunction
 from tests.test_models import nbegm_medicaid_toy as toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 2.0) & (_LIQUID < 22.0)
@@ -55,7 +52,7 @@ def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
 
 def test_grid_search_executes_the_output_declared_by_case_pieces() -> None:
     """Case pieces generate their split output without a second user combiner."""
-    params = toy.build_params(final_age_alive=1.0)
+    params = toy.build_params()
     generated = (
         toy.build_model(
             variant="brute",
@@ -200,14 +197,6 @@ def _build_model(
             }
         },
         constraints={},
-        regime_transitions=until_exit(
-            1.0,
-            law={
-                "alive": StochasticTransition(func=toy.prob_stay_alive),
-                "dead": StochasticTransition(func=toy.prob_die),
-            },
-            exits=("dead",),
-        ),
         functions={
             "utility": toy.utility,
             "predicate": predicate,
@@ -229,13 +218,13 @@ def _build_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": grid},
         functions={"utility": toy.bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"dead": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=toy.RegimeId,
         initial_nodes={0: "alive"},

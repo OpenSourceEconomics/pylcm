@@ -31,26 +31,24 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.regime_building.age_specialization import _TRAIT_DESCRIPTIONS, _GridTraits
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
+    DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
+    Model,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N = 6  # ages 20..25; working ages 20..24, terminal at 25
 _AGES = AgeGrid(start=20, inclusive_stop=20 + _N - 1, step="Y")
@@ -87,38 +85,39 @@ def _next_regime(*, period, last):
 
 
 _DEAD = Regime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
 
-_ALIVE_TRANSITIONS = until_exit(
-    20 + _N - 1,
-    law=_SupportedDeterministicTransition(func=_next_regime, targets=("alive", "dead")),
-    exits=("dead",),
-)
+_ALIVE_TARGETS = {
+    "alive": AgeRange(exclusive_stop=20 + _N - 2),
+    "dead": AgeRange(exclusive_stop=20 + _N - 1),
+}
+_EDGES = {
+    "alive": Transition(
+        targets=_ALIVE_TARGETS, law=DeterministicTransition(func=_next_regime)
+    )
+}
 
 
-def _alive_regime(
-    *, wealth_grid, regime_transitions=_ALIVE_TRANSITIONS, functions=None
-):
+def _alive_regime(*, wealth_grid, functions=None):
     return Regime(
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
         state_transitions={"wealth": _next_wealth},
-        regime_transitions=regime_transitions,
         constraints={"bc": _bc},
         functions={"utility": _utility} if functions is None else functions,
     )
 
 
 def _model(wealth_grid):
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": _alive_regime(wealth_grid=wealth_grid), "dead": _DEAD},
         ages=_AGES,
         regime_id_class=RegimeId,
         fixed_params={"last": _N - 2},
         initial_nodes={20: "alive"},
+        edges=_EDGES,
     )
 
 
@@ -511,25 +510,27 @@ def test_age_specialized_marker_on_never_solved_regime_is_rejected(
             )
         }
     with pytest.raises(ModelInitializationError, match="no age of the model"):
-        with_fixture_graph(
+        Model(
             regimes={
-                "alive": _alive_regime(
-                    wealth_grid=grid,
-                    functions=functions,
-                    regime_transitions=ByAge(
-                        cases={
-                            AgeRange(start=100): _SupportedDeterministicTransition(
-                                func=_next_regime, targets=("dead",)
-                            )
-                        }
-                    ),
-                ),
+                "alive": _alive_regime(wealth_grid=grid, functions=functions),
                 "dead": _DEAD,
             },
             ages=_AGES,
             regime_id_class=RegimeId,
             fixed_params={"last": _N - 2},
             initial_nodes={20: "alive"},
+            edges={
+                "alive": Transition(
+                    targets=_ALIVE_TARGETS,
+                    law=ByAge(
+                        cases={
+                            AgeRange(start=100): DeterministicTransition(
+                                func=_next_regime
+                            )
+                        }
+                    ),
+                )
+            },
         )
 
 

@@ -31,6 +31,7 @@ from lcm.typing import BoolND, ContinuousAction, FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models.dcegm_paper_twin import (
     DCEGM_SOLVER,
+    EDGES,
     MIN_AGE,
     N_PERIODS,
     TwinRegimeId,
@@ -41,7 +42,6 @@ from tests.test_models.dcegm_paper_twin import (
     done_retired,
     get_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _NEEDS_KERNEL = pytest.mark.requires_exact_affine_kernel(
     reason=EXACT_KERNEL_SKIP_REASON
@@ -83,7 +83,7 @@ def _twin(
         working = working.replace(
             functions={**dict(working.functions), "utility": utility}
         )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working,
             "retirement": retirement,
@@ -93,6 +93,7 @@ def _twin(
         ages=AgeGrid(start=MIN_AGE, inclusive_stop=MIN_AGE + N_PERIODS - 1, step="Y"),
         regime_id_class=TwinRegimeId,
         initial_nodes={20: "working_life"},
+        edges=EDGES,
     )
 
 

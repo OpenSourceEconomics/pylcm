@@ -7,7 +7,15 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation import runtime
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    Transition,
+)
 from lcm.solvers import GridSearch
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -15,20 +23,16 @@ from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
     get_params,
+    next_regime,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def _toy_model(*, execution: ExecutionConfig) -> Model:
     final_age_alive = START_AGE + 1
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=8)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -42,6 +46,15 @@ def _toy_model(*, execution: ExecutionConfig) -> Model:
         regime_id_class=RegimeId,
         execution_config=execution,
         initial_nodes={18: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={
+                    "working_life": START_AGE,
+                    "dead": (START_AGE, final_age_alive),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

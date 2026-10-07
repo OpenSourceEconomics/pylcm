@@ -171,7 +171,6 @@ _PARAMS = {
     "crra": CRRA,
     "base_income": BASE_INCOME,
     "return_liquid": GROSS_RETURN - 1.0,
-    "final_age_alive": 2.0,
     "discount_factor": DISCOUNT_FACTOR,
 }
 

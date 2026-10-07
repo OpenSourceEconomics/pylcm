@@ -2,17 +2,18 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-    _SupportedStochasticTransition,
-)
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regime
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -30,15 +31,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
+from tests.conftest import bind_laws
 
 
 def test_regime_invalid_states():
     """Regime rejects non-dict states argument."""
     with pytest.raises(RegimeInitializationError, match="states"):
         UserRegime(
-            regime_transitions=lambda: 0,
             states="health",  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
@@ -49,7 +48,6 @@ def test_regime_invalid_actions():
     """Regime rejects non-dict actions argument."""
     with pytest.raises(RegimeInitializationError, match="actions"):
         UserRegime(
-            regime_transitions=lambda: 0,
             states={},
             actions="exercise",  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
@@ -60,7 +58,6 @@ def test_regime_invalid_functions():
     """Regime rejects non-dict functions argument."""
     with pytest.raises(RegimeInitializationError, match="functions"):
         UserRegime(
-            regime_transitions=lambda: 0,
             states={},
             actions={},
             functions="utility",  # ty: ignore[invalid-argument-type]
@@ -73,7 +70,6 @@ def test_regime_invalid_functions_values():
         UserRegime(
             states={},
             actions={},
-            regime_transitions=lambda: 0,
             functions={"utility": lambda: 0, "function": 0},  # ty: ignore[invalid-argument-type]
         )
 
@@ -84,7 +80,6 @@ def test_regime_invalid_functions_keys():
         UserRegime(
             states={},
             actions={},
-            regime_transitions=lambda: 0,
             functions={"utility": lambda: 0, 0: lambda: 0},  # ty: ignore[invalid-argument-type]
         )
 
@@ -96,7 +91,6 @@ def test_regime_invalid_actions_values():
             states={},
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
-            regime_transitions=lambda: 0,
         )
 
 
@@ -107,7 +101,6 @@ def test_regime_invalid_states_values():
             states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
-            regime_transitions=lambda: 0,
         )
 
 
@@ -118,7 +111,6 @@ def test_regime_invalid_utility():
             states={},
             actions={},
             functions={"utility": 0},  # ty: ignore[invalid-argument-type]
-            regime_transitions=lambda: 0,
         )
 
 
@@ -131,7 +123,6 @@ def test_regime_overlapping_states_actions(binary_category_class):
         state_transitions={"health": fixed_transition("health")},
         actions={"health": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda: 0},
-        regime_transitions=lambda: 0,
     )
     with pytest.raises(
         RegimeInitializationError,
@@ -139,6 +130,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
     ):
         finalize_regimes(
             user_regimes={"regime": regime},
+            laws=bind_laws({"regime": lambda: 0}),
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -146,14 +138,10 @@ def test_regime_overlapping_states_actions(binary_category_class):
 
 
 def test_regime_transition_must_be_callable():
-    """Regime rejects non-callable transition."""
+    """Binding a non-callable regime transition law is rejected."""
+    regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
     with pytest.raises(RegimeInitializationError, match="transition"):
-        UserRegime(
-            states={},
-            actions={},
-            functions={"utility": lambda: 0},
-            regime_transitions=42,  # ty: ignore[invalid-argument-type]
-        )
+        validate_regime(regime, law=bind_regime_law(42))
 
 
 def test_model_requires_terminal_regime(binary_category_class):
@@ -170,16 +158,14 @@ def test_model_requires_terminal_regime(binary_category_class):
         state_transitions={"health": lambda health: health},
         actions={},
         functions={"utility": lambda health: health},
-        regime_transitions=_SupportedStochasticTransition(
-            func=lambda: jnp.array([1.0]), targets=("test",)
-        ),
     )
     with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
-        with_fixture_graph(
+        Model(
             regimes={"test": regime},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "test"},
+            edges={"test": {"test": (0, 1)}},
         )
 
 
@@ -205,35 +191,31 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedStochasticTransition(
-                func=lambda: jnp.array([0.8, 0.1, 0.1]),
-                targets=("alive", "dead1", "dead2"),
-            ),
-            exits=("dead1", "dead2"),
-        ),
     )
     dead1 = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
     )
     dead2 = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
     )
     # Should not raise - multiple terminal regimes are allowed
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"dead1": 0, "dead2": 0},
+                law=StochasticTransition(func=lambda: jnp.array([0.8, 0.1, 0.1])),
+            )
+        },
     )
     assert model._regimes is not None
 
@@ -252,26 +234,19 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedStochasticTransition(
-                func=lambda: jnp.array([0.5, 0.5]), targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
     # regime id should be created from dict keys in order
     assert model.regime_names_to_ids["alive"] == 0
@@ -292,16 +267,8 @@ def test_model_regime_name_validation(binary_category_class):
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedStochasticTransition(
-                func=lambda: jnp.array([0.5, 0.5]), targets=("alive__bad", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=binary_category_class),
         },
@@ -309,11 +276,12 @@ def test_model_regime_name_validation(binary_category_class):
     )
     # Using separator in regime name should raise error
     with pytest.raises(ModelInitializationError, match="separator character"):
-        with_fixture_graph(
+        Model(
             regimes={"alive__bad": alive, "dead": dead},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "alive__bad"},
+            edges={"alive__bad": {"dead": 0}},
         )
 
 
@@ -351,18 +319,9 @@ def test_unused_state_raises_error():
             "unused_state": fixed_transition("unused_state"),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedStochasticTransition(
-                func=lambda: jnp.array([0.9, 0.1]),
-                targets=("working_life", "retirement"),
-            ),
-            exits=("retirement",),
-        ),
     )
 
     retirement = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -372,11 +331,20 @@ def test_unused_state_raises_error():
 
     # Should raise error about unused_state
     with pytest.raises(ModelInitializationError, match="unused_state"):
-        with_fixture_graph(
+        Model(
             regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, inclusive_stop=5, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "working_life"},
+            edges={
+                "working_life": Transition(
+                    targets={
+                        "working_life": (0, 1, 2, 3),
+                        "retirement": (0, 1, 2, 3, 4),
+                    },
+                    law=StochasticTransition(func=lambda: jnp.array([0.9, 0.1])),
+                )
+            },
         )
 
 
@@ -415,18 +383,9 @@ def test_unused_action_raises_error():
                 category_class=UnusedAction
             ),  # Not used anywhere!
         },
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedStochasticTransition(
-                func=lambda: jnp.array([0.9, 0.1]),
-                targets=("working_life", "retirement"),
-            ),
-            exits=("retirement",),
-        ),
     )
 
     retirement = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -435,11 +394,20 @@ def test_unused_action_raises_error():
 
     # Should raise error about unused_action
     with pytest.raises(ModelInitializationError, match="unused_action"):
-        with_fixture_graph(
+        Model(
             regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, inclusive_stop=5, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "working_life"},
+            edges={
+                "working_life": Transition(
+                    targets={
+                        "working_life": (0, 1, 2, 3),
+                        "retirement": (0, 1, 2, 3, 4),
+                    },
+                    law=StochasticTransition(func=lambda: jnp.array([0.9, 0.1])),
+                )
+            },
         )
 
 
@@ -498,13 +466,6 @@ def test_constraint_naming_a_transition_output_is_rejected():
 
     alive_regime = UserRegime(
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            61,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -521,16 +482,21 @@ def test_constraint_naming_a_transition_output_is_rejected():
     )
 
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": dead_utility},
     )
 
     with pytest.raises(InvalidNameError, match="next_assets"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive_regime, "dead": dead_regime},
             ages=AgeGrid(start=59, inclusive_stop=61, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={59: "alive"},
+            edges={
+                "alive": Transition(
+                    targets={"alive": 59, "dead": (59, 60)},
+                    law=DeterministicTransition(func=next_regime),
+                )
+            },
         )
 
 
@@ -584,13 +550,6 @@ def test_state_only_used_in_transitions():
         )
 
     alive_regime = UserRegime(
-        regime_transitions=until_exit(
-            61,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -607,15 +566,20 @@ def test_state_only_used_in_transitions():
     )
 
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": dead_utility},
     )
 
-    with_fixture_graph(
+    Model(
         regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, inclusive_stop=61, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={59: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 59, "dead": (59, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -669,20 +633,19 @@ def test_state_only_in_transitions_with_terminal_regime():
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": dead_utility})
+    dead = UserRegime(functions={"utility": dead_utility})
 
-    with_fixture_graph(
+    Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )

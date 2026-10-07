@@ -47,6 +47,7 @@ from _lcm.regime_building.phases import (
     _PhaseRegimeTransition,
     normalize_all_regime_phases,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
@@ -68,6 +69,7 @@ type _CanonicalJointTransitions = MappingProxyType[
 def canonicalize_regimes(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Split every finalized regime into phases and canonicalize its laws.
 
@@ -80,6 +82,7 @@ def canonicalize_regimes(
 
     Args:
         user_regimes: Mapping of regime names to finalized regimes.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
 
     Returns:
         Immutable mapping of regime names to per-phase specs whose every
@@ -92,7 +95,7 @@ def canonicalize_regimes(
             retained temporal target carrying the state.
 
     """
-    raw_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    raw_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     return canonicalize_phased_regimes(
         raw_specs=raw_specs,
         all_regime_names=frozenset(user_regimes),

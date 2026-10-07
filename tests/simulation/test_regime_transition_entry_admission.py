@@ -11,14 +11,13 @@ import pytest
 
 from _lcm import transition_checks
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     ExecutionConfig,
     Model,
     Regime,
+    StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -32,15 +31,15 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
 
 @categorical(ordered=False)
-class _RegimeId:
+class _LotteryRegimeId:
     alive: ScalarInt
     done: ScalarInt
+    gone: ScalarInt
 
 
 def _utility() -> ScalarFloat:
@@ -51,11 +50,12 @@ def _invalid_costly_regime_probabilities() -> FloatND:
     """Return invalid mass after a visible sort workspace completes."""
     sample = jnp.sin(jnp.arange(4096, dtype=_FLOAT_DTYPE))
     probability = _FLOAT_DTYPE(0.25) + _FLOAT_DTYPE(0) * jnp.sort(sample)[2048]
-    return jnp.stack((jnp.zeros_like(probability), probability))
+    zero = jnp.zeros_like(probability)
+    return jnp.stack((zero, probability, zero))
 
 
 def _valid_regime_probabilities() -> FloatND:
-    return jnp.asarray([0, 1], dtype=_FLOAT_DTYPE)
+    return jnp.asarray([0, 1, 0], dtype=_FLOAT_DTYPE)
 
 
 def _inputs(
@@ -64,30 +64,33 @@ def _inputs(
     probabilities = (
         _valid_regime_probabilities if valid else _invalid_costly_regime_probabilities
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=_SupportedStochasticTransition(
-                    func=probabilities, targets=("done",)
-                ),
-                functions={"utility": _utility},
-            ),
-            "done": Regime(
-                regime_transitions=None,
-                functions={"utility": _utility},
-            ),
+            "alive": Regime(functions={"utility": _utility}),
+            "done": Regime(functions={"utility": _utility}),
+            "gone": Regime(functions={"utility": _utility}),
         },
-        regime_id_class=_RegimeId,
+        regime_id_class=_LotteryRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"done": 0, "gone": 0},
+                law=StochasticTransition(func=probabilities),
+            )
+        },
     )
     return (
         model,
-        {"alive": {"koopmans_aggregator": {"discount_factor": 0.9}}, "done": {}},
+        {
+            "alive": {"koopmans_aggregator": {"discount_factor": 0.9}},
+            "done": {},
+            "gone": {},
+        },
         {
             "age": jnp.zeros(1),
-            "regime_id": jnp.asarray([_RegimeId.alive]),
+            "regime_id": jnp.asarray([_LotteryRegimeId.alive]),
         },
     )
 
@@ -146,44 +149,56 @@ def _done_payoff() -> ScalarFloat:
     return jnp.asarray(6, dtype=_FLOAT_DTYPE)
 
 
-def _parameterized_regime_probabilities(done_probability: float) -> FloatND:
-    return jnp.stack((jnp.zeros_like(done_probability), done_probability))
+def _done_probability(done_probability: float) -> FloatND:
+    return jnp.asarray(done_probability, dtype=_FLOAT_DTYPE)
+
+
+def _never() -> FloatND:
+    return jnp.asarray(0, dtype=_FLOAT_DTYPE)
 
 
 def _numerical_inputs(
     *, budget: int | None
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6."""
-    model = with_fixture_graph(
+    """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6.
+
+    `alive` draws between two terminal regimes. The draw into `gone` is a fixed
+    zero, so every subject lands in `done` and only the parameterized `done`
+    probability is left to admit and validate.
+    """
+    model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=_SupportedStochasticTransition(
-                    func=_parameterized_regime_probabilities, targets=("done",)
-                ),
-                functions={"utility": _alive_payoff},
-            ),
-            "done": Regime(
-                regime_transitions=None,
-                functions={"utility": _done_payoff},
-            ),
+            "alive": Regime(functions={"utility": _alive_payoff}),
+            "done": Regime(functions={"utility": _done_payoff}),
+            "gone": Regime(functions={"utility": _done_payoff}),
         },
-        regime_id_class=_RegimeId,
+        regime_id_class=_LotteryRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget),
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"done": 0, "gone": 0},
+                law={
+                    "done": StochasticTransition(func=_done_probability),
+                    "gone": StochasticTransition(func=_never),
+                },
+            )
+        },
     )
     return (
         model,
         {
             "alive": {
                 "koopmans_aggregator": {"discount_factor": 0.5},
-                "next_regime": {"done_probability": 1.0},
+                "done": {"next_regime": {"done_probability": 1.0}},
             },
             "done": {},
+            "gone": {},
         },
         {
             "age": jnp.zeros(3),
-            "regime_id": jnp.full(3, _RegimeId.alive),
+            "regime_id": jnp.full(3, _LotteryRegimeId.alive),
         },
     )
 
@@ -219,9 +234,10 @@ def test_admitted_regime_probability_pytree_completes() -> None:
         params=params, initial_conditions=initial, seed=17, log_level="debug"
     )
     assert result.n_subjects == expected.n_subjects == 3
-    assert set(result.raw_results) == {"alive", "done"}
+    assert set(result.raw_results) == {"alive", "done", "gone"}
     assert set(result.raw_results["alive"]) == {0}
     assert set(result.raw_results["done"]) == {1}
+    assert not any(data.in_regime.any() for data in result.raw_results["gone"].values())
     for regime, period, value in (("alive", 0, 5), ("done", 1, 6)):
         data = result.raw_results[regime][period]
         np.testing.assert_array_equal(data.V_arr, np.full(3, value))
@@ -248,7 +264,9 @@ def test_invalid_regime_diagnostic_matches_unbudgeted_and_recovers() -> None:
         assert isinstance(invalid, dict)
         alive_params = invalid["alive"]
         assert isinstance(alive_params, dict)
-        law_params = alive_params["next_regime"]
+        done_params = alive_params["done"]
+        assert isinstance(done_params, dict)
+        law_params = done_params["next_regime"]
         assert isinstance(law_params, dict)
         law_params["done_probability"] = 0.5
         with pytest.raises(InvalidRegimeTransitionProbabilitiesError) as error:

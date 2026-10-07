@@ -155,7 +155,8 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 2.0,
     cliff_b: float = 14.0,
-    final_age_alive: float = 3.0,
+    # Unused: the model's edges fix the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the mixed jump-and-kink two-variable budget toy.
 
@@ -182,7 +183,6 @@ def build_params(
             },
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

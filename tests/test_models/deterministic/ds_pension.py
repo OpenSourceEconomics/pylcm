@@ -44,6 +44,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -57,8 +58,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 type _StateGrid = ContinuousGrid | AgeSpecializedGrid
 
@@ -217,16 +216,6 @@ def feasible_retired(
     return consumption <= liquid
 
 
-def prob_stay_working(*, age: int, retirement_age: float) -> FloatND:
-    """Deterministic (0/1) probability of staying in the working regime next period."""
-    return jnp.where(age + 1 < retirement_age, 1.0, 0.0)
-
-
-def prob_retire(*, age: int, retirement_age: float) -> FloatND:
-    """Deterministic (0/1) probability of transitioning working->retired next period."""
-    return jnp.where(age + 1 >= retirement_age, 1.0, 0.0)
-
-
 def prob_stay_retired(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of remaining retired next period."""
     return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
@@ -316,6 +305,16 @@ def get_model(
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     pension_grid = LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_pension)
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
+    die = StochasticTransition(func=prob_die)
+    retired_law = ByAge.until(
+        stop_age_exclusive=final_age,
+        law={
+            "retired": StochasticTransition(func=prob_stay_retired),
+            "dead": die,
+        },
+        then={"dead": die},
+        start_age_inclusive=retirement_age,
+    )
 
     working = Regime(
         actions={
@@ -334,11 +333,6 @@ def get_model(
             "pension": {"working": pension_working},
         },
         constraints={"feasible": feasible_working},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=retirement_age,
-            law={"working": StochasticTransition(func=prob_stay_working)},
-            then={"retired": StochasticTransition(func=prob_retire)},
-        ),
         functions={
             "utility": utility_working,
             **_euler_inversion_functions(
@@ -359,15 +353,6 @@ def get_model(
         constraints={}
         if isinstance(retired_solver, EGM)
         else {"feasible": feasible_retired},
-        regime_transitions=until_exit(
-            final_age,
-            law={
-                "retired": StochasticTransition(func=prob_stay_retired),
-                "dead": StochasticTransition(func=prob_die),
-            },
-            exits=("dead",),
-            start=retirement_age,
-        ),
         functions={
             "utility": utility_retired,
             "resources": resources_retired,
@@ -391,12 +376,11 @@ def get_model(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": dead_liquid_grid or liquid_grid},
         functions={"utility": bequest},
         solver=solvers.get("dead", GridSearch()),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
@@ -404,7 +388,35 @@ def get_model(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={ages.exact_values[0]: "working"},
+        edges=_edges(
+            ages=ages, retirement_period=retirement_period, retired_law=retired_law
+        ),
     )
+
+
+def _edges(
+    *, ages: AgeGrid, retirement_period: int, retired_law: ByAge
+) -> dict[str, object]:
+    """Work until retiring, stay retired until the last alive age, then die.
+
+    Working has one outgoing edge at every age. Where a retiree can both stay
+    retired and die, `retired_law` chooses between them.
+    """
+    values = ages.exact_values
+    stay_working = values[: retirement_period - 1]
+    stay_retired = values[retirement_period:-2]
+    dies = values[retirement_period:-1]
+    return {
+        "working": {
+            **({"working": stay_working} if stay_working else {}),
+            "retired": values[retirement_period - 1],
+        },
+        "retired": (
+            Transition(targets={"retired": stay_retired, "dead": dies}, law=retired_law)
+            if stay_retired
+            else {"dead": dies}
+        ),
+    }
 
 
 def _euler_inversion_functions(
@@ -426,9 +438,10 @@ def get_params(
     match_rate: float = 0.10,
     wage: float = 1.0,
     retirement_income: float = 0.50,
-    retirement_age: float = 3.0,
     final_age_alive: float = 4.0,
     pension_payout_return: float | None = None,
+    n_periods: int = 5,
+    retirement_period: int = 3,
 ) -> dict:
     """Get parameters for the DS pension model (faithful calibration from `SetupPar.m`).
 
@@ -439,7 +452,16 @@ def get_params(
     `crra` is written once at the model level: one risk aversion is shared by every
     regime's felicity and by the closed-form `(u')^-1` an endogenous-grid regime
     declares, so the same tree fits the brute and the EGM variants of the model.
+
+    `final_age_alive` is read only by the retired law, which a model of the given
+    `n_periods` and `retirement_period` declares only when a retiree can still
+    both stay retired and die at some age (see `_edges`).
     """
+    retired_law_params = (
+        {"final_age_alive": final_age_alive}
+        if retirement_period < n_periods - 2
+        else {}
+    )
     if pension_payout_return is None:
         pension_payout_return = 1.0 + return_pension
     return {
@@ -453,7 +475,6 @@ def get_params(
                     "match_rate": match_rate,
                     "return_pension": return_pension,
                 },
-                "next_regime": {"retirement_age": retirement_age},
             },
             "retired": {
                 "next_liquid": {
@@ -462,7 +483,6 @@ def get_params(
                     "retirement_income": retirement_income,
                     "return_liquid": return_liquid,
                 },
-                "next_regime": {"retirement_age": retirement_age},
             },
         },
         "retired": {
@@ -479,6 +499,6 @@ def get_params(
                     "return_liquid": return_liquid,
                 }
             },
-            "final_age_alive": final_age_alive,
+            **retired_law_params,
         },
     }

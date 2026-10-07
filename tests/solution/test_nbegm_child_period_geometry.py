@@ -13,9 +13,17 @@ Both the production cliff targets and the scalar oracle's must bracket the
 savings preimages of the child's cliffs, which `_cliff_pullback_reference`
 computes in exact arithmetic without reading either. The full period kernel must
 also agree with the scalar oracle.
+
+A unit wage persistence lands the source's wage 4 exactly on the child's middle
+node 4; persistences one representable float either side of one land it on the
+adjacent floats. The child's rows read are both nodes of the child segment the
+query falls in — the segment above a node the query lands on exactly — and those
+segments differ from the ones the source's grid would bracket.
 """
 
+import bisect
 import dataclasses
+from collections.abc import Sequence
 from fractions import Fraction
 from typing import Any
 
@@ -71,7 +79,9 @@ def zero_bequest(*, liquid: ContinuousState) -> FloatND:
     return jnp.zeros_like(liquid)
 
 
-def _wage_grid_model(*, child_top: float) -> tuple[Any, dict[str, Any]]:
+def _wage_grid_model(
+    *, child_top: float, wage_persistence: float = 0.9
+) -> tuple[Any, dict[str, Any]]:
     """Wage nodes `(0, 2, 4)` at age 0 and `(0, top / 2, top)` from age 1 on."""
 
     def build_grid(age: float) -> LinSpacedGrid:
@@ -95,6 +105,7 @@ def _wage_grid_model(*, child_top: float) -> tuple[Any, dict[str, Any]]:
         income=1.0,
         subsidy_high=0.5,
         final_age_alive=2.0,
+        wage_persistence=wage_persistence,
     )
     return model, params
 
@@ -143,7 +154,6 @@ def _income_closure_model(*, increment: float) -> tuple[Any, dict[str, Any]]:
                 "subsidy_high": 5.0,
                 "fpl_cliff": jnp.asarray([11.0, 11.0]),
             },
-            "final_age_alive": 2.0,
         }
     }
     return model, params
@@ -202,6 +212,13 @@ def seam(request: pytest.FixtureRequest) -> dict[str, Any]:
         if kind == "grid"
         else _income_closure_model(increment=parameter)
     )
+    return _build_seam(model=model, params=params, kind=kind, centres=centres)
+
+
+def _build_seam(
+    *, model: Any, params: dict[str, Any], kind: str, centres: tuple[float, ...]
+) -> dict[str, Any]:
+    """The source's period-0 kernel, its solved inputs and the cell it reads."""
     kernel, context = ride_along_kernel(model=model, params=params, period=0)
     replay = core_program_graph(kernel=kernel)["replay"]
     materialized = materialize_core_program(
@@ -224,6 +241,54 @@ def seam(request: pytest.FixtureRequest) -> dict[str, Any]:
         "dtype": dtype,
         "centres": centres,
     }
+
+
+_NODE_STEPS = {"below-node": -1, "on-node": 0, "above-node": 1}
+_SOURCE_WAGE_NODES = (Fraction(0), Fraction(2), Fraction(4))
+_CHILD_WAGE_NODES = (Fraction(0), Fraction(4), Fraction(8))
+
+
+def _node_persistence(step: int) -> float:
+    """One, or the representable float adjacent to one, at the canonical dtype.
+
+    The source's wage 4 times this persistence is then 4 or the float adjacent to
+    4 on the same side, exactly.
+    """
+    dtype = np.dtype(jnp.asarray(1.0).dtype)
+    one = np.asarray(1.0, dtype=dtype)
+    if step == 0:
+        return float(one)
+    return float(np.nextafter(one, np.asarray(1.0 + step, dtype=dtype)))
+
+
+def _segment_centres(
+    *, nodes: Sequence[Fraction], query: Fraction
+) -> tuple[float, ...]:
+    """Savings preimages of the income-15 cliffs of the rows a wage query reads.
+
+    The rows are both nodes of the segment containing `query`, closed on the
+    left, clipped to the grid's first and last segments; row `w` loses its subsidy
+    at liquid `15 - w`, and `liquid' = s + 1`.
+    """
+    upper = min(max(bisect.bisect_right(nodes, query), 1), len(nodes) - 1)
+    return tuple(
+        sorted(float(Fraction(14) - node) for node in nodes[upper - 1 : upper + 1])
+    )
+
+
+@pytest.fixture(scope="module", params=tuple(_NODE_STEPS), ids=tuple(_NODE_STEPS))
+def node_seam(request: pytest.FixtureRequest) -> dict[str, Any]:
+    persistence = _node_persistence(_NODE_STEPS[request.param])
+    query = Fraction(persistence) * 4
+    model, params = _wage_grid_model(child_top=8.0, wage_persistence=persistence)
+    seam = _build_seam(
+        model=model,
+        params=params,
+        kind="grid",
+        centres=_segment_centres(nodes=_CHILD_WAGE_NODES, query=query),
+    )
+    seam["source_centres"] = _segment_centres(nodes=_SOURCE_WAGE_NODES, query=query)
+    return seam
 
 
 def _combo_pool(*, seam: dict[str, Any]) -> dict[str, Any]:
@@ -259,11 +324,7 @@ def _brackets_exactly(
     )
 
 
-@pytest.mark.parametrize("jit", [False, True], ids=["eager", "jit"])
-def test_production_cliff_targets_bracket_the_child_periods_cliffs(
-    *, seam: dict[str, Any], jit: bool
-) -> None:
-    """The kernel's save-to-cliff targets straddle exactly the child's centres."""
+def _production_rows(*, seam: dict[str, Any], jit: bool) -> np.ndarray:
     kernel = seam["kernel"]
 
     def evaluate() -> FloatND:
@@ -277,7 +338,45 @@ def test_production_cliff_targets_bracket_the_child_periods_cliffs(
             dtype=seam["dtype"],
         )
 
-    rows = _live_rows(jax.jit(evaluate)() if jit else evaluate())
+    return _live_rows(jax.jit(evaluate)() if jit else evaluate())
+
+
+def _oracle_rows(*, seam: dict[str, Any], child: Any) -> np.ndarray:
+    kernel = seam["kernel"]
+    return _live_rows(
+        oracle_targets(
+            plan=kernel.continuation_plan,
+            regime_name="alive",
+            combo_pool=_combo_pool(seam=seam),
+            kwargs=seam["kwargs"],
+            child=child,
+            savings_grid=np.asarray(kernel.savings_grid, dtype=np.float64),
+            dtype=seam["dtype"],
+        )
+    )
+
+
+def _source_as_child(*, seam: dict[str, Any]) -> Any:
+    """The oracle's child context with the source period's grids and functions."""
+    kernel, context = seam["kernel"], seam["context"]
+    return dataclasses.replace(
+        seam["child"],
+        statics=kernel.statics,
+        grids={
+            name: np.asarray(nodes)
+            for name, nodes in context["state_action_space"].states.items()
+        },
+        period=int(context["period"]),
+        age=context["ages"].values[int(context["period"])],
+    )
+
+
+@pytest.mark.parametrize("jit", [False, True], ids=["eager", "jit"])
+def test_production_cliff_targets_bracket_the_child_periods_cliffs(
+    *, seam: dict[str, Any], jit: bool
+) -> None:
+    """The kernel's save-to-cliff targets straddle exactly the child's centres."""
+    rows = _production_rows(seam=seam, jit=jit)
     assert _brackets_exactly(rows=rows, centres=seam["centres"], dtype=seam["dtype"]), (
         rows,
         seam["centres"],
@@ -288,17 +387,7 @@ def test_oracle_cliff_targets_bracket_the_child_periods_cliffs(
     *, seam: dict[str, Any]
 ) -> None:
     """The scalar oracle's cliff targets straddle exactly the child's centres."""
-    kernel = seam["kernel"]
-    raw = oracle_targets(
-        plan=kernel.continuation_plan,
-        regime_name="alive",
-        combo_pool=_combo_pool(seam=seam),
-        kwargs=seam["kwargs"],
-        child=seam["child"],
-        savings_grid=np.asarray(kernel.savings_grid, dtype=np.float64),
-        dtype=seam["dtype"],
-    )
-    rows = _live_rows(raw)
+    rows = _oracle_rows(seam=seam, child=seam["child"])
     assert _brackets_exactly(rows=rows, centres=seam["centres"], dtype=seam["dtype"]), (
         rows,
         seam["centres"],
@@ -332,30 +421,83 @@ def test_oracle_reading_the_source_period_misses_moved_cliffs(
     and functions the oracle brackets the source's centres, which differ from
     the child's exactly when the child's grid or age-closed function moved.
     """
-    kernel, kwargs, context = seam["kernel"], seam["kwargs"], seam["context"]
-    source_as_child = dataclasses.replace(
-        seam["child"],
-        statics=kernel.statics,
-        grids={
-            name: np.asarray(nodes)
-            for name, nodes in context["state_action_space"].states.items()
-        },
-        period=int(context["period"]),
-        age=context["ages"].values[int(context["period"])],
-    )
-    rows = _live_rows(
-        oracle_targets(
-            plan=kernel.continuation_plan,
-            regime_name="alive",
-            combo_pool=_combo_pool(seam=seam),
-            kwargs=kwargs,
-            child=source_as_child,
-            savings_grid=np.asarray(kernel.savings_grid, dtype=np.float64),
-            dtype=seam["dtype"],
-        )
-    )
+    rows = _oracle_rows(seam=seam, child=_source_as_child(seam=seam))
     unchanged = request.node.callspec.id in {"grid-unchanged", "income-age-invariant"}
     assert (
         _brackets_exactly(rows=rows, centres=seam["centres"], dtype=seam["dtype"])
         == unchanged
     ), rows
+
+
+@pytest.mark.parametrize("jit", [False, True], ids=["eager", "jit"])
+def test_production_targets_at_a_child_node_bracket_the_child_segments_cliffs(
+    *, node_seam: dict[str, Any], jit: bool
+) -> None:
+    """On and beside child node 4 the targets straddle the child segment's cliffs.
+
+    Just below the node the rows are wages 0 and 4 (centres 10 and 14); on and
+    just above it they are wages 4 and 8 (centres 6 and 10).
+    """
+    rows = _production_rows(seam=node_seam, jit=jit)
+    assert _brackets_exactly(
+        rows=rows, centres=node_seam["centres"], dtype=node_seam["dtype"]
+    ), (rows, node_seam["centres"])
+
+
+def test_oracle_targets_at_a_child_node_bracket_the_child_segments_cliffs(
+    *, node_seam: dict[str, Any]
+) -> None:
+    """The scalar oracle reads the same child segment on and beside node 4."""
+    rows = _oracle_rows(seam=node_seam, child=node_seam["child"])
+    assert _brackets_exactly(
+        rows=rows, centres=node_seam["centres"], dtype=node_seam["dtype"]
+    ), (rows, node_seam["centres"])
+
+
+def test_oracle_on_the_source_grid_brackets_the_source_segments_cliffs(
+    *, node_seam: dict[str, Any]
+) -> None:
+    """Handing the oracle the source period as the child moves every target.
+
+    The source grid `(0, 2, 4)` puts each of the three queries in its last
+    segment, wages 2 and 4 (centres 10 and 12), which no child segment shares, so
+    using the source's geometry is detected on and beside the node.
+    """
+    rows = _oracle_rows(seam=node_seam, child=_source_as_child(seam=node_seam))
+    assert _brackets_exactly(
+        rows=rows, centres=node_seam["source_centres"], dtype=node_seam["dtype"]
+    ), (rows, node_seam["source_centres"])
+
+
+def test_period_kernel_at_a_child_node_agrees_with_the_oracle(
+    *, node_seam: dict[str, Any]
+) -> None:
+    """Value, carry and consumption match the oracle on and beside node 4."""
+    assert_kernel_agrees_with_oracle(
+        kernel=node_seam["kernel"],
+        context=node_seam["context"],
+        child=node_seam["child"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("step", "child_centres", "source_centres"),
+    [
+        (-1, (10.0, 14.0), (10.0, 12.0)),
+        (0, (6.0, 10.0), (10.0, 12.0)),
+        (1, (6.0, 10.0), (10.0, 12.0)),
+    ],
+    ids=tuple(_NODE_STEPS),
+)
+def test_node_reference_centres(
+    *,
+    step: int,
+    child_centres: tuple[float, ...],
+    source_centres: tuple[float, ...],
+) -> None:
+    """The exact segment reference reproduces the hand-derived centres."""
+    query = Fraction(_node_persistence(step)) * 4
+    assert (
+        _segment_centres(nodes=_CHILD_WAGE_NODES, query=query),
+        _segment_centres(nodes=_SOURCE_WAGE_NODES, query=query),
+    ) == (child_centres, source_centres)

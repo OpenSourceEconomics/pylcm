@@ -13,16 +13,15 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
+    Model,
     Phased,
     Regime,
     categorical,
     fixed_transition,
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -41,27 +40,20 @@ def _perceived_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth + 1.0
 
 
-def _regime(*, law, perceived=False):
+def _regime(*, terminal=False, perceived=False):
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": _perceived_utility if perceived else _utility},
     )
 
 
 def _model(*, budgeted, promote, reverse, width):
     regimes = {
-        "source": _regime(
-            law=ByAge(
-                cases={
-                    0: Phased(solve="perceived", simulate="realized"),
-                }
-            )
-        ),
-        "perceived": _regime(law=ByAge(cases={1: "end"}), perceived=True),
-        "realized": _regime(law=ByAge(cases={1: "end"})),
-        "end": _regime(law=None),
+        "source": _regime(),
+        "perceived": _regime(perceived=True),
+        "realized": _regime(),
+        "end": _regime(terminal=True),
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
@@ -77,13 +69,25 @@ def _model(*, budgeted, promote, reverse, width):
         if budgeted
         else ExecutionConfig()
     )
-    return with_fixture_graph(
+    return Model(
         enable_jit=True,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DomainId,
         initial_nodes=roots,
         regimes=regimes,
         execution_config=execution_config,
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+        ),
     )
 
 

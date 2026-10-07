@@ -13,9 +13,6 @@ from _lcm.execution.core_program import (
     core_program_graph,
 )
 from _lcm.regime_building import max_Q_over_a
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import action_streaming
 from lcm import (
     AgeGrid,
@@ -39,8 +36,6 @@ from tests.regime_building.test_collective_feasibility_is_shared import (
     _make_model as _build_collective_model,
 )
 from tests.test_models import taste_shocks_toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -53,11 +48,6 @@ class Work:
 class RegimeId:
     acting: ScalarInt
     done: ScalarInt
-
-
-def _next_regime() -> ScalarInt:
-    """Move from the decision regime to the terminal regime."""
-    return RegimeId.done
 
 
 def _utility(
@@ -89,13 +79,6 @@ def _terminal_utility() -> FloatND:
 def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("acting", "done")
-            ),
-            exits=("done",),
-        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -106,16 +89,16 @@ def _build_model(*, enable_jit: bool = True) -> Model:
         constraints={"only_target": _only_target},
     )
     done = Regime(
-        regime_transitions=None,
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"acting": acting, "done": done},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
 
