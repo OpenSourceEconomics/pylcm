@@ -28,6 +28,7 @@ from _lcm.solution import backward_induction as engine
 from _lcm.solution import lower_candidate as candidate_lowering
 from _lcm.solution.continuation_arguments import MARGINAL_ARGUMENT
 from _lcm.solution.fingerprint import _semantic_fingerprint
+from _lcm.solution.lowering_descriptors import describe_lowering_value
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import EGM_CONTINUATION, ResultRetention
 from tests.test_models import nbegm_ride_along_toy
@@ -91,6 +92,13 @@ def _describe_jax(value: Any) -> Any:
                 _describe(value.spec.unreduced),
             ),
         )
+    if isinstance(value, jax.sharding.AbstractMesh):
+        return (
+            "abstract_mesh",
+            _describe(value.shape_tuple),
+            _describe(value.axis_types),
+            _describe(value.abstract_device),
+        )
     raise AssertionError(f"Unspecified JAX descriptor type: {type(value)}")
 
 
@@ -106,6 +114,7 @@ def _describe_tree(value: Any) -> Any:
             np.ndarray,
             jax.tree_util.PyTreeDef,
             jax.sharding.Sharding,
+            jax.sharding.AbstractMesh,
         ),
     ):
         return _describe_jax(value)
@@ -572,3 +581,28 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
                     retention=ResultRetention.VALUES_AND_REPLAY,
                 )
             assert str(exc_info.value) == message
+
+
+_EXPLICIT = ("enum", "jax._src.mesh", "AxisType", "Explicit")
+
+
+@pytest.mark.parametrize(
+    ("mesh", "expected"),
+    [
+        (jax.sharding.AbstractMesh((), ()), ("abstract_mesh", (), (), None)),
+        (
+            jax.sharding.AbstractMesh((2, 3), ("x", "y")),
+            ("abstract_mesh", (("x", 2), ("y", 3)), (_EXPLICIT, _EXPLICIT), None),
+        ),
+    ],
+    ids=["empty-ambient", "two-axes"],
+)
+@pytest.mark.parametrize(
+    "describe", [_describe, describe_lowering_value], ids=["tracer", "public"]
+)
+def test_describe_spells_abstract_mesh_by_axis_names_sizes_and_types(
+    *, describe: Any, mesh: Any, expected: Any
+) -> None:
+    """An abstract mesh, such as JAX's ambient trace-context mesh, is described by
+    its axis names, sizes, types and abstract device."""
+    assert describe(mesh) == expected
