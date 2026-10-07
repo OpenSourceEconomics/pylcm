@@ -3313,6 +3313,10 @@ class Model:
         V_arrs, sim_policies, _, replay_readers = self._resolve_solution_result(
             solution=solution, flat_params=flat_params
         )
+        if self._owned_component_values(solution=solution) is not None:
+            # A block-major result keeps its values on the host; its value
+            # store assembles each value the lookup reads, when it reads it.
+            V_arrs = solution.values  # noqa: PD011
         if (
             sim_policies.get(period, {}).get(regime_name) is not None
             or replay_readers.get(period, {}).get(regime_name) is not None
