@@ -362,7 +362,7 @@ def project_solution_params(
         kept = MappingProxyType(
             {name: value for name, value in leaves.items() if name not in realized_only}
         )
-        if path[0] == EDGES and len(path) > 1:
+        if path[0] == EDGES:
             projected_edges[path[1]] = kept
         else:
             projected[path[0]] = kept

@@ -156,6 +156,7 @@ def test_convert_series_heterogeneous_grids() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
 
 
@@ -201,6 +202,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         laws=m.graph.laws,
         ages=m.ages,
         regime_names_to_ids=m.regime_names_to_ids,
+        declared_laws=m._declared_laws,
     )
     assert result is not None
 
@@ -887,6 +889,7 @@ def test_convert_series_function_level_series() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     arr = regime_kernel_params(result, regime_name="working_life")[
         "next_partner__probs_array"
@@ -908,6 +911,7 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     # Model-level param is broadcast to all regimes/functions that need it
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
@@ -932,6 +936,7 @@ def test_convert_series_regime_level_series() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     arr = regime_kernel_params(result, regime_name="working_life")[
         "next_partner__probs_array"
@@ -961,6 +966,7 @@ def test_convert_series_mixed_dict() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
@@ -992,6 +998,7 @@ def test_convert_series_mapping_leaf() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, UserMappingLeaf)
@@ -1021,6 +1028,7 @@ def test_convert_series_nested_mapping_leaf() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     converted = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted, UserMappingLeaf)
@@ -1093,6 +1101,7 @@ def test_convert_series_with_derived_categoricals() -> None:
             laws=model.graph.laws,
             ages=model.ages,
             regime_names_to_ids=model.regime_names_to_ids,
+            declared_laws=model._declared_laws,
         )
 
     # With derived_categoricals on the regime, it succeeds
@@ -1110,6 +1119,7 @@ def test_convert_series_with_derived_categoricals() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     arr = result["retirement"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1197,6 +1207,7 @@ def test_convert_series_per_target_transition() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     arr = result["working"]["working__next_health__probs_array"]
     assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1295,6 +1306,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
     assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
@@ -1337,6 +1349,7 @@ def test_convert_series_runtime_grid_param() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())  # ty: ignore[no-matching-overload]
 
@@ -1358,6 +1371,7 @@ def test_convert_series_sequence_leaf_traversal() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, UserSequenceLeaf)
@@ -1480,6 +1494,7 @@ def test_convert_series_cross_grid_transition() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
 
     arr = result["pre65"]["post65__next_health__health_trans_probs_cross"]
@@ -1639,6 +1654,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
+        declared_laws=MappingProxyType({}),
     )["source"]
 
     np.testing.assert_allclose(
@@ -1703,6 +1719,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
+        declared_laws=MappingProxyType({}),
     )["source"]["target__next_health__transition_matrix"]
 
     np.testing.assert_allclose(np.asarray(converted), [[0.9, 0.1], [0.2, 0.8]])

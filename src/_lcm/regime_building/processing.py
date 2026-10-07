@@ -159,7 +159,7 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
     phase_variation_paths,
 )
-from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration, RegimeLaws
 from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     route_output_roles,
@@ -332,7 +332,7 @@ class PreparedModelStructure:
     """Per `(source, target)` gated edge, the source periods whose selected law
     declares the gate."""
 
-    declared_laws: MappingProxyType[RegimeName, tuple[object, ...]]
+    declared_laws: MappingProxyType[RegimeName, tuple[RegimeLawDeclaration, ...]]
     """Per source regime, its laws as declared in `Model(edges=...)`, which the
     `edges` parameter template is read off."""
 
@@ -349,8 +349,8 @@ def prepare_model_structure(
     gated_source_periods: MappingProxyType[
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
+    declared_laws: Mapping[RegimeName, tuple[RegimeLawDeclaration, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
-    declared_laws: Mapping[RegimeName, tuple[object, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
 
@@ -359,7 +359,7 @@ def prepare_model_structure(
     periods resolved once from the declarations by the caller;
     `visited_periods_by_regime` are the periods a subject can occupy, where the
     simulate graph is active. `declared_laws` are the laws as `Model(edges=...)`
-    declares them; without them each source's bound law stands in.
+    declares them.
     """
     raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
@@ -389,11 +389,7 @@ def prepare_model_structure(
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
-        declared_laws=MappingProxyType(
-            {name: (law.transition,) for name, law in laws.items() if not law.terminal}
-            if declared_laws is None
-            else dict(declared_laws)
-        ),
+        declared_laws=MappingProxyType(dict(declared_laws)),
     )
 
 
@@ -722,6 +718,7 @@ def process_regimes(
     regime_to_edge_params_template = MappingProxyType(
         {
             regime_name: create_edge_params_template(
+                source=regime_name,
                 user_regime=user_regime,
                 declared_laws=prepared_structure.declared_laws.get(regime_name, ()),
                 state_names_by_regime=state_names_by_regime,

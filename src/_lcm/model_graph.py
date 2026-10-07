@@ -21,7 +21,12 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
-from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
+from _lcm.regime_law import (
+    RegimeLaw,
+    RegimeLawDeclaration,
+    RegimeLaws,
+    bind_regime_law,
+)
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
@@ -113,6 +118,9 @@ class DroppedCells:
     """The source age."""
     targets: tuple[RegimeName, ...]
     """The law's targets that have no edge out of the source at that age."""
+    law_over_all_targets: bool
+    """Whether only a law over all targets reaches them: its vector is kept
+    whole, so only mass it puts on one of them is explained by the graph."""
 
 
 # Keyed by `(source, period)`.
@@ -141,7 +149,8 @@ class GraphPreparation:
     pruned_edges: MappingProxyType[str, MappingProxyType[Edge, str]]
     """Fixed-zero primary edges and their proof reason."""
     cells_without_edges: CellsWithoutEdges
-    """Law cells binding dropped because the graph declares no edge for them."""
+    """Law cells binding dropped, and targets of a law over all targets, without
+    an edge at the age."""
 
 
 @contextmanager
@@ -152,9 +161,10 @@ def naming_cells_without_edges(
 
     A law cell toward a target the graph gives no edge at that age is dropped when
     the law is bound, so its probability mass is lost. The unit-mass check then
-    fails on the law, while the cause is the graph. When the failing source and
-    period have dropped cells, the error names each `(age, source -> target)` cell;
-    otherwise it is raised unchanged.
+    fails on the law, while the cause is the graph. A law over all targets keeps
+    its whole vector, and the check refuses the mass it puts on a target without
+    an edge there. When the failing source and period have such cells, the error
+    names each `(age, source -> target)` cell; otherwise it is raised unchanged.
     """
     try:
         yield
@@ -162,12 +172,23 @@ def naming_cells_without_edges(
         dropped = cells_without_edges.get(
             getattr(error, "unit_mass_violation", None)  # ty: ignore[invalid-argument-type]
         )
-        if dropped is None:
+        outside = getattr(error, "outside_target", None)
+        targets = (
+            ()
+            if dropped is None
+            else tuple(
+                target
+                for target in dropped.targets
+                if outside is None or target == outside
+            )
+        )
+        if dropped is None or not targets:
+            raise
+        if dropped.law_over_all_targets and outside is None:
             raise
         source = error.unit_mass_violation[0]  # ty: ignore[unresolved-attribute]
         cells = ", ".join(
-            f"(age {dropped.age}, '{source}' -> '{target}')"
-            for target in dropped.targets
+            f"(age {dropped.age}, '{source}' -> '{target}')" for target in targets
         )
         msg = (
             f"{error.mass_detail}\n"  # ty: ignore[unresolved-attribute]
@@ -305,13 +326,15 @@ def bind_edge_laws(
 
 
 def declared_transition_laws(
-    edges: object,
-) -> MappingProxyType[RegimeName, tuple[object, ...]]:
+    edges: Mapping[RegimeName, object] | Phased,
+) -> MappingProxyType[RegimeName, tuple[RegimeLawDeclaration, ...]]:
     """Return each source's declared `Transition` law, one per phase of `edges`.
 
     The laws are returned as declared — every `ByAge` case, both sides of a
     `Phased` law — before any age selects among them. A source declared as a
-    plain `{target: selector}` mapping declares no law and has no entry.
+    plain `{target: selector}` mapping declares no law and has no entry. Called
+    once `bind_edge_laws` has accepted `edges`, so every law is a declaration
+    form.
 
     Args:
         edges: The `Model(edges=...)` declaration, or a `Phased` pair of them.
@@ -321,13 +344,15 @@ def declared_transition_laws(
 
     """
     phases = (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges,)
-    laws: dict[RegimeName, list[object]] = {}
+    laws: dict[RegimeName, list[RegimeLawDeclaration]] = {}
     for phase in phases:
         if not isinstance(phase, Mapping):
             continue
         for source, declaration in phase.items():
             if isinstance(declaration, Transition):
-                laws.setdefault(source, []).append(declaration.law)
+                laws.setdefault(source, []).append(
+                    cast("RegimeLawDeclaration", declaration.law)
+                )
     return MappingProxyType({source: tuple(found) for source, found in laws.items()})
 
 
@@ -519,11 +544,18 @@ def bind_graph_support(
                         regime_names=regime_names,
                     )
                 sides[side] = cache[key]
-                if isinstance(law, Mapping) and targets[side]:
+                if targets[side] and not isinstance(law, str):
+                    # A per-target law names its cells; a law over all targets
+                    # can reach every target of the source's edges.
+                    named = (
+                        law
+                        if isinstance(law, Mapping)
+                        else getattr(edges, side).get(source, {})
+                    )
                     missing = tuple(
                         target
                         for target in regime_names
-                        if target in law and target not in targets[side]
+                        if target in named and target not in targets[side]
                     )
                     if missing:
                         previous = dropped.get((source, period))
@@ -533,6 +565,10 @@ def bind_graph_support(
                                 dict.fromkeys(
                                     (*(previous.targets if previous else ()), *missing)
                                 )
+                            ),
+                            law_over_all_targets=(
+                                not isinstance(law, Mapping)
+                                and (previous is None or previous.law_over_all_targets)
                             ),
                         )
             cases.append(

@@ -19,12 +19,20 @@ import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import IrregSpacedGrid
-from _lcm.params.edges import FALLBACK, GATE, GATE_REFERENCES, PROBABILITY, ROUTES
+from _lcm.params.edges import (
+    EDGES,
+    FALLBACK,
+    GATE,
+    GATE_REFERENCES,
+    PROBABILITY,
+    ROUTES,
+    user_path,
+)
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
 from _lcm.regime_building.gated_edges import is_target_value_operand
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.regime_law import RegimeLaw
+from _lcm.regime_law import RegimeLaw, RegimeLawDeclaration
 from _lcm.typing import (
     EdgeParamsTemplate,
     FunctionName,
@@ -36,7 +44,7 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args
 from lcm.collective import ValueDependentTransition
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
@@ -245,8 +253,9 @@ def create_regime_params_template(
 
 def create_edge_params_template(
     *,
+    source: RegimeName,
     user_regime: UserRegime,
-    declared_laws: tuple[object, ...],
+    declared_laws: tuple[RegimeLawDeclaration, ...],
     state_names_by_regime: Mapping[RegimeName, frozenset[StateName]],
 ) -> EdgeParamsTemplate:
     """Create a source regime's branch of the `edges` parameter template.
@@ -271,6 +280,7 @@ def create_edge_params_template(
     None of those is a parameter.
 
     Args:
+        source: The source regime's name.
         user_regime: The source regime, whose engine-wired names the law reads.
         declared_laws: The `Transition` laws declared for the source, one per
             phase of `Model(edges=...)`.
@@ -283,10 +293,12 @@ def create_edge_params_template(
         InvalidNameError: If one path is both a parameter and a branch, e.g. a
             law over all targets reading an argument named like a target whose
             cell has parameters.
+        ModelInitializationError: If the source's laws read parameters both over
+            all targets and per target.
 
     """
     variables = _wired_names(user_regime)
-    template: dict[str, Any] = {}
+    params_by_path: list[tuple[tuple[str, ...], dict[str, str]]] = []
     for law in declared_laws:
         for path, func, cell in iter_edge_callables(law=law, path=()):
             non_params = (
@@ -298,19 +310,59 @@ def create_edge_params_template(
                     target_state_names=state_names_by_regime.get(path[0], frozenset()),
                 )
             )
-            params = _discovered_params(
-                name="edge",
-                func=func,
-                non_params=non_params,
-                strip_target_value_operands=cell is not None,
-            )
-            for param_name, annotation in params.items():
-                _insert_edge_slot(
-                    template=template,
-                    path=(*path, param_name),
-                    annotation=annotation,
+            params_by_path.append(
+                (
+                    path,
+                    _discovered_params(
+                        name="edge",
+                        func=func,
+                        non_params=non_params,
+                        strip_target_value_operands=cell is not None,
+                        kind=(
+                            "Edge-callable (at "
+                            f"{user_path(path=(EDGES, source, *path))}) argument"
+                        ),
+                    ),
                 )
+            )
+    _fail_if_coarse_law_params_meet_per_target_cells(
+        source=source, params_by_path=params_by_path
+    )
+    template: dict[str, Any] = {}
+    for path, params in params_by_path:
+        for param_name, annotation in params.items():
+            _insert_edge_slot(
+                template=template, path=(*path, param_name), annotation=annotation
+            )
     return cast("EdgeParamsTemplate", _freeze_template_node(template))
+
+
+def _fail_if_coarse_law_params_meet_per_target_cells(
+    *,
+    source: RegimeName,
+    params_by_path: list[tuple[tuple[str, ...], dict[str, str]]],
+) -> None:
+    """Reject a source whose laws read parameters both over all targets and per target.
+
+    A law over all targets files its parameters at `params["edges"][source][arg]`,
+    which is also the level that broadcasts into every per-target slot below
+    `params["edges"][source]`. A source mixing the two forms — a `ByAge` with a
+    `DeterministicTransition` case and a per-target case, say — would make one
+    path both a slot and a broadcast level.
+    """
+    coarse = sorted(
+        {name for path, params in params_by_path if not path for name in params}
+    )
+    if coarse and any(path for path, _ in params_by_path):
+        raise ModelInitializationError(
+            f"The law of '{source}' mixes a law over all targets reading "
+            f"parameters {coarse} with per-target cases. Its parameters would sit "
+            f"both at params['edges']['{source}'][<arg>] and below each target. "
+            "Write every case in one form: the law over all targets as a "
+            "per-target mapping (`{target: StochasticTransition(...)}`, a "
+            "deterministic choice as indicator probabilities), or every case as "
+            "a law over all targets."
+        )
 
 
 def iter_edge_callables(
@@ -325,6 +377,10 @@ def iter_edge_callables(
     Yields:
         Triples of the path, the callable, and the value-dependent cell when the
         callable runs on that cell's target grid (a gate or a projection).
+
+    Raises:
+        TypeError: If the law, a case, a phase or a cell is none of the law
+            forms.
 
     """
     if law is None or isinstance(law, str):
@@ -344,6 +400,12 @@ def iter_edge_callables(
             yield from iter_edge_callables(law=cell, path=(*path, target_regime_name))
     elif callable(law):
         yield path, cast("UserFunction", law), None
+    else:
+        msg = (
+            f"A declared law holds a {type(law).__name__!r} at "
+            f"{list(path)} below its source's edges, which is not a law form."
+        )
+        raise TypeError(msg)
 
 
 def _value_dependent_callables(
@@ -397,6 +459,10 @@ def _insert_edge_slot(
     branch[path[-1]] = annotation
 
 
+# The entries a value-dependent cell's parameters nest under.
+_CELL_ENTRIES = (PROBABILITY, GATE, GATE_REFERENCES, ROUTES)
+
+
 def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
     """Name an edge path that is both a parameter and a branch."""
     spelled = "".join(f"[{segment!r}]" for segment in path)
@@ -404,7 +470,7 @@ def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
         f"The edge parameter path {spelled} below a source's `params['edges']` "
         "branch is both a parameter and a branch of further parameters: a "
         "law's argument has the name of a target or of a cell entry "
-        "('probability', 'gate', 'gate_references', 'routes'). Rename the argument."
+        f"({', '.join(repr(entry) for entry in _CELL_ENTRIES)}). Rename the argument."
     )
 
 
@@ -587,6 +653,7 @@ def _discovered_params(
     func: UserFunction | Phased,
     non_params: set[str],
     strip_target_value_operands: bool,
+    kind: str | None = None,
 ) -> dict[str, str]:
     """Return the parameters one collected template entry contributes.
 
@@ -598,6 +665,8 @@ def _discovered_params(
             user-facing parameters.
         strip_target_value_operands: Whether the reserved `V_target` vocabulary
             is engine-wired here too, which holds for a gated edge's callables.
+        kind: How an invalid argument name's error introduces the arguments; the
+            template key `name` when omitted.
 
     Returns:
         Dictionary of parameter name to type annotation, in name order.
@@ -620,7 +689,7 @@ def _discovered_params(
     # `dags` nests a `__`-joined argument into a subtree, so the argument names
     # are read back from the flattened tree.
     if errors := path_segment_name_errors(
-        kind=f"{name!r} argument",
+        kind=f"{name!r} argument" if kind is None else kind,
         names=[arg for arg in dt.flatten_to_qnames(tree) if arg not in non_params],
     ):
         raise InvalidNameError(errors[0])
@@ -1319,10 +1388,10 @@ def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
     """
     entries: dict[FunctionName, UserFunction] = {}
     for target_regime_name, edge in law.gated_edges.items():
-        entries[qname_from_tree_path(("gate", target_regime_name))] = edge.gate
+        entries[qname_from_tree_path((GATE, target_regime_name))] = edge.gate
         for ref_name, ref in edge.gate_refs.items():
             for state_name, projection in ref.projection.items():
-                key = f"gate_references_{ref_name}_{state_name}"
+                key = f"{GATE_REFERENCES}_{ref_name}_{state_name}"
                 entries[qname_from_tree_path((key, target_regime_name))] = projection
         for leg_name, leg in edge.legs.items():
             for phase, ref in _fallbacks_by_phase(
@@ -1331,7 +1400,7 @@ def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
                 is_phased=leg.fallback_is_phased,
             ):
                 for state_name, projection in ref.projection.items():
-                    key = f"{phase or 'both'}_routes_{leg_name}_{state_name}"
+                    key = f"{phase or 'both'}_{ROUTES}_{leg_name}_{state_name}"
                     entries[qname_from_tree_path((key, target_regime_name))] = (
                         projection
                     )
@@ -1415,13 +1484,18 @@ def _drop_engine_provided_args(
 def _regime_transition_entries(
     transition: object,
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
-    """Key the regime transition for parameter discovery.
+    """Key the regime transition for the read checks.
+
+    The entries let the checks walk what the law reads and keep it out of the
+    regime's own template; its parameters live in the edge namespace, at
+    `params["edges"][source]` for a coarse law and at
+    `params["edges"][source][target]` for a per-target cell
+    (`create_edge_params_template`).
 
     - coarse forms ⇒ one `next_regime` entry
-    - a per-target dict ⇒ one `next_regime__<target>` entry per cell, so each
-      cell's parameters nest under the target (`template[target_regime]["next_regime"]`)
+    - a per-target dict ⇒ one `next_regime__<target>` entry per cell
     - `Phased` per-target dicts ⇒ per-cell `Phased` entries, so both phases'
-      parameters are unioned per target; an absent phase contributes none
+      callables are walked per target; an absent phase contributes none
 
     """
     if isinstance(transition, Phased) and isinstance(transition.solve, Mapping):

@@ -151,8 +151,10 @@ class SimulationEntryAllocations:
             )
             on_devices = cast("FlatRegimeParams", arguments["solve_params"])
             if path[0] == EDGES:
+                # A live view, so each placed source counts toward the next
+                # placement's footprint.
+                placed.setdefault(EDGES, MappingProxyType(placed_edges))
                 placed_edges[path[-1]] = on_devices
-                placed[EDGES] = MappingProxyType(placed_edges)
             else:
                 placed[path[0]] = on_devices
         return MappingProxyType(placed)

@@ -19,7 +19,7 @@ from _lcm.params.edges import EDGES
 from _lcm.params.regime_template import iter_edge_callables
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
-from _lcm.regime_law import RegimeLaws
+from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
@@ -293,8 +293,8 @@ def convert_series_in_params(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
+    declared_laws: Mapping[RegimeName, tuple[RegimeLawDeclaration, ...]],
     array_writer: CanonicalArrayWriter | None = None,
-    declared_laws: Mapping[RegimeName, tuple[object, ...]] | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
@@ -316,11 +316,11 @@ def convert_series_in_params(
         laws: Each regime's law, whose transition functions read params too.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
-        array_writer: Optional owner admitting each Series upload and retaining
-            completed leaves while the parameter mapping is assembled.
         declared_laws: Per source regime, its laws as `Model(edges=...)`
             declares them; an `edges` slot's Series is indexed by the declared
-            callable reading it. Without them each source's bound law stands in.
+            callable reading it.
+        array_writer: Optional owner admitting each Series upload and retaining
+            completed leaves while the parameter mapping is assembled.
 
     Returns:
         Immutable mapping with the same structure, Series replaced by JAX
@@ -336,11 +336,7 @@ def convert_series_in_params(
                         _convert_edge_params(
                             source=source,
                             leaves=cast("Mapping[str, object]", leaves),
-                            declared_laws=(
-                                (laws[source].transition,)
-                                if declared_laws is None
-                                else declared_laws.get(source, ())
-                            ),
+                            declared_laws=declared_laws.get(source, ()),
                             ages=ages,
                             user_regimes=user_regimes,
                             regime_names_to_ids=regime_names_to_ids,

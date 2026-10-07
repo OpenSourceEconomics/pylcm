@@ -80,9 +80,15 @@ from weakref import WeakKeyDictionary
 
 import jax
 import jax.numpy as jnp
+from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace
-from _lcm.params.edges import edge_params, edge_user_path, regime_kernel_params
+from _lcm.params.edges import (
+    edge_params,
+    edge_user_path,
+    regime_kernel_params,
+    user_path,
+)
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
@@ -846,7 +852,7 @@ def bind_provenance_params(
             where = (
                 edge_user_path(source=source_name, key=qname)
                 if namespace == SOURCE_PARAMS
-                else f"flat_params['{target_name}']['{qname}']"
+                else user_path(path=(target_name, *tree_path_from_qname(qname)))
             )
             msg = (
                 f"A gated edge '{source_name}' -> '{target_name}' needs the "

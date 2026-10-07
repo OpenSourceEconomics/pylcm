@@ -1004,7 +1004,7 @@ def _validate_regime_transition_probs(
     for r, has_mass in zip(inactive, inactive_flags, strict=True):
         if has_mass:
             period_detail = "" if period is None else f" in period {period}"
-            raise InvalidRegimeTransitionProbabilitiesError(
+            error = InvalidRegimeTransitionProbabilitiesError(
                 f"Regime '{r}' is outside the declared targets of '{regime_name}' "
                 f"at age {age} but has positive "
                 f"transition probability from '{regime_name}' "
@@ -1014,6 +1014,14 @@ def _validate_regime_transition_probs(
                 f"does not depend on '{r}' at all. Either declare '{r}' as a target "
                 f"at that age or give it probability 0 there."
             )
+            # Lets the model name the graph edge whose absence strands the mass.
+            error.unit_mass_violation = (regime_name, period)  # ty: ignore[unresolved-attribute]
+            error.mass_detail = (  # ty: ignore[unresolved-attribute]
+                f"Regime transition probabilities from '{regime_name}' {span} put "
+                f"positive mass on '{r}', which is not a target at age {age}."
+            )
+            error.outside_target = r  # ty: ignore[unresolved-attribute]
+            raise error
 
 
 def validate_realized_regime_transition_probs(

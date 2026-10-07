@@ -8,6 +8,7 @@ import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +31,7 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_regime_schedules,
 )
-from _lcm.regime_law import RegimeLaws, bind_regime_law
+from _lcm.regime_law import RegimeLawDeclaration, RegimeLaws, bind_regime_law
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.tuning import _array_ulp_gap
@@ -677,13 +678,20 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
+    bound = bind_laws(lowered)
     return prepare_model_structure(
         user_regimes=user_regimes,
-        laws=bind_laws(lowered),
+        laws=bound,
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
         support_by_phase=schedules.support_by_phase,
         gated_source_periods=gated_source_periods(schedules=schedules),
+        # The bound laws stand in for the declarations a `Model` would hold.
+        declared_laws={
+            name: (cast("RegimeLawDeclaration", law.transition),)
+            for name, law in bound.items()
+            if not law.terminal
+        },
     )
 
 

@@ -172,7 +172,7 @@ def get_model(retirement_age: int = 24) -> Model:
             "working_life": working_life,
             "retirement": retirement,
         },
-        ages=AgeGrid(start=18, inclusive_stop=retirement_age, step="Y"),
+        ages=_ages(retirement_age),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
     )
@@ -195,5 +195,10 @@ def get_params(retirement_age: int = 24) -> dict:
             "next_wealth": {"interest_rate": 0.05},
         },
         "retirement": {},
-        "edges": {"working_life": {"n_periods": get_model(retirement_age).n_periods}},
+        "edges": {"working_life": {"n_periods": _ages(retirement_age).n_periods}},
     }
+
+
+def _ages(retirement_age: int) -> AgeGrid:
+    """Return the yearly age grid from 18 to the retirement age."""
+    return AgeGrid(start=18, inclusive_stop=retirement_age, step="Y")

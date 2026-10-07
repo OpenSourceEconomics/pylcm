@@ -15,8 +15,7 @@ rest of that path joined by `QNAME_DELIMITER`, e.g.
 
 A source's own kernels evaluate its law and its gated continuations, so they
 bind from the union of the regime's own parameters and its edges' parameters
-(`regime_kernel_params`); the two key sets are disjoint because every regime key
-starts with a function name and every edge key with a target or an argument.
+(`regime_kernel_params`), which refuses a key the two share.
 """
 
 from collections.abc import Iterator, Mapping
@@ -26,6 +25,7 @@ from typing import cast
 from dags.tree import tree_path_from_qname
 
 from _lcm.typing import FlatEdgeParams, FlatRegimeParams, RegimeName
+from lcm.exceptions import InvalidNameError
 
 # Root of the edge namespace, in the user's params and in the engine's.
 EDGES = "edges"
@@ -71,7 +71,7 @@ def regime_kernel_params(
 
     A source's kernels evaluate its regime-transition law and gate its gated
     continuations, so they read the regime's own parameters and its edges'
-    parameters. The two key sets are disjoint, so the union is unambiguous.
+    parameters, by key.
 
     Args:
         flat_params: The engine's params.
@@ -80,12 +80,33 @@ def regime_kernel_params(
     Returns:
         The regime's own flat params, extended by its edges' flat params.
 
+    Raises:
+        InvalidNameError: If a key names both one of the regime's own parameters
+            and one of its edges' parameters.
+
     """
     own = cast("FlatRegimeParams", flat_params.get(regime_name, _EMPTY))
     edges = edge_params(flat_params, source=regime_name)
     if not edges:
         return own
+    _fail_if_own_and_edge_keys_collide(own=own, edges=edges, regime_name=regime_name)
     return MappingProxyType({**own, **edges})
+
+
+def _fail_if_own_and_edge_keys_collide(
+    *, own: FlatRegimeParams, edges: FlatRegimeParams, regime_name: RegimeName
+) -> None:
+    """Refuse a key a regime's own parameters and its edges' parameters share."""
+    shared = sorted(set(own) & set(edges))
+    if shared:
+        key = shared[0]
+        regime_path = user_path(path=(regime_name, *tree_path_from_qname(key)))
+        edge_path = edge_user_path(source=regime_name, key=key)
+        raise InvalidNameError(
+            f"The parameter key {key!r} names both a parameter of regime "
+            f"'{regime_name}' ({regime_path}) and one of its edges ({edge_path}). "
+            "Rename the function, target or argument that spells it."
+        )
 
 
 def is_gated_cell_slot(key: str) -> bool:

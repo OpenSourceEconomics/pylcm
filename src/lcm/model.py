@@ -256,6 +256,7 @@ from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -689,10 +690,12 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self.edges = edges
+        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # The laws as declared, before any age selects among them: the `edges`
         # parameter template and its Series conversion read these.
-        self._declared_laws = declared_transition_laws(edges)
-        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        self._declared_laws = declared_transition_laws(
+            cast("Mapping[RegimeName, object] | Phased", edges)
+        )
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (

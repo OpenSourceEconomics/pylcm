@@ -48,6 +48,7 @@ def test_series_uploads_use_the_entry_writer(
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     expected = convert()
     owner = _owner(budget=2**20 if fits else 1)
