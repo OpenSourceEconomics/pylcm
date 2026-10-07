@@ -162,6 +162,17 @@ first:
    over all targets, each target's cell, gates, gate references and route fallbacks;
 1. the model level, `params[arg]`, which also feeds regime functions.
 
+`get_params_template()` lists every slot at its declaration path, the most specific
+level; supply each slot at any one of the three. An argument several callables below one
+source read is supplied once at the source level. With per-target cells into `working`
+and `dead` that both read `survival_rate`, the template lists
+`params["edges"]["working"]["working"]["survival_rate"]` and
+`params["edges"]["working"]["dead"]["survival_rate"]`, and one value covers both:
+
+```python
+params = {"edges": {"working": {"survival_rate": 0.98}}}
+```
+
 There is no `params["edges"][arg]` level. A regime-level value never reaches an edge
 callable: `params[source][arg]` feeds only the source regime's own functions, and when
 none of them reads it, it is an unknown key: `InvalidParamsError` names its

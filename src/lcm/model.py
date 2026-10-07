@@ -1175,7 +1175,10 @@ class Model:
         """Get a human-readable params template.
 
         Return a nested dict showing which parameters each function in each
-        regime expects.
+        regime expects. The `edges` branch lists each edge parameter at its
+        declaration path, the most specific level. Any single level may supply a
+        slot instead: the declaration path, `params["edges"][source][arg]`, or
+        the model level.
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)

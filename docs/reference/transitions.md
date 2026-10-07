@@ -108,12 +108,14 @@ params["edges"][source][target]["routes"][route]["fallback"]["solve" | "simulate
 
 The last line is a `Phased` fallback. A law over all targets has no `law` segment;
 `ByAge` cases and `Phased` sides of one law share its slot and union their arguments. A
-source without a law has no `params["edges"]` entry. A value may also be given at
-`params["edges"][source][arg]`, which covers every callable below the source, or at the
-model level; a value under the source regime, `params[source][arg]`, never reaches an
-edge callable. Per-target state laws belong to the source regime and keep their paths
-under `params[source][target]`. The slots are read off the declared `Transition`, so
-they do not depend on the horizon or on fixed-zero pruning. See
+source without a law has no `params["edges"]` entry. `get_params_template()` lists each
+slot at this declaration path, the most specific of three levels; a value may instead be
+given once at `params["edges"][source][arg]`, which covers every callable below the
+source that reads `arg`, or at the model level. Each slot takes its value from exactly
+one level. A value under the source regime, `params[source][arg]`, never reaches an edge
+callable. Per-target state laws belong to the source regime and keep their paths under
+`params[source][target]`. The slots are read off the declared `Transition`, so they do
+not depend on the horizon or on fixed-zero pruning. See
 [Move transition parameters under `edges`](../user_guide/migrating_dated_regimes.md#migrating-edge-parameters).
 
 (api-dated-regime-transitions)=
