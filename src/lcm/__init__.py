@@ -108,6 +108,7 @@ from lcm.certainty_equivalent import (  # noqa: E402
 )
 from lcm.collective import (  # noqa: E402
     CollectiveUtility,
+    Gate,
     ParetoObjective,
     ProjectedRegimeValue,
     StakeholderRoute,
@@ -213,6 +214,7 @@ __all__ = [
     "DiscreteGrid",
     "ExecutionConfig",
     "ExtremeValueTasteShocks",
+    "Gate",
     "GridBreakpoint",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",

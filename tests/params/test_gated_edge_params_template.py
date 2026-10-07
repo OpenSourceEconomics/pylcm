@@ -33,6 +33,7 @@ from _lcm.typing import FlatParams
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -40,7 +41,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -78,7 +78,7 @@ def test_gate_scalar_parameter_is_a_model_parameter():
         husband_reference_projection=_wage_itself,
         wife_fallback=_wife_fallback(projection=_wage_itself),
     )
-    assert (*_EDGE, "gate", "marriage_premium") in _leaf_paths(
+    assert (*_EDGE, "predicate", "marriage_premium") in _leaf_paths(
         model.get_params_template()["edges"]
     )
     solution = model.solve(
@@ -108,7 +108,7 @@ def test_gate_ref_projection_scalar_parameter_is_a_model_parameter():
     )
     assert (
         *_EDGE,
-        "gate_references",
+        "references",
         "V_single_m_ref",
         "wage",
         "husband_reference_weight",
@@ -169,11 +169,11 @@ def test_gated_edge_template_holds_each_declaration_path():
         wife_fallback=_wife_fallback(projection=_wife_fallback_wage),
     )
     assert _leaf_paths(model.get_params_template()["edges"]) == {
-        (*_EDGE, "probability", "meeting_rate"),
-        (*_EDGE, "gate", "marriage_premium"),
+        (*_EDGE, "meeting_rate"),
+        (*_EDGE, "predicate", "marriage_premium"),
         (
             *_EDGE,
-            "gate_references",
+            "references",
             "V_single_m_ref",
             "wage",
             "husband_reference_weight",
@@ -217,9 +217,9 @@ def test_phased_fallback_template_nests_each_phase_under_its_name():
     [
         pytest.param(
             {
-                "probability": {"meeting_rate": 1.0},
-                "gate": {"marriage_premium": 0.25},
-                "gate_references": {
+                "meeting_rate": 1.0,
+                "predicate": {"marriage_premium": 0.25},
+                "references": {
                     "V_single_m_ref": {"wage": {"husband_reference_weight": 0.1}}
                 },
                 "routes": {"f": {"fallback": {"wage": {"wife_fallback_weight": 0.4}}}},
@@ -282,10 +282,10 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots():
         }
     )
     assert set(edge_params(flat_params, source="single_f")) == {
-        "married_terminal__probability__meeting_rate",
-        "married_terminal__gate__marriage_premium",
+        "married_terminal__meeting_rate",
+        "married_terminal__predicate__marriage_premium",
         (
-            "married_terminal__gate_references__V_single_m_ref__wage__"
+            "married_terminal__references__V_single_m_ref__wage__"
             "husband_reference_weight"
         ),
         "married_terminal__routes__f__fallback__wage__wife_fallback_weight",
@@ -314,7 +314,7 @@ def test_source_regime_flat_params_hold_no_edge_key():
 
 def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot():
     """A gate parameter missing from the edge namespace is reported by its path."""
-    qname = "married_terminal__gate__marriage_premium"
+    qname = "married_terminal__predicate__marriage_premium"
     provenance = EdgeArgProvenance(
         states=frozenset(),
         params=MappingProxyType({f"__source_param__{qname}": (SOURCE_PARAMS, qname)}),
@@ -331,7 +331,7 @@ def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot():
     )
     with pytest.raises(
         KeyError,
-        match=r"params\['edges'\]\['single_f'\]\['married_terminal'\]\['gate'\]"
+        match=r"params\['edges'\]\['single_f'\]\['married_terminal'\]\['predicate'\]"
         r"\['marriage_premium'\]",
     ):
         bind_provenance_params(
@@ -346,7 +346,8 @@ def test_simulate_binder_names_the_user_path_of_a_missing_edge_slot():
     "regime_params",
     [
         pytest.param(
-            {"married_terminal": {"gate": {"marriage_premium": 1.5}}}, id="gate"
+            {"married_terminal": {"predicate": {"marriage_premium": 1.5}}},
+            id="predicate",
         ),
         pytest.param({"marriage_premium": 1.5}, id="source-regime-level"),
     ],
@@ -360,7 +361,7 @@ def test_edge_parameter_under_the_source_regime_names_the_edges_path(regime_para
     )
     with pytest.raises(
         InvalidParamsError,
-        match=r"params\['edges'\]\['single_f'\]\['married_terminal'\]\['gate'\]"
+        match=r"params\['edges'\]\['single_f'\]\['married_terminal'\]\['predicate'\]"
         r"\['marriage_premium'\]",
     ):
         model.solve(
@@ -389,7 +390,7 @@ def test_series_valued_gate_parameter_converts_and_solves():
             "discount_factor": DISCOUNT_FACTOR,
             "edges": {
                 "single_f": {
-                    "married_terminal": {"gate": {"marriage_premium": premium}}
+                    "married_terminal": {"predicate": {"marriage_premium": premium}}
                 }
             },
         },
@@ -472,15 +473,17 @@ def _build_model(
 
     """
     single_f_law = {
-        "married_terminal": ValueDependentTransition(
-            probability=StochasticTransition(
-                func=_marry_for_sure if probability is None else probability
-            ),
-            gate=gate,
+        "married_terminal": StochasticTransition(
+            func=_marry_for_sure if probability is None else probability
+        )
+    }
+    single_f_gates = {
+        "married_terminal": Gate(
+            predicate=gate,
             routes={
                 "f": StakeholderRoute(target_stakeholder="f", fallback=wife_fallback)
             },
-            gate_references={
+            references={
                 "V_single_f_ref": ProjectedRegimeValue(
                     regime="single_f_terminal",
                     projection={"wage": _wage_itself},
@@ -525,12 +528,7 @@ def _build_model(
         ages=_AGES,
         regime_id_class=_RegimeId,
         initial_nodes={0: "single_f"},
-        edges={
-            "single_f": Transition(
-                targets={"married_terminal": 0, "single_f_terminal": 0},
-                law=single_f_law,
-            )
-        },
+        edges={"single_f": Transition(law=single_f_law, gates=single_f_gates)},
     )
 
 

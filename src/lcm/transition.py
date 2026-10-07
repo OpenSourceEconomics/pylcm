@@ -86,8 +86,8 @@ class Transition:
     edge, the source is declared as a `Transition` whose `law` chooses among
     them:
 
-    - a per-target mapping of `StochasticTransition` probabilities (or
-      `ValueDependentTransition` gates), keyed by target;
+    - a per-target mapping of `StochasticTransition` probabilities, keyed by
+      target;
     - a plain function or `DeterministicTransition` returning a global regime
       code, which is how a discrete choice between regimes is written;
     - a `StochasticTransition` returning the full regime-code probability vector;
@@ -97,8 +97,12 @@ class Transition:
 
         edges = {
             "working": Transition(
-                targets={"working": (60, 61), "dead": (60, 61), "retired": 62},
-                law=ByAge(cases={(60, 61): {"working": survive, "dead": die}}),
+                law=ByAge(
+                    cases={
+                        (60, 61): {"working": survive, "dead": die},
+                        62: {"retired": certain},
+                    }
+                ),
             ),
             "retired": {"dead": (63, 64)},
         }
@@ -107,26 +111,69 @@ class Transition:
     one edge leaves the source, and there it must put unit mass on that edge. A
     `ByAge` law need not select ages with a single outgoing edge; the edge is the
     law there. It must select every age with more than one.
+
+    `gates` makes the transition into a target value-dependent: the law still
+    supplies the probability of reaching it, and the target's `Gate` decides
+    whether a row stays there or takes its route's fallback.
     """
 
-    targets: Mapping[str, AgeSelector]
-    """Destination regimes and the source ages at which each edge fires."""
+    targets: Mapping[str, AgeSelector] | None = None
+    """Destination regimes and the source ages at which each edge fires.
+
+    Optional when the law names its targets — a per-target mapping, a regime
+    name, or a `ByAge` / `Phased` of those. The destinations are then read off
+    the law: each key of a case is reached at the non-final ages that case
+    covers, and each route fallback of a gate wherever its gated target is.
+    Supplied anyway, it must equal what the law names. A law over all targets
+    names none, so it requires `targets`.
+    """
 
     law: object
     """The numerical law choosing among the destinations."""
 
+    gates: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
+    """One `Gate` per value-dependent destination, keyed by that destination."""
+
     def __post_init__(self) -> None:
-        if not self.targets:
-            raise RegimeInitializationError(
-                "`Transition.targets` must be a nonempty mapping from destination "
-                f"regimes to source-age selectors; got {self.targets!r}."
-            )
         if self.law is None:
             raise RegimeInitializationError(
                 "`Transition.law` cannot be `None`. A regime with no outgoing "
                 "edges is terminal; leave it out of `Model(edges=...)`."
             )
-        object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        if self.targets is None:
+            if not law_names_its_targets(self.law):
+                raise RegimeInitializationError(
+                    "`Transition.targets` is required when the law does not name "
+                    "its targets: a function, `DeterministicTransition` or "
+                    "vector `StochasticTransition` chooses among regime codes, "
+                    "so declare the destinations and their source ages; got "
+                    f"law={self.law!r}."
+                )
+        elif not self.targets:
+            raise RegimeInitializationError(
+                "`Transition.targets` must be a nonempty mapping from destination "
+                f"regimes to source-age selectors; got {self.targets!r}."
+            )
+        else:
+            object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+
+
+def law_names_its_targets(law: object) -> bool:
+    """Whether every case and phase of `law` is a per-target mapping or a name.
+
+    Args:
+        law: A `Transition` law.
+
+    Returns:
+        Whether the law's destinations can be read off its declaration.
+
+    """
+    if isinstance(law, ByAge):
+        return all(law_names_its_targets(case) for case in law.laws)
+    if isinstance(law, Phased):
+        return law_names_its_targets(law.solve) and law_names_its_targets(law.simulate)
+    return isinstance(law, Mapping | str)
 
 
 @beartype(conf=REGIME_CONF)
