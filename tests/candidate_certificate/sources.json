@@ -82,7 +82,7 @@
           },
           {
             "path": "src/_lcm/grids/coordinates.py",
-            "sha256": "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8"
+            "sha256": "a8576bee1b791046e93f9cd65568d8e7d6626e1eea02a89efc4ffccd3a485a28"
           },
           {
             "path": "src/_lcm/grids/discrete.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "b596c8d152c54efefc8b7773c6bf31f6eba68bd23a3f997471f8ec5a338b1a59"
+        "source_inventory_sha256": "88bc785d12ebfabd8fd35db108171c270e3496c51d42ea69995050c1721b50e9"
       },
       "fast": {
         "candidate_sources": [
@@ -556,7 +556,7 @@
           },
           {
             "path": "src/_lcm/grids/coordinates.py",
-            "sha256": "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8"
+            "sha256": "a8576bee1b791046e93f9cd65568d8e7d6626e1eea02a89efc4ffccd3a485a28"
           },
           {
             "path": "src/_lcm/grids/discrete.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "b596c8d152c54efefc8b7773c6bf31f6eba68bd23a3f997471f8ec5a338b1a59"
+        "source_inventory_sha256": "88bc785d12ebfabd8fd35db108171c270e3496c51d42ea69995050c1721b50e9"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "b596c8d152c54efefc8b7773c6bf31f6eba68bd23a3f997471f8ec5a338b1a59",
+  "source_inventory_sha256": "88bc785d12ebfabd8fd35db108171c270e3496c51d42ea69995050c1721b50e9",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1034,7 +1034,7 @@
     },
     {
       "path": "src/_lcm/grids/coordinates.py",
-      "sha256": "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8"
+      "sha256": "a8576bee1b791046e93f9cd65568d8e7d6626e1eea02a89efc4ffccd3a485a28"
     },
     {
       "path": "src/_lcm/grids/discrete.py",
