@@ -106,6 +106,11 @@ Its fields:
   planning only and does not enter the economic fingerprint.
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
+- `invariant_block_widths` names an invariant state to solve one code at a time, and
+  `invariant_block_schedule` (an `InvariantBlockSchedule`) the order: `PERIOD_MAJOR`
+  (the default) solves every code of a period before the next period; `BLOCK_MAJOR`
+  solves, simulates and releases one code's whole lifetime at a time, retaining its
+  values on the host. See [Solve one invariant code at a time](../user_guide/tuning.md).
 
 NB-EGM can nominate one marginal leaf on an unsharded, self-carry `main` program.
 Donation requires exclusive solve ownership and a final, unretained read. A physical

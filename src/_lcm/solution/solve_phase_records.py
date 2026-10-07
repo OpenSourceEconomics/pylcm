@@ -65,7 +65,7 @@ import contextvars
 import logging
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 
 type CallId = str
 
@@ -104,7 +104,7 @@ def new_call_id() -> CallId:
 @contextlib.contextmanager
 def solve_phase(
     *, name: str, logger: logging.Logger, call_id: CallId | None
-) -> Iterator[None]:
+) -> Generator[None]:
     """Bracket one host phase of a public solve with a begin and an end record.
 
     Args:
@@ -140,7 +140,7 @@ def solve_phase(
 
 
 @contextlib.contextmanager
-def nested_phase(*, name: str) -> Iterator[None]:
+def nested_phase(*, name: str) -> Generator[None]:
     """Bracket a phase inside whichever call's phase is open in this context.
 
     Outside any open phase — and on a thread the call's context did not reach —

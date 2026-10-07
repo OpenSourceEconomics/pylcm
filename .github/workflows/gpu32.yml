@@ -36,7 +36,7 @@ jobs:
             | head -n 1 | tr -d '.')
           test -n "$capability"
           echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -76,7 +76,7 @@ jobs:
           --log-cli-level=INFO tests
       - name: Upload policy and native reports
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: gpu-reports
           path: reports/

@@ -25,7 +25,7 @@ as it can up front:
 """
 
 import contextlib
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from fractions import Fraction
 from typing import Any
 
@@ -384,7 +384,7 @@ _TRANSFORMS = [
 
 
 @contextlib.contextmanager
-def _precision(bits: int) -> Iterator[None]:
+def _precision(bits: int) -> Generator[None]:
     """Build and solve at `bits`-bit floats, restoring the suite's setting."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", bits == 64)

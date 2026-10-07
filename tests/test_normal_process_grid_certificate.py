@@ -33,7 +33,7 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         assert historical.isdisjoint(names)
         assert set(population).isdisjoint(names)
         historical.update(names)
-    assert len(historical) == 554
+    assert len(historical) == 556
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 117
 
 

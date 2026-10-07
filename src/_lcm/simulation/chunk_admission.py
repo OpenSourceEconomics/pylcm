@@ -42,6 +42,7 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from _lcm.utils.logging import LogLevel
@@ -132,11 +133,15 @@ def prepare_simulation_chunks(
     policies: Mapping[int, Mapping[str, object]] | None = None,
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
+    group_sizes: tuple[int, ...] | None = None,
 ) -> PreparedSimulationChunks:
     """Select a complete admitted outer cohort with the top-first planner.
 
     `max_compilation_workers` bounds the threads compiling each profiled
     candidate's forward programs, as it does for the solve's compilation waves.
+    `group_sizes` holds the number of real subjects of each code when the
+    regimes group subjects by an invariant state: no candidate then exceeds the
+    largest group, and each candidate is profiled for every group's chunks.
     """
     runtime = next(iter(regimes.values())).simulation.programs.executor
     if (
@@ -212,6 +217,7 @@ def prepare_simulation_chunks(
         resident=resident,
         devices=devices,
         max_compilation_workers=max_compilation_workers,
+        group_sizes=group_sizes,
     )
     plan = _plan_independent_chunks(profiler=profiler, alignment=alignment)
     return PreparedSimulationChunks(
@@ -239,6 +245,7 @@ def _simulation_chunk_profile_key(
     widths: Mapping[str, int],
     independent_taste: bool,
     log_level: LogLevel,
+    group_sizes: tuple[int, ...] | None = None,
 ) -> tuple[object, ...]:
     """Return the canonical, versioned cache key for `profile_simulation_chunk`.
 
@@ -290,7 +297,7 @@ def _simulation_chunk_profile_key(
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
-    population_metadata = (n_subjects, population, original_population)
+    population_metadata = (n_subjects, population, original_population, group_sizes)
     devices_and_backend = (
         tuple((device.platform, device.id) for device in runtime.subject_devices),
         runtime.enable_jit,
@@ -341,6 +348,13 @@ class _ChunkProfiler:
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[str, object]] | None = None
     max_compilation_workers: int | None = None
+    group_sizes: tuple[int, ...] | None = None
+
+    def planning_population(self, *, alignment: int) -> int:
+        """Return the largest extent one chunk can need: a group, or everyone."""
+        if self.group_sizes is None:
+            return self.population
+        return grouped_extent(sizes=self.group_sizes, alignment=alignment)
 
     def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
         """Return a fitting common inner choice, or the smallest required bound."""
@@ -406,6 +420,7 @@ class _ChunkProfiler:
             "widths": widths,
             "independent_taste": self.independent_taste,
             "log_level": self.log_level,
+            "group_sizes": self.group_sizes,
         }
         return profile_cache_registry().get_or_build(
             runtime_token=self.runtime.profile_cache_token,
@@ -518,14 +533,15 @@ def _plan_independent_chunks(
     if budget is None:
         raise ExecutionPlanningError("Independent chunk admission needs a budget.")
     configured = profiler.runtime.execution.axis_widths
+    population = profiler.planning_population(alignment=alignment)
     subject_width = _resolve_subject_anchor_width(
         configured=configured,
-        population=profiler.population,
+        population=population,
         alignment=alignment,
         budget=budget,
     )
     candidates = _independent_outer_candidates(
-        population=profiler.population, alignment=alignment, subject_width=subject_width
+        population=population, alignment=alignment, subject_width=subject_width
     )
     anchor = candidates[0]
     largest = candidates[-1]

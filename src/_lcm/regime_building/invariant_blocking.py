@@ -7,13 +7,17 @@ before anything is lowered:
 - `fail_if_invariant_blocking_route_is_unsupported` reads only the
   declarations, before the regimes are built, and refuses what the route
   does not serve;
-- `fail_if_invariant_blocking_is_unsafe_for_model` runs the placement-independent
-  invariant analysis on the built model and refuses a state whose
-  declarations do not establish that its value never changes and that no
-  value read crosses its codes.
+- `admit_invariant_blocking` runs the placement-independent invariant analysis
+  on the built model and refuses a state whose declarations do not establish
+  that its value never changes and that no value read crosses its codes.
+
+When the forward phase preserves the state too, forward simulation groups its
+subjects by the state's code; otherwise it keeps the ungrouped route.
 """
 
+import dataclasses
 from collections.abc import Mapping
+from types import MappingProxyType
 
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid
@@ -24,10 +28,13 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
+from _lcm.simulation.subject_groups import SubjectGroupingRoute
+from _lcm.solution.backward_induction import _value_axis_names
 from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.execution import InvariantBlockSchedule
 
 _REMEDY = (
     "Remove the state from ExecutionConfig.invariant_block_widths to solve it "
@@ -61,6 +68,7 @@ def fail_if_invariant_blocking_route_is_unsupported(
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     block_widths: Mapping[StateName, int],
     sharded_states: frozenset[StateName],
+    schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
 ) -> None:
     """Refuse a request the blocked GridSearch route does not serve.
 
@@ -72,7 +80,11 @@ def fail_if_invariant_blocking_route_is_unsupported(
     - a state no regime declares;
     - a non-terminal regime carrying the state that is solved by another
       solver, or declares taste shocks, stakeholders, gated edges or
-      same-period references, or carries the state on a non-discrete grid.
+      same-period references, or carries the state on a non-discrete grid;
+    - under the block-major schedule, no blocked state at all, or a regime
+      that does not carry the blocked state on a discrete grid: each code is
+      solved as one component, and a regime without the state would be solved
+      once per code.
 
     Folded processes and edge-reference reads are refused once the regimes are
     built, where they are resolved.
@@ -81,6 +93,14 @@ def fail_if_invariant_blocking_route_is_unsupported(
         ExecutionPlanningError: The request is not served.
 
     """
+    if schedule is InvariantBlockSchedule.BLOCK_MAJOR and not block_widths:
+        msg = (
+            "ExecutionConfig.invariant_block_schedule=BLOCK_MAJOR solves one code "
+            "of a blocked state at a time, but invariant_block_widths names no "
+            "state. Name the state in invariant_block_widths, or keep the default "
+            "InvariantBlockSchedule.PERIOD_MAJOR."
+        )
+        raise ExecutionPlanningError(msg)
     if not block_widths:
         return
     failures = [
@@ -99,6 +119,11 @@ def fail_if_invariant_blocking_route_is_unsupported(
                 regime=regime,
                 carried=tuple(name for name in block_widths if name in regime.states),
             )
+        ),
+        *(
+            _block_major_failures(user_regimes=user_regimes, block_widths=block_widths)
+            if schedule is InvariantBlockSchedule.BLOCK_MAJOR
+            else ()
         ),
     ]
     if failures:
@@ -136,6 +161,27 @@ def _request_failures(
     return failures
 
 
+def _block_major_failures(
+    *,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    block_widths: Mapping[StateName, int],
+) -> list[str]:
+    """Name every regime the block-major schedule cannot take components of."""
+    return [
+        (
+            f"regime {regime_name!r} does not carry {name!r}, which the "
+            "block-major schedule requires of every regime"
+            if name not in regime.states
+            else f"regime {regime_name!r} carries {name!r} on a non-discrete grid"
+        )
+        for name in block_widths
+        for regime_name, regime in user_regimes.items()
+        if not isinstance(regime.states.get(name), DiscreteGrid)
+        # A non-terminal carrier's grid is already checked by the route itself.
+        and not (regime.states.get(name) is not None and not regime.terminal)
+    ]
+
+
 def _regime_failures(
     *,
     regime_name: RegimeName,
@@ -165,7 +211,7 @@ def _regime_failures(
     return [f"regime {regime_name!r} {reason}" for failed, reason in checks if failed]
 
 
-def fail_if_invariant_blocking_is_unsafe_for_model(
+def admit_invariant_blocking(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regimes: Mapping[RegimeName, Regime],
@@ -174,13 +220,30 @@ def fail_if_invariant_blocking_is_unsafe_for_model(
     ages: AgeGrid,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
     block_widths: Mapping[StateName, int],
-) -> None:
-    """Analyse the built model and refuse an unsafe solve-phase request.
+    schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
+) -> MappingProxyType[RegimeName, Regime]:
+    """Refuse an unsafe solve-phase request and group simulation where certified.
 
-    Nothing is analysed when no state is blocked.
+    Nothing is analysed when no state is blocked. Forward simulation groups
+    subjects by the blocked state only when the simulate phase preserves it as
+    well, and every regime draws through the ordinary grid decision: no regime
+    declares taste shocks or gated edges, or replays a solve payload. Any other
+    model keeps the ungrouped forward route.
+
+    Returns:
+        The regimes, whose forward programs carry the grouping route when
+        grouping applies.
+
+    Raises:
+        ExecutionPlanningError: The solve-phase request is unsafe.
+
     """
     if not block_widths:
-        return
+        return MappingProxyType(dict(regimes))
+    if schedule is InvariantBlockSchedule.BLOCK_MAJOR:
+        _fail_if_a_regime_drops_the_component_state(
+            regimes=regimes, block_widths=block_widths
+        )
     components = analyze_invariant_components(
         user_regimes=user_regimes,
         regimes=regimes,
@@ -192,3 +255,63 @@ def fail_if_invariant_blocking_is_unsafe_for_model(
     fail_if_invariant_blocking_is_unsafe(
         components=components, block_widths=block_widths, phase="solve"
     )
+    (state_name,) = block_widths
+    component = components[state_name]
+    if not component.simulate.eligible or any(
+        regime.has_taste_shocks
+        or regime.gated_edges
+        or regime.simulation.replay_route.policy_applicable
+        or regime.simulation.external_replay_route is not None
+        for regime in regimes.values()
+    ):
+        return MappingProxyType(dict(regimes))
+    route = SubjectGroupingRoute(
+        state_name=state_name,
+        codes=component.codes,
+        value_axis_names=_value_axis_names(regimes=regimes),
+    )
+    return MappingProxyType(
+        {
+            name: dataclasses.replace(
+                regime,
+                simulation=dataclasses.replace(
+                    regime.simulation,
+                    programs=dataclasses.replace(
+                        regime.simulation.programs, grouping=route
+                    ),
+                ),
+            )
+            for name, regime in regimes.items()
+        }
+    )
+
+
+def _fail_if_a_regime_drops_the_component_state(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    block_widths: Mapping[StateName, int],
+) -> None:
+    """Refuse the block-major schedule when a built regime solves without the state.
+
+    A regime may declare the state and still never read it, in which case the
+    built regime carries no axis for it. Its value is then shared by every
+    code, and the component schedule would solve it once per code.
+
+    Raises:
+        ExecutionPlanningError: A built regime's value has no axis for the state.
+
+    """
+    (state_name,) = block_widths
+    dropping = [
+        name
+        for name, regime in regimes.items()
+        if state_name not in regime.solution.state_names
+    ]
+    if dropping:
+        msg = (
+            "ExecutionConfig.invariant_block_schedule=BLOCK_MAJOR requires every "
+            f"regime's value to carry {state_name!r}, but regimes "
+            f"{dropping!r} solve without it. Keep the default "
+            "InvariantBlockSchedule.PERIOD_MAJOR for this model."
+        )
+        raise ExecutionPlanningError(msg)

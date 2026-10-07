@@ -16,7 +16,7 @@ import gc
 import logging
 import math
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any
@@ -57,7 +57,7 @@ def _solve(*, model: Model, params: dict) -> Any:
 
 
 @contextmanager
-def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int]]:
+def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Generator[dict[str, int]]:
     """Count calls of the builders a blueprint hit skips."""
     calls = dict.fromkeys(_EXPENSIVE_BUILDERS, 0)
     with monkeypatch.context() as patch:
@@ -77,7 +77,7 @@ def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int
 @contextmanager
 def _captured_plans(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[list[Any]]:
+) -> Generator[list[Any]]:
     """Capture the compiled-program plan of every solve inside the block."""
     plans: list[Any] = []
     original = bi._compile_all_functions

@@ -33,6 +33,7 @@ from _lcm.simulation.program_arguments import (
     transition_arguments,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.typing import FlatParams
@@ -324,6 +325,19 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             ),
         )
     else:
+        # A grouped decision reads each continuation carrying the grouping
+        # state through one code's block, which has that axis removed.
+        grouping = regime.simulation.programs.grouping
+        decision_values = MappingProxyType(
+            {
+                target: type_local_template(
+                    route=grouping,
+                    regime=target,
+                    leaf=cast("jax.Array | jax.ShapeDtypeStruct", leaf),
+                )
+                for target, leaf in next_values.items()
+            }
+        )
         arguments = decision_arguments(
             states=states,
             discrete_actions=_shared_tree(tree=base.discrete_actions, devices=devices),
@@ -333,7 +347,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             taste_keys={"taste_shock_key": decision_key}
             if regime.has_taste_shocks
             else {},
-            next_values=_shared_tree(tree=next_values, devices=devices),
+            next_values=_shared_tree(tree=decision_values, devices=devices),
             references=_shared_tree(tree=references, devices=devices),
             params=params,
             period=period_value,
@@ -343,7 +357,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             "tuple[jax.ShapeDtypeStruct, object]",
             _prepare_program(
                 runtime=runtime,
-                program=regime.simulation.programs.decision[period],
+                program=regime.simulation.programs.forward_decision[period],
                 arguments=arguments,
                 period=period,
                 n_subjects=n_subjects,

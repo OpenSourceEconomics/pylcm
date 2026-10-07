@@ -695,6 +695,7 @@ def test_direct_flow_certificate_names_every_supported_route():
     assert set(result["routes"]) == {
         "singleton_solve",
         "singleton_streamed_solve",
+        "singleton_action_partitioned_solve",
         "singleton_simulate",
         "collective_solve",
         "collective_streamed_solve",

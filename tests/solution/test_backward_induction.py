@@ -61,6 +61,8 @@ class MockSolutionPhase:
     """
     sharded_state_names: frozenset[StateOrActionName] = frozenset()
     """These dense fixture state axes have no declared device sharding."""
+    action_partitions: int = 1
+    """No regime's actions are shared over devices."""
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     artifact_authorities: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
