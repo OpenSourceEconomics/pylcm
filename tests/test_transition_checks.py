@@ -33,6 +33,7 @@ from lcm import (
     Phased,
     StochasticTransition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.regime import Regime as UserRegime
@@ -667,32 +668,114 @@ def test_state_validator_raises_on_invalid_law_at_unreached_derived_code() -> No
         model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
-def test_state_validator_skips_law_reading_non_categorical_function_output(
+def _health_from_income(*, income: FloatND) -> FloatND:
+    return jnp.stack([1.0 - income, income])
+
+
+def _health_beside_income(*, income: FloatND) -> FloatND:
+    return jnp.stack([jnp.asarray(0.5), income])
+
+
+def test_state_validator_checks_law_reading_non_categorical_function_output(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A law reading a plain function output is skipped with a warning."""
+    """A law reading a plain function output is evaluated through that function.
 
-    def health_probs(
-        *,
-        health: DiscreteState,  # noqa: ARG001
-        income: FloatND,  # noqa: ARG001
-    ) -> FloatND:
-        return jnp.array([0.3, 0.7])
-
-    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
+    `income = 0.1 * wealth` lies in `[0.1, 1]` on the wealth grid, so the row
+    `[1 - income, income]` is valid and nothing is skipped.
+    """
+    model = _model_with_function_reading_health_probs(
+        next_health_func=_health_from_income
+    )
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.solve(log_level="warning", params={"discount_factor": 0.95})
 
-    skips = [
-        r.message for r in caplog.records if "not numerically validated" in r.message
-    ]
-    assert skips == [
-        (
-            "StochasticTransition for state 'health' in regime 'alive' not "
-            "numerically validated: parameter 'income' is not a recognized grid "
-            "or model parameter."
-        )
-    ]
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_rejects_invalid_law_reading_function_output() -> None:
+    """The row `[0.5, income]` sums to `0.6` at `wealth = 1` and is refused."""
+    model = _model_with_function_reading_health_probs(
+        next_health_func=_health_beside_income
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' in regime 'alive'",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _health_from_share(*, carried_share: ContinuousState) -> FloatND:
+    return jnp.stack([1.0 - carried_share, carried_share])
+
+
+def _health_from_stray_share(*, carried_share: ContinuousState) -> FloatND:
+    return _health_from_share(carried_share=2.0 * carried_share - 0.5)
+
+
+def _model_with_carried_share_health_probs(*, simulate_law: Callable) -> Model:
+    """Build a model whose `health` laws read the carried state `carried_share`.
+
+    `carried_share` is the function `0.5` in the solve phase and the grid
+    `{0, 1}` in the simulate phase. The solve law is `[1 - s, s]`; the
+    simulate law is `simulate_law`.
+    """
+    alive = UserRegime(
+        states={
+            "wealth": WEALTH_GRID,
+            "health": DiscreteGrid(category_class=_Health),
+            "carried_share": Phased(
+                solve=_half, simulate=LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+            ),
+        },
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": Phased(
+                solve=StochasticTransition(func=_health_from_share),
+                simulate=StochasticTransition(func=simulate_law),
+            ),
+            "carried_share": fixed_transition("carried_share"),
+        },
+        functions={"utility": _utility_alive},
+        constraints={"budget": _budget},
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
+    )
+
+
+def test_state_validator_checks_laws_reading_a_carried_state_in_both_phases(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The solve law reads the carried state's function, the simulate law its grid."""
+    model = _model_with_carried_share_health_probs(simulate_law=_health_from_share)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_rejects_a_simulate_law_invalid_on_the_carried_grid() -> None:
+    """At `carried_share = 0` the simulate row is `[1.5, -0.5]` and is refused."""
+    model = _model_with_carried_share_health_probs(
+        simulate_law=_health_from_stray_share
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' \(simulate phase\) in regime 'alive'",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
 def _health_probs_reading_effort(
