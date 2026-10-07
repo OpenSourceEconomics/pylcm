@@ -62,14 +62,16 @@ Code that read a regime's law back reads it from the model:
 | `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
 | `Regime.gated_edges`                    | `model.graph.laws[name].gated_edges`           |
 | `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
-| the law passed as `regime_transitions=` | `model.declared_laws[name]`                    |
+| the law passed as `regime_transitions=` | `model.declared_laws[phase][name]`             |
 
-`model.declared_laws[name]` is the tuple of laws a source declared as a `Transition`,
-exactly as declared and one per phase: a single law, or the solve law and then the
-simulate law when the whole `edges` mapping is `Phased`. `model.graph.laws[name]` is the
-law the solver and simulator evaluate: bound to the graph, pruned of fixed-zero cells
-and lowered to the ages the starts demand. A regime is terminal when it has no outgoing
-edge in `Model(edges=...)`, and `model.graph.laws[name].terminal` says so:
+`model.declared_laws["solve"][name]` and `model.declared_laws["simulate"][name]` are the
+law a source declared as a `Transition`, exactly as declared. Edges declared for both
+phases give both phases the same law; a `Phased` `edges` mapping gives each phase its
+own. A source without a `Transition` in a phase is absent from that phase's mapping.
+`model.graph.laws[name]` is the law the solver and simulator evaluate: bound to the
+graph, pruned of fixed-zero cells and lowered to the ages the starts demand. A regime is
+terminal when it has no outgoing edge in `Model(edges=...)`, and
+`model.graph.laws[name].terminal` says so:
 
 ```python
 assert model.graph.laws["dead"].terminal
