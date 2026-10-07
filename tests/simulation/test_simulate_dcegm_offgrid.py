@@ -29,7 +29,7 @@ from tests.test_models.deterministic import base, dcegm_variants, retirement_onl
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 
 pytestmark = pytest.mark.slow
@@ -80,7 +80,9 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     must.
     """
     model = _closed_form_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
 
     # Seed subjects at wealth strictly between consumption-grid nodes (the
     # consumption grid shares spacing with the wealth grid in this example).
@@ -223,7 +225,9 @@ def test_passive_state_regime_keeps_the_grid_consumption_path():
     re-decision across the passive axis exists.
     """
     model = _skill_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
@@ -290,7 +294,9 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         initial_nodes={40: "retirement"},
         edges={"retirement": {"dead": 40}},
     )
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])

@@ -34,7 +34,7 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -140,7 +140,9 @@ def _solve_capturing(
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model = _model(axis_width_ceilings=axis_width_ceilings)
-    return model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+    return model.solve(
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
+    )
 
 
 def _captured_widths(tmp_path: Path) -> dict[str, dict[str, int]]:
@@ -171,7 +173,7 @@ def test_no_ceiling_keeps_the_bootstrap_cell_width(*, monkeypatch, tmp_path) -> 
 def test_ceiling_leaves_the_value_shape_unchanged() -> None:
     """Tiling narrower partitions the same output; the value array keeps its shape."""
     bounded = _model(axis_width_ceilings={"cell": _CELL_CEILING}).solve(
-        params=get_params(n_periods=_N_PERIODS), log_level="off"
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
 
     assert np.asarray(bounded.values[0]["working_life"]).shape == (_N_WEALTH,)
@@ -179,9 +181,11 @@ def test_ceiling_leaves_the_value_shape_unchanged() -> None:
 
 def test_ceiling_leaves_the_solved_values_unchanged() -> None:
     """A narrower cell tile partitions the same maximum, bit for bit."""
-    unbounded = _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+    unbounded = _model().solve(
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
+    )
     bounded = _model(axis_width_ceilings={"cell": _CELL_CEILING}).solve(
-        params=get_params(n_periods=_N_PERIODS), log_level="off"
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
 
     assert_agrees_to_ulp(
@@ -215,7 +219,7 @@ def _simulate_recording_widths(
     model = _model(
         axis_width_ceilings=axis_width_ceilings, device_memory_bytes=device_memory_bytes
     )
-    params = get_params(n_periods=_N_PERIODS)
+    params = get_graph_only_params(n_periods=_N_PERIODS)
     result = model.simulate(
         params=params,
         initial_conditions={

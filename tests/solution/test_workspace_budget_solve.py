@@ -38,7 +38,7 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -122,7 +122,7 @@ def _solve_capturing(
         )
     )
     return model.solve(
-        params=get_params(n_periods=_N_PERIODS),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
         log_level="off",
     )
 
@@ -217,7 +217,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
     """A narrower block partitions the same maximum; values agree to a few ULP."""
     del synthetic_peaks
     unbudgeted = _model().solve(
-        params=get_params(n_periods=_N_PERIODS), log_level="off"
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
     budgeted = _solve_capturing(
         monkeypatch=monkeypatch,
@@ -332,7 +332,7 @@ def test_an_eager_solve_refuses_the_default_budget_and_runs_without_one(
 ) -> None:
     """`enable_jit=False` refuses the device default; opting out solves alike."""
     _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=1 << 30)
-    params = get_params(n_periods=_N_PERIODS)
+    params = get_graph_only_params(n_periods=_N_PERIODS)
     compiled = _model().solve(params=params, log_level="off")
 
     with pytest.raises(
@@ -362,7 +362,7 @@ def test_an_eager_solve_with_an_explicit_budget_is_refused() -> None:
     )
 
     with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
-        model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+        model.solve(params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off")
 
 
 def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
@@ -373,7 +373,7 @@ def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
 
     with pytest.raises(ExecutionPlanningError) as refusal:
         _model(execution_config=ExecutionConfig()).solve(
-            params=get_params(n_periods=_N_PERIODS), log_level="off"
+            params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
         )
 
     message = str(refusal.value)

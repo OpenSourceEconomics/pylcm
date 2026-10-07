@@ -23,7 +23,7 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -103,7 +103,9 @@ def _adaptive_params() -> dict[str, float]:
 def test_a_dropped_solution_releases_every_compiled_executable() -> None:
     before = _live_compiled_executables()
 
-    solution = _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+    solution = _model().solve(
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
+    )
     del solution
 
     assert _live_compiled_executables() == before

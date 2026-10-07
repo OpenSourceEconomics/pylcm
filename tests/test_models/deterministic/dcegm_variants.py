@@ -176,6 +176,27 @@ def get_retirement_only_params(
     )
 
 
+def get_graph_only_retirement_params(
+    *,
+    n_periods: int,
+    discount_factor: float = 0.98,
+    interest_rate: float = 0.0,
+) -> dict:
+    """Retirement-only params for a model whose `retirement` edges declare no law.
+
+    Such a model has no law reading `final_age_alive`, so the key is unknown there.
+    """
+    return {
+        name: value
+        for name, value in get_retirement_only_params(
+            n_periods=n_periods,
+            discount_factor=discount_factor,
+            interest_rate=interest_rate,
+        ).items()
+        if name != "final_age_alive"
+    }
+
+
 def get_full_params(
     *,
     n_periods: int,

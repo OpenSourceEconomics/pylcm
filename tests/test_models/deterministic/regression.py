@@ -176,3 +176,26 @@ def get_params(
         },
         "final_age_alive": START_AGE + n_periods - 2,
     }
+
+
+def get_graph_only_params(
+    *,
+    n_periods: int,
+    discount_factor: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+) -> UserParams:
+    """`get_params` for a model whose `working_life` edges declare no law.
+
+    Such a model has no law reading `final_age_alive`, so the key is unknown there.
+    """
+    return {
+        name: value
+        for name, value in get_params(
+            n_periods=n_periods,
+            discount_factor=discount_factor,
+            disutility_of_work=disutility_of_work,
+            interest_rate=interest_rate,
+        ).items()
+        if name != "final_age_alive"
+    }
