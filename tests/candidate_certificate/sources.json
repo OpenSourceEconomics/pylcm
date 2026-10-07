@@ -334,7 +334,7 @@
           },
           {
             "path": "src/_lcm/solution/action_streaming.py",
-            "sha256": "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58"
+            "sha256": "86940bb57c3ccda2b2b9b5fee82caf0152d4c65ca73c926f92523839b42573b6"
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
@@ -474,7 +474,7 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "52e7f707885d66d9d15b3ce5f39bbfd4d36cdf15160e283af6f47123507491bf"
+        "source_inventory_sha256": "050a27261f37a7517126349f5b0ffc62a594cebf8299c76a6a2081ce143b455c"
       },
       "fast": {
         "candidate_sources": [
@@ -808,7 +808,7 @@
           },
           {
             "path": "src/_lcm/solution/action_streaming.py",
-            "sha256": "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58"
+            "sha256": "86940bb57c3ccda2b2b9b5fee82caf0152d4c65ca73c926f92523839b42573b6"
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
@@ -948,13 +948,13 @@
           }
         ],
         "source_count": 117,
-        "source_inventory_sha256": "52e7f707885d66d9d15b3ce5f39bbfd4d36cdf15160e283af6f47123507491bf"
+        "source_inventory_sha256": "050a27261f37a7517126349f5b0ffc62a594cebf8299c76a6a2081ce143b455c"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "52e7f707885d66d9d15b3ce5f39bbfd4d36cdf15160e283af6f47123507491bf",
+  "source_inventory_sha256": "050a27261f37a7517126349f5b0ffc62a594cebf8299c76a6a2081ce143b455c",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -1286,7 +1286,7 @@
     },
     {
       "path": "src/_lcm/solution/action_streaming.py",
-      "sha256": "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58"
+      "sha256": "86940bb57c3ccda2b2b9b5fee82caf0152d4c65ca73c926f92523839b42573b6"
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
