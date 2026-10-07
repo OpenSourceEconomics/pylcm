@@ -153,3 +153,105 @@ def test_finite_reads_never_reverse_a_discrete_choice() -> None:
         reversals += int(np.argmax(guarded) != np.argmax(bare))
 
     assert reversals == 0
+
+
+_DTYPES = [jnp.float32, jnp.float64]
+
+
+def _grid_with_infeasible_node(*, infeasible_index: int, dtype: type) -> FloatND:
+    """Twelve finite nodes, the one at `infeasible_index` replaced by `-inf`.
+
+    The last node holds the value of the feasible neighbour from a production
+    solve, so the top-edge reads below reproduce it.
+    """
+    values = np.linspace(-1.0, -0.1, 12)
+    values[11] = -0.07254466811182257
+    values[infeasible_index] = -np.inf
+    grid = jnp.asarray(values, dtype=dtype)
+    assert grid.dtype == dtype
+    return grid
+
+
+def _read(*, grid: FloatND, coordinate: float) -> FloatND:
+    coord = jnp.asarray(coordinate, dtype=grid.dtype)
+    assert coord.dtype == grid.dtype
+    return map_coordinates(input=grid, coordinates=[coord])
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
+def test_extrapolation_above_the_grid_onto_an_infeasible_node_is_infeasible(
+    dtype: type,
+) -> None:
+    """A read beyond the top node whose stencil holds `-inf` is `-inf`.
+
+    The corner below the top node carries a negative weight out there, and a
+    negative weight on `-inf` must not turn the read into `+inf`.
+    """
+    grid = _grid_with_infeasible_node(infeasible_index=10, dtype=dtype)
+
+    read = _read(grid=grid, coordinate=11.62304782083577)
+
+    assert float(read) == -np.inf
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
+def test_extrapolation_below_the_grid_onto_an_infeasible_node_is_infeasible(
+    dtype: type,
+) -> None:
+    """A read below the bottom node whose stencil holds `-inf` is `-inf`."""
+    grid = _grid_with_infeasible_node(infeasible_index=1, dtype=dtype)
+
+    read = _read(grid=grid, coordinate=-0.62304782083577)
+
+    assert float(read) == -np.inf
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
+def test_interpolation_inside_the_grid_onto_an_infeasible_node_is_infeasible(
+    dtype: type,
+) -> None:
+    """A read strictly between a feasible and an infeasible node is `-inf`."""
+    grid = _grid_with_infeasible_node(infeasible_index=10, dtype=dtype)
+
+    read = _read(grid=grid, coordinate=10.25)
+
+    assert float(read) == -np.inf
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
+@pytest.mark.parametrize("coordinate", [11.0, 0.0], ids=["top-node", "bottom-node"])
+def test_a_zero_weight_infeasible_corner_leaves_the_read_feasible(
+    *, dtype: type, coordinate: float
+) -> None:
+    """A read exactly at a feasible node returns that node beside an `-inf` one."""
+    infeasible_index = 10 if coordinate > 0 else 1
+    grid = _grid_with_infeasible_node(infeasible_index=infeasible_index, dtype=dtype)
+
+    read = _read(grid=grid, coordinate=coordinate)
+
+    assert float(read) == float(grid[int(coordinate)])
+
+
+@pytest.mark.usefixtures("x64_enabled")
+@pytest.mark.parametrize("dtype", _DTYPES, ids=["fp32", "fp64"])
+@pytest.mark.parametrize(
+    "coordinate",
+    [-1.62304782083577, -0.5, 3.25, 11.62304782083577, 13.5],
+    ids=["far-below", "below", "inside", "above", "far-above"],
+)
+def test_a_finite_read_is_bitwise_the_plain_weighted_sum(
+    *, dtype: type, coordinate: float
+) -> None:
+    """On a finite grid every read, extrapolated or not, is the bare corner sum."""
+    grid = jnp.asarray(np.linspace(-1.0, 3.0, 12) ** 3, dtype=dtype)
+    coord = [jnp.asarray(coordinate, dtype=dtype)]
+    assert grid.dtype == dtype
+
+    np.testing.assert_array_equal(
+        np.asarray(map_coordinates(input=grid, coordinates=coord)),
+        np.asarray(_bare_multiply_reference(grid=grid, coordinates=coord)),
+    )
