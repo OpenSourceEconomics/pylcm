@@ -59,6 +59,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 
 N_WEALTH = 12
@@ -263,6 +264,7 @@ def build_model(
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
     second_passive_state: bool = False,
     carried_state: bool = False,
+    fixed_params: UserParams | None = None,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -302,6 +304,9 @@ def build_model(
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
+    `fixed_params` overrides the fixed parameters, which otherwise fix the
+    regime law's `final_age_alive` to the last alive age; `{}` leaves it a free
+    parameter at `params["edges"]["alive"]["final_age_alive"]`.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -423,7 +428,11 @@ def build_model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
-        fixed_params={"final_age_alive": final_age_alive},
+        fixed_params=(
+            {"final_age_alive": final_age_alive}
+            if fixed_params is None
+            else fixed_params
+        ),
         execution_config=execution_config,
         initial_nodes={20: ("alive", "dead")},
         edges={
