@@ -546,7 +546,8 @@ class Regime:
 
         Args:
             phase: Which variant to use for phase-variant entries.
-            law: The law the model binds for this regime from its edges. Without
+            law: The law the model binds for this regime from its edges
+                (`model.graph.laws[name]`). Without
                 one the regime's state laws are collected and no regime
                 transition; a terminal law contributes neither.
 

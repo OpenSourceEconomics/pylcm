@@ -166,7 +166,7 @@ age. A full-vector `StochasticTransition(func=...)` returns probabilities in ful
 regime-code order and must be zero outside graph support. Per-target scalar probability
 mappings provide the probabilities for graph-selected destinations. Their keys do not
 independently define edges. Public wrappers and decorators take no `targets` argument;
-passing one raises an error that points to `Model(edges=...)`.
+passing one raises a `TypeError`. Destinations are declared only in `Model(edges=...)`.
 
 Source-age selectors can be exact ages, nonempty tuples, integer ranges, or
 `AgeRange(start=..., exclusive_stop=...)`. A half-open selector excludes its stop:
@@ -203,7 +203,10 @@ edges = Phased(
 
 A law-free source follows its single edge in each phase, so
 `Phased(solve={"working": {"working": 60}}, simulate={"working": {"retired": 60}})`
-believes in staying while realizing retirement.
+believes in staying while realizing retirement. Where one phase has a single edge at a
+source age and the other phase's `Transition` law is a per-target probability mapping
+there, the lone edge counts as a probability-one cell for its destination, so both
+phases carry the same form.
 
 Every realized visit needs a local solve value and its recursive perceived continuation
 values. Additional nodes needed only for valuation do not create realized visits. Graph

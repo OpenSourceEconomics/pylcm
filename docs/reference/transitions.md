@@ -78,7 +78,9 @@ full vector must be exactly zero outside graph support. Scalar probability mappi
 supply graph-selected cells without declaring topology themselves. Terminal regimes have
 no outgoing edges. `Phased(solve=..., simulate=...)` can give the model different
 perceived and realized edges; each phase's `Transition` carries that phase's law, and
-state handoffs stay phase-specific on the source regime.
+state handoffs stay phase-specific on the source regime. A lone edge in one phase,
+paired with a per-target probability mapping in the other, counts as a probability-one
+cell for its destination.
 
 (api-dated-regime-transitions)=
 

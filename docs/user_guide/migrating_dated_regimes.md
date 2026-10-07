@@ -10,8 +10,24 @@ structure and its law. Initial age–regime pairs are required explicitly throug
 
 ## Move transitions onto Model
 
-Delete `regime_transitions=` from every `Regime`. Where each source age has a single
-destination, the edges alone are the law:
+`Regime` has no `regime_transitions` argument; passing one raises a `TypeError`. The
+removed form declared the law on the source regime:
+
+```python
+# Removed: raises TypeError. Shown only to identify code that needs migrating.
+working = Regime(
+    functions={"utility": utility},
+    states={"assets": assets_grid},
+    state_transitions={"assets": next_assets},
+    regime_transitions=ByAge.until(
+        stop_age_exclusive=62, law="working", then="retired"
+    ),
+)
+```
+
+Delete `regime_transitions=` from every `Regime` and declare the destinations in
+`Model(edges=...)`. Where each source age has a single destination, the edges alone are
+the law:
 
 ```python
 # Current declaration fragment: working stays until 62, then retires.
@@ -39,9 +55,10 @@ This replaces laws such as `"dead"`, `ByAge.until(law="working", then="retired")
 selector that only ever returns the one available destination. A regime that declared
 `regime_transitions=None` simply has no outgoing edges.
 
+`Regime.terminal`, `Regime.gated_edges` and `Regime.decomposed_transition` are removed.
 Code that read a regime's law back reads it from the model graph:
-`model.graph.laws[name].terminal` replaces `regime.terminal`, and
-`model.graph.laws[name].gated_edges` replaces `regime.gated_edges`.
+`model.graph.laws[name].terminal`, `model.graph.laws[name].gated_edges` and
+`model.graph.laws[name].decomposed_transition`.
 
 Where a source age has several destinations, move the former `regime_transitions` value
 unchanged into a `Transition` that replaces the source's destination mapping:
@@ -59,12 +76,12 @@ edges = {
 A `Transition` on a source with at most one destination per age is rejected; drop its
 law instead. A `ByAge` law may leave single-destination ages unselected.
 
-Public `DeterministicTransition` and `StochasticTransition` refuse `targets` with an
-error that points to `Model(edges=...)`, the only place regime transitions are declared.
-Their targetless decorator factories are `@deterministic_transition()` and
-`@stochastic_transition()`. Plain functions remain deterministic for both state and
-regime laws. Full-vector stochastic laws retain global regime-code ordering;
-probabilities outside graph support must be zero.
+Public `DeterministicTransition` and `StochasticTransition` have no `targets` argument;
+passing one raises a `TypeError`. Declare destinations in `Model(edges=...)`, the only
+place regime transitions are declared. Their targetless decorator factories are
+`@deterministic_transition()` and `@stochastic_transition()`. Plain functions remain
+deterministic for both state and regime laws. Full-vector stochastic laws retain global
+regime-code ordering; probabilities outside graph support must be zero.
 
 Per-target probability mappings still supply scalar probability laws. Move their
 structural destination and age restrictions into `edges`, and keep target-specific state
