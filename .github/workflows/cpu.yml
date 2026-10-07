@@ -2280,6 +2280,7 @@ jobs:
       - tests-topology-four-device
       - tests-topology-eight-device
       - tests-slow-solution
+      - tests-benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -2312,11 +2313,6 @@ jobs:
           directory: coverage-data
           disable_search: false
           fail_ci_if_error: true
-  # One context for the whole matrix, so branch protection names `cpu` rather
-  # than every lane -- adding a platform or a shard would otherwise silently
-  # drop out of the required set until someone remembered to add it there too.
-  # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
-  # is not a success.
   # The harness tests under `benchmarks/` (ASV wiring, GPU-memory measurement
   # plumbing, PR-comment and publish tooling). They fake every device and model
   # they touch, so they run on CPU. `tests/conftest.py` does not load for
@@ -2380,6 +2376,7 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-benchmarks.xml \
+            --cov=./ --cov-report="xml:reports/coverage-benchmarks.xml" \
           && check_population reports/junit-cpu-benchmarks.xml
       - name: Upload the JUnit report
         # `always()` so a failing run still publishes its report.
@@ -2389,6 +2386,19 @@ jobs:
           name: junit-cpu-benchmarks
           path: reports/junit-*.xml
           if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Sent to Codecov only by the `coverage` combine stage.
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-benchmarks
+          path: reports/coverage-benchmarks.xml
+          if-no-files-found: error
+  # One context for the whole matrix, so branch protection names `cpu` rather
+  # than every lane -- adding a platform or a shard would otherwise silently
+  # drop out of the required set until someone remembered to add it there too.
+  # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
+  # is not a success.
   cpu:
     name: cpu
     needs:
