@@ -5539,7 +5539,6 @@ class _CoreFrontier:
     transfer_plan: tuple[ResolvedValueTransfer, ...]
     templates: Mapping[str, object]
     widths: tuple[Mapping[str, object] | None, ...]
-    consumed: bool
     top_record: ResolvedProducer | None
     """The top-ranked candidate's producer record, for a consumed producer.
 
@@ -5920,7 +5919,7 @@ class _StructuralBlueprint:
     representative_metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
 
-def _build_structural_blueprint(  # noqa: PLR0915
+def _build_structural_blueprint(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
@@ -5948,7 +5947,6 @@ def _build_structural_blueprint(  # noqa: PLR0915
     # below, so nothing is kept for it; only a budgeted frontier retains what a
     # later candidate is bound from.
     frontiers: dict[_CoreTriple, _CoreFrontier] = {}
-    candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
     frontier_lengths: dict[_CoreTriple, int] = {}
     # A producer's records are kept only while its own graph is being resolved,
     # and only when some consumer of that graph names it, so no argument tree is
@@ -6060,7 +6058,6 @@ def _build_structural_blueprint(  # noqa: PLR0915
                 transfer_plan=transfer_plan,
                 templates=templates,
                 widths=width_candidates,
-                consumed=consumed,
                 top_record=top_record,
             )
         layouts[triple] = resolve_output_layout(
@@ -6079,7 +6076,6 @@ def _build_structural_blueprint(  # noqa: PLR0915
         candidate = (triple, _width_key(widths=resolved.tile_widths))
         resolved_programs[candidate] = resolved
         internal_templates[candidate] = templates
-        candidates_by_triple[triple] = [candidate]
         frontier_lengths[triple] = len(width_candidates)
         if top_record is not None:
             producers[core_key] = MappingProxyType({candidate[1]: top_record})

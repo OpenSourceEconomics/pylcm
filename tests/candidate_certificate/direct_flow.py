@@ -375,7 +375,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "46c1cfff9ef447f216431995dd70430c8374972481ecabdd435331cab4b62f63",
+    NBEGM_SOURCE: "55a12e019900ab6f10c28c66aeb32e7ebb50c3a514847539b78d8ea047d6f9dd",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -428,7 +428,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "1b924f3915c3c7843ca5c4f09847e35a1e552ef884118ee047a9f5620db31184",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "671636ac98e4fe215d1460ed9960fe642f28e0e0bcc76a865246d394f8bad0f9",
+    BACKWARD_INDUCTION_SOURCE: "38d61b0a631f60998d7c0a29fa102d36a965c549c97d6cc28fc71aebb9045b8b",
     PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
     INITIAL_CONDITIONS_SOURCE: "315f0aa7bdf2202a4d2d632af729a8224675620eeb0d1635114ca2c892fb8163",
     RESULT_SOURCE: "b02c3c5160878e01d04d2b2ea8a8b5dfbde9d6bfae2059468614109df0a8477d",
@@ -1085,19 +1085,6 @@ def _method_definition(
     return cls, methods[0]
 
 
-def _function_definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
-    matches = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == name
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            f"expected one top-level function {name!r}, found {len(matches)}"
-        )
-    return matches[0]
-
-
 def _grid_base_errors(tree: ast.Module) -> list[str]:
     """Forbid inherited interception of concrete grid coordinate materializers."""
     errors: list[str] = []
@@ -1223,7 +1210,7 @@ def _engine_state_action_space_errors(tree: ast.Module) -> list[str]:
 def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
     """Pin the simulation adapter to a state-only replacement of the completed base."""
     try:
-        node = _function_definition(tree=tree, name="create_regime_state_action_space")
+        node = _definition(tree=tree, name="create_regime_state_action_space")
     except ValueError as error:
         return [f"simulation state-action adapter: {error}"]
     expected_body = (
@@ -1255,7 +1242,7 @@ def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
 def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
     """Pin the live simulation caller to the params-completed base without wrapping."""
     try:
-        node = _function_definition(tree=tree, name="_simulate_regime_in_period")
+        node = _definition(tree=tree, name="_simulate_regime_in_period")
     except ValueError as error:
         return [f"simulation state-action caller: {error}"]
     body = _body_without_docstring(node)
@@ -4037,7 +4024,7 @@ _EAGER_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e83b3a7465ac2b5f2c7940694ece179ea0ae880896f76495bc098ddd5583ec25",
+        "443eafc0be844a42f7f124fc928f7a0767d89b83c36f32e9d443c3a276363aa5",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4122,7 +4109,7 @@ _SOLVE_READINESS_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e83b3a7465ac2b5f2c7940694ece179ea0ae880896f76495bc098ddd5583ec25",
+        "443eafc0be844a42f7f124fc928f7a0767d89b83c36f32e9d443c3a276363aa5",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4394,7 +4381,7 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e83b3a7465ac2b5f2c7940694ece179ea0ae880896f76495bc098ddd5583ec25",
+        "443eafc0be844a42f7f124fc928f7a0767d89b83c36f32e9d443c3a276363aa5",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -4593,7 +4580,7 @@ def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "927f213db9a7cc98368af4cd49d8f5a2b4e4e904bc837be3180e5ab15e9898a6"
+        != "3155bd03c4814a42e3ef9f3d789b15b6234bebfbb11f04d07ffe3829e1bc2b4f"
     ):
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors
@@ -4646,7 +4633,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             # and its top-ranked candidate resolved against abstract inputs; a
             # warm solve binds the stored blueprint, so the recipe, its key and
             # its per-call binding are one corridor with the resolver above.
-            "_build_structural_blueprint": "929c01769199b79f0d972b9f659162fe80eb4130d0460a36c48464fc29800dd0",
+            "_build_structural_blueprint": "4ae5ebfea2ba834d45313a87f8ae90282bd2c870b1c50e76b990461016a231eb",
             "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
             "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
             "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
@@ -4698,7 +4685,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     )
     if (
         _transport_module_surface(tree)
-        != "e83b3a7465ac2b5f2c7940694ece179ea0ae880896f76495bc098ddd5583ec25"
+        != "443eafc0be844a42f7f124fc928f7a0767d89b83c36f32e9d443c3a276363aa5"
     ):
         errors.append("backward output-layout transport: module bindings changed")
     try:
@@ -6603,7 +6590,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/backward_induction.py": (
-        "e83b3a7465ac2b5f2c7940694ece179ea0ae880896f76495bc098ddd5583ec25",
+        "443eafc0be844a42f7f124fc928f7a0767d89b83c36f32e9d443c3a276363aa5",
         {
             "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
             "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
@@ -6614,7 +6601,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "_compile_all_functions": "c98a7c37f68774be63dd3b2ce5bf66a2218fd948e6e06102f9e2f4dd7ac39367",
             "_prepare_solve_programs": "b8037f9538927815534d7d49525ac6c84726e5c8dfa6ffd1689eaae69182cda5",
             "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
-            "_build_structural_blueprint": "929c01769199b79f0d972b9f659162fe80eb4130d0460a36c48464fc29800dd0",
+            "_build_structural_blueprint": "4ae5ebfea2ba834d45313a87f8ae90282bd2c870b1c50e76b990461016a231eb",
             "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
             "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
         },
@@ -10053,7 +10040,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_runtime_source,
                     old="        program=families[family][period],",
-                    new='        program=families["regime_transitions"][period],',
+                    new='        program=families["route"][period],',
                     label="dispatch_family_replaced",
                 ),
             },

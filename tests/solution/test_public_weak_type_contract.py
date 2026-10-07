@@ -353,7 +353,7 @@ def _consumed_producer(
         (frontier, triple)
         for frontier in frontiers
         for triple, core in frontier.frontiers.items()
-        if core.consumed and len(core.widths) > 1
+        if core.top_record is not None and len(core.widths) > 1
     ]
     assert consumed
     frontier, triple = consumed[0]
