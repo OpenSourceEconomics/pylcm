@@ -9,6 +9,7 @@ a value written under the source regime itself never reaches the law.
 """
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -16,7 +17,8 @@ import numpy as np
 import pytest
 from jax import Array
 
-from _lcm.params.edges import edge_params
+from _lcm.params.edges import edge_params, regime_kernel_params
+from _lcm.params.regime_template import iter_edge_callables
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -29,7 +31,11 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import InvalidNameError, InvalidParamsError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -316,6 +322,59 @@ def test_law_argument_named_like_a_target_is_rejected():
         )
 
 
+def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
+    """A source's kernels cannot bind one key from two namespaces."""
+    flat_params = MappingProxyType(
+        {
+            "working": MappingProxyType({"dead__rate": 1.0}),
+            "edges": MappingProxyType(
+                {"working": MappingProxyType({"dead__rate": 2.0})}
+            ),
+        }
+    )
+    with pytest.raises(InvalidNameError, match="'dead__rate'"):
+        regime_kernel_params(flat_params, regime_name="working")
+
+
+def test_edge_callables_refuse_a_value_that_is_no_law_form():
+    """A declared law cell that is neither a law nor a callable is named by type."""
+    with pytest.raises(TypeError, match="'float'"):
+        list(iter_edge_callables(law={"dead": 0.5}, path=()))
+
+
+def test_invalid_law_argument_name_is_reported_at_its_edges_path():
+    """An argument name the path grammar refuses is reported where its slot lives."""
+    with pytest.raises(
+        InvalidNameError, match=r"params\['edges'\]\['working'\]\['dead'\]"
+    ):
+        _mortal_model(
+            law={
+                "working": StochasticTransition(func=_survive),
+                "dead": StochasticTransition(func=_die_reading_a_nested_name),
+            }
+        )
+
+
+def test_parametrized_coarse_case_beside_per_target_cases_is_rejected():
+    """A law over all targets with parameters cannot share a source with cells.
+
+    Its parameters would sit at `params["edges"][source][arg]`, the level that
+    also broadcasts into every per-target slot, so the model refuses the mix and
+    asks for one form.
+    """
+    with pytest.raises(ModelInitializationError, match="per-target mapping"):
+        _mortal_model(
+            law=ByAge(
+                cases={
+                    AgeRange(start=60, exclusive_stop=62): DeterministicTransition(
+                        func=_stay_until
+                    )
+                },
+                default=_LATE_LAW,
+            )
+        )
+
+
 def _leaf_paths(branch: Mapping[str, object]) -> set[tuple[str, ...]]:
     """Return the path of every leaf of a params-template branch.
 
@@ -387,6 +446,14 @@ def _die_at(death_probability: float) -> FloatND:
 
 def _stay_reading_dead(dead: float) -> FloatND:
     return 1.0 - jnp.asarray(dead)
+
+
+def _die_reading_a_nested_name(survival__probability: float) -> FloatND:
+    return 1.0 - jnp.asarray(survival__probability)
+
+
+def _stay_until(*, age: float, last_working_age: float) -> ScalarInt:
+    return jnp.where(age < last_working_age, _MortalId.working, _MortalId.dead)
 
 
 def _survive_early(early_survival: float) -> FloatND:

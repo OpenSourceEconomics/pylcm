@@ -282,6 +282,34 @@ def test_law_short_of_unit_mass_at_a_single_destination_age_names_the_cell() -> 
         model.solve(params=PARAMS, log_level="debug")
 
 
+def _vector_ignoring_the_horizon() -> FloatND:
+    """Mass 0.9 on working and 0.1 on dead, in the order of `RegimeId`."""
+    return jnp.array([0.9, 0.0, 0.1])
+
+
+def test_vector_law_short_of_unit_mass_at_one_destination_names_the_cell() -> None:
+    """A vector law over all targets loses the mass of its target without an edge.
+
+    At ages 60 and 61 the only edge leads back to work, so the 0.1 the law puts
+    on death has no edge; at 62 its 0.9 on work has none. The debug check names
+    the cell, as it does for a per-target law.
+    """
+    model = _model(
+        edges={
+            "working": Transition(
+                targets=SINGLE_DESTINATION_TARGETS,
+                law=StochasticTransition(func=_vector_ignoring_the_horizon),
+            ),
+            "retired": RETIRED_EDGES,
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"(?s)\(age 6[012], 'working' -> '(dead|working)'\).*declares no edge",
+    ):
+        model.solve(params=PARAMS, log_level="debug")
+
+
 def test_phased_edges_solve_with_the_perceived_law() -> None:
     """Each phase's `Transition` carries that phase's law; solve uses the perceived."""
     phased = _model(

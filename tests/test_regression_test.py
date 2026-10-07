@@ -14,10 +14,17 @@ from lcm import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
+    Model,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
 )
 from lcm.typing import FloatND
+from lcm_examples import (
+    collective_household,
+    iskhakov_et_al_2017,
+    precautionary_savings_health,
+    tiny,
+)
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
 from tests.conftest import X64_ENABLED
@@ -228,3 +235,168 @@ def test_model_with_different_grid_types(grid_type: str):
     assert len(df) == n_periods * 4  # 4 periods * 4 subjects
     assert "wealth" in df.columns
     assert "consumption" in df.columns
+
+
+# Stored values of four representative models (fixed `params["edges"]` laws,
+# gated edges) at a few small configurations. Large value arrays are thinned to
+# every k-th entry of the flattened array, so each stores at most
+# `_N_STORED_ENTRIES` numbers.
+_STORED_MODEL_VALUES = _PRECISION_DIR / "representative_model_values.npz"
+_N_STORED_ENTRIES = 64
+_TOLERANCE = 1e-10 if X64_ENABLED else 1e-5
+_N_SUBJECTS = 4
+_REPRESENTATIVE_MODELS = (
+    "tiny",
+    "precautionary_savings_health",
+    "iskhakov_et_al_2017",
+    "collective_household",
+)
+
+
+@pytest.mark.parametrize("name", _REPRESENTATIVE_MODELS)
+def test_solved_values_match_their_stored_values(name: str):
+    """Each model's solved value functions equal their stored values."""
+    model, params, _ = _representative_case(name)
+    got = _value_entries(name=name, model=model, params=params)
+    expected = _stored_entries(prefix=f"{name}/V/")
+    np.testing.assert_allclose(
+        np.concatenate([got[key] for key in expected]),
+        np.concatenate(list(expected.values())),
+        rtol=_TOLERANCE,
+        atol=_TOLERANCE,
+    )
+
+
+@pytest.mark.parametrize("name", _REPRESENTATIVE_MODELS)
+def test_simulated_numeric_columns_match_their_stored_values(name: str):
+    """Each model's simulated numeric columns equal their stored values."""
+    got = _simulated_columns(name)
+    expected = {
+        key: value
+        for key, value in _stored_entries(prefix=f"{name}/simulation/").items()
+        if value.dtype.kind == "f"
+    }
+    np.testing.assert_allclose(
+        np.concatenate([got[key] for key in expected]),
+        np.concatenate(list(expected.values())),
+        rtol=_TOLERANCE,
+        atol=_TOLERANCE,
+    )
+
+
+@pytest.mark.parametrize("name", _REPRESENTATIVE_MODELS)
+def test_simulated_categorical_columns_match_their_stored_values(name: str):
+    """Each model's simulated regimes and discrete choices equal their stored labels."""
+    got = _simulated_columns(name)
+    expected = {
+        key: value
+        for key, value in _stored_entries(prefix=f"{name}/simulation/").items()
+        if value.dtype.kind != "f"
+    }
+    np.testing.assert_array_equal(
+        np.concatenate([got[key] for key in expected]),
+        np.concatenate(list(expected.values())),
+    )
+
+
+def _representative_case(name: str) -> tuple[Model, dict, dict]:
+    """Build one representative model with its params and initial conditions."""
+    starting_wealth = jnp.linspace(5.0, 40.0, _N_SUBJECTS)
+    regime_ids = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
+    if name == "tiny":
+        return (
+            tiny.get_model(n_periods=3),
+            tiny.get_params(n_periods=3),
+            {
+                "age": jnp.full(_N_SUBJECTS, 25.0),
+                "wealth": starting_wealth,
+                "regime_id": regime_ids,
+            },
+        )
+    if name == "precautionary_savings_health":
+        return (
+            precautionary_savings_health.get_model(retirement_age=20),
+            precautionary_savings_health.get_params(retirement_age=20),
+            {
+                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "wealth": starting_wealth,
+                "health": jnp.linspace(0.2, 0.8, _N_SUBJECTS),
+                "regime_id": regime_ids,
+            },
+        )
+    if name == "iskhakov_et_al_2017":
+        return (
+            iskhakov_et_al_2017.get_model(n_periods=4),
+            iskhakov_et_al_2017.get_params(n_periods=4),
+            {
+                "age": jnp.full(_N_SUBJECTS, 40.0),
+                "wealth": jnp.linspace(20.0, 200.0, _N_SUBJECTS),
+                "regime_id": regime_ids,
+            },
+        )
+    model = collective_household.get_model(
+        n_periods=3, wealth_n_points=6, consumption_n_points=6
+    )
+    return (
+        model,
+        collective_household.get_params(),
+        collective_household.get_initial_conditions(
+            n_subjects=_N_SUBJECTS, model=model
+        ),
+    )
+
+
+def _value_entries(*, name: str, model: Model, params: dict) -> dict[str, np.ndarray]:
+    """Return every solved value array, thinned, keyed by period and regime path."""
+    values = model.solve(params=params, log_level="off").values
+    return {
+        key: _thinned(leaf)
+        for period, by_regime in values.items()
+        for key, leaf in _leaves(prefix=f"{name}/V/{period}", value=by_regime)
+    }
+
+
+def _simulated_columns(name: str) -> dict[str, np.ndarray]:
+    """Simulate one representative model and key each column by its stored path."""
+    model, params, initial_conditions = _representative_case(name)
+    frame = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        seed=12345,
+        log_level="off",
+    ).to_dataframe()
+    return {
+        f"{name}/simulation/{column}": _stored_column(frame[column])
+        for column in frame.columns
+    }
+
+
+def _leaves(*, prefix: str, value: object):
+    """Yield the leaves of a nested mapping with their `/`-joined key paths."""
+    if isinstance(value, Mapping):
+        for key, inner in value.items():
+            yield from _leaves(prefix=f"{prefix}/{key}", value=inner)
+    else:
+        yield prefix, value
+
+
+def _thinned(leaf: object) -> np.ndarray:
+    """Return every k-th entry of a flattened array, at most the stored count."""
+    flat = np.asarray(leaf, dtype=np.float64).ravel()
+    step = max(1, -(-flat.size // _N_STORED_ENTRIES))
+    return flat[::step]
+
+
+def _stored_column(series: pd.Series) -> np.ndarray:
+    """Return a simulated column as floats, or as strings when categorical."""
+    if pd.api.types.is_bool_dtype(series.dtype) or pd.api.types.is_numeric_dtype(
+        series.dtype
+    ):
+        return series.to_numpy(dtype=np.float64)
+    return series.astype(str).to_numpy(dtype=str)
+
+
+def _stored_entries(*, prefix: str) -> dict[str, np.ndarray]:
+    """Return the stored arrays whose key starts with `prefix`, in stored order."""
+    with np.load(_STORED_MODEL_VALUES) as stored:
+        return {key: stored[key] for key in stored.files if key.startswith(prefix)}
