@@ -26,11 +26,12 @@ The subprocess calls ``setup_for_gpu_measurement()`` (model + params only, no
 warm-up) followed by the benchmark's one measured cold call,
 ``execute_for_measurement()``, then prints ``peak_bytes_in_use``.
 
-ACA's long-running benchmarks also use ``measure_combined``. Its subprocess
-performs one cold execution, captures cold elapsed time plus CPU peak memory,
-then performs and times one warm execution. GPU attribution is deliberately
-separate: ``measure_gpu_memory_profile`` runs the three named solve/persistence/
-simulate phases sequentially in fresh, phase-isolated processes. Every child
+ACA's long-running benchmarks use ``measure_combined``. Its subprocess performs
+one cold execution, captures cold elapsed time plus CPU peak memory, then
+performs and times one warm execution; it reports no GPU memory. GPU-memory
+profiles are separate: ``measure_gpu_memory_profile`` runs the three named
+solve/persistence/simulate phases sequentially in fresh, phase-isolated
+processes. Every child
 reports its own peak and exact invocation provenance; peaks are never combined
 arithmetically.
 """

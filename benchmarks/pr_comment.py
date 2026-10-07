@@ -38,9 +38,7 @@ _RESULTS_DIR = Path(".asv/results")
 
 _CLASS_DISPLAY = {
     "AcaBaseline": "ACA (reduced)",
-    "AcaBaselineGpuPeakMem": "ACA (reduced)",
     "AcaBaselineDebugLog": "ACA (reduced, debug logging)",
-    "AcaBaselineDebugLogGpuPeakMem": "ACA (reduced, debug logging)",
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
     "MahlerYumBudgetedGpu": "Mahler-Yum",
@@ -85,15 +83,9 @@ _CLASS_FIXED_PARAMS = {
     "ReferenceChainSolveGpuPeakMem": "8",
 }
 
-_CLASS_ALIASES = {
-    "AcaBaselineGpuPeakMem": "AcaBaseline",
-    "AcaBaselineDebugLogGpuPeakMem": "AcaBaselineDebugLog",
-}
-
 _METHOD_ALIASES = {
     "track_execution_time": "time_execution",
     "track_peak_cpu_mem": "peakmem_execution",
-    "track_peak_gpu_mem": "track_gpu_peak_mem",
 }
 
 _METHOD_DISPLAY = {
@@ -453,10 +445,7 @@ def display_sort_key(benchmark_name: str) -> tuple[Any, ...]:
 def _canonical_names(benchmark_name: str) -> tuple[str, str]:
     """Return the class and method a benchmark name is tabulated under."""
     class_name, method_name = benchmark_name.split(".")[-2:]
-    return (
-        _CLASS_ALIASES.get(class_name, class_name),
-        _METHOD_ALIASES.get(method_name, method_name),
-    )
+    return class_name, _METHOD_ALIASES.get(method_name, method_name)
 
 
 def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
@@ -513,7 +502,6 @@ def _parse_raw_values(
             continue
 
         class_name, method_name, _ = name_match.groups()
-        class_name = _CLASS_ALIASES.get(class_name, class_name)
         method_name = _METHOD_ALIASES.get(method_name, method_name)
         raw_values = values[0]
         params_list = values[1] if len(values) > 1 else []
