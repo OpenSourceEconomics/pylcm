@@ -320,6 +320,7 @@ _ENGINE_CONSTRUCTORS = frozenset(
         "MockRegime",
         "_MockRegime",
         "build_pareto_weights",
+        "build_streaming_collective_max_Q_over_a",
         "get_max_Q_over_a",
         "get_streaming_max_Q_over_a",
     }

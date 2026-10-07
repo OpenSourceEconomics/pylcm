@@ -17,7 +17,7 @@ when the geometry state is carried by a fixed law (a single child node).
 """
 
 import contextlib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from typing import Literal
 
 import jax
@@ -116,7 +116,7 @@ def _income_derived_from_shock(
 
 
 @contextlib.contextmanager
-def _precision(bits: int) -> Iterator[None]:
+def _precision(bits: int) -> Generator[None]:
     """Build at `bits`-bit floats, restoring the suite's setting."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", bits == 64)

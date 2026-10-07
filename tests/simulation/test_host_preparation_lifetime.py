@@ -25,7 +25,7 @@ This module asserts, on a small CPU model, for both an unbudgeted
 """
 
 import builtins
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 import jax.numpy as jnp
@@ -84,7 +84,7 @@ _ATTRIBUTED_MODULE_MARKERS = (
 
 
 @contextmanager
-def _count_new_wrapper_objects() -> Iterator[dict[str, int]]:
+def _count_new_wrapper_objects() -> Generator[dict[str, int]]:
     """Count `builtins.compile` calls attributable to the two migrated helpers.
 
     `builtins.compile` is called by beartype's own code generation for a

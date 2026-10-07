@@ -33,7 +33,7 @@ simulation holds the rows of its codes' subjects alone.
 import dataclasses
 import json
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -1002,7 +1002,7 @@ _SELECTION: ContextVar[ComponentSelection | None] = ContextVar(
 
 
 @contextmanager
-def selected_components(*, codes: tuple[int, ...]) -> Iterator[ComponentSelection]:
+def selected_components(*, codes: tuple[int, ...]) -> Generator[ComponentSelection]:
     """Scope the block-major schedules started inside to `codes`.
 
     A selected solve retains its codes and publishes no result; a selected

@@ -209,7 +209,7 @@ def vmap_1d(
         # should be mapped over the leading axis of the input. A `co_mapped_in_axes`
         # entry overrides the default for that argument — a scalar axis index there
         # maps that axis of every pytree leaf, co-mapping it with the variables.
-        in_axes_for_vmap: list[Any] = cast("list[Any]", [None] * len(parameters))
+        in_axes_for_vmap: list[Any] = [None] * len(parameters)
         for p in positions:
             in_axes_for_vmap[p] = 0
         for name, axes in co_mapped_in_axes.items():

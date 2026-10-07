@@ -9,7 +9,7 @@ the inner liquid post-decision margin, directly or through a sibling law.
 
 import contextlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import cast
 
 import jax.numpy as jnp
@@ -623,7 +623,7 @@ def test_the_published_capability_records_the_outer_state_domain() -> None:
 @contextlib.contextmanager
 def _recorded_published_policies(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[list[object]]:
+) -> Generator[list[object]]:
     """Record every replay policy object either outer search constructs."""
     constructed: list[object] = []
     for name in ("NNBEGMSimPolicy", "NestedEGMSimPolicy"):
