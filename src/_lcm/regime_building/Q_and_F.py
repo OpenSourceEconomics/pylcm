@@ -3486,7 +3486,7 @@ class _ExpectationOverSliceDraws:
     once, vectorised along a leading block axis, and folds the block into the
     running sums. A block holds `_slice_block_size` slice nodes, a quarter of
     them rounded up, so every intermediate — the reads, their weights, and the
-    running sums — is at most a quarter of the slice nodes wide and the
+    running sums — is one block, about a quarter of the slice nodes, wide and the
     continuation never holds an array spanning all joint nodes.
 
     Each read is weighted by its FULL joint probability before it is added into
