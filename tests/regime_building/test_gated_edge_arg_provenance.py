@@ -70,6 +70,7 @@ from _lcm.regime_building.gated_edges import (
     ResolvedProjectedRegimeValue,
     _fence_edge_consumer,
     _reject_gate_operand_state_name_collision,
+    _with_qualified_params,
 )
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
@@ -2406,17 +2407,14 @@ def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
     )
 
 
-# The ENGINE argument namespace is reserved.
+# The ENGINE argument namespace is reserved against target states.
 #
 # `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
-# (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) into the fold
-# kwargs, then OVERWRITES them from the source's edge params -- so a source param
-# named after an engine arg is bound as the source scalar on the SOLVE side. The
-# simulate evaluator's `_expose` classifies the same spelling as the engine mapping
-# BEFORE it could be a source param, so SIMULATE reads the engine object. Solve and
-# simulate then evaluate different gates (or the solve side crashes when the source
-# scalar overwrites the value MAPPING). A target STATE named after an engine arg is
-# the same hazard, so the engine names are reserved against both.
+# (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) and the period
+# context under their bare names. A gate's own parameters never meet them: every
+# one is renamed to its `<target>__gate__<name>` slot before the fold is built,
+# while the period context stays the engine's. A target STATE spelled like an
+# engine argument would share one fold leaf with it, so those names are reserved.
 def _gate_reads_params_engine_arg(
     *, V_target: FloatND, same_period_regime_to_params: FloatND
 ) -> BoolND:
@@ -2427,13 +2425,8 @@ def _gate_reads_period_engine_arg(*, V_target: FloatND, period: ScalarInt) -> Bo
     return V_target > period
 
 
-def _make_source_param_aliases_regimes(gate: UserFunction) -> _Spec:
-    """A source whose edge into `target` is gated by `gate`.
-
-    The source supplies a bare param in `flat_params['src']` spelled exactly like
-    one of the fold's own arguments, so `gate` decides which collision the fixture
-    exercises.
-    """
+def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
+    """A source whose edge into `target` is gated by `gate`."""
     src = (
         Regime(
             states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
@@ -2447,75 +2440,6 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> _Spec:
                     "target": ValueDependentTransition(
                         probability=StochasticTransition(func=_prob_one),
                         gate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split({"src": src, "target": target, "fallback": fallback})
-
-
-def _make_source_param_aliases_engine_params_regimes() -> _Spec:
-    """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
-    supplied in `flat_params['src']` -- so it is both a source param and the fold's
-    engine reference-params leaf."""
-    return _make_source_param_aliases_regimes(_gate_reads_params_engine_arg)
-
-
-def _make_source_param_aliases_period_context_regimes() -> _Spec:
-    """Source gate reads `period`, the fold's own context argument, as a bare
-    param supplied in `flat_params['src']`."""
-    return _make_source_param_aliases_regimes(_gate_reads_period_engine_arg)
-
-
-def _u_src_reads_v_arg_param(
-    *, y: ContinuousState, work: DiscreteAction, same_period_regime_to_V_arr: FloatND
-) -> FloatND:
-    return jnp.zeros_like(y) * work + 0.0 * same_period_regime_to_V_arr
-
-
-def _gate_v_only(V_target: FloatND) -> BoolND:
-    return V_target > 0.0
-
-
-def _make_source_param_aliases_engine_v_regimes() -> _Spec:
-    """Source utility reads a bare param spelled exactly `SAME_PERIOD_V_ARG`,
-    supplied in `flat_params['src']`. `SAME_PERIOD_V_ARG` is ALWAYS in the fold
-    signature, so the source scalar overwrites the solve-side value MAPPING."""
-    src = (
-        Regime(
-            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src_reads_v_arg_param},
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_v_only,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -2609,78 +2533,29 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_source_param_aliasing_the_engine_params_arg_is_rejected():
-    """A source param named `SAME_PERIOD_PARAMS_ARG` is rejected: it would open
-    the gate in solve (source scalar) and close it in simulate (engine mapping)."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    SAME_PERIOD_PARAMS_ARG: jnp.asarray(0.1),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
+@pytest.mark.parametrize(
+    ("gate", "expected"),
+    [
+        pytest.param(
+            _gate_reads_params_engine_arg,
+            {"V_target", f"target__gate__{SAME_PERIOD_PARAMS_ARG}"},
+            id="engine-params-spelling-is-a-gate-slot",
+        ),
+        pytest.param(
+            _gate_reads_period_engine_arg,
+            {"V_target", "period"},
+            id="period-stays-the-engine-context",
+        ),
+    ],
+)
+def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
+    *, gate: UserFunction, expected: set[str]
+) -> None:
+    """A gate parameter takes its slot name; the period context keeps its own."""
+    qualified = _with_qualified_params(
+        func=gate, path=("target", "gate"), wired_names=frozenset()
     )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|same_period_regime_to_params|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_engine_params_regimes(),
-            flat_params=flat_params,
-        )
-
-
-def test_source_param_aliasing_edge_period_context_is_rejected():
-    """A source parameter cannot shadow the target fold's period context."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "period": jnp.asarray(0),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|period|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_period_context_regimes(),
-            flat_params=flat_params,
-        )
-
-
-def test_source_param_aliasing_the_engine_v_arg_is_rejected():
-    """A source param named `SAME_PERIOD_V_ARG` is rejected: it would overwrite
-    the solve-side value mapping."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    SAME_PERIOD_V_ARG: jnp.asarray(0.1),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_engine_v_regimes(),
-            flat_params=flat_params,
-        )
+    assert set(signature(qualified).parameters) == expected
 
 
 def test_target_state_aliasing_the_engine_v_arg_is_rejected():
@@ -2705,9 +2580,31 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
         )
 
 
-def test_source_param_near_engine_name_still_solves():
-    """Negative control: a source param whose name merely RESEMBLES an engine arg
-    (not an exact match) is a legitimate gate param and must still solve."""
+def _gate_near_engine_name(
+    *, V_target: FloatND, same_period_regime_to_params_user: FloatND
+) -> BoolND:
+    return V_target > same_period_regime_to_params_user
+
+
+@pytest.mark.parametrize(
+    ("gate", "name"),
+    [
+        pytest.param(
+            _gate_near_engine_name,
+            "same_period_regime_to_params_user",
+            id="name-resembling-an-engine-name",
+        ),
+        pytest.param(
+            _gate_reads_params_engine_arg,
+            SAME_PERIOD_PARAMS_ARG,
+            id="name-spelled-like-an-engine-name",
+        ),
+    ],
+)
+def test_gate_param_named_like_an_engine_argument_solves_from_its_slot(
+    *, gate: UserFunction, name: str
+) -> None:
+    """A gate parameter is supplied at its `target__gate__<name>` edge slot."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -2715,54 +2612,10 @@ def test_source_param_near_engine_name_still_solves():
             ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
-            # The gate declares it, so it is an edge parameter at its declaration
-            # path; the near-miss the control is about is in the name the GATE
-            # reads.
             "edges": MappingProxyType(
-                {
-                    "src": MappingProxyType(
-                        {
-                            "target__gate__same_period_regime_to_params_user": (
-                                jnp.asarray(0.1)
-                            )
-                        }
-                    )
-                }
+                {"src": MappingProxyType({f"target__gate__{name}": jnp.asarray(0.1)})}
             ),
         }
     )
-
-    def _gate_near(
-        *, V_target: FloatND, same_period_regime_to_params_user: FloatND
-    ) -> BoolND:
-        return V_target > same_period_regime_to_params_user
-
-    regimes, laws = _make_source_param_aliases_engine_params_regimes()
-    # swap the gate to read the near-miss (non-engine) name
-    regimes["src"], laws["src"] = (
-        Regime(
-            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src_no_param},
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_near,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
-    )
     # Must not raise.
-    _solve_fixture(spec=(regimes, laws), flat_params=flat_params)
+    _solve_fixture(spec=_make_gated_source_regimes(gate), flat_params=flat_params)
