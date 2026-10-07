@@ -310,6 +310,38 @@ def test_an_unknown_target_in_an_unused_case_is_a_global_error() -> None:
         )
 
 
+_MIXED_GATED_TARGET = "value-dependent in one schedule case and declared differently"
+
+
+def test_a_gated_target_declared_plainly_in_an_active_case_is_rejected() -> None:
+    """A target gated in one selected case cannot be a plain cell in another."""
+    with pytest.raises(ModelInitializationError, match=_MIXED_GATED_TARGET):
+        _gated_model(
+            source=ByAge(
+                cases={
+                    40: _gated_law(),
+                    45: {"target": StochasticTransition(func=_prob_one)},
+                }
+            ),
+            edges={"source": {"target": (40, 45), "fallback": 40}},
+            initial_nodes={40: "source", 45: "source"},
+        )
+
+
+def test_a_gated_target_declared_plainly_in_a_dormant_case_is_rejected() -> None:
+    """The same declaration is rejected where the horizon selects the plain case
+    at no source age."""
+    with pytest.raises(ModelInitializationError, match=_MIXED_GATED_TARGET):
+        _gated_model(
+            source=ByAge(
+                cases={
+                    40: _gated_law(),
+                    50: {"target": StochasticTransition(func=_prob_one)},
+                }
+            ),
+        )
+
+
 @categorical(ordered=False)
 class _LifeId:
     working: ScalarInt
