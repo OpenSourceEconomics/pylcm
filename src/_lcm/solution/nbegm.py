@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from dags import concatenate_functions
+from dags.tree import QNAME_DELIMITER
 
 import lcm.typing as lcm_typing
 from _lcm.axis_boundaries import (
@@ -2030,7 +2031,7 @@ def _flat_params(func: Callable[..., object]) -> frozenset[str]:
     names; a flat parameter always arrives qualified by the function that owns
     it, so the qualifying separator is what tells the two apart.
     """
-    return frozenset(name for name in _parameter_names(func) if "__" in name)
+    return frozenset(name for name in _parameter_names(func) if QNAME_DELIMITER in name)
 
 
 def _parameter_names(func: Callable[..., object]) -> frozenset[str]:

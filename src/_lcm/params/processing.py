@@ -39,6 +39,7 @@ from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
 from _lcm.typing import FlatParams, ParamsTemplate, RegimeName, RegimeParamsTemplate
 from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import UserParams
@@ -528,16 +529,14 @@ def _validated_arg_names(
 ) -> set[str]:
     """Return a function entry's argument names, validating each leaf.
 
-    Argument names must be separator-free and map to bare leaves — a nested
-    mapping at this depth means the user nested params one level too deep.
+    Argument names must be valid parameter-path segments and map to bare leaves
+    — a nested mapping at this depth means the user nested params one level too
+    deep.
     """
+    if errors := path_segment_name_errors(kind=f"{func_name!r} argument", names=params):
+        raise InvalidNameError(errors[0])
     arg_names: set[str] = set()
     for arg_name, leaf in params.items():
-        if QNAME_DELIMITER in arg_name:
-            raise InvalidNameError(
-                f"Argument name {arg_name!r} in function {func_name!r} "
-                f"cannot contain the separator '{QNAME_DELIMITER}'"
-            )
         if isinstance(leaf, Mapping):
             raise InvalidNameError(
                 f"Parameter {arg_name!r} in regime {regime_name!r} is "
@@ -553,27 +552,20 @@ def _fail_if_template_names_invalid(
     function_names: set[str],
     arg_names: set[str],
 ) -> None:
-    """Validate separator-freedom and disjointness of template name sets.
+    """Validate the form and disjointness of template name sets.
 
-    Regime and function names must not contain the qname separator, and
+    Regime and function names must be valid parameter-path segments, and
     regime names must be disjoint from both function and argument names so
     parameter propagation stays unambiguous. Function names CAN overlap with
     argument names across regimes — a function output in one regime may be a
     parameter in another (e.g. `labor_income` is a function in `working` but
     a param in `retired`).
     """
-    for name in regime_names:
-        if QNAME_DELIMITER in name:
-            raise InvalidNameError(
-                f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
-            )
-
-    for name in function_names:
-        if QNAME_DELIMITER in name:
-            raise InvalidNameError(
-                f"Function name {name!r} cannot contain the separator "
-                f"'{QNAME_DELIMITER}'"
-            )
+    if errors := [
+        *path_segment_name_errors(kind="Regime", names=sorted(regime_names)),
+        *path_segment_name_errors(kind="Function", names=sorted(function_names)),
+    ]:
+        raise InvalidNameError(errors[0])
 
     regime_func_overlap = regime_names & function_names
     if regime_func_overlap:
