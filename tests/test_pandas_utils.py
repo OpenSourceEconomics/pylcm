@@ -17,6 +17,7 @@ from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import edge_params, regime_kernel_params
 from _lcm.params.processing import broadcast_to_template
 from _lcm.regime_law import UNBOUND_LAW
 from lcm import (
@@ -523,12 +524,16 @@ def _alive_regime_law() -> StochasticTransition:
 
 
 def test_convert_series_regime_transition_under_a_schedule() -> None:
-    """A Series for a regime transition law's parameter is converted."""
+    """A Series for a regime transition law's parameter is converted.
+
+    The law returns a probability vector over regimes, so the Series carries a
+    `next_regime` level that becomes the array's trailing outcome axis.
+    """
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     internal = broadcast_to_template(
-        params={"alive": {"next_regime": {"probs_array": series}}},
+        params={"edges": {"alive": {"probs_array": series}}},
         template=model._params_template,
         required=False,
     )
@@ -540,7 +545,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
     np.testing.assert_allclose(
-        cast("FloatND", result["alive"]["next_regime__probs_array"]),
+        cast("FloatND", edge_params(result, source="alive")["probs_array"]),
         arr,
         atol=1e-7,
     )
@@ -874,7 +879,9 @@ def test_convert_series_function_level_series() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
@@ -917,7 +924,9 @@ def test_convert_series_regime_level_series() -> None:
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 

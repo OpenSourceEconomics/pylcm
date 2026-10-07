@@ -96,6 +96,10 @@ type Params = Mapping[
 type FlatRegimeParams = MappingProxyType[
     str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 ]
+# The `edges` level of the internal params: per source regime, the flat params of
+# the callables its edges declare, keyed by their declaration path below
+# `params["edges"][source]` joined by the qname delimiter.
+type FlatEdgeParams = MappingProxyType[RegimeName, FlatRegimeParams]
 type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally. Within a regime, a key is either:
