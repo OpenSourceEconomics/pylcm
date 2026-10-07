@@ -1016,7 +1016,15 @@ class Model:
         no law and has no entry. `model.graph.laws` holds the law as bound to the
         graph.
         """
-        raise NotImplementedError
+        # `bind_edge_laws` accepted every declared law as a declaration form.
+        return MappingProxyType(
+            {
+                source: tuple(
+                    cast("TransitionLaw", transition.law) for transition in transitions
+                )
+                for source, transitions in self._declared_transitions.items()
+            }
+        )
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
