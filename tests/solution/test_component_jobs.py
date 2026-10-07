@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -154,6 +155,43 @@ def test_collected_jobs_equal_complete_single_process_result_bitwise(
     assert _complete_result_bytes(
         solution=collected.solution, simulation=collected.simulation
     ) == _complete_result_bytes(solution=reference.solution, simulation=reference)
+
+
+def test_simulating_job_copies_its_raw_results_to_the_host_in_one_transfer(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A simulating job gathers all of its raw-result leaves with one `device_get`."""
+    component_jobs = importlib.import_module("lcm.component_jobs")
+    model = _model()
+    params = life_cycle._params(typed_dead=True)
+    initial = life_cycle._initial()
+    directory = tmp_path / "jobs"
+    component_jobs.plan_component_jobs(
+        model=model,
+        params=params,
+        directory=directory,
+        n_jobs=3,
+        initial_conditions=initial,
+        seed=7,
+    )
+    device_get = jax.device_get
+    callers: list[str] = []
+
+    def _recording_device_get(tree: object) -> object:
+        callers.append(sys._getframe(1).f_code.co_name)
+        return device_get(tree)
+
+    monkeypatch.setattr(jax, "device_get", _recording_device_get)
+    component_jobs.run_component_job(
+        model=model,
+        params=params,
+        directory=directory,
+        job=0,
+        initial_conditions=initial,
+        log_level="off",
+    )
+
+    assert callers.count("_simulate_job") == 1
 
 
 def test_solve_only_jobs_preserve_every_value_without_a_simulation(
