@@ -87,6 +87,33 @@ state handoffs stay phase-specific on the source regime. A lone edge in one phas
 paired with a per-target probability mapping in the other, counts as a probability-one
 cell for its destination.
 
+(api-edge-parameters)=
+
+### Edge parameter paths
+
+The regime-transition law belongs to the edges, and so do its parameters: the parameter
+path of an edge-declared callable is its declaration path under `params["edges"]`.
+
+```text
+params["edges"][source][arg]                       # a law over all targets
+params["edges"][source][target][arg]               # a per-target StochasticTransition cell
+params["edges"][source][target]["probability"][arg]          # ValueDependentTransition
+params["edges"][source][target]["gate"][arg]
+params["edges"][source][target]["gate_references"][reference][state][arg]
+params["edges"][source][target]["routes"][route]["fallback"][state][arg]
+params["edges"][source][target]["routes"][route]["fallback"]["solve" | "simulate"][state][arg]
+```
+
+The last line is a `Phased` fallback. A law over all targets has no `law` segment;
+`ByAge` cases and `Phased` sides of one law share its slot and union their arguments. A
+source without a law has no `params["edges"]` entry. A value may also be given at
+`params["edges"][source][arg]`, which covers every callable below the source, or at the
+model level; a value under the source regime, `params[source][arg]`, never reaches an
+edge callable. Per-target state laws belong to the source regime and keep their paths
+under `params[source][target]`. The slots are read off the declared `Transition`, so
+they do not depend on the horizon or on fixed-zero pruning. See
+[Move transition parameters under `edges`](../user_guide/migrating_dated_regimes.md#migrating-edge-parameters).
+
 (api-dated-regime-transitions)=
 
 ### Age-indexed laws
@@ -183,8 +210,9 @@ is refused rather than treated as valid.
 
 ### Parameter paths
 
-Support and probability parameters live below the kernel name; output parameters keep
-the ordinary target-local `next_<state>` paths:
+A joint law belongs to the source regime, like a per-target state law, and so do its
+parameters. Support and probability parameters live below the kernel name; output
+parameters keep the ordinary target-local `next_<state>` paths:
 
 ```text
 params[source][target][kernel]["support"]

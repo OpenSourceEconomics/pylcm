@@ -249,9 +249,8 @@ edges = {
 ```
 
 The `Transition`'s targets include the gate-open target and every route's fallback
-regime. A source whose every age has a single outgoing edge still declares a
-`Transition` when its law carries a `ValueDependentTransition`, because the gate adds
-routing that the edge alone does not state.
+regime. A gated source declares a `Transition` even where every age has a single
+outgoing edge, because the gate adds routing that the edge alone does not state.
 
 **The key is always the gate-open target** — the regime a row enters when the gate is
 true. A dissolution edge is therefore keyed by the *continuing* collective regime under
@@ -373,7 +372,7 @@ regime is active — not only the first time.
 
 ## Parameters
 
-Free arguments of these declarations reach `get_params_template()` in three places.
+Free arguments of these declarations reach `get_params_template()` in four places.
 
 **Per-stakeholder utilities** appear under `utility_<stakeholder>`, one entry per
 stakeholder, at the top level of the regime's template.
@@ -389,31 +388,33 @@ one parameter and appears once. A weight argument that names a state, `period` o
 is wired at call time and never surfaces. The key is present only when some weight is a
 callable with a free argument.
 
-**Every callable of a gated transition** nests under the **target** regime's name,
-beside that target's `next_regime` cell:
+**Every callable of a gated transition** belongs to the edges, so its parameters sit at
+its declaration path under `params["edges"][source][target]`, not under the source
+regime:
 
-| Template entry                                    | Callable                                 |
-| ------------------------------------------------- | ---------------------------------------- |
-| `gate`                                            | the `gate` predicate                     |
-| `gate_ref_<reference key>_<state>`                | one `gate_references` projection         |
-| `leg_fallback_<fallback regime>_<state>`          | one route fallback projection (solve)    |
-| `simulate_leg_fallback_<fallback regime>_<state>` | the simulate side of a `Phased` fallback |
+| Template path below `params["edges"][source][target]`   | Callable                                 |
+| ------------------------------------------------------- | ---------------------------------------- |
+| `["probability"][arg]`                                  | the selection `probability`              |
+| `["gate"][arg]`                                         | the `gate` predicate                     |
+| `["gate_references"][reference][state][arg]`            | one `gate_references` projection         |
+| `["routes"][route]["fallback"][state][arg]`             | one route fallback projection            |
+| `["routes"][route]["fallback"]["solve"][state][arg]`    | the solve side of a `Phased` fallback    |
+| `["routes"][route]["fallback"]["simulate"][state][arg]` | the simulate side of a `Phased` fallback |
 
-A fallback entry is named by the regime it falls back to rather than by its `routes`
-key, because that is the identity both sides of the solve/simulate seam can spell. Two
-routes of one edge falling back to the same regime therefore share one entry, and their
-parameters are unioned there.
+A fallback is keyed by its `routes` key and each projection by the state it projects.
+Only callables that read a free argument appear. A value may also be supplied once for
+every edge callable of the source, at `params["edges"][source][arg]`, or at the model
+level; a value under the source regime never reaches a gate or projection. See
+[Edge parameter paths](transitions.md#api-edge-parameters).
 
 For a source regime with a gate parameter `marriage_bonus`, a parameterized gate
 reference, and a `Phased` fallback whose simulate side takes `settlement_share`:
 
 ```python
-template["source"]["target"] == {
-    "next_regime": {},
+template["edges"]["source"]["target"] == {
     "gate": {"marriage_bonus": "float"},
-    "gate_ref_V_outside_x": {"ref_share": "float"},
-    "leg_fallback_fallback_x": {},
-    "simulate_leg_fallback_fallback_x": {"settlement_share": "float"},
+    "gate_references": {"V_outside": {"x": {"ref_share": "float"}}},
+    "routes": {"f": {"fallback": {"simulate": {"x": {"settlement_share": "float"}}}}},
 }
 ```
 

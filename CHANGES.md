@@ -118,6 +118,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     `Regime.decomposed_transition` are gone. `model.graph.laws[name]` holds each
     regime's law as the model binds it, with `terminal` (no outgoing edges),
     `gated_edges` and `decomposed_transition`.
+  - Parameters of edge-declared callables (the regime-transition law, gates, gate
+    references, route fallbacks) live at their declaration path under
+    `params["edges"][source]`, and resolve from that path,
+    `params["edges"][source][arg]` or the model level. A regime-level value never
+    reaches them; `next_regime` and `gate` keys under a regime raise an error naming the
+    new path. Per-target state laws keep their paths under the source regime. See
+    [the migration guide](docs/user_guide/migrating_dated_regimes.md#migrating-edge-parameters).
+  - Names that become parameter-path segments contain no `__` and do not start or end
+    with `_`; `edges` is reserved as a regime, function and argument name.
 - Probability mass validation is shared by the solver consumers. Compiled validation
   now reliably rejects negative subnormal probabilities at both precisions.
 

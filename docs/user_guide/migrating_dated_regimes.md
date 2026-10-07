@@ -73,8 +73,9 @@ edges = {
 }
 ```
 
-A `Transition` on a source with at most one destination per age is rejected; drop its
-law instead. A `ByAge` law may leave single-destination ages unselected.
+A `ByAge` law may leave single-destination ages unselected. A law that does reach such
+an age is evaluated there and must put unit mass on its one destination; see
+[Laws at every horizon](#laws-at-every-horizon).
 
 Public `DeterministicTransition` and `StochasticTransition` have no `targets` argument;
 passing one raises a `TypeError`. Declare destinations in `Model(edges=...)`, the only
@@ -87,6 +88,105 @@ Per-target probability mappings still supply scalar probability laws. Move their
 structural destination and age restrictions into `edges`, and keep target-specific state
 handoffs on the source regime. `ByAge` selects complete laws, not topology or solved
 coverage. Replace age activity predicates with graph selectors and explicit starts.
+
+(migrating-edge-parameters)=
+
+## Move transition parameters under `edges`
+
+The regime-transition law, its gates, gate references and route fallbacks are declared
+in `Model(edges=...)`, and their parameters live there too: the parameter path of an
+edge-declared callable is its declaration path under `params["edges"]`. The source
+regime owns none of them, so its branch of the parameters has no `next_regime` or `gate`
+entry. Per-target state laws (`state_transitions={state: {target: law}}`) belong to the
+source regime and keep their paths, `params[source][target]["next_<state>"]`.
+
+| Key under the source regime                                       | Path under `params["edges"]`                                            |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `[source]["next_regime"][arg]` (a law over all targets)           | `[source][arg]`                                                         |
+| `[source][target]["next_regime"][arg]` (a per-target cell)        | `[source][target][arg]`                                                 |
+| the same, for a `ValueDependentTransition` cell                   | `[source][target]["probability"][arg]`                                  |
+| `[source][target]["gate"][arg]`                                   | `[source][target]["gate"][arg]`                                         |
+| `[source][target]["gate_ref_<reference>_<state>"][arg]`           | `[source][target]["gate_references"][reference][state][arg]`            |
+| `[source][target]["leg_fallback_<regime>_<state>"][arg]`          | `[source][target]["routes"][route]["fallback"][state][arg]`             |
+| the same, solve side of a `Phased` fallback                       | `[source][target]["routes"][route]["fallback"]["solve"][state][arg]`    |
+| `[source][target]["simulate_leg_fallback_<regime>_<state>"][arg]` | `[source][target]["routes"][route]["fallback"]["simulate"][state][arg]` |
+| `[source][arg]`, where the law or a gate reads it                 | `[source][arg]`, or the model level                                     |
+
+A law over all targets is a plain function, `DeterministicTransition`, a full-vector
+`StochasticTransition`, or `ByAge` / `Phased` around one; it has no `law` segment
+because the law is the only callable of a `Transition`. The `ByAge` cases and `Phased`
+sides of a law share its slot, and their arguments are unioned. A route fallback is
+keyed by its `routes` key, not by the regime it falls back to. A source declared by its
+edges alone has no `params["edges"]` entry, and `get_params_template()` has an `edges`
+branch only when some edge-declared callable takes a parameter:
+
+```python
+params = {
+    "discount_factor": 0.95,
+    "working": {
+        "utility": {"disutility_of_work": 0.05},
+        "next_wealth": {"interest_rate": 0.05},
+    },
+    "edges": {"working": {"retirement_age": 62}},
+}
+```
+
+### Where an edge parameter's value may come from
+
+For one parameter of an edge-declared callable, the candidate levels are, most specific
+first:
+
+1. its declaration path, e.g. `params["edges"]["working"]["dead"]["survival_rate"]`;
+1. `params["edges"][source][arg]`, which covers every callable below the source: the law
+   over all targets, each target's cell, gates, gate references and route fallbacks;
+1. the model level, `params[arg]`, which also feeds regime functions.
+
+There is no `params["edges"][arg]` level. A regime-level value never reaches an edge
+callable: `params[source][arg]` feeds only the source regime's own functions, and when
+none of them reads it, it is an unknown key: `InvalidParamsError` names its
+`params["edges"]` path. A value supplied at two levels for one parameter raises
+`InvalidNameError`. `fixed_params` take the same paths and levels. A `next_regime` or
+`gate` key under a regime raises `InvalidParamsError` naming the new path. Regime
+functions keep their levels: function, regime, model.
+
+### Names that become path segments
+
+Every user-chosen name that becomes a parameter-path segment contains no `__` and does
+not start or end with `_`: regime (source and target), state, action, function and
+constraint names, `gate_references` keys, `routes` keys, stakeholder names, and the
+argument names of model functions, which become parameter names. A violation raises when
+the regime or model is built, naming the name and its kind. `edges` is reserved: no
+regime, function or function argument may take that name. A law argument may not share
+its name with a regime.
+
+(laws-at-every-horizon)=
+
+### Laws at every horizon
+
+A declared law is evaluated at every source age with outgoing edges, including ages
+where only one destination is declared or left after fixed-zero pruning; there it must
+put unit mass on that destination. Its parameter slots are read off the declared
+`Transition`, so they do not depend on the number of periods, on age windows or on fixed
+values: a law that is never decisive, for instance on a two-period grid, still has
+required parameters.
+
+Declare the `Transition` at every horizon and write its law horizon-aware, or let
+`ByAge` (e.g. `ByAge.until`) leave single-destination ages unselected. Delete branches
+such as `Transition(targets=..., law=...) if len(targets) > 1 else targets` in a model
+and the matching branch in its parameter helper:
+
+```python
+def retire(*, age: float, retirement_age: float) -> ScalarInt:
+    return jnp.where(age < retirement_age, RegimeId.working, RegimeId.retired)
+
+
+edges = {"working": Transition(targets=working_targets, law=retire)}
+params = {"discount_factor": 0.95, "edges": {"working": {"retirement_age": 62}}}
+```
+
+A law short of unit mass at such an age is caught by the probability check at
+`log_level="debug"`, which names the cells dropped for lack of an edge. Run a model at
+that level at least once.
 
 ## Name age bounds explicitly
 

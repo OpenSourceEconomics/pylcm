@@ -70,11 +70,19 @@ Model(
   name, plain deterministic function, `DeterministicTransition(func=...)`, full-vector
   `StochasticTransition(func=...)`, per-target scalar probability mapping, `ByAge`
   selecting complete laws, or `Phased` of those. The law never owns topology; the
-  targets do. A `ByAge` law must select every age with several outgoing edges; a
-  `Transition` on a source whose every age has at most one edge is rejected unless its
-  law carries a `ValueDependentTransition`. Ordinary scalar probability cells require
-  `StochasticTransition`; their parameters nest under the target
-  (`template[regime][target]["next_regime"]`).
+  targets do. A `ByAge` law must select every age with several outgoing edges. A law is
+  evaluated at every source age with outgoing edges, including single-destination ages,
+  where it must put unit mass on that destination; its parameter slots do not depend
+  on the horizon. Ordinary scalar probability cells require `StochasticTransition`.
+- Edge parameters belong to the edges: the parameter path of an edge-declared callable
+  is its declaration path under `params["edges"]` — `[source][arg]` for a law over all
+  targets, `[source][target][arg]` for a per-target cell, and
+  `[source][target]["probability" | "gate"][arg]`,
+  `[source][target]["gate_references"][reference][state][arg]`,
+  `[source][target]["routes"][route]["fallback"][state][arg]` for a gated cell. Values
+  resolve from that path, `params["edges"][source][arg]` or the model level; a
+  regime-level value never reaches an edge callable. Per-target state laws stay under
+  their source regime.
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
   takes the model-level value. Declaring either at the regime level requires declaring
   it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
@@ -96,7 +104,8 @@ Model(
 - Terminal regimes must have empty `state_transitions`.
 - Regime, state, action, function, constraint, stakeholder, route and gate-reference
   names, and parameter arguments of model functions, cannot contain the reserved
-  separator `__` and cannot start or end with `_`
+  separator `__` and cannot start or end with `_`. `edges` is reserved as a regime, function
+  and argument name
 
 ### Model Creation
 
@@ -287,7 +296,7 @@ Model(
   parameters under the `pareto_objective` key. Omit it for equal weights.
 - A constraint-local projection may introduce **no** free parameter (refused when the
   `Regime` is constructed); an edge projection's free arguments become that edge's
-  params, nested under the target name.
+  params, under `params["edges"][source][target]`.
 - Stakeholder identity is **per row**: seed `initial_conditions["own_stakeholder"]`
   whenever the starting regime's forward closure contains a collective regime declaring
   a transition with more than one route. A row keeps its role across an ordinary regime
@@ -455,7 +464,7 @@ initial_conditions = {
 ### Key Attributes
 
 - `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
-  name)
+  name, plus an `"edges"` root for edge-declared callables)
 - `model.user_regimes` - Immutable mapping of regime names to plain `Regime` objects:
   the regimes as the model runs them, finalized at model build (model-level slots
   merged, Koopmans aggregator injected, completeness validated), still in user

@@ -203,9 +203,12 @@ index under JIT.
 
 A free function argument becomes a model parameter unless another state, action, DAG
 function, context value, or fixed parameter supplies it. Values may be given at model,
-regime, or function level, but each parameter value has one unambiguous source. Start
-from `model.get_params_template()` rather than constructing a nested parameter mapping
-from memory.
+regime, or function level, but each parameter value has one unambiguous source.
+Parameters of callables declared in `Model(edges=...)` live under `params["edges"]` at
+their declaration path, and a regime-level value never reaches them; see
+[Edge parameter paths](transitions.md#api-edge-parameters). Start from
+`model.get_params_template()` rather than constructing a nested parameter mapping from
+memory.
 
 Workflow: [Defining models](../user_guide/defining_models.md) and
 [Parameters](../user_guide/parameters.md).

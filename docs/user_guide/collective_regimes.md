@@ -333,11 +333,13 @@ Everything lands where the declaration is:
 template["couple"]["utility_f"]["crra"]  # a stakeholder's own utility
 template["couple"]["pareto_objective"]["weight_f"]  # the objective's free arguments
 template["couple"]["participation_f"]["slack"]  # a value constraint's predicate
-template["single_f"]["couple"]["gate"]["bonus"]  # one edge's gate
+template["edges"]["single_f"]["couple"]["gate"]["bonus"]  # one edge's gate
 ```
 
-Edge parameters nest under the **target** name and are discovered from that edge's own
-target states and injected operands — never from a union over unrelated regimes.
+Edge parameters belong to the edges, not to the source regime: each sits at its
+declaration path under `params["edges"][source][target]` and is discovered from that
+edge's own target states and injected operands — never from a union over unrelated
+regimes. See [Edge parameter paths](../reference/transitions.md#api-edge-parameters).
 
 ## What this costs
 
