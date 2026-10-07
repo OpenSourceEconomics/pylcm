@@ -202,7 +202,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     import lcm
     from lcm import (
         AgeGrid,
-        ByAge,
         DeterministicTransition,
         DiscreteGrid,
         LinSpacedGrid,
@@ -282,11 +281,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
                     "working": ages.exact_values[:-2],
                     "retired": ages.exact_values[:-1],
                 },
-                law=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
+                law=DeterministicTransition(func=next_regime),
             ),
         },
         **execution_kwargs,
@@ -299,7 +294,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
 
     from lcm import (
         AgeGrid,
-        ByAge,
         DeterministicTransition,
         LinSpacedGrid,
         Model,
@@ -365,11 +359,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
                     "working": ages.exact_values[:-2],
                     "retired": ages.exact_values[:-1],
                 },
-                law=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
+                law=DeterministicTransition(func=next_regime),
             ),
         },
         **_gpu_mem.default_budget_execution_kwargs(),

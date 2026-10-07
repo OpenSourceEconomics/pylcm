@@ -38,7 +38,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -166,11 +165,7 @@ def get_model(
         stop=CONSUMPTION_GRID.stop,
         n_points=n_consumption_points,
     )
-    alive_law = ByAge.until(
-        stop_age_exclusive=last_age,
-        law=StochasticTransition(func=next_regime),
-        then=StochasticTransition(func=next_regime),
-    )
+    alive_law = StochasticTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": wealth_grid,

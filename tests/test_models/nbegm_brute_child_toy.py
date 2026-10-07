@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
-    ByAge,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
@@ -158,14 +157,10 @@ def build_model(
         "liquid": {"old": young_liquid_law, "dead": young_liquid_law},
         "kind": {"old": lcm.fixed_transition("kind")},
     }
-    young_transition = ByAge(
-        cases={
-            0: {
-                "old": StochasticTransition(func=prob_to_old),
-                "dead": StochasticTransition(func=prob_young_dead),
-            }
-        }
-    )
+    young_transition = {
+        "old": StochasticTransition(func=prob_to_old),
+        "dead": StochasticTransition(func=prob_young_dead),
+    }
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(young_solver, NBEGM):

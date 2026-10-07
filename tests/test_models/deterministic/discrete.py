@@ -14,7 +14,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     Model,
@@ -109,21 +108,12 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Work until the age before `last_age`, then die."""
-    return ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
-
 def working_life_edges(
     ages: AgeGrid,
 ) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
     """Keep working before the second-to-last age; die from every non-final age.
 
-    Where both edges leave an age, `working_life_transitions` chooses between them.
+    Where both edges leave an age, `next_regime` chooses between them.
     """
     stays = tuple(ages.exact_values[:-2])
     dies = tuple(ages.exact_values[:-1])
@@ -132,7 +122,7 @@ def working_life_edges(
     return {
         "working_life": Transition(
             targets={"working_life": stays, "dead": dies},
-            law=working_life_transitions(last_age=ages.exact_values[-1]),
+            law=DeterministicTransition(func=next_regime),
         )
     }
 

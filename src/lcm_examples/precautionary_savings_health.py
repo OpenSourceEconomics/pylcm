@@ -12,7 +12,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
@@ -105,15 +104,6 @@ def borrowing_constraint(
     return consumption <= wealth + labor_income
 
 
-def working_life_transitions(*, retirement_age: int) -> ByAge:
-    """Work until the age before `retirement_age`, then retire."""
-    return ByAge.until(
-        stop_age_exclusive=retirement_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
-
 working_life = Regime(
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
@@ -177,7 +167,7 @@ def get_model(retirement_age: int = 24) -> Model:
             "working_life": (
                 Transition(
                     targets=working_targets,
-                    law=working_life_transitions(retirement_age=retirement_age),
+                    law=DeterministicTransition(func=next_regime),
                 )
                 if len(working_targets) > 1
                 else working_targets
