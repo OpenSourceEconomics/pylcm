@@ -6,7 +6,9 @@ transitions, the process-time AST subscript-order check, and the way the
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,12 +17,23 @@ import pytest
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.simulation import initial_conditions as initial_conditions_module
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
+)
+from _lcm.solution import backward_induction as backward_induction_module
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Phased,
     StochasticTransition,
     categorical,
 )
@@ -647,18 +660,22 @@ def _income(wealth: ContinuousState) -> FloatND:
     return 0.1 * wealth
 
 
-def _model_with_function_reading_health_probs(next_health_func) -> Model:
+def _model_with_function_reading_health_probs(
+    *, next_health_func, phased: bool = False, **model_options: Any
+) -> Model:
     """Build a model whose `health` law reads regime-function outputs.
 
     `effort` is a derived categorical (a regime function with a declared
-    `DiscreteGrid`); `income` is a plain continuous function output.
+    `DiscreteGrid`); `income` is a plain continuous function output. With
+    `phased`, the solve and simulate phases each declare their own copy of the law.
     """
+    law = StochasticTransition(func=next_health_func)
     alive = UserRegime(
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
-            "health": StochasticTransition(func=next_health_func),
+            "health": Phased(solve=law, simulate=law) if phased else law,
         },
         functions={"utility": _utility_alive, "effort": _effort, "income": _income},
         derived_categoricals={"effort": DiscreteGrid(category_class=_Effort)},
@@ -676,6 +693,7 @@ def _model_with_function_reading_health_probs(next_health_func) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        **model_options,
     )
 
 
@@ -692,7 +710,7 @@ def test_state_validator_checks_law_reading_derived_categorical(
             jnp.array([0.5, 0.5]),
         )
 
-    model = _model_with_function_reading_health_probs(health_probs)
+    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.solve(log_level="warning", params={"discount_factor": 0.95})
 
@@ -712,7 +730,7 @@ def test_state_validator_raises_on_invalid_law_at_unreached_derived_code() -> No
             effort == _Effort.high, jnp.array([0.5, 0.2]), jnp.array([0.3, 0.7])
         )
 
-    model = _model_with_function_reading_health_probs(health_probs)
+    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
     with pytest.raises(
         InvalidStateTransitionProbabilitiesError,
         match=r"state 'health' in regime 'alive' .* do not sum to 1",
@@ -732,7 +750,7 @@ def test_state_validator_skips_law_reading_non_categorical_function_output(
     ) -> FloatND:
         return jnp.array([0.3, 0.7])
 
-    model = _model_with_function_reading_health_probs(health_probs)
+    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.solve(log_level="warning", params={"discount_factor": 0.95})
 
@@ -746,3 +764,143 @@ def test_state_validator_skips_law_reading_non_categorical_function_output(
             "or model parameter."
         )
     ]
+
+
+def _health_probs_reading_effort(
+    *,
+    health: DiscreteState,
+    effort: ScalarInt,
+) -> FloatND:
+    good = jnp.where(effort == _Effort.high, 0.9, 0.7)
+    return jnp.where(
+        health == _Health.good, jnp.stack([1.0 - good, good]), jnp.array([0.5, 0.5])
+    )
+
+
+def _budgeted_model_with_derived_law(*, phased: bool) -> Model:
+    return _model_with_function_reading_health_probs(
+        next_health_func=_health_probs_reading_effort,
+        phased=phased,
+        execution_config=ExecutionConfig(device_memory_bytes=2**28),
+    )
+
+
+def _derived_code_footprint(*, model: Model, phased: bool) -> DeviceBufferFootprint:
+    """Measure the validation code arrays each law keeps, read off its metadata."""
+    codes = tuple(
+        code
+        for regime in model._regimes.values()
+        for transition in regime.stochastic_state_transitions.values()
+        for code in transition.derived_categorical_codes.values()
+    )
+    footprint = measure_buffer_footprint(tree=codes)
+    # A plain law keeps one two-code int32 array; a phased law keeps one per phase.
+    assert len(codes) == (2 if phased else 1)
+    assert sum(
+        end - start for spans in footprint.spans.values() for start, end in spans
+    ) == 8 * len(codes)
+    return footprint
+
+
+def _uncovered_code_bytes(
+    *, codes: DeviceBufferFootprint, inventory: DeviceBufferFootprint
+) -> int:
+    return sum(
+        resident_bytes_by_device(
+            live=codes, arguments=inventory, devices=tuple(codes.spans)
+        ).values()
+    )
+
+
+_INITIAL_CONDITIONS = {
+    "wealth": np.array([10.0]),
+    "health": np.array([_Health.good], dtype=np.int32),
+    "regime_id": np.array([_RegimeId.alive], dtype=np.int32),
+}
+
+
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_simulate_entry_inventory_charges_derived_categorical_codes(
+    *, phased: bool, log_level: LogLevel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every simulation entry snapshot covers the law validation code arrays."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    snapshots: list[DeviceBufferFootprint] = []
+    original = SimulationEntryAllocations.snapshot
+
+    def record(self: SimulationEntryAllocations) -> DeviceBufferFootprint:
+        snapshot = original(self)
+        snapshots.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(SimulationEntryAllocations, "snapshot", record)
+    model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions=_INITIAL_CONDITIONS,
+        seed=0,
+        log_level=log_level,
+    )
+
+    assert snapshots
+    assert [
+        _uncovered_code_bytes(codes=codes, inventory=snapshot) for snapshot in snapshots
+    ] == [0] * len(snapshots)
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_simulation_preflight_charges_derived_categorical_codes(
+    *, phased: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The validation preflight admits its buffers against the code arrays."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    memories: list[SimulationMemory] = []
+    original = initial_conditions_module._preflight_memory
+
+    def record(**arguments: Any) -> SimulationMemory | None:
+        memory = original(**arguments)
+        assert memory is not None
+        memories.append(memory)
+        return memory
+
+    monkeypatch.setattr(initial_conditions_module, "_preflight_memory", record)
+    model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions=_INITIAL_CONDITIONS,
+        seed=0,
+        log_level="debug",
+    )
+
+    assert [
+        _uncovered_code_bytes(codes=codes, inventory=memory.inputs)
+        for memory in memories
+    ] == [0]
+
+
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_solve_fixed_inventory_charges_derived_categorical_codes(
+    *, phased: bool, log_level: LogLevel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A standalone budgeted solve counts the code arrays among its fixed owners."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    trees: list[object] = []
+    original: Callable[..., object] = backward_induction_module.concrete_device_bytes
+
+    def record(*, tree: object) -> object:
+        trees.append(tree)
+        return original(tree=tree)
+
+    monkeypatch.setattr(backward_induction_module, "concrete_device_bytes", record)
+    model.solve(params={"discount_factor": 0.95}, log_level=log_level)
+
+    assert trees
+    assert [
+        _uncovered_code_bytes(
+            codes=codes, inventory=measure_buffer_footprint(tree=tree)
+        )
+        for tree in trees
+    ] == [0] * len(trees)
