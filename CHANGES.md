@@ -99,18 +99,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   fixed-zero pruning reasons.
 - `Model(edges=...)` is the only place regime transitions are declared, structure
   and law alike. Breaking API: `Regime` has no `regime_transitions` field.
-  - A source with exactly one outgoing edge at every source age is declared as a
-    plain `{target: source_ages}` mapping: the graph is the law. Deterministic
-    schedules such as `"dead"` or `ByAge.until(law="working", then="retired")`
-    are expressed by the edges alone.
-  - Where some source age has several outgoing edges, the source is declared as
-    `Transition(targets={target: source_ages, ...}, law=...)`. The law is any form
+  - A source with exactly one outgoing edge at every source age can be declared as
+    a plain `{target: source_ages}` mapping, with no law: the graph is the law.
+    Deterministic schedules such as `"dead"` or
+    `ByAge.until(law="working", then="retired")` are expressed by the edges alone.
+  - A source with a law is declared as
+    `Transition(targets={target: source_ages, ...}, law=...)`; one where some
+    source age has several outgoing edges needs one. The law is any form
     `regime_transitions` took: a per-target probability mapping, a selector
     function returning a regime code (a discrete choice), a full-vector
-    `StochasticTransition`, a regime name, `ByAge` or `Phased`. A `ByAge` law must
-    select every age with several edges; ages with one edge use that edge.
-  - A `Transition` law is evaluated at every source age with outgoing edges, also
-    where one edge leaves the source; there it must put unit mass on that edge.
+    `StochasticTransition`, a regime name, `ByAge` or `Phased`.
+  - A supplied `Transition` law is evaluated at every source age with outgoing
+    edges, also where one edge leaves the source; there it must put unit mass on
+    that edge. Only an age a `ByAge` law leaves unselected uses its one edge
+    instead; a `ByAge` law must select every age with several edges.
   - A regime with no outgoing edges is terminal.
   - `Phased` edges carry each phase's law in that phase's `Transition`.
   - `DeterministicTransition` and `StochasticTransition` have no `targets` field.
