@@ -18,9 +18,8 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
-    working_life_transitions,
+    working_life_edges,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def test_model_constructor_has_no_population_parameter() -> None:
@@ -30,16 +29,13 @@ def test_model_constructor_has_no_population_parameter() -> None:
 
 def _model() -> Model:
     """Build a small three-period model with one acting regime."""
-    return with_fixture_graph(
-        regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=20)
-            ),
-            "dead": dead,
-        },
-        ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
+    ages = AgeGrid(start=18, inclusive_stop=20, step="Y")
+    return Model(
+        regimes={"working_life": working_life, "dead": dead},
+        ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
+        edges=working_life_edges(ages),
     )
 
 
@@ -55,12 +51,13 @@ def _initial(*, count: int) -> dict[str, Array]:
 def test_model_constructor_rejects_population_keyword(population: int | None) -> None:
     """Unsupported constructor keywords raise instead of being silently ignored."""
     with pytest.raises(TypeError, match="n_subjects"):
-        with_fixture_graph(
+        Model(
             regimes={"working_life": working_life, "dead": dead},
             ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
             regime_id_class=RegimeId,
-            n_subjects=population,
+            n_subjects=population,  # ty: ignore[unknown-argument]
             initial_nodes={18: "working_life"},
+            edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
         )
 
 

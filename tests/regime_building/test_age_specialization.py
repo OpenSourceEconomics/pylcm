@@ -23,6 +23,7 @@ from _lcm.regime_building.age_specialization import (
     tree_signature,
 )
 from _lcm.regime_building.processing import _fail_if_phase_state_nodes_disagree
+from _lcm.regime_law import bind_regime_law
 from _lcm.user_regime_validation import _validate_logical_consistency
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import AgeSpecializedFunction, StochasticTransition
@@ -122,23 +123,25 @@ def test_tree_signature_wrappers_share_recursive_semantics():
 
 
 def test_age_specialized_regime_transition_is_rejected(binary_category_class):
-    """An age-specialized `regime_transitions` is rejected."""
+    """An age-specialized regime transition law is rejected."""
+    law = bind_regime_law(
+        AgeSpecializedFunction(
+            build=lambda age: lambda b: b,  # noqa: ARG005
+            signature=lambda age: ("regime", age),
+        )
+    )
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
-        regime_transitions=AgeSpecializedFunction(
-            build=lambda age: lambda b: b,  # noqa: ARG005
-            signature=lambda age: ("regime", age),
-        ),
         functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
     with pytest.raises(
         RegimeInitializationError,
-        match=r"`regime_transitions` cannot be an `AgeSpecializedFunction`",
+        match=r"A regime transition law cannot be an `AgeSpecializedFunction`",
     ):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_class):
@@ -147,6 +150,7 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
     `StochasticTransition(func=AgeSpecializedFunction(...))` is out of scope for v1 and
     must raise.
     """
+    law = bind_regime_law(lambda: 0)
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -158,12 +162,11 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
                 )
             )
         },
-        regime_transitions=lambda: 0,
         functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_age_specialized_deterministic_state_transition_is_rejected(
@@ -175,6 +178,7 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
     `AgeSpecializedFunction` helper function; a direct marker in
     `state_transitions` must raise before any program is built.
     """
+    law = bind_regime_law(lambda: 0)
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -184,12 +188,11 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
                 signature=lambda age: ("deterministic", age),
             )
         },
-        regime_transitions=lambda: 0,
         functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
@@ -199,9 +202,10 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
     policy-specialized terminal function must raise instead of silently using one
     age's closure.
     """
+    law = bind_regime_law(None)
     regime = MockRegime(
         states={"b": DiscreteGrid(category_class=binary_category_class)},
-        regime_transitions=None,
+        terminal=True,
         functions={
             "utility": AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
@@ -211,7 +215,7 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_regime_transition_reading_age_specialized_helper_is_rejected(
@@ -227,10 +231,10 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
     def next_regime(policy_threshold):
         return policy_threshold
 
+    law = bind_regime_law(StochasticTransition(func=next_regime))
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
-        regime_transitions=StochasticTransition(func=next_regime),
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "policy_threshold": AgeSpecializedFunction(
@@ -241,7 +245,7 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_regime_transition_reading_age_specialized_constraint_is_rejected(
@@ -259,10 +263,10 @@ def test_regime_transition_reading_age_specialized_constraint_is_rejected(
     def next_regime(policy_threshold):
         return policy_threshold
 
+    law = bind_regime_law(StochasticTransition(func=next_regime))
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
-        regime_transitions=StochasticTransition(func=next_regime),
         functions={"utility": lambda a, b: None},  # noqa: ARG005
         constraints={
             "policy_threshold": AgeSpecializedFunction(
@@ -273,7 +277,7 @@ def test_regime_transition_reading_age_specialized_constraint_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
@@ -292,10 +296,10 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
     def next_regime(eligibility):
         return eligibility
 
+    law = bind_regime_law(StochasticTransition(func=next_regime))
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
-        regime_transitions=StochasticTransition(func=next_regime),
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "eligibility": eligibility,
@@ -307,7 +311,7 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
@@ -318,22 +322,24 @@ def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
     Regime-transition probabilities are built once, not per period, so a
     policy-specialized probability law as the regime transition is just as
     unsound as a bare `AgeSpecializedFunction` transition and must be rejected at
-    `Regime` construction.
+    the moment the law is bound to the regime.
     """
-    regime = MockRegime(
-        actions={"a": DiscreteGrid(category_class=binary_category_class)},
-        states={"b": DiscreteGrid(category_class=binary_category_class)},
-        regime_transitions=StochasticTransition(
+    law = bind_regime_law(
+        StochasticTransition(
             func=AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
                 signature=lambda age: ("regime", age),
             )
-        ),
+        )
+    )
+    regime = MockRegime(
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda a, b: None},  # noqa: ARG005
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime)
+        _validate_logical_consistency(regime, law=law)
 
 
 def _nodes(*values: float) -> Float1D:

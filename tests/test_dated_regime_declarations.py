@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regimes
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -181,7 +183,7 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
 def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
     *, build, match: str
 ) -> None:
-    """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
+    """A schedule cannot mark a regime terminal at some ages, nor nest schedules."""
     with pytest.raises(RegimeInitializationError, match=match):
         build()
 
@@ -208,7 +210,7 @@ def _phased(*, schedule_side: str, law: object) -> Phased:
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
 @pytest.mark.parametrize("schedule_side", ["solve", "simulate", "both"])
-def test_regime_rejects_a_schedule_inside_a_top_level_phased(
+def test_law_rejects_a_schedule_inside_a_top_level_phased(
     *, schedule_side: str, law_form: str
 ) -> None:
     """A top-level `Phased` may not wrap a `ByAge` on either side."""
@@ -222,15 +224,19 @@ def test_regime_rejects_a_schedule_inside_a_top_level_phased(
         RegimeInitializationError,
         match=rf"`ByAge` cannot be nested inside `ByAge` or `Phased`.*{side_pattern}",
     ):
-        Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+        bind_regime_law(transition)
 
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
-def test_regime_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
-    """A top-level `Phased` whose sides are plain laws constructs."""
+def test_law_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
+    """A top-level `Phased` whose sides are plain laws binds and validates."""
     transition = Phased(solve=_LAWS[law_form](), simulate=_LAWS[law_form]())
-    regime = Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
-    assert regime.regime_transitions is transition
+    law = bind_regime_law(transition)
+    validate_regimes(
+        regimes={"regime": Regime(functions={"utility": lambda: 0.0})},
+        laws={"regime": law},
+    )
+    assert law.transition is transition
 
 
 def test_until_rejects_a_stop_age_without_a_predecessor() -> None:
@@ -250,7 +256,7 @@ def test_until_rejects_an_off_grid_stop_age() -> None:
 @pytest.mark.parametrize("targets", [("a", "b"), (), ("a", "a")])
 def test_transition_kernels_reject_topology_metadata(*, wrapper, targets) -> None:
     """The model graph is the sole public owner of regime support."""
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="targets"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets=targets,
@@ -280,7 +286,7 @@ def test_by_age_constructor_takes_only_cases_and_default() -> None:
 @pytest.mark.parametrize("restriction", [AgeRange(exclusive_stop=64), True])
 def test_transition_rejects_embedded_age_restrictions(*, wrapper, restriction) -> None:
     """Source-age support belongs to Model.edges, including invalid metadata."""
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="targets"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets={"working": restriction},

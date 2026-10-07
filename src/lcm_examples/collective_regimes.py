@@ -17,7 +17,6 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -25,6 +24,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -73,7 +73,6 @@ _SHARED_WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 _DISSOLUTION_WAGE_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 _MIDDLE_WAGE_LOWER = 1.5
 _MIDDLE_WAGE_UPPER = 2.5
-_DISSOLUTION_AGE = 2
 
 
 def get_params() -> dict[str, float]:
@@ -102,10 +101,6 @@ def _next_shared_wage(work: DiscreteAction) -> ContinuousState:
     return 40.0 * work + 8.0 * (1.0 - work)
 
 
-def _to_shared_terminal() -> ScalarInt:
-    return SharedDecisionRegimeId.couple_terminal
-
-
 def get_shared_decision_model() -> Model:
     """Build a two-period collective model with one shared labor choice.
 
@@ -116,14 +111,12 @@ def get_shared_decision_model() -> Model:
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
     )
     couple = Regime(
-        regime_transitions=DeterministicTransition(func=_to_shared_terminal),
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": shared_utility},
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _SHARED_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": shared_utility},
@@ -216,23 +209,14 @@ def get_dissolution_model(
     transition routes each stakeholder to their own singleton fallback.
     """
     single_f = Regime(
-        regime_transitions=None,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_f_value},
     )
     single_m = Regime(
-        regime_transitions=None,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         functions={"utility": _single_m_value},
     )
     married_with_participation = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=_DISSOLUTION_AGE): {
-                    "married_terminal": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -262,37 +246,37 @@ def get_dissolution_model(
             ),
         },
     )
-    married = Regime(
-        # Keyed by the gate-open target: the couple that keeps going. The
-        # gate-closed branch is each stakeholder's own single regime, so keying
-        # this edge by one of them would send both partners there whenever the
-        # household stays together.
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_with_participation": ValueDependentTransition(
-                        probability=StochasticTransition(func=_probability_one),
-                        gate=_no_dissolution,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
+    # Keyed by the gate-open target: the couple that keeps going. The
+    # gate-closed branch is each stakeholder's own single regime, so keying
+    # this edge by one of them would send both partners there whenever the
+    # household stays together.
+    married_law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {
+                "married_with_participation": ValueDependentTransition(
+                    probability=StochasticTransition(func=_probability_one),
+                    gate=_no_dissolution,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wage": _identity_wage},
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wage": _identity_wage},
                             ),
-                        },
-                    )
-                }
+                        ),
+                    },
+                )
             }
-        ),
+        }
+    )
+    married = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -303,7 +287,6 @@ def get_dissolution_model(
         },
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -314,7 +297,14 @@ def get_dissolution_model(
     )
     return Model(
         edges={
-            "married": {"married_with_participation": 0, "single_f": 0, "single_m": 0},
+            "married": Transition(
+                targets={
+                    "married_with_participation": 0,
+                    "single_f": 0,
+                    "single_m": 0,
+                },
+                law=married_law,
+            ),
             "married_with_participation": {"married_terminal": 1},
         },
         regimes={

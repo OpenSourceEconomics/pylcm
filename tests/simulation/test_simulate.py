@@ -20,13 +20,14 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     LinearAggregator,
     LinearExpectation,
+    Model,
 )
 from lcm.ages import AgeGrid
 from lcm.result import (
     SimulationResult,
     _collect_array_tree_leaf_sizes,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
     START_AGE,
@@ -34,10 +35,10 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_model,
     get_params,
+    graph_bound_working_life_transitions,
     working_life,
-    working_life_transitions,
+    working_life_edges,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @pytest.fixture
@@ -49,25 +50,33 @@ def simulate_inputs():
             **working_life.actions,
             "consumption": working_life.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
     )
     user_regimes = {"working_life": updated_working_life, "dead": dead}
+    laws = bind_laws(
+        {
+            "working_life": graph_bound_working_life_transitions(
+                last_age=final_age_alive + 1
+            ),
+            "dead": None,
+        }
+    )
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
 
@@ -78,6 +87,7 @@ def simulate_inputs():
         "simulation_output_dtypes": _get_output_dtypes(
             user_regimes=finalize_regimes(
                 user_regimes=user_regimes,
+                laws=laws,
                 derived_categoricals={},
                 koopmans_aggregator=LinearAggregator(),
                 certainty_equivalent=LinearExpectation(),
@@ -142,20 +152,17 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             if name != "wage"
         }
         stop_age = START_AGE + n_periods - 1
-        final_age_alive = stop_age - 1
         ages = AgeGrid(start=START_AGE, inclusive_stop=stop_age, step="Y")
-        updated_working_life = working_life.replace(
-            functions=updated_functions,
-            regime_transitions=working_life_transitions(last_age=final_age_alive + 1),
-        )
+        updated_working_life = working_life.replace(functions=updated_functions)
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
-        model = with_fixture_graph(
+        model = Model(
             regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
             initial_nodes={ages.exact_values[0]: "working_life"},
+            edges=working_life_edges(ages),
         )
         period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
         return period_to_regime_to_V_arr, params, model

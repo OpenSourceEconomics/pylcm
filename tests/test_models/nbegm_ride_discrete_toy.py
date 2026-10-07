@@ -551,6 +551,11 @@ def build_model(  # noqa: C901, PLR0912
         extra_state_transitions=extra_state_transitions,
         extra_actions={"buy_private": DiscreteGrid(category_class=BuyPrivate)},
         survival_transition=survival_transition,
+        # The survival law reads the age past which the alive regime dies; with
+        # one outgoing edge per age there is no law and no such parameter.
+        fixed_params={"final_age_alive": float(n_periods - 1)}
+        if survival_transition is not None and n_periods >= 3
+        else None,
     )
 
 
@@ -564,7 +569,8 @@ def build_params(
     premium: float = 1.5,
     tax_rate: float = 0.2,
     tax_exemption: float = 12.0,
-    final_age_alive: float = 3.0,
+    # Unused: `build_model` fixes the age at which `alive` dies.
+    final_age_alive: float = 3.0,  # noqa: ARG001
     jump_schedule: bool = False,
     tax_lump: float = 2.0,
     action_in_liquid_law: bool = False,
@@ -626,6 +632,5 @@ def build_params(
         **surcharge_params,
         "alive": {"next_liquid": alive_budget},
         "dead": {"next_liquid": alive_budget},
-        "final_age_alive": final_age_alive,
     }
     return {"alive": alive, "dead": {"utility": {"crra": crra}}}

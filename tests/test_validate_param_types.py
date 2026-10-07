@@ -11,21 +11,19 @@ import numpy as np
 from jax import Array
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -45,13 +43,6 @@ def _next_regime() -> ScalarInt:
 
 
 working = UserRegime(
-    regime_transitions=until_exit(
-        30,
-        law=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("working", "dead")
-        ),
-        exits=("dead",),
-    ),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -64,17 +55,25 @@ working = UserRegime(
 )
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
 
 def _make_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=30, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={25: "working"},
+        edges={
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=29),
+                    "dead": AgeRange(exclusive_stop=30),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 

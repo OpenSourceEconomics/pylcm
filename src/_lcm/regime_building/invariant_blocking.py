@@ -28,6 +28,7 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
 from _lcm.solution.backward_induction import _value_axis_names
 from _lcm.solution.grid_search import GridSearch
@@ -45,6 +46,7 @@ _REMEDY = (
 def bound_state_names(
     *,
     user_regime: FinalizedUserRegime,
+    law: RegimeLaw,
     block_widths: Mapping[StateName, int],
     state_names: tuple[StateName, ...],
 ) -> tuple[StateName, ...]:
@@ -53,7 +55,7 @@ def bound_state_names(
     A non-terminal regime binds every blocked state it carries on a discrete
     grid. A terminal regime reads no continuation and stays unblocked.
     """
-    if user_regime.terminal:
+    if law.terminal:
         return ()
     return tuple(
         name
@@ -66,6 +68,7 @@ def bound_state_names(
 def fail_if_invariant_blocking_route_is_unsupported(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     block_widths: Mapping[StateName, int],
     sharded_states: frozenset[StateName],
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
@@ -113,15 +116,18 @@ def fail_if_invariant_blocking_route_is_unsupported(
             failure
             for regime_name, regime in user_regimes.items()
             # A terminal regime reads no continuation and is solved unblocked.
-            if not regime.terminal
+            if not laws[regime_name].terminal
             for failure in _regime_failures(
                 regime_name=regime_name,
                 regime=regime,
+                law=laws[regime_name],
                 carried=tuple(name for name in block_widths if name in regime.states),
             )
         ),
         *(
-            _block_major_failures(user_regimes=user_regimes, block_widths=block_widths)
+            _block_major_failures(
+                user_regimes=user_regimes, laws=laws, block_widths=block_widths
+            )
             if schedule is InvariantBlockSchedule.BLOCK_MAJOR
             else ()
         ),
@@ -164,6 +170,7 @@ def _request_failures(
 def _block_major_failures(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     block_widths: Mapping[StateName, int],
 ) -> list[str]:
     """Name every regime the block-major schedule cannot take components of."""
@@ -178,7 +185,7 @@ def _block_major_failures(
         for regime_name, regime in user_regimes.items()
         if not isinstance(regime.states.get(name), DiscreteGrid)
         # A non-terminal carrier's grid is already checked by the route itself.
-        and not (regime.states.get(name) is not None and not regime.terminal)
+        and not (regime.states.get(name) is not None and not laws[regime_name].terminal)
     ]
 
 
@@ -186,6 +193,7 @@ def _regime_failures(
     *,
     regime_name: RegimeName,
     regime: FinalizedUserRegime,
+    law: RegimeLaw,
     carried: tuple[StateName, ...],
 ) -> list[str]:
     """Name what one non-terminal regime carrying a blocked state declares."""
@@ -198,7 +206,7 @@ def _regime_failures(
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
         (regime.stakeholders is not None, "is a collective regime"),
-        (bool(regime.gated_edges), "declares gated edges"),
+        (bool(law.gated_edges), "declares gated edges"),
         (bool(regime.same_period_refs), "declares same-period references"),
         *(
             (
@@ -214,6 +222,7 @@ def _regime_failures(
 def admit_invariant_blocking(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
     initial_nodes: frozenset[tuple[object, RegimeName]],
@@ -247,6 +256,7 @@ def admit_invariant_blocking(
     components = analyze_invariant_components(
         user_regimes=user_regimes,
         regimes=regimes,
+        laws=laws,
         reachability=reachability,
         initial_nodes=initial_nodes,
         ages=ages,

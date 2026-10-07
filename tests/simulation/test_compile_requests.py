@@ -209,7 +209,7 @@ def test_cold_simulate_call_compiles() -> None:
     """A simulate call on a freshly built model issues backend compilations."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,

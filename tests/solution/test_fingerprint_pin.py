@@ -6,8 +6,8 @@ the row of the format the session runs under. What it never covers is execution
 policy: two models differing only in ExecutionConfig widths are the same model.
 
 The table binds the current Solver API identity and the dated
-`regime_transitions` declarations; regenerate it deliberately whenever a model's
-declaration changes.
+`Model(edges=...)` declarations, transition laws included; regenerate it
+deliberately whenever a model's declaration changes.
 """
 
 import json

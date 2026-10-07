@@ -46,6 +46,7 @@ from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_law import RegimeLaw
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
@@ -287,12 +288,14 @@ if TYPE_CHECKING:
         def solver(self) -> _SolverDeclaration: ...
 
     type _FingerprintUserRegimes = Mapping[RegimeName, _UserRegimeDeclaration]
+    type _FingerprintLaws = Mapping[RegimeName, RegimeLaw]
 else:
     # Runtime structural tests and extension boundaries reach the function's own
     # conservative attribute inspection instead of decorator nominal checking.
     type _ProjectionRegime = object
     type _ProjectionRegimes = object
     type _FingerprintUserRegimes = object
+    type _FingerprintLaws = object
 
 
 type SolutionParamProjection = MappingProxyType[RegimeName, frozenset[str]]
@@ -516,6 +519,7 @@ def fingerprint_model(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     structure: str | None = None,
@@ -543,6 +547,7 @@ def fingerprint_model(
             ages=ages,
             regimes=regimes,
             user_regimes=user_regimes,
+            laws=laws,
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             structure=structure,
@@ -560,6 +565,7 @@ def fingerprint_model_programs(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     structure: str | None = None,
@@ -582,6 +588,7 @@ def fingerprint_model_programs(
             ages=ages,
             regimes=regimes,
             user_regimes=user_regimes,
+            laws=laws,
             regime_names_to_ids=regime_names_to_ids,
         )
     record = (
@@ -641,6 +648,7 @@ def fingerprint_model_structure(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
 ) -> str:
@@ -697,7 +705,9 @@ def fingerprint_model_structure(
                 # hasher. The declaration retains user-level function bodies,
                 # defaults, closures and globals instead of relying on compiled
                 # wrapper identity.
-                "declaration": _project_user_regime_declaration(user_regimes[name]),
+                "declaration": _project_user_regime_declaration(
+                    user_regimes[name], law=laws[name]
+                ),
                 "fixed_params": projected_fixed_params[name],
             }
             for name, regime in regimes.items()
@@ -729,11 +739,17 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 
 
-def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
+# keyword-only-exempt: primary-argument=regime
+def _project_user_regime_declaration(
+    regime: object, *, law: RegimeLaw
+) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
+
+    The regime's law joins its fields: its `transition` first and its
+    `gated_edges` before `same_period_refs`.
 
     A stored policy is priced against the solve-phase laws of motion and regime
     transition; the realized path after the action is chosen does not change
@@ -752,6 +768,7 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
         raise TypeError(msg)
+    fields = _with_law_fields(fields=fields, law=law)
     declaration_type = type(regime)
     return MappingProxyType(
         {
@@ -768,6 +785,29 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
                 }
             ),
         }
+    )
+
+
+def _with_law_fields(
+    *, fields: Iterable[tuple[str, object]], law: RegimeLaw
+) -> tuple[tuple[str, object], ...]:
+    """Place the law's two slots among a regime's own fields.
+
+    The law is read field by field, as the regime is, so the fingerprint hashes
+    the declaration as written without interpreting it.
+    """
+    own = [(name, value) for name, value in fields]
+    names = [name for name, _value in own]
+    at = names.index("same_period_refs") if "same_period_refs" in names else len(own)
+    law_fields = {
+        declaration.name: getattr(law, declaration.name)
+        for declaration in dataclasses.fields(law)
+    }
+    return (
+        ("transition", law_fields["transition"]),
+        *own[:at],
+        ("gated_edges", law_fields["gated_edges"]),
+        *own[at:],
     )
 
 

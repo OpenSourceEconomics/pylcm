@@ -161,7 +161,6 @@ def _params(
                 "law_slope": law_slope,
                 "law_offset": jnp.asarray(law_offset),
             },
-            "final_age_alive": 2.0,
         },
     }
 

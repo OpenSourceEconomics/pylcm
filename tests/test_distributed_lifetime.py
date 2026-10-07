@@ -33,7 +33,6 @@ from lcm import (
     ExecutionConfig,
     Model,
     Regime,
-    StochasticTransition,
     fixed_transition,
 )
 from lcm.solver_api import (
@@ -55,12 +54,10 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import FloatND, RegimeName, ScalarFloat, ScalarInt, StateName
+from lcm.typing import FloatND, RegimeName, ScalarInt, StateName
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # The out-of-tree solver module builds arrays at import, which initializes a JAX
 # backend; every name it supplies is therefore imported inside the function that
@@ -223,11 +220,6 @@ def _two_leaf_reading_arguments(build: Any) -> dict[str, Any]:
         "count": payload.count,
         "echo": payload.echo,
     }
-
-
-def _certain(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
-    """Probability of the one target the reading regime can reach."""
-    return jnp.asarray(1.0)
 
 
 def _placed_zeros(
@@ -597,21 +589,15 @@ def _model(
         next_wealth,
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=until_exit(
-                    _N_PERIODS - 1,
-                    law={"dead": StochasticTransition(func=_certain)},
-                    exits=("dead",),
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": lambda wealth, type1: wealth * (type1 + 1.0)},
                 solver=solver if solver is not None else _ReadingSolver(),
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
                 solver=(
@@ -629,6 +615,7 @@ def _model(
         # Every reading age is a start: `alive` exits straight to `dead`, so one
         # age-0 root would demand the reading problem at period 0 alone.
         initial_nodes={range(_N_PERIODS - 1): "alive"},
+        edges={"alive": {"dead": tuple(range(_N_PERIODS - 1))}},
     )
 
 

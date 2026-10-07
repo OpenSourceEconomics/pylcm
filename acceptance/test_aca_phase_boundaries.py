@@ -217,7 +217,7 @@ def test_last_living_age_enters_dead_and_terminal_has_no_carried_pension() -> No
         RegimeId.dead
     )
     dead = build_dead_regime()
-    assert dead.regime_transitions is None
+    assert not dead.state_transitions
     assert dead.states["pension_wealth"] is None
     assert not dead.actions
     assert dead.active(95)

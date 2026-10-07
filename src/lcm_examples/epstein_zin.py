@@ -46,6 +46,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -165,12 +166,12 @@ def get_model(
         stop=CONSUMPTION_GRID.stop,
         n_points=n_consumption_points,
     )
+    alive_law = ByAge.until(
+        stop_age_exclusive=last_age,
+        law=StochasticTransition(func=next_regime),
+        then=StochasticTransition(func=next_regime),
+    )
     alive = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=StochasticTransition(func=next_regime),
-            then=StochasticTransition(func=next_regime),
-        ),
         states={
             "wealth": wealth_grid,
             "health": DiscreteGrid(category_class=HealthStatus),
@@ -186,20 +187,24 @@ def get_model(
         certainty_equivalent=certainty_equivalent,
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": dead_wealth_grid},
         functions={"utility": utility_dead},
     )
+    alive_targets = {
+        "dead": tuple(range(25, last_age)),
+        **(
+            {"alive": tuple(range(25, last_age - 1))}
+            if tuple(range(25, last_age - 1))
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "alive": {
-                "dead": tuple(range(25, last_age)),
-                **(
-                    {"alive": tuple(range(25, last_age - 1))}
-                    if tuple(range(25, last_age - 1))
-                    else {}
-                ),
-            },
+            "alive": (
+                Transition(targets=alive_targets, law=alive_law)
+                if len(alive_targets) > 1
+                else alive_targets
+            )
         },
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=last_age, step="Y"),

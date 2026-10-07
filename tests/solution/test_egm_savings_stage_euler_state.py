@@ -23,16 +23,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -49,8 +48,6 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Number of model periods; the last one is spent in the terminal regime.
 N_PERIODS = 4
@@ -256,14 +253,6 @@ def _survival_prob_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "working_life": StochasticTransition(func=stay_prob),
-                "dead": StochasticTransition(func=death_prob),
-            },
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={
@@ -285,9 +274,18 @@ def _survival_prob_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay_prob),
+                    "dead": StochasticTransition(func=death_prob),
+                },
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -324,13 +322,6 @@ def _markov_health_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -356,9 +347,15 @@ def _markov_health_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -404,13 +401,6 @@ def _passive_skill_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "skill": SKILL_GRID},
         state_transitions={
@@ -436,9 +426,15 @@ def _passive_skill_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -497,14 +493,6 @@ def smooth_death_prob(wealth: ContinuousState) -> FloatND:
 
 def _build_model_with_survival_cells(*, stay, die) -> Model:
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "working_life": StochasticTransition(func=stay),
-                "dead": StochasticTransition(func=die),
-            },
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
         state_transitions={"wealth": next_wealth_dcegm},
@@ -517,9 +505,18 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law={
+                    "working_life": StochasticTransition(func=stay),
+                    "dead": StochasticTransition(func=die),
+                },
+            )
+        },
         regime_id_class=SavingsStageRegimeId,
         initial_nodes={40: "working_life"},
     )

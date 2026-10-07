@@ -24,13 +24,13 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.phased import Phased
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -161,8 +161,14 @@ def _make_model(
             simulate=checked if law_phase == "simulate" else constant,
         )
     )
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        edges={
+            "working": Transition(
+                targets={"left": (0, 1), "right": 1},
+                law=ByAge(cases={0: "left", 1: late_law}),
+            )
+        },
         regime_id_class=RegimeId,
         initial_nodes={(0, 1): "working"} if earlier_root else {1: "working"},
         enable_jit=enable_jit,
@@ -170,15 +176,14 @@ def _make_model(
         fixed_params={"spending_scale": spending_scale} if fixed else {},
         regimes={
             "working": Regime(
-                regime_transitions=ByAge(cases={0: "left", 1: late_law}),
                 states={"wealth": grid},
                 actions={"consumption": grid},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions=functions,
                 constraints=constraints,
             ),
-            "left": Regime(regime_transitions=None, functions={"utility": _ten}),
-            "right": Regime(regime_transitions=None, functions={"utility": _zero}),
+            "left": Regime(functions={"utility": _ten}),
+            "right": Regime(functions={"utility": _zero}),
         },
     )
 

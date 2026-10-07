@@ -4,7 +4,7 @@ A regime's continuation is a lottery over the targets it can reach, weighted by
 the regime-transition probabilities. Two properties hold whether or not the
 regime carries stakeholders:
 
-- A unit mass on the single target prices each stakeholder as its singleton twin.
+- The single target's unit mass prices each stakeholder as its singleton twin.
 - Regime selection refuses a non-unit mass and a negative probability at the
   `off`, `warning` and `debug` log levels, including probabilities that sum to one
   only because one is negative.
@@ -23,7 +23,14 @@ import pytest
 from numpy.testing import assert_allclose
 
 from _lcm.utils.logging import LogLevel
-from lcm import CollectiveUtility, DiscreteGrid, Model, Regime, StochasticTransition
+from lcm import (
+    CollectiveUtility,
+    DiscreteGrid,
+    Model,
+    Regime,
+    StochasticTransition,
+    Transition,
+)
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     ContinuousState,
@@ -42,13 +49,11 @@ from tests.collective_fixtures import (
     Work,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 # The stakeholders every collective regime in this module carries, wife first.
 STAKEHOLDERS = ("f", "m")
 
-# A regime-transition mass just above one, which regime selection refuses.
+# A regime-transition probability just above one, which regime selection refuses.
 INFLATED_MASS = 1.0 + 1e-4
 
 # Probabilities of the two-target source regime's targets at age 0.
@@ -65,14 +70,14 @@ EXPECTED_TWIN_V = {"f": (3808.0, 3840.0), "m": (7616.0, 7680.0)}
 def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin():
     """Every stakeholder slice of a collective value equals its singleton twin's.
 
-    The single target carries the regime's whole unit mass, so each twin's value
-    is the hand-computed `EXPECTED_TWIN_V`.
+    The single outgoing edge carries the regime's whole unit mass, so each twin's
+    value is the hand-computed `EXPECTED_TWIN_V`.
     """
     rtol = 10.0**-DECIMAL_PRECISION
 
     collective = _build_single_target_model(household=STAKEHOLDERS)
     collective_V = collective.solve(
-        params=_single_target_params(mass=1.0),
+        params=_single_target_params(),
         log_level="off",
     ).values[0]["couple"]
 
@@ -81,7 +86,7 @@ def test_collective_continuation_prices_each_stakeholder_as_its_singleton_twin()
         twin = _build_single_target_model(household=None, stakeholder=stakeholder)
         twin_values.append(
             twin.solve(
-                params=_single_target_params(mass=1.0),
+                params=_single_target_params(),
                 log_level="off",
             ).values[0]["couple"]
         )
@@ -113,16 +118,26 @@ _NOT_SUMMING_TO_ONE = (
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
 @pytest.mark.parametrize(
-    ("mass", "match"),
-    [(INFLATED_MASS, _OUTSIDE_UNIT_INTERVAL), (1.0 - 1e-4, _NOT_SUMMING_TO_ONE)],
+    ("stay_probability", "leave_probability", "match"),
+    [
+        (INFLATED_MASS, 0.0, _OUTSIDE_UNIT_INTERVAL),
+        (0.5, 0.5 - 1e-4, _NOT_SUMMING_TO_ONE),
+    ],
 )
 def test_collective_regime_selection_refuses_a_non_unit_mass(
-    *, mass: float, match: str, log_level: LogLevel
+    *,
+    stay_probability: float,
+    leave_probability: float,
+    match: str,
+    log_level: LogLevel,
 ) -> None:
     """A regime-transition mass other than one is refused at the source's age 0."""
-    collective = _build_single_target_model(household=STAKEHOLDERS)
+    collective = _build_two_target_model(household=STAKEHOLDERS)
+    params = _two_target_params(
+        stay_probability=stay_probability, leave_probability=leave_probability
+    )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match=match):
-        collective.solve(params=_single_target_params(mass=mass), log_level=log_level)
+        collective.solve(params=params, log_level=log_level)
 
 
 @pytest.mark.parametrize("log_level", ["off", "warning", "debug"])
@@ -159,11 +174,10 @@ def test_two_target_model_with_a_distribution_has_a_finite_last_source_period():
 def _build_single_target_model(
     *, household: tuple[str, ...] | None, stakeholder: str = "f"
 ) -> Model:
-    """Build a source regime whose only target carries the whole declared mass.
+    """Build a source regime whose only target carries the whole mass.
 
-    `couple` has a transition law at age 0 and reaches `couple_terminal` — solved
-    from age 1 — with the probability named by the `regime_mass` parameter, which
-    is the regime's entire transition mass.
+    `couple` reaches `couple_terminal` — solved from age 1 — along its single
+    outgoing edge at age 0, so the edge is the regime's entire transition mass.
 
     Args:
         household: Stakeholder names of both regimes, or `None` for the
@@ -176,9 +190,7 @@ def _build_single_target_model(
 
     """
     return _build_model(
-        regime_transitions={
-            "couple_terminal": StochasticTransition(func=_target_probability)
-        },
+        law=None,
         household=household,
         stakeholder=stakeholder,
         source_ends_at_age=1,
@@ -206,7 +218,7 @@ def _build_two_target_model(
 
     """
     return _build_model(
-        regime_transitions={
+        law={
             "couple": StochasticTransition(func=_stay_probability),
             "couple_terminal": StochasticTransition(func=_leave_probability),
         },
@@ -218,7 +230,7 @@ def _build_two_target_model(
 
 def _build_model(
     *,
-    regime_transitions: Mapping[RegimeName, StochasticTransition],
+    law: Mapping[RegimeName, StochasticTransition] | None,
     household: tuple[str, ...] | None,
     stakeholder: str,
     source_ends_at_age: int,
@@ -230,7 +242,9 @@ def _build_model(
     this builds.
 
     Args:
-        transition: Regime transition of the source regime, as a per-target dict.
+        law: Regime transition law of the source regime, as a per-target dict
+            whose targets are reachable before its last age, or `None` when
+            the terminal regime is its only target.
         household: Stakeholder names of both regimes, or `None` for a
             singleton twin.
         stakeholder: Whose utility a singleton twin carries.
@@ -241,27 +255,30 @@ def _build_model(
 
     """
     couple = Regime(
-        regime_transitions=until_exit(
-            source_ends_at_age,
-            law=choose_among(regime_transitions, targets=("couple", "couple_terminal")),
-            exits=("couple_terminal",),
-        ),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_source_functions(household=household, stakeholder=stakeholder),
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
-    return with_fixture_graph(
+    # Every target is reachable before the last source age; only the terminal
+    # regime is reachable at it.
+    targets = {
+        **dict.fromkeys(law or {}, tuple(range(source_ends_at_age - 1))),
+        "couple_terminal": tuple(range(source_ends_at_age)),
+    }
+    return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         initial_nodes={0: "couple"},
+        edges={
+            "couple": targets if law is None else Transition(targets=targets, law=law)
+        },
     )
 
 
@@ -293,13 +310,10 @@ def _terminal_functions(
     }
 
 
-def _single_target_params(*, mass: float) -> UserParams:
-    """Return the single-target model's params, with `mass` as its whole mass."""
+def _single_target_params() -> UserParams:
+    """Return the single-target model's params."""
     return {
-        "couple": {
-            "koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR},
-            "couple_terminal": {"next_regime": {"regime_mass": mass}},
-        },
+        "couple": {"koopmans_aggregator": {"discount_factor": DISCOUNT_FACTOR}},
         "couple_terminal": {},
     }
 
@@ -350,11 +364,6 @@ def _terminal_utility_m(*, wage: ContinuousState, work: DiscreteAction) -> Float
 def _next_wage(work: DiscreteAction) -> ContinuousState:
     """Deterministic wage law: working today yields the high wage tomorrow."""
     return 40.0 * work + 8.0 * (1.0 - work)
-
-
-def _target_probability(regime_mass: float) -> FloatND:
-    """Probability of the only target: the source regime's whole mass."""
-    return jnp.asarray(regime_mass)
 
 
 def _stay_probability(*, age: float, stay_probability: float) -> FloatND:

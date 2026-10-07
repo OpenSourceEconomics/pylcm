@@ -73,4 +73,4 @@ def test_three_regimes_with_terminal_dead():
     """The model carries working, retired, and a terminal dead regime."""
     model = fues.build_model(variant="dcegm", n_grid=6, n_housing=5, n_periods=4)
     assert set(model.regime_names_to_ids) == {"working", "retired", "dead"}
-    assert model.user_regimes["dead"].regime_transitions is None
+    assert model.graph.laws["dead"].terminal

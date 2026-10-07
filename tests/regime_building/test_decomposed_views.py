@@ -1,10 +1,10 @@
 """What the engine reads when a regime is written in the declaration vocabulary.
 
-A regime's `functions`, `constraints` and `transition` are what the author
-wrote — declarations included. The three decomposed views are what the engine
-runs: one utility per stakeholder, the ordinary constraints alone, and a
-per-target probability cell for every target. The transformations are tested on
-raw mappings, because that is the input they exist to handle.
+A regime's `functions` and `constraints`, and its law between regimes, are what
+the author wrote — declarations included. The three decomposed views are what
+the engine runs: one utility per stakeholder, the ordinary constraints alone,
+and a per-target probability cell for every target. The transformations are
+tested on raw mappings, because that is the input they exist to handle.
 """
 
 from collections.abc import Mapping
@@ -13,6 +13,7 @@ from typing import cast
 import jax.numpy as jnp
 import pytest
 
+from _lcm.regime_law import decompose_transition
 from lcm import (
     CollectiveUtility,
     Phased,
@@ -21,11 +22,7 @@ from lcm import (
     ValueDependentConstraint,
     ValueDependentTransition,
 )
-from lcm.regime import (
-    decompose_constraints,
-    decompose_functions,
-    decompose_transition,
-)
+from lcm.regime import decompose_constraints, decompose_functions
 from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, FloatND
 

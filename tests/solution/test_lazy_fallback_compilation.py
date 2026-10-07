@@ -6,10 +6,10 @@ under `ResultRetention.VALUES`, recorded by
 
 | triple           | primary pair         | fallback pair        |
 | ---------------- | -------------------- | -------------------- |
-| `alive` period 0 | 62224 + 1888 = 64112 | 62352 + 1888 = 64240 |
-| `alive` period 1 | 62224 + 1760 = 63984 | 62352 + 1760 = 64112 |
-| `alive` period 2 | 62160 + 1496 = 63656 | no fallback          |
-| `dead` period 3  | 521 + 1232 = 1753    | no fallback          |
+| `alive` period 0 | 62212 + 1880 = 64092 | 62340 + 1880 = 64220 |
+| `alive` period 1 | 62212 + 1752 = 63964 | 62340 + 1752 = 64092 |
+| `alive` period 2 | 62148 + 1488 = 63636 | no fallback          |
+| `dead` period 3  | 521 + 1224 = 1745    | no fallback          |
 
 A pair is the variant's compiler reservation plus the bytes it leaves resident.
 
@@ -57,10 +57,10 @@ DEAD_3 = ("dead", 3, "main")
 CELL_2 = (("cell", 2),)
 
 # Below `alive` period 1's primary pair, so both donating primaries are refused.
-BOTH_DONATING_PRIMARIES_REFUSED = 63979
+BOTH_DONATING_PRIMARIES_REFUSED = 63959
 
 # Between the two donating primaries' pairs: period 1 survives, period 0 does not.
-ONLY_THE_FIRST_DONATING_PRIMARY_REFUSED = 64107
+ONLY_THE_FIRST_DONATING_PRIMARY_REFUSED = 64087
 
 # Above every primary pair and above period 1's fallback pair, below period 0's.
 ONLY_THE_FIRST_FALLBACK_REFUSED = 64164
@@ -147,7 +147,7 @@ def test_fallback_rejection_uses_the_fallbacks_own_pairing(
 
     rows = [row for row in census.rows_for(role=FALLBACK) if row.triple == ALIVE_0]
     assert rows, "The refused candidate's fallback was never measured."
-    assert [(row.reservation, row.residency) for row in rows] == [(62352, 1888)]
+    assert [(row.reservation, row.residency) for row in rows] == [(62340, 1880)]
 
 
 def test_selected_donating_winner_has_an_admitted_fallback(

@@ -75,45 +75,8 @@ def _passes_keyword(*, source: str, keyword: str) -> bool:
 
 
 def _reaches_public_model(*, source: str) -> bool:
-    """Recognize `Model` or the explicitly imported domain fixture builder."""
-    if _calls(source=source, name="Model"):
-        return True
-    tree = ast.parse(source)
-    aliases = {
-        alias.asname or alias.name
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom) and node.module == "tests.test_models.graph"
-        for alias in node.names
-        if alias.name == "with_fixture_graph"
-    }
-
-    def reaches(*, node: ast.AST, visible: set[str]) -> bool:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            arguments = {
-                argument.arg
-                for argument in (
-                    *node.args.posonlyargs,
-                    *node.args.args,
-                    *node.args.kwonlyargs,
-                )
-            }
-            assigned = {
-                child.id
-                for child in ast.walk(node)
-                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
-            }
-            visible = visible - arguments - assigned
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in visible
-        ):
-            return True
-        return any(
-            reaches(node=child, visible=visible) for child in ast.iter_child_nodes(node)
-        )
-
-    return reaches(node=tree, visible=aliases)
+    """Recognize a call to `Model`, plain or as an attribute."""
+    return _calls(source=source, name="Model")
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
@@ -230,57 +193,19 @@ def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
     [
         ("Model(regimes={})", True),
         ("lcm.Model(regimes={})", True),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph\n"
-                "with_fixture_graph(regimes={})"
-            ),
-            True,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph as build\n"
-                "build(regimes={})"
-            ),
-            True,
-        ),
-        ("with_fixture_graph(regimes={})", False),
-        (
-            (
-                "from other_module import with_fixture_graph\n"
-                "with_fixture_graph(regimes={})"
-            ),
-            False,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph\n"
-                "def run(with_fixture_graph):\n"
-                "    return with_fixture_graph(regimes={})"
-            ),
-            False,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph as build\n"
-                "def run():\n"
-                "    build = lambda **kwargs: None\n"
-                "    return build(regimes={})"
-            ),
-            False,
-        ),
+        ("build_model(regimes={})", False),
         ('"""Builds no Model, only mentions one."""', False),
     ],
 )
 def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
-    """A public route calls `Model` or its explicitly imported fixture builder."""
+    """A public route calls `Model`."""
     assert _reaches_public_model(source=source) is expected
 
 
-#: What a regime's three declarations decompose into. A model author never
-#: writes one: `stakeholders`, `pareto_objective`, `value_constraints`,
-#: `same_period_refs` and `gated_edges` are read off a regime, and `GatedEdge`
-#: is the engine's own form of an edge.
+#: What a regime's declarations and its law decompose into. A model author never
+#: writes one: `stakeholders`, `pareto_objective`, `value_constraints` and
+#: `same_period_refs` are read off a regime, `gated_edges` off the law the model
+#: binds for it, and `GatedEdge` is the engine's own form of an edge.
 _DECOMPOSED_NAMES = (
     "stakeholders",
     "pareto_objective",

@@ -33,6 +33,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
@@ -40,8 +41,6 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -166,29 +165,25 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "single": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_of_separating),
-                    gate=_wage_clears_the_floor,
-                    routes={
-                        "f": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="outside_f", projection={"wage": _identity_wage}
-                            )
-                        ),
-                        "m": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="outside_m", projection={"wage": _identity_wage}
-                            )
-                        ),
-                    },
-                )
+    couple_law = {
+        "single": ValueDependentTransition(
+            probability=StochasticTransition(func=_probability_of_separating),
+            gate=_wage_clears_the_floor,
+            routes={
+                "f": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="outside_f", projection={"wage": _identity_wage}
+                    )
+                ),
+                "m": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="outside_m", projection={"wage": _identity_wage}
+                    )
+                ),
             },
-            exits=("single",),
-        ),
+        )
+    }
+    couple = Regime(
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=_Work)},
@@ -209,21 +204,23 @@ def _build_model() -> Model:
         },
     )
     single = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _single_utility},
     )
     outside_f = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_f_utility},
     )
     outside_m = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_m_utility},
     )
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "couple": Transition(
+                targets={"single": 0, "outside_f": 0, "outside_m": 0}, law=couple_law
+            )
+        },
         regimes={
             "couple": couple,
             "single": single,

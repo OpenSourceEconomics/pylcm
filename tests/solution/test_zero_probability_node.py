@@ -30,8 +30,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, IntND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 # The entry names 10.0 at the middle node, outside income's support.
@@ -52,10 +50,6 @@ class Health:
     poor: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
@@ -73,14 +67,9 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     def _health_probabilities() -> FloatND:
         return jnp.asarray(health_probabilities)
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
                 states={},
                 state_transitions={
                     "income": {"target": _entry_income},
@@ -92,7 +81,6 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
                 certainty_equivalent=certainty_equivalent,
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     "health": DiscreteGrid(category_class=Health),
@@ -103,6 +91,7 @@ def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": 20}},
     )
 
 

@@ -26,6 +26,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
+    Transition,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -36,7 +37,6 @@ from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.regime_building.test_same_period_ref_period_axes import (
     _make_model as _make_outside_option_model,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -46,9 +46,8 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _nonterminal(transition: Any) -> Regime:
+def _nonterminal() -> Regime:
     return Regime(
-        regime_transitions=transition,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
@@ -57,7 +56,6 @@ def _nonterminal(transition: Any) -> Regime:
 
 def _terminal() -> Regime:
     return Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )
@@ -71,6 +69,10 @@ class LifeId:
 
 
 _LIFE_AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
+_BROKEN_EXIT_EDGES = {
+    "working": {"working": (25, 35, 45), "retirement": 55},
+    "retirement": {"dead": 45},
+}
 
 
 def _stay() -> FloatND:
@@ -82,26 +84,33 @@ def _die() -> FloatND:
 
 
 def _life_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "working": _nonterminal(
-                ByAge.until(
+            "working": _nonterminal(),
+            "retirement": _nonterminal(),
+            "dead": _terminal(),
+        },
+        ages=_LIFE_AGES,
+        regime_id_class=LifeId,
+        initial_nodes=initial_nodes,
+        edges={
+            "working": Transition(
+                targets={
+                    "working": (25, 35, 45),
+                    "dead": (25, 35, 45),
+                    "retirement": 55,
+                },
+                law=ByAge.until(
                     stop_age_exclusive=65,
                     law={
                         "working": StochasticTransition(func=_stay),
                         "dead": StochasticTransition(func=_die),
                     },
                     then="retirement",
-                )
+                ),
             ),
-            "retirement": _nonterminal(
-                ByAge(cases={AgeRange(start=65, exclusive_stop=75): "dead"})
-            ),
-            "dead": _terminal(),
+            "retirement": {"dead": 65},
         },
-        ages=_LIFE_AGES,
-        regime_id_class=LifeId,
-        initial_nodes=initial_nodes,
     )
 
 
@@ -194,37 +203,31 @@ def test_a_required_target_without_a_law_names_the_source() -> None:
     with pytest.raises(
         ModelInitializationError, match=r"\(55, 'working'\).*'retirement' at age 65"
     ):
-        with_fixture_graph(
+        Model(
             regimes={
-                "working": _nonterminal(
-                    ByAge.until(stop_age_exclusive=65, law="working", then="retirement")
-                ),
-                "retirement": _nonterminal(
-                    ByAge(cases={AgeRange(start=45, exclusive_stop=55): "dead"})
-                ),
+                "working": _nonterminal(),
+                "retirement": _nonterminal(),
                 "dead": _terminal(),
             },
             ages=_LIFE_AGES,
             regime_id_class=LifeId,
             initial_nodes={25: "working"},
+            edges=_BROKEN_EXIT_EDGES,
         )
 
 
 def test_an_unrequired_broken_target_does_not_fail() -> None:
     """The same broken exit is harmless when no start requires it."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
-            "working": _nonterminal(
-                ByAge.until(stop_age_exclusive=65, law="working", then="retirement")
-            ),
-            "retirement": _nonterminal(
-                ByAge(cases={AgeRange(start=45, exclusive_stop=55): "dead"})
-            ),
+            "working": _nonterminal(),
+            "retirement": _nonterminal(),
             "dead": _terminal(),
         },
         ages=_LIFE_AGES,
         regime_id_class=LifeId,
         initial_nodes={45: "retirement"},
+        edges=_BROKEN_EXIT_EDGES,
     )
     assert model.reachability.nodes == frozenset({(45, "retirement"), (55, "dead")})
 
@@ -243,22 +246,32 @@ _PHASED_AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
 
 def _phased_model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "source": _nonterminal(
-                ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
-            ),
-            "other_source": _nonterminal(ByAge(cases={0: "perceived"})),
-            "perceived": _nonterminal(
-                ByAge(cases={1: Phased(solve="end", simulate="realized_end")})
-            ),
-            "realized": _nonterminal(ByAge(cases={1: "end"})),
+            "source": _nonterminal(),
+            "other_source": _nonterminal(),
+            "perceived": _nonterminal(),
+            "realized": _nonterminal(),
             "end": _terminal(),
             "realized_end": _terminal(),
         },
         ages=_PHASED_AGES,
         regime_id_class=PhasedId,
         initial_nodes=initial_nodes,
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "other_source": {"perceived": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "other_source": {"perceived": 0},
+                "perceived": {"realized_end": 1},
+                "realized": {"end": 1},
+            },
+        ),
     )
 
 
@@ -335,27 +348,26 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         if phased_fallback
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
-    return with_fixture_graph(
-        regimes={
-            "source": _nonterminal(
-                ByAge(
-                    cases={
-                        40: {
-                            "target": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_gate,
-                                routes={"only": StakeholderRoute(fallback=fallback)},
-                                gate_references={
-                                    "V_reference": ProjectedRegimeValue(
-                                        regime="reference",
-                                        projection={"wealth": _identity},
-                                    )
-                                },
-                            )
-                        }
-                    }
+    law = ByAge(
+        cases={
+            40: {
+                "target": ValueDependentTransition(
+                    probability=StochasticTransition(func=_prob_one),
+                    gate=_gate,
+                    routes={"only": StakeholderRoute(fallback=fallback)},
+                    gate_references={
+                        "V_reference": ProjectedRegimeValue(
+                            regime="reference",
+                            projection={"wealth": _identity},
+                        )
+                    },
                 )
-            ),
+            }
+        }
+    )
+    return Model(
+        regimes={
+            "source": _nonterminal(),
             "target": _terminal(),
             "reference": _terminal(),
             "priced": _terminal(),
@@ -364,6 +376,14 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         ages=_GATED_AGES,
         regime_id_class=GatedId,
         initial_nodes={40: "source"},
+        edges=Phased(
+            solve={"source": Transition(targets={"target": 40, "priced": 40}, law=law)},
+            simulate={
+                "source": Transition(targets={"target": 40, "fallback": 40}, law=law)
+            },
+        )
+        if phased_fallback
+        else {"source": Transition(targets={"target": 40, "fallback": 40}, law=law)},
     )
 
 

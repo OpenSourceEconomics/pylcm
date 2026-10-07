@@ -41,7 +41,7 @@ def _model(*, kind: str, enabled: bool, budget: int | None) -> Model:
     """The two-state fixture without its cell-width pin, which would bypass halving."""
     base = _fixture_model(kind=kind, width=6)
     return Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=_RegimeId,

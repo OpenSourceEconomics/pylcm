@@ -1,7 +1,8 @@
 """The gated edge a `ValueDependentTransition` decomposes into.
 
-A model author declares a value-dependent transition in the regime's own
-`regime_transitions` slot and reads the result back as `regime.gated_edges`. This is
+A model author declares a value-dependent transition in the law of the source's
+`Transition` in `Model(edges=...)`; the model graph keeps the result on that
+source's `RegimeLaw.gated_edges`. This is
 that result: the engine's form of one edge, carrying the gate, the routes, the
 references the gate reads and the off-grid contract. It lives here rather than
 in the public package because nothing constructs it — it is derived.
@@ -31,7 +32,7 @@ class GatedEdge:
     singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
     raw transitions between different-stakeholder regimes stay rejected.
 
-    A source regime declares `gated_edges` as a mapping of TARGET regime name
+    A source regime's law carries `gated_edges` as a mapping of TARGET regime name
     to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
     row enters when the gate is true — and each leg's `fallback` is where the
     gate-false branch sends it. A dissolution edge is therefore keyed by the

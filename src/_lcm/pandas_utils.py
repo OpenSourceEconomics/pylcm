@@ -17,6 +17,7 @@ from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
@@ -114,7 +115,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     _validate_state_columns(
         state_columns=state_columns,
         user_regimes=user_regimes,
-        initial_nodes=df["regime_name"].tolist(),
+        initial_regimes=df["regime_name"].tolist(),
     )
 
     n_subjects = len(df)
@@ -288,6 +289,7 @@ def convert_series_in_params(
     flat_params: Mapping[RegimeName, Mapping[str, object]],
     ages: AgeGrid,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
     array_writer: CanonicalArrayWriter | None = None,
 ) -> FlatParams:
@@ -308,6 +310,7 @@ def convert_series_in_params(
             (`{regime: {func__param: value}}`).
         ages: Age grid for the model.
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
+        laws: Each regime's law, whose transition functions read params too.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         array_writer: Optional owner admitting each Series upload and retaining
@@ -321,7 +324,7 @@ def convert_series_in_params(
     result: dict[RegimeName, dict[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
         user_regime = user_regimes[regime_name]
-        all_funcs = dict(user_regime.get_all_functions())
+        all_funcs = dict(user_regime.get_all_functions(law=laws[regime_name]))
         # The Koopmans aggregator is not a regime function; its params live
         # under a pseudo-function key of the same name. Under `Phased` the two
         # variants declare different parameters and the template carries their
@@ -1042,11 +1045,11 @@ def _validate_state_columns(
     *,
     state_columns: set[str],
     user_regimes: Mapping[RegimeName, UserRegime],
-    initial_nodes: list[RegimeName],
+    initial_regimes: list[RegimeName],
 ) -> None:
     """Validate that DataFrame columns match model states."""
     expected = _collect_state_names(
-        user_regimes=user_regimes, initial_nodes=initial_nodes
+        user_regimes=user_regimes, initial_regimes=initial_regimes
     )
 
     unknown = state_columns - expected
@@ -1061,7 +1064,7 @@ def _validate_state_columns(
     missing = expected - state_columns
     if missing:
         required_by: dict[str, list[str]] = {name: [] for name in missing}
-        for regime_name in set(initial_nodes):
+        for regime_name in set(initial_regimes):
             for name in user_regimes[regime_name].states:
                 if name in required_by:
                     required_by[name].append(regime_name)
@@ -1084,7 +1087,7 @@ def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
 def _collect_state_names(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
-    initial_nodes: list[RegimeName],
+    initial_regimes: list[RegimeName],
 ) -> set[str]:
     """Collect all state names from initial regimes.
 
@@ -1096,7 +1099,7 @@ def _collect_state_names(
 
     """
     names: set[str] = set(PSEUDO_STATE_NAMES)
-    for regime_name in set(initial_nodes):
+    for regime_name in set(initial_regimes):
         names.update(user_regimes[regime_name].states.keys())
     return names
 

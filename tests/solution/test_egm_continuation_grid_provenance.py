@@ -29,7 +29,6 @@ it is asserted against an exact affine oracle rather than against brute force.
 
 from pathlib import Path
 
-import jax.numpy as jnp
 import numpy as np
 import yaml
 
@@ -37,7 +36,7 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     LinSpacedGrid,
-    StochasticTransition,
+    Model,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -51,8 +50,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models.deterministic.ds_pension import get_model, get_params
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 5
 _RETIREMENT_PERIOD = 3
@@ -174,12 +171,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
     def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
         return consumption <= wealth
 
-    def prob_survive(*, age: int, last_age: float) -> FloatND:
-        return jnp.where(age + 1 < last_age, 1.0, 0.0)
-
-    def prob_gone(*, age: int, last_age: float) -> FloatND:
-        return jnp.where(age + 1 >= last_age, 1.0, 0.0)
-
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
@@ -189,15 +180,6 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         states={"wealth": wealth_grid},
         state_transitions={"wealth": {"alive": next_wealth, "gone": next_wealth}},
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=until_exit(
-            3,
-            law={
-                "alive": StochasticTransition(func=prob_survive),
-                "gone": StochasticTransition(func=prob_gone),
-            },
-            exits=("gone",),
-            stays=("alive",),
-        ),
         functions={"utility": utility, "resources": resources, "savings": savings},
         solver=solver,
         **(
@@ -214,14 +196,14 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        regime_transitions=None,
         states={"wealth": wealth_grid},
         functions={"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "gone": gone},
         ages=ages,
+        edges={"alive": {"alive": (0, 1), "gone": 2}},
         regime_id_class=RenamedRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
     )
@@ -234,8 +216,8 @@ def _renamed_one_asset_params():
         "alive": {
             "utility": {"crra": 2.0},
             "koopmans_aggregator": {"discount_factor": 0.98},
-            "alive": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
-            "gone": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
+            "alive": {"next_wealth": law},
+            "gone": {"next_wealth": law},
         },
         "gone": {"utility": {"crra": 2.0}},
     }

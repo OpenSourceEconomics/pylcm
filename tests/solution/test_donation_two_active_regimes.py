@@ -30,11 +30,9 @@ from _lcm.solution.continuation_reads import continuation_leaf_reads
 from _lcm.solution.solve_inputs import SolveInputMappings, locate_artifact
 from lcm import (
     AgeGrid,
-    ByAge,
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.solver_api import (
@@ -57,7 +55,6 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt, StateName
-from tests.test_models.graph import with_fixture_graph
 from tests.test_solver_api_out_of_tree import TerminalPublisher
 
 _N_PERIODS = 3
@@ -113,11 +110,6 @@ def _utility(wealth: ScalarFloat) -> ScalarFloat:
 def _next_wealth(wealth: ScalarFloat) -> ScalarFloat:
     """Keep wealth where it is, so every period sees the same grid."""
     return wealth
-
-
-def _stay(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
-    """Send the whole mass back into the regime it came from."""
-    return jnp.asarray(1.0)
 
 
 def _counting_value(
@@ -256,14 +248,9 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
     Each acting regime stays in itself until the last acting age, where it
     moves into the terminal `dead`.
     """
-    return with_fixture_graph(
+    return Model(
         regimes={
             name: Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_N_PERIODS,
-                    law={name: StochasticTransition(func=_stay)},
-                    then={"dead": StochasticTransition(func=_stay)},
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
@@ -273,7 +260,6 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         }
         | {
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 solver=TerminalPublisher(parent=solver_class()),
@@ -282,6 +268,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: _ACTING_REGIMES},
+        edges={name: {name: (0, 1), "dead": 2} for name in _ACTING_REGIMES},
     )
 
 

@@ -745,17 +745,27 @@ def _representative_function(
 ) -> object:
     """Replace an age-function marker (bare or inside `Phased`) by its concrete.
 
-    Returns the marker's concrete callable at `period` — the first-active-period
+    Returns the marker's concrete callable for `period` — the first-active-period
     one when `period` is `None` — a `Phased` with its variants likewise replaced,
-    or the value unchanged. A marker only the simulate slice reads is resolved
-    only at the periods a subject can occupy; elsewhere no solve reads it, and it
-    keeps its representative.
+    or the value unchanged. Periods that share a signature share one callable:
+    the one built at the earliest period of that signature group, the same rule
+    `PeriodizedEconFunction` resolves by. A marker only the simulate slice reads
+    is resolved only at the periods a subject can occupy; elsewhere no solve
+    reads it, and it keeps its representative.
     """
     if isinstance(value, AgeSpecializedFunction):
         resolved = function_cache[id(value)]
         if period is None:
             return resolved.representative
-        return resolved.concrete_by_period.get(period, resolved.representative)
+        if period not in resolved.signature_by_period:
+            return resolved.representative
+        signature = resolved.signature_by_period[period]
+        group_period = min(
+            other
+            for other, other_signature in resolved.signature_by_period.items()
+            if other_signature == signature
+        )
+        return resolved.concrete_by_period[group_period]
     if isinstance(value, Phased):
         return Phased(
             solve=cast(

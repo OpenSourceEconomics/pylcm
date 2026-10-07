@@ -14,7 +14,7 @@ import pytest
 from _lcm.engine import NNBEGMPolicyRead
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.solution.nnbegm import _BoundNNBEGM
-from lcm import LinearAggregator, Phased
+from lcm import LinearAggregator, Phased, Transition
 from lcm.exceptions import ModelInitializationError
 from lcm.solvers import NBEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -55,12 +55,13 @@ def _resources(liquid: ContinuousState) -> FloatND:
 def _structural_phase_variations(model) -> tuple[str, ...]:
     """Independent oracle over normalized public declarations.
 
-    This reads the existing phase slices and compares corresponding objects by
-    ``is``. It does not call the production replay-capability classifier and it
-    does not infer capability from ``NNBEGMPolicyRead``.
+    This reads the existing phase slices, and the regime law declared on the
+    model's edges, and compares corresponding objects by ``is``. It does not
+    call the production replay-capability classifier and it does not infer
+    capability from ``NNBEGMPolicyRead``.
     """
     regime = model.user_regimes["alive"]
-    spec = normalize_regime_phases(regime)
+    spec = normalize_regime_phases(regime, law=model.graph.laws["alive"])
     solve = spec.solution
     simulate = spec.simulation
     varied: list[str] = []
@@ -81,7 +82,9 @@ def _structural_phase_variations(model) -> tuple[str, ...]:
             )
         )
 
-    if solve.regime_transition is not simulate.regime_transition:
+    alive_edges = cast("Mapping[str, object]", model.edges).get("alive")
+    law = alive_edges.law if isinstance(alive_edges, Transition) else None
+    if isinstance(law, Phased) and law.solve is not law.simulate:
         varied.append("transition")
     if solve.koopmans_aggregator is not simulate.koopmans_aggregator:
         varied.append("koopmans_aggregator")
@@ -96,8 +99,8 @@ def _assert_nnbegm_replay(model) -> None:
     )
 
 
-def _build_nnbegm(**kwargs):
-    return n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2, **kwargs)
+def _build_nnbegm(*, n_periods: int = 2, **kwargs):
+    return n_nbegm_toy.build_model(variant="n_nbegm", n_periods=n_periods, **kwargs)
 
 
 def test_nbegm_accepts_an_identical_object_phased_utility() -> None:
@@ -201,10 +204,13 @@ def test_nnbegm_rejects_variation_before_period_kernels(
         ),
         (
             {
+                # A third period gives the alive regime two outgoing edges at
+                # its first age, so the law is declared on the model's edges.
+                "n_periods": 3,
                 "regime_transition": Phased(
                     solve=n_nbegm_toy.next_regime,
                     simulate=_next_regime_clone,
-                )
+                ),
             },
             "transition",
         ),
@@ -239,9 +245,7 @@ def test_nnbegm_rejects_every_genuine_phase_variation(
     # The oracle model is built under grid search so production NNBEGM capability
     # cannot affect its classification.
     oracle_model = n_nbegm_toy.build_model(
-        variant="brute",
-        n_periods=2,
-        **kwargs,
+        variant="brute", **({"n_periods": 2} | kwargs)
     )
     assert oracle_path in _structural_phase_variations(oracle_model)
 

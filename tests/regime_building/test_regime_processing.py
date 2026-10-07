@@ -25,6 +25,7 @@ from _lcm.regime_building.processing import (
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import RegimeLaw, bind_regime_law
 from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.variables import from_regime, get_grids
 from lcm import (
@@ -41,14 +42,16 @@ from lcm.regime import Regime as UserRegime
 from lcm.solver_api import EGM_CONTINUATION
 from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, GridSearch, Solver
 from lcm.typing import FloatND, ScalarInt
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.mock_regime import MockRegime
 from tests.solution.test_egm_solver import _SAVINGS_GRID as EGM_SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as egm_model
 from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 from tests.test_models.deterministic.base import dead, working_life
-from tests.test_models.deterministic.regression import working_life_transitions
+from tests.test_models.deterministic.regression import (
+    graph_bound_working_life_transitions,
+)
 from tests.test_nbegm_constraint_validation import _build_smooth_model
 
 
@@ -60,6 +63,7 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
         pass
 
     mock_regime = MockRegime(
+        terminal=True,
         actions={
             "a": DiscreteGrid(category_class=binary_category_class),
         },
@@ -85,6 +89,7 @@ def test_get_grids(binary_category_class):
         pass
 
     mock_regime = MockRegime(
+        terminal=True,
         actions={
             "a": DiscreteGrid(category_class=binary_category_class),
         },
@@ -110,6 +115,7 @@ def test_get_grids_reorder(binary_category_class):
         pass
 
     mock_regime = MockRegime(
+        terminal=True,
         actions={
             "a": DiscreteGrid(category_class=binary_category_class),
         },
@@ -136,28 +142,30 @@ def test_get_grids_reorder(binary_category_class):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
-    user_regimes = {
-        "working_life": working_life.replace(
-            regime_transitions=working_life_transitions(last_age=4)
-        ),
-        "dead": dead,
-    }
+    user_regimes = {"working_life": working_life, "dead": dead}
+    laws = bind_laws(
+        {
+            "working_life": graph_bound_working_life_transitions(last_age=4),
+            "dead": None,
+        }
+    )
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
     working_regime = regimes["working_life"]
@@ -234,46 +242,54 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
         return jnp.where(age >= 1, 2, 1)
 
     early = UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=regime_transition, targets=("late",)
-                )
-            }
-        ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=4)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
     )
     late = UserRegime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=regime_transition, targets=("done",)
-                )
-            }
-        ),
         states={"x": LinSpacedGrid(start=0, stop=10, n_points=6)},
         state_transitions={"x": next_x},
         functions={"utility": lambda x: x},
     )
-    done = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    done = UserRegime(functions={"utility": lambda: 0.0})
+    laws = bind_laws(
+        {
+            "early": ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
+                        func=regime_transition, targets=("late",)
+                    )
+                }
+            ),
+            "late": ByAge(
+                cases={
+                    AgeRange(
+                        start=1, exclusive_stop=2
+                    ): _SupportedDeterministicTransition(
+                        func=regime_transition, targets=("done",)
+                    )
+                }
+            ),
+            "done": None,
+        }
+    )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     finalized_user_regimes = finalize_regimes(
         user_regimes={"early": early, "late": late, "done": done},
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     return process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=MappingProxyType(
             {"early": jnp.int32(0), "late": jnp.int32(1), "done": jnp.int32(2)}
         ),
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
 
@@ -345,8 +361,8 @@ def test_wrap_regime_transition_probs_return_annotation_accepts_mapping():
     assert set(result) == {"working", "retired"}
 
 
-def _pair_handover_regime() -> UserRegime:
-    """A regime whose only handover to `retired` is its carried state."""
+def _pair_handover_regime() -> tuple[UserRegime, RegimeLaw]:
+    """A regime whose only handover to `retired` is its carried state, and its law."""
 
     def impute_pension_wealth(wealth: float) -> float:
         return wealth * 0.1
@@ -364,7 +380,6 @@ def _pair_handover_regime() -> UserRegime:
         return jnp.asarray(wealth)
 
     return UserRegime(
-        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -378,7 +393,7 @@ def _pair_handover_regime() -> UserRegime:
         },
         actions={},
         functions={"utility": utility},
-    )
+    ), bind_regime_law(next_regime)
 
 
 def test_carried_law_registered_for_carried_only_target():
@@ -389,14 +404,14 @@ def test_carried_law_registered_for_carried_only_target():
     be registered for that target in the simulate phase — otherwise the
     simulation silently freezes the carried value on the crossing.
     """
-    working = _pair_handover_regime()
+    working, law = _pair_handover_regime()
     simulate_states_per_regime = {
         "working": frozenset({"wealth", "pension_wealth"}),
         "retired": frozenset({"pension_wealth"}),
         "dead": frozenset(),
     }
     canonical, _ = _canonicalize_phase_transitions(
-        phase_slice=normalize_regime_phases(working).simulation,
+        phase_slice=normalize_regime_phases(working, law=law).simulation,
         states_per_regime=simulate_states_per_regime,
     )
     assert "retired" in canonical["pension_wealth"]
@@ -432,7 +447,6 @@ def test_carried_state_counts_as_covered_for_reachability():
         return jnp.asarray(wealth)
 
     working = UserRegime(
-        regime_transitions=next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
@@ -449,6 +463,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         actions={},
         functions={"utility": utility},
     )
+    law = bind_regime_law(next_regime)
     # `retired` is not named in any per-target dict; its ordinary state need
     # (wealth) is covered by a bare law and the carried law covers the
     # carried state, so it must be reachable and receive both laws.
@@ -458,7 +473,7 @@ def test_carried_state_counts_as_covered_for_reachability():
         "dead": frozenset(),
     }
     canonical, _ = _canonicalize_phase_transitions(
-        phase_slice=normalize_regime_phases(working).simulation,
+        phase_slice=normalize_regime_phases(working, law=law).simulation,
         states_per_regime=simulate_states_per_regime,
     )
     assert "retired" in canonical["wealth"]
@@ -490,7 +505,6 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         return jnp.asarray(wealth)
 
     kwargs: dict = {
-        "regime_transitions": next_regime,
         "states": {
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
             "pension_wealth": Phased(
@@ -504,14 +518,16 @@ def test_mock_regime_get_all_functions_matches_real_regime():
         },
         "functions": {"utility": utility},
     }
+    law = bind_regime_law(next_regime)
     real = finalize_regimes(
         user_regimes={"regime": UserRegime(**kwargs)},
+        laws={"regime": law},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )["regime"]
     mock = MockRegime(**kwargs)
-    assert set(mock.get_all_functions()) == set(real.get_all_functions())
+    assert set(mock.get_all_functions(law=law)) == set(real.get_all_functions(law=law))
 
 
 def _egm_model() -> Model:

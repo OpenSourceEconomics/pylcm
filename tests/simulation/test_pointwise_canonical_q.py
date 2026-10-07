@@ -45,7 +45,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _DISCOUNT_FACTOR = 0.98
 _BONUS = 10.0
@@ -83,7 +82,6 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
 def _bonus_model() -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
@@ -98,17 +96,17 @@ def _bonus_model() -> Model:
         },
     )
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
         # Direct dispatch here carries no live residency context.
         execution_config=ExecutionConfig(device_memory_bytes=None),
+        edges={"retirement": {"dead": 40}},
     )
 
 

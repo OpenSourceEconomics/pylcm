@@ -17,9 +17,10 @@ import dataclasses
 import functools
 from typing import Literal
 
-from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model, Transition
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
+from lcm.typing import UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
@@ -35,7 +36,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
-from tests.test_models.graph import with_fixture_graph
 
 # Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
 # the original `consumption <= wealth` constraint. This is the number the regime
@@ -74,7 +74,6 @@ LIQUID_MARGIN = LiquidMargin(
 
 
 dcegm_retirement = ConsumptionSavingsRegime(
-    regime_transitions=retirement_only.retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -89,7 +88,6 @@ dcegm_retirement = ConsumptionSavingsRegime(
 
 
 dcegm_working_life = ConsumptionSavingsRegime(
-    regime_transitions=base.working_life_transitions(last_age=70),
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -109,7 +107,6 @@ dcegm_working_life = ConsumptionSavingsRegime(
 
 
 dcegm_retirement_full = ConsumptionSavingsRegime(
-    regime_transitions=base.retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -131,19 +128,15 @@ def get_retirement_only_model(
     if solver == "brute_force":
         return retirement_only.get_model(n_periods)
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions=retirement_only.retirement_transitions(
-                    last_age=last_age
-                )
-            ),
+            "retirement": dcegm_retirement,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=retirement_only.retirement_edges(ages),
     )
 
 
@@ -163,43 +156,16 @@ def get_full_model(
     if solver == "brute_force":
         return base.get_model(n_periods)
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     dcegm_solver = (
         DCEGM_SOLVER
         if envelope is None
         else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
-        edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        "working_life": tuple(ages.exact_values[:-2]),
-                        "retirement": tuple(ages.exact_values[:-2]),
-                    }
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {"retirement": tuple(ages.exact_values[:-2])}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-        },
+        edges=lifecycle_edges(ages=ages),
         regimes={
-            "working_life": dcegm_working_life.replace(
-                regime_transitions=base.working_life_transitions(last_age=last_age),
-                solver=dcegm_solver,
-            ),
-            "retirement": dcegm_retirement_full.replace(
-                regime_transitions=base.retirement_transitions(last_age=last_age),
-                solver=dcegm_solver,
-            ),
+            "working_life": dcegm_working_life.replace(solver=dcegm_solver),
+            "retirement": dcegm_retirement_full.replace(solver=dcegm_solver),
             "dead": dead,
         },
         ages=ages,
@@ -209,6 +175,32 @@ def get_full_model(
             (ages.exact_values[0], "retirement"),
         ),
     )
+
+
+def lifecycle_edges(
+    *, ages: AgeGrid
+) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
+    """Edges and laws of the worker/retirement/dead model on `ages`.
+
+    Before the second-to-last age a worker keeps working, retires, or dies and a
+    retiree stays retired or dies, chosen by `base.working_life_transitions` and
+    `base.retirement_transitions`; from the second-to-last age both die.
+    """
+    dies = tuple(ages.exact_values[:-1])
+    stays = tuple(ages.exact_values[:-2])
+    if not stays:
+        return {"working_life": {"dead": dies}, "retirement": {"dead": dies}}
+    last_age = ages.exact_values[-1]
+    return {
+        "working_life": Transition(
+            targets={"dead": dies, "working_life": stays, "retirement": stays},
+            law=base.working_life_transitions(last_age=last_age),
+        ),
+        "retirement": Transition(
+            targets={"dead": dies, "retirement": stays},
+            law=base.retirement_transitions(last_age=last_age),
+        ),
+    }
 
 
 def get_retirement_only_params(
@@ -233,11 +225,18 @@ def get_full_params(
     interest_rate: float = 0.0,
     wage: float = 20.0,
 ) -> dict:
-    """Params for the full-model pair; valid for both solver variants."""
-    return base.get_params(
+    """Params for the full-model pair; valid for both solver variants.
+
+    The laws reading `final_age_alive` exist only where some age has several
+    outgoing edges (see `lifecycle_edges`), so a two-period model takes none.
+    """
+    params = base.get_params(
         n_periods=n_periods,
         discount_factor=discount_factor,
         disutility_of_work=disutility_of_work,
         interest_rate=interest_rate,
         wage=wage,
     )
+    if n_periods <= 2:
+        del params["final_age_alive"]
+    return params

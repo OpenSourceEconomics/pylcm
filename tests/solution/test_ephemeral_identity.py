@@ -23,12 +23,11 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     working_life,
-    working_life_transitions,
+    working_life_edges,
 )
 from tests.test_models.deterministic.regression import (
     get_model as get_durable_model,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 def _inputs(
@@ -40,10 +39,10 @@ def _inputs(
         _ = token
         return 1 + 0.1 * age
 
-    model = with_fixture_graph(
+    ages = AgeGrid(start=18, inclusive_stop=19, step="Y")
+    model = Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=19),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -53,10 +52,11 @@ def _inputs(
             ),
             "dead": dead,
         },
-        ages=AgeGrid(start=18, inclusive_stop=19, step="Y"),
+        ages=ages,
         regime_id_class=RegimeId,
         durable_identity=durable_identity,
         initial_nodes={18: "working_life"},
+        edges=working_life_edges(ages),
     )
     params = get_params(n_periods=2)
     initial_conditions = {

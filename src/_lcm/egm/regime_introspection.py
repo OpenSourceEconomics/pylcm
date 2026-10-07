@@ -20,6 +20,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_law import RegimeLaw
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
@@ -140,7 +141,7 @@ def _get_child_discrete_actions(
 
 
 def _get_child_resources_function(
-    *, regime_name: RegimeName, user_regime: UserRegime
+    *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
 ) -> Callable[..., ScalarFloat]:
     """Build the closed-over resources map of one carry target.
 
@@ -153,7 +154,7 @@ def _get_child_resources_function(
     """
     if _as_dcegm(user_regime) is not None:
         return _concatenate_child_resources(
-            regime_name=regime_name, user_regime=user_regime
+            regime_name=regime_name, user_regime=user_regime, law=law
         )
 
     return _IdentityResources(state_name=_get_child_state_name(user_regime=user_regime))
@@ -171,7 +172,7 @@ class _IdentityResources:
 
 
 def _get_child_resources_arg_names(
-    *, regime_name: RegimeName, user_regime: UserRegime
+    *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
 ) -> set[str]:
     """Argument names of a carry target's resources map."""
     if _as_dcegm(user_regime) is not None:
@@ -179,7 +180,7 @@ def _get_child_resources_arg_names(
             get_union_of_args(
                 [
                     _concatenate_child_resources(
-                        regime_name=regime_name, user_regime=user_regime
+                        regime_name=regime_name, user_regime=user_regime, law=law
                     )
                 ]
             )
@@ -188,7 +189,7 @@ def _get_child_resources_arg_names(
 
 
 def _concatenate_child_resources(
-    *, regime_name: RegimeName, user_regime: UserRegime
+    *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
 ) -> UserFunction:
     """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
 
@@ -215,7 +216,9 @@ def _concatenate_child_resources(
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
     dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
-    regime_params_template = create_regime_params_template(user_regime=user_regime)
+    regime_params_template = create_regime_params_template(
+        user_regime=user_regime, law=law
+    )
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.decomposed_functions.items():
         if isinstance(func, Phased):

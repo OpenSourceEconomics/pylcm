@@ -44,8 +44,8 @@ def test_a_law_falling_in_savings_is_refused_when_the_model_is_solved():
         "saving": {
             "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
-            "saving": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
-            "done": {"next_wealth": law, "next_regime": {"last_age": 3.0}},
+            "saving": {"next_wealth": law},
+            "done": {"next_wealth": law},
         },
         "done": {"utility": {"crra": _CRRA}},
     }

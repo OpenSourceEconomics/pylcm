@@ -17,7 +17,6 @@ import pytest
 from _lcm.simulation import chunk_profiles, simulate
 from lcm import (
     AgeGrid,
-    ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -28,7 +27,6 @@ from lcm import (
 )
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import GatedId, _gated_model
-from tests.test_models.graph import with_fixture_graph
 
 _DISCOUNT = 0.5
 
@@ -56,11 +54,10 @@ def _perceived_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth + 1.0
 
 
-def _regime(*, law: Any, perceived: bool = False) -> Regime:
+def _regime(*, terminal: bool = False, perceived: bool = False) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": _perceived_utility if perceived else _utility},
     )
 
@@ -75,56 +72,75 @@ def _config(*, budgeted: bool) -> ExecutionConfig:
 
 def _mixed_model(*, budgeted: bool) -> Model:
     """`perceived` is value-only at period 1 and physically visited at period 2."""
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "source": _regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
-            ),
-            "perceived": _regime(
-                law=ByAge(cases={1: "perceived", 2: "end"}), perceived=True
-            ),
-            "realized": _regime(law=ByAge(cases={1: "perceived"})),
-            "end": _regime(law=None),
+            "source": _regime(),
+            "perceived": _regime(perceived=True),
+            "realized": _regime(),
+            "end": _regime(terminal=True),
         },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=ControlId,
         initial_nodes={0: "source"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"perceived": 1, "end": 2},
+                "realized": {"perceived": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"perceived": 1, "end": 2},
+                "realized": {"perceived": 1},
+            },
+        ),
     )
 
 
 def _value_only_terminal_model(*, budgeted: bool) -> Model:
     """The value-only pair is a terminal regime."""
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "source": _regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="end")})
-            ),
-            "perceived": _regime(law=None, perceived=True),
-            "end": _regime(law=None),
+            "source": _regime(),
+            "perceived": _regime(terminal=True, perceived=True),
+            "end": _regime(terminal=True),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=TerminalId,
         initial_nodes={0: "source"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={"source": {"perceived": 0}}, simulate={"source": {"end": 0}}
+        ),
     )
 
 
 def _multi_root_model(*, budgeted: bool) -> Model:
     """Two cohorts start at different ages; `perceived` stays value-only."""
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "source": _regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
-            ),
-            "perceived": _regime(law=ByAge(cases={1: "end"}), perceived=True),
-            "realized": _regime(law=ByAge(cases={1: "end"})),
-            "end": _regime(law=None),
+            "source": _regime(),
+            "perceived": _regime(perceived=True),
+            "realized": _regime(),
+            "end": _regime(terminal=True),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ControlId,
         initial_nodes={0: "source", 1: "realized"},
         execution_config=_config(budgeted=budgeted),
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": {"end": 1},
+                "realized": {"end": 1},
+            },
+        ),
     )
 
 
@@ -134,7 +150,7 @@ def _gated_value_only_model(*, budgeted: bool) -> Model:
     if not budgeted:
         return model
     return Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=GatedId,

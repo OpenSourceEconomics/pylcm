@@ -1347,8 +1347,8 @@ class Regime:
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
     """This regime's gated edges keyed by TARGET regime name, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`: each entry folds a gated continuation object `Wbar` on the
+    Non-empty only for a source regime with
+    gated edges: each entry folds a gated continuation object `Wbar` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
 

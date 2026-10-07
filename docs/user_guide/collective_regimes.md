@@ -7,13 +7,13 @@ title: Households and value-dependent choice
 A single decision maker maximizes her own value. A household does not: it takes one
 action for two people, it is only viable while both of them want it, and whether it
 forms or ends depends on what each member would be worth outside it. Three declarations
-cover that, and each goes in a slot a regime already has.
+cover that, and each goes in a slot an ordinary model already has.
 
 | Declaration                | Goes in                | Says                                                                 |
 | -------------------------- | ---------------------- | -------------------------------------------------------------------- |
 | `CollectiveUtility`        | `functions["utility"]` | who the stakeholders are, and how their action values are traded off |
 | `ValueDependentConstraint` | `constraints`          | where the cell is feasible, reading values as well as states         |
-| `ValueDependentTransition` | `regime_transitions`   | which target, and which branch within it                             |
+| `ValueDependentTransition` | `Model(edges=...)` law | which target, and which branch within it                             |
 
 `ProjectedRegimeValue` is what the last two share: a reading of another regime's value
 in the *same* period.
@@ -33,7 +33,6 @@ array, so `value_f` comes before `value_m` in the simulated frame.
 from lcm import CollectiveUtility, Regime
 
 couple = Regime(
-    regime_transitions=...,
     states={"wealth": couple_wealth},
     state_transitions={"wealth": next_couple_wealth},
     actions={"consumption": consumption},
@@ -135,39 +134,59 @@ from there. Letting `simulate` solve automatically retains and threads it direct
 
 A raw transition between regimes with different stakeholder structure stays rejected —
 there is no rule that would say who the arriving row is. A `ValueDependentTransition`
-supplies one:
+supplies one. Like every regime law it lives on the source's edges in
+`Model(edges=...)`, inside a per-target `Transition` law keyed by destination:
 
 ```python
-from lcm import ProjectedRegimeValue, StakeholderRoute, ValueDependentTransition
+from lcm import (
+    ProjectedRegimeValue,
+    StakeholderRoute,
+    Transition,
+    ValueDependentTransition,
+)
 from lcm.transition import StochasticTransition
 
 single_f = Regime(
-    regime_transitions={
-        "couple": ValueDependentTransition(
-            probability=StochasticTransition(func=meets_a_partner),
-            gate=mutual_consent,
-            routes={
-                "her": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": half_of_couple_wealth},
-                    ),
-                )
-            },
-            gate_references={
-                "V_alone_f": ProjectedRegimeValue(regime="single_f", projection=...),
-                "V_alone_m": ProjectedRegimeValue(regime="single_m", projection=...),
-            },
-        ),
-        "single_f": StochasticTransition(func=meets_nobody),
-    },
     states={"wealth": single_wealth},
     state_transitions={"wealth": next_single_wealth},
     actions={"consumption": consumption},
     functions={"utility": utility_single},
 )
+
+edges = {
+    "single_f": Transition(
+        targets={"couple": ages, "single_f": ages},
+        law={
+            "couple": ValueDependentTransition(
+                probability=StochasticTransition(func=meets_a_partner),
+                gate=mutual_consent,
+                routes={
+                    "her": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wealth": half_of_couple_wealth},
+                        ),
+                    )
+                },
+                gate_references={
+                    "V_alone_f": ProjectedRegimeValue(
+                        regime="single_f", projection=...
+                    ),
+                    "V_alone_m": ProjectedRegimeValue(
+                        regime="single_m", projection=...
+                    ),
+                },
+            ),
+            "single_f": StochasticTransition(func=meets_nobody),
+        },
+    ),
+    # ... the other sources' edges
+}
 ```
+
+The `Transition`'s targets name every destination the law can send a row to, including
+each route's fallback regime.
 
 `probability` and `gate` are two distinct operations. The first decides whether this
 target edge is attempted at all. It accepts a `StochasticTransition` or, as a
@@ -177,11 +196,12 @@ cell such as `"single_f"` above still requires an explicit `StochasticTransition
 gate decides, having arrived at the target's coordinates, whether the row keeps that
 target or takes its route's fallback.
 
-When the whole regime transition is `Phased`, repeat the value-dependent cell on both
-sides. The target is value-dependent in both phases or in neither, and both declarations
-must use the identical gate plus equal routes, references, and `off_grid` contract. Only
-the transition probability may differ, which permits a perceived probability in solve
-and a realized probability in simulation without changing what consent means.
+When the source's law is `Phased`, or the edges are `Phased` with a `Transition` in each
+phase, repeat the value-dependent cell on both sides. The target is value-dependent in
+both phases or in neither, and both declarations must use the identical gate plus equal
+routes, references, and `off_grid` contract. Only the transition probability may differ,
+which permits a perceived probability in solve and a realized probability in simulation
+without changing what consent means.
 
 The gate is a **Boolean** predicate on the *target* regime's grid. It may read the
 target's value — `V_target` for a singleton target, `V_target_<s>` per stakeholder for a
@@ -204,32 +224,32 @@ together continues in the couple regime, so **that** is the key, under
 `gate = ~D_target`:
 
 ```python
-couple = Regime(
-    regime_transitions={
-        "couple": ValueDependentTransition(
-            probability=StochasticTransition(func=stays_married),
-            gate=no_dissolution,  # ~D_target
-            routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(regime="single_f", projection=...),
-                ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
-                    fallback=ProjectedRegimeValue(regime="single_m", projection=...),
-                ),
-            },
-        ),
-    },
-    states={"wealth": couple_wealth},
-    state_transitions={"wealth": next_couple_wealth},
-    actions={"consumption": consumption},
-    functions={
-        "utility": CollectiveUtility(
-            utilities={"f": her_utility, "m": his_utility},
-        )
-    },
-)
+edges = {
+    "couple": Transition(
+        targets={"couple": ages, "single_f": ages, "single_m": ages},
+        law={
+            "couple": ValueDependentTransition(
+                probability=StochasticTransition(func=stays_married),
+                gate=no_dissolution,  # ~D_target
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f", projection=...
+                        ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_m", projection=...
+                        ),
+                    ),
+                },
+            ),
+        },
+    ),
+    # ... the other sources' edges
+}
 ```
 
 Keying it by `single_f` instead would send *both* partners to `single_f` whenever the

@@ -19,18 +19,12 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def _shock_probs() -> FloatND:
@@ -46,21 +40,16 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
                 state_transitions={
                     "shock": {"target": StochasticTransition(func=_shock_probs)}
                 },
                 functions={"utility": _no_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0

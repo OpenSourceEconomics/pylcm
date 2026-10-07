@@ -515,7 +515,6 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
                 "koopmans_aggregator": {"discount_factor": 0.95},
                 "alive": {"next_liquid": {"return_liquid": 0.0, "income": 0.0}},
                 "dead": {"next_liquid": {"return_liquid": 0.0, "income": 0.0}},
-                "final_age_alive": 1.0,
             },
             "dead": {"utility": {"crra": 2.0}},
         }

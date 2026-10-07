@@ -15,10 +15,14 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import core_program_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DeterministicTransition,
+    ExecutionConfig,
+    Model,
+    Transition,
 )
-from lcm import AgeGrid, ExecutionConfig, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM, STOCHASTIC_NODE_AXIS
 from lcm.typing import FloatND
@@ -39,8 +43,6 @@ from tests.solution.test_egm_process_states import (
     savings,
     utility_consumption_only,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -66,13 +68,6 @@ def _model(width: int | None = None) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            last_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "income": _income_process("iid")},
         state_transitions={"wealth": next_wealth_from_savings_iid},
@@ -89,12 +84,21 @@ def _model(width: int | None = None) -> Model:
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": working, "dead": dead},
         ages=ages,
         regime_id_class=ProcessRegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=last_age - 10),
+                    "dead": AgeRange(exclusive_stop=last_age),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

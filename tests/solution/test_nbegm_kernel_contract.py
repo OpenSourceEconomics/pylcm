@@ -74,8 +74,7 @@ def _build(*, alive_functions, liquid_law):
     )
 
 
-# Ages run `0 .. 2`, so `alive` goes inactive at age 2.
-_TOY_PARAMS = build_params(final_age_alive=2.0)
+_TOY_PARAMS = build_params()
 
 _PIECES = {
     "savings": savings,

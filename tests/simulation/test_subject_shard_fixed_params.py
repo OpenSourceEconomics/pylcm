@@ -43,7 +43,6 @@ _SCRIPT = textwrap.dedent(
         dead,
         get_params,
         working_life,
-    working_life_transitions,
     )
 
     n_devices = int(sys.argv[1])
@@ -62,9 +61,6 @@ _SCRIPT = textwrap.dedent(
             edges={"working_life": {"dead": START_AGE}},
             regimes={
                 "working_life": working_life.replace(
-                    regime_transitions=working_life_transitions(
-                        last_age=final_age_alive + 1
-                    ),
                     states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                     actions={
                         "labor_supply": working_life.actions["labor_supply"],
@@ -84,10 +80,7 @@ _SCRIPT = textwrap.dedent(
     supplied = get_params(n_periods=N_PERIODS)
     free = {
         "discount_factor": supplied["discount_factor"],
-        "working_life": {
-            "utility": supplied["working_life"]["utility"],
-            "next_regime": {"final_age_alive": final_age_alive},
-        },
+        "working_life": {"utility": supplied["working_life"]["utility"]},
     }
     ids = tuple(device.id for device in jax.devices()[:n_devices])
     initial = {

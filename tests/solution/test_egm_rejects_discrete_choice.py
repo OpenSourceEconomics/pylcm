@@ -9,13 +9,17 @@ outside `EGM`'s contract and is refused where the contract is stated, at `Model`
 construction.
 """
 
+import jax.numpy as jnp
 import pytest
 
 from lcm import (
     AgeGrid,
+    AgeRange,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -30,15 +34,9 @@ from tests.solution.test_egm_solver import (
     RegimeId,
     feasible,
     next_wealth,
-    prob_continue,
-    prob_stop,
     savings,
     terminal_utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
-
-_LAST_AGE = float(_N_PERIODS - 1)
 
 
 @categorical(ordered=False)
@@ -54,6 +52,14 @@ def utility(
     return consumption ** (1.0 - crra) / (1.0 - crra) - 0.1 * effort
 
 
+def prob_continue(*, age: int, last_age: float) -> FloatND:
+    return jnp.where(age + 1 < last_age, 1.0, 0.0)
+
+
+def prob_stop(*, age: int, last_age: float) -> FloatND:
+    return jnp.where(age + 1 >= last_age, 1.0, 0.0)
+
+
 def test_a_discrete_action_is_refused_at_model_construction() -> None:
     """A regime with a discrete action and `EGM` names the action and fails."""
     saving = ConsumptionSavingsRegime(
@@ -64,14 +70,6 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},
         constraints={"feasible": feasible},
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "saving": StochasticTransition(func=prob_continue),
-                "done": StochasticTransition(func=prob_stop),
-            },
-            exits=("done",),
-        ),
         functions={"utility": utility, "savings": savings},
         solver=EGM(savings_grid=_SAVINGS_GRID),
         liquid=LiquidMargin(
@@ -82,15 +80,26 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
         ),
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
     with pytest.raises(ModelInitializationError, match="effort"):
-        with_fixture_graph(
+        Model(
             regimes={"saving": saving, "done": done},
             ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
+            edges={
+                "saving": Transition(
+                    targets={
+                        "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
+                        "done": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    },
+                    law={
+                        "saving": StochasticTransition(func=prob_continue),
+                        "done": StochasticTransition(func=prob_stop),
+                    },
+                )
+            },
             regime_id_class=RegimeId,
             initial_nodes={0: "saving"},
         )

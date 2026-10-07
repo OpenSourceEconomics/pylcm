@@ -40,7 +40,7 @@ _CELL_AXIS = "cell"
 def _model_with(config: ExecutionConfig) -> Model:
     base = get_multi_regime_model(n_periods=_N_PERIODS, distribution_type="normal")
     return Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,

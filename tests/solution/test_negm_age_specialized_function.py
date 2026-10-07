@@ -12,31 +12,41 @@ which no age specialization touches. So the age-specialized solve must reproduce
 *exactly*, a plain solve whose helper is the concrete function `build(age)` returns
 at that age. Resolving the specialization at some other age moves the value by a
 finite amount, which makes equality the right instrument rather than a tolerance.
+
+The same oracle isolates a NEGM *child's* keeper resources. An age-invariant
+`early` regime moves into a `late` regime whose no-adjustment map depreciates the
+durable by age, and `late` is active only at its last age. The parent's read of
+`late` composes `late`'s resources with that keeper, so `early`'s solution at the
+period before must equal the one with `late` pinned to the keeper of `late`'s own
+age — and differ from one whose read alone uses the keeper of `early`'s age.
 """
 
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
+from _lcm.egm import regime_introspection
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedFunction,
+    DeterministicTransition,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
+    Transition,
+    categorical,
     outer_unchanged,
 )
-from lcm.typing import ContinuousState, FloatND
+from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, ResultRetention
+from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.negm_kinked_toy import (
     N_PERIODS,
     NEGM_SOLVER,
@@ -51,7 +61,6 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -110,6 +119,7 @@ def _build_model(*, helper_name: str, override) -> Model:
         functions[helper_name] = override
         if helper_name == "keep_illiquid":
             no_adjustment = "keep_illiquid"
+    alive_law = DeterministicTransition(func=next_regime)
     alive = NestedConsumptionSavingsRegime(
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
@@ -123,13 +133,6 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            _FINAL_AGE_ALIVE + _AGE_STEP,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -149,8 +152,17 @@ def _build_model(*, helper_name: str, override) -> Model:
             no_adjustment=no_adjustment,
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": build_dead_regime()},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                    "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + _AGE_STEP),
+                },
+                law=alive_law,
+            )
+        },
         regime_id_class=RegimeId,
         ages=AgeGrid(
             start=_MIN_AGE,
@@ -272,3 +284,184 @@ def test_ages_sharing_one_signature_resolve_to_one_concrete_helper(helper_name):
         np.testing.assert_array_almost_equal(
             got[finite], expected[finite], decimal=DECIMAL_PRECISION
         )
+
+
+@categorical(ordered=False)
+class _EarlyLateId:
+    early: ScalarInt
+    late: ScalarInt
+    dead: ScalarInt
+
+
+_LATE_AGE = _MIN_AGE + 2 * _AGE_STEP
+_EARLY_LAST_PERIOD = 1
+_EARLY_LATE_PARAMS = {"discount_factor": 0.95, "early": {}, "late": {}}
+
+
+def _negm_regime(*, keep_illiquid: Any) -> NestedConsumptionSavingsRegime:
+    """The kinked NEGM regime with `keep_illiquid` as its no-adjustment map.
+
+    `keep_illiquid=None` keeps the durable unchanged without adjusting.
+    """
+    functions = {
+        "utility": utility,
+        "new_durable": new_durable,
+        "resources_before_outer_cost": resources_before_outer_cost,
+        "liquid_savings": liquid_savings,
+        "credited": credited,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    }
+    no_adjustment = outer_unchanged
+    if keep_illiquid is not None:
+        functions["keep_illiquid"] = keep_illiquid
+        no_adjustment = "keep_illiquid"
+    return NestedConsumptionSavingsRegime(
+        states={
+            "wealth": negm_kinked_toy.WEALTH_GRID,
+            "illiquid": negm_kinked_toy.ILLIQUID_GRID,
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "illiquid": negm_kinked_toy.durable_transition,
+        },
+        actions={
+            "consumption": negm_kinked_toy.CONSUMPTION_GRID,
+            "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
+        },
+        functions=functions,
+        solver=replace(NEGM_SOLVER),
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources=NetOfAdjustmentCost(
+                output="resources",
+                before_cost="resources_before_outer_cost",
+                cost="credited",
+            ),
+            post_decision_state="liquid_savings",
+        ),
+        outer_continuous=OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_durable",
+            no_adjustment=no_adjustment,
+        ),
+    )
+
+
+def _early_late_model(*, late_keep: Any) -> Model:
+    """`early` at the first two ages, then `late` at the third only, then `dead`.
+
+    `late_keep` is `late`'s no-adjustment map: an `AgeSpecializedFunction` or a
+    concrete function pinned to one age.
+    """
+    return Model(
+        edges={
+            "early": {"early": _MIN_AGE, "late": _MIN_AGE + _AGE_STEP},
+            "late": {"dead": _LATE_AGE},
+        },
+        regimes={
+            "early": _negm_regime(
+                keep_illiquid=None,
+            ),
+            "late": _negm_regime(
+                keep_illiquid=late_keep,
+            ),
+            "dead": build_dead_regime(),
+        },
+        regime_id_class=_EarlyLateId,
+        ages=AgeGrid(
+            start=_MIN_AGE,
+            inclusive_stop=_MIN_AGE + (N_PERIODS - 1) * _AGE_STEP,
+            step=f"{_AGE_STEP}Y",
+        ),
+        initial_nodes={_MIN_AGE: "early"},
+    )
+
+
+def _early_continuation(*, late_keep: Any, read_keep: Any = None) -> Any:
+    """`early`'s published continuation at its last period, before `late`.
+
+    `read_keep`, if given, replaces `late`'s keeper in the parent's read of `late`
+    only; `late`'s own solve keeps `late_keep`.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        if read_keep is not None:
+            patch.setattr(
+                regime_introspection,
+                "_keeper_no_adjustment_function",
+                _with_read_keep(read_keep),
+            )
+        result = _early_late_model(late_keep=late_keep).solve(
+            params=_EARLY_LATE_PARAMS,
+            log_level="off",
+            retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+        )
+    return result.retained_continuations[
+        ArtifactRef(period=_EARLY_LAST_PERIOD, regime="early", key=EGM_CONTINUATION)
+    ]
+
+
+def _with_read_keep(read_keep: Any) -> Any:
+    """The parent-read keeper builder with a declared keeper swapped for `read_keep`."""
+    build = regime_introspection._keeper_no_adjustment_function
+
+    def build_with_read_keep(*, no_adjustment_func: Any, **kwargs: Any) -> Any:
+        return build(
+            no_adjustment_func=None if no_adjustment_func is None else read_keep,
+            **kwargs,
+        )
+
+    return build_with_read_keep
+
+
+@pytest.fixture(scope="module")
+def early_continuations() -> dict[str, Any]:
+    """`early`'s continuation with `late`'s keeper specialized and pinned."""
+    return {
+        "specialized": _early_continuation(late_keep=_specialized("keep_illiquid")),
+        "pinned-to-child-age": _early_continuation(
+            late_keep=_make_depreciating_keep(_LATE_AGE)
+        ),
+        "read-at-source-age": _early_continuation(
+            late_keep=_make_depreciating_keep(_LATE_AGE),
+            read_keep=_make_depreciating_keep(_LATE_AGE - _AGE_STEP),
+        ),
+    }
+
+
+@pytest.mark.parametrize("field", ["endog_grid", "value", "marginal_utility"])
+def test_parent_reads_a_negm_childs_keeper_at_the_childs_age(
+    *, early_continuations: dict[str, Any], field: str
+) -> None:
+    """The parent's endogenous grid, value and marginal match the child-age pin.
+
+    `late` is solved only at its last age, so its own solution is the same under
+    the specialized keeper and the keeper pinned to that age; `early`, reading
+    `late`'s keeper resources the period before, must then agree exactly too.
+    """
+    got = np.asarray(getattr(early_continuations["specialized"], field))
+    expected = np.asarray(getattr(early_continuations["pinned-to-child-age"], field))
+    np.testing.assert_allclose(got, expected, rtol=0.0, atol=10.0**-DECIMAL_PRECISION)
+
+
+def test_parent_value_moves_when_the_childs_keeper_is_the_sources_age(
+    *, early_continuations: dict[str, Any]
+) -> None:
+    """Reading `late`'s keeper at `early`'s age changes `early`'s value.
+
+    `late` publishes its continuation on its keeper's cash-on-hand axis,
+    `wealth + 5 - credited(illiquid, keep(illiquid))`. Its own keeper retains
+    `0.8` of the durable, which puts a durable `z` at cash `wealth + 5 + 0.18 z`;
+    a read with `early`'s keeper (retaining `0.9`) queries `wealth + 5 + 0.09 z`,
+    `0.09 z` lower on a value strictly increasing in cash. Every cell whose
+    continuation carries a positive durable into `late` therefore moves.
+
+    Pinning both `late`'s solve and the read to one keeper cannot show this:
+    `late` is solved only at its last age, where withdrawing the whole durable
+    dominates keeping any of it, so its value is the same under every keeper and
+    the parent's value with it.
+    """
+    specialized = np.asarray(early_continuations["specialized"].value)
+    source_age = np.asarray(early_continuations["read-at-source-age"].value)
+    assert not np.allclose(specialized, source_age, equal_nan=True)

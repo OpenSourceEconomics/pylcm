@@ -4,12 +4,15 @@ Only construction-time fixed leaves may feed the probability or its ordinary DAG
 ancestors. States, actions, time, transition outputs and free parameters make an
 edge conditional; no state probes or runtime values narrow the graph.
 
-Removing an edge changes the effective graph, never the authored model's validity:
+A removed edge takes every declaration toward its target with it, so the pruned
+model, including its validation, is the one an author would write without that
+edge:
 
-- joint kernels leaving with an edge are checked for output ownership first;
+- per-target state laws and joint kernels toward the target leave unchecked;
+  target-cell ownership is validated on the effective graph alone, so every
+  live edge keeps its checks;
 - a source state whose only authored law was such a kernel gets the empty
-  per-target law `{}`, so the pruned regime is the one an author would write
-  without the removed edge: the state is covered and no target cell is produced;
+  per-target law `{}`: the state is covered and no target cell is produced;
 - the states and actions those removed declarations read are recorded only to
   explain an error: pruning removes as much as it can up front, so a variable
   read only across a removed edge is unused, exactly as without that edge.
@@ -30,10 +33,10 @@ from _lcm.params.processing import (
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
 from _lcm.typing import FlatParams, RegimeName, StateName
-from _lcm.utils.error_messages import format_messages
 from _lcm.utils.namespace import flatten_regime_namespace
-from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import ByAge, JointTransition, StochasticTransition
@@ -47,7 +50,10 @@ class FixedRegimeSupport:
     """Keep the reduced declarations and exact consumed fixed-key provenance."""
 
     user_regimes: MappingProxyType[RegimeName, UserRegime]
-    """Regimes with constant-zero ordinary transition cells removed."""
+    """Regimes without the declarations toward removed edges."""
+
+    laws: RegimeLaws
+    """Laws with constant-zero ordinary transition cells removed."""
 
     consumed_param_keys: frozenset[str]
     """Supplied flat keys used to prove a removed cell constant and zero."""
@@ -60,7 +66,10 @@ class FixedRegimeSupport:
 
 
 def prune_fixed_regime_support(
-    *, user_regimes: Mapping[RegimeName, UserRegime], fixed_params: UserParams
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    fixed_params: UserParams,
 ) -> FixedRegimeSupport:
     """Remove exactly zero cells whose entire dependency graph is fixed.
 
@@ -68,27 +77,20 @@ def prune_fixed_regime_support(
     too, and so are joint kernels toward a target removed from both phases. Bare
     laws and source variables remain declared. Fixed keys consumed by removed
     cells retain their provenance for later unknown-key validation.
-
-    Raises:
-        ModelInitializationError: If a removed joint kernel claims a target-state
-            cell that the target lacks or that another producer also claims.
     """
     fixed_flat = flatten_regime_namespace(fixed_params)
     consumed: set[str] = set()
-    errors: list[str] = []
     result: dict[RegimeName, UserRegime] = {}
+    pruned_laws: dict[RegimeName, RegimeLaw] = {}
     removed_edge_reads: dict[
         RegimeName, MappingProxyType[str, tuple[RegimeName, ...]]
     ] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
-            regime_name=name, regime=regime, fixed_flat=fixed_flat
+            regime_name=name, regime=regime, law=laws[name], fixed_flat=fixed_flat
         )
         consumed.update(law_keys)
         removed_in_both = removed["solve"] & removed["simulate"]
-        errors += _removed_joint_ownership_errors(
-            removed=removed_in_both, regime_name=name, user_regimes=user_regimes
-        )
         reads: dict[RegimeName, set[str]] = {}
         joint_transitions = _trim_joint_transitions(
             removed=removed_in_both,
@@ -129,14 +131,13 @@ def prune_fixed_regime_support(
             }
         )
         result[name] = regime.replace(
-            regime_transitions=transition,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
         )
-    if errors:
-        raise ModelInitializationError(format_messages(errors))
+        pruned_laws[name] = bind_regime_law(transition)
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),
+        laws=MappingProxyType(pruned_laws),
         consumed_param_keys=frozenset(consumed),
         removed_edge_reads=MappingProxyType(removed_edge_reads),
     )
@@ -146,6 +147,7 @@ def _prune_regime_transition(
     *,
     regime_name: RegimeName,
     regime: UserRegime,
+    law: RegimeLaw,
     fixed_flat: Mapping[str, object],
 ) -> tuple[object, dict[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
@@ -162,7 +164,7 @@ def _prune_regime_transition(
     while True:
         consumed: set[str] = set()
         transition = _prune_law(
-            law=regime.regime_transitions,
+            law=law.transition,
             side=None,
             regime_name=regime_name,
             regime=regime,
@@ -171,7 +173,7 @@ def _prune_regime_transition(
             protected=protected,
         )
         removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=regime.regime_transitions, side=side)
+            side: _targets(law=law.transition, side=side)
             - _targets(law=transition, side=side)
             for side in ("solve", "simulate")
         }
@@ -191,53 +193,6 @@ def _joint_kernels(raw: object) -> tuple[tuple[Side, JointTransition], ...]:
         else (side, cast("JointTransition", raw))
         for side in ("solve", "simulate")
     )
-
-
-def _removed_joint_ownership_errors(
-    *,
-    removed: frozenset[str],
-    regime_name: RegimeName,
-    user_regimes: Mapping[RegimeName, UserRegime],
-) -> list[str]:
-    """Check the target-state cells claimed by joint kernels about to be removed.
-
-    The checks on retained kernels run on the effective graph; these give a
-    removed kernel the same output and unique-producer contract.
-    """
-    regime = user_regimes[regime_name]
-    errors: list[str] = []
-    for target in sorted(removed & regime.joint_transitions.keys()):
-        target_states = user_regimes[target].states if target in user_regimes else {}
-        for side in ("solve", "simulate"):
-            owners: dict[StateName, str] = {}
-            for kernel_name, raw in regime.joint_transitions[target].items():
-                kernel = dict(_joint_kernels(raw))[side]
-                for output in kernel.outputs:
-                    if output not in target_states:
-                        errors.append(
-                            f"regime '{regime_name}' ({side}): joint-transition "
-                            f"output '{output}' of kernel '{kernel_name}' is not a "
-                            f"target state of regime '{target}'."
-                        )
-                    if output in owners:
-                        errors.append(
-                            f"regime '{regime_name}' ({side}): multiple producers "
-                            f"claim target-state cell ('{target}', '{output}'): "
-                            f"joint kernels '{owners[output]}' and '{kernel_name}'."
-                        )
-                    owners.setdefault(output, kernel_name)
-            for output in owners:
-                law = regime.state_transitions.get(output)
-                if isinstance(law, Phased):
-                    law = getattr(law, side)
-                if isinstance(law, Mapping) and target in law:
-                    errors.append(
-                        f"regime '{regime_name}' ({side}): multiple producers "
-                        f"claim target-state cell ('{target}', '{output}'); an "
-                        "explicit per-target ordinary law and a joint-transition "
-                        "output cannot own the same state."
-                    )
-    return sorted(set(errors))
 
 
 def _states_covered_only_by_removed_joints(

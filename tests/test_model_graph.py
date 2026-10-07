@@ -12,6 +12,7 @@ from lcm import (
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -34,22 +35,16 @@ def _graph_regimes() -> dict[str, Regime]:
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
     return {
         "work": Regime(
-            regime_transitions=Phased(
-                solve=lambda: _GraphRegimeId.perceived,
-                simulate=lambda: _GraphRegimeId.realized,
-            ),
             states={"wealth": grid},
             actions={"investment": grid},
             state_transitions={"wealth": lambda investment: investment},
             functions={"utility": lambda wealth: 0.0 * wealth},
         ),
         "perceived": Regime(
-            regime_transitions=None,
             states={"wealth": grid},
             functions={"utility": lambda wealth: wealth},
         ),
         "realized": Regime(
-            regime_transitions=None,
             states={"wealth": grid},
             functions={"utility": lambda wealth: -wealth},
         ),
@@ -141,12 +136,8 @@ def test_transition_kernel_rejects_embedded_topology(
 def test_graph_snapshot_owns_immutable_source_age_selectors() -> None:
     """Publish source ages without retaining mutable caller topology containers."""
     edges: dict[str, dict[str, tuple[int, ...]]] = {"work": {"perceived": (0, 1)}}
-    regimes = _graph_regimes()
-    regimes["work"] = regimes["work"].replace(
-        regime_transitions=lambda: _GraphRegimeId.perceived,
-    )
     model = Model(
-        regimes=regimes,
+        regimes=_graph_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_GraphRegimeId,
         initial_nodes=((1, "work"),),
@@ -167,19 +158,20 @@ def test_graph_snapshot_owns_immutable_source_age_selectors() -> None:
 
 def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> None:
     """Distinguish declared support from a fixed-zero effective probability edge."""
-    regimes = _graph_regimes()
-    regimes["work"] = regimes["work"].replace(
-        regime_transitions={
-            "perceived": StochasticTransition(func=lambda mass: mass),
-            "realized": StochasticTransition(func=lambda mass: 1.0 - mass),
-        },
-    )
     model = Model(
-        regimes=regimes,
+        regimes=_graph_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_GraphRegimeId,
         initial_nodes=((0, "work"),),
-        edges={"work": {"perceived": 0, "realized": 0}},
+        edges={
+            "work": Transition(
+                targets={"perceived": 0, "realized": 0},
+                law={
+                    "perceived": StochasticTransition(func=lambda mass: mass),
+                    "realized": StochasticTransition(func=lambda mass: 1.0 - mass),
+                },
+            )
+        },
         fixed_params={"mass": 0.0},
         enable_jit=False,
     )
@@ -196,38 +188,40 @@ def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> N
 
 def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
     """Reject known scalar-law targets outside the model's declared support."""
-    regimes = _graph_regimes()
-    regimes["work"] = regimes["work"].replace(
-        regime_transitions={
-            "perceived": StochasticTransition(func=lambda: jnp.asarray(1.0)),
-            "realized": StochasticTransition(func=lambda: jnp.asarray(0.0)),
-        },
-    )
     with pytest.raises(ModelInitializationError, match="realized"):
         Model(
-            regimes=regimes,
+            regimes=_graph_regimes(),
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=_GraphRegimeId,
             initial_nodes=((0, "work"),),
-            edges={"work": {"perceived": 0}},
+            edges={
+                "work": Transition(
+                    targets={"perceived": 0, "work": 0},
+                    law={
+                        "perceived": StochasticTransition(
+                            func=lambda: jnp.asarray(1.0)
+                        ),
+                        "realized": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                    },
+                )
+            },
             enable_jit=False,
         )
 
 
 def test_scalar_probability_mapping_may_use_a_subset_of_declared_graph() -> None:
     """Keep graph-declared support inspectable when a scalar lottery is narrower."""
-    regimes = _graph_regimes()
-    regimes["work"] = regimes["work"].replace(
-        regime_transitions={
-            "perceived": StochasticTransition(func=lambda: jnp.asarray(1.0)),
-        },
-    )
     model = Model(
-        regimes=regimes,
+        regimes=_graph_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_GraphRegimeId,
         initial_nodes=((0, "work"),),
-        edges={"work": {"perceived": 0, "realized": 0}},
+        edges={
+            "work": Transition(
+                targets={"perceived": 0, "realized": 0},
+                law={"perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))},
+            )
+        },
         enable_jit=False,
     )
     assert set(model.graph.edges.solve["work"]) == {"perceived", "realized"}
@@ -245,20 +239,21 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
     log_level: LogLevel,
 ) -> None:
     """Reject a destination allowed at another source age, at every log level."""
-    regimes = _graph_regimes()
-    regimes["work"] = regimes["work"].replace(
-        regime_transitions=(
-            StochasticTransition(func=lambda: jnp.array([0.0, 1.0, 0.0]))
-            if stochastic
-            else lambda: _GraphRegimeId.perceived
-        ),
-    )
     model = Model(
-        regimes=regimes,
+        regimes=_graph_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_GraphRegimeId,
         initial_nodes=((1, "work"),),
-        edges={"work": {"perceived": 0, "realized": 1}},
+        edges={
+            "work": Transition(
+                targets={"perceived": 0, "realized": (0, 1)},
+                law=(
+                    StochasticTransition(func=lambda: jnp.array([0.0, 1.0, 0.0]))
+                    if stochastic
+                    else lambda: _GraphRegimeId.perceived
+                ),
+            )
+        },
         enable_jit=False,
     )
     assert model.graph.solution.targets(period=1, source="work") == ("realized",)
@@ -266,19 +261,10 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
         model.solve(params={"discount_factor": 1.0}, log_level=log_level)
 
 
-@pytest.mark.parametrize("scalar_cells", [False, True])
-def test_value_only_node_needs_only_its_perceived_graph_continuation(
-    *,
-    scalar_cells: bool,
-) -> None:
+def test_value_only_node_needs_only_its_perceived_graph_continuation() -> None:
     """Value a belief node without adding its continuation to physical visits."""
     regimes = _graph_regimes()
     regimes["perceived"] = regimes["perceived"].replace(
-        regime_transitions=(
-            {"realized": StochasticTransition(func=lambda: jnp.asarray(1.0))}
-            if scalar_cells
-            else lambda: _GraphRegimeId.realized
-        ),
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": lambda wealth: 0.0 * wealth},
     )
@@ -328,13 +314,20 @@ def test_broadcast_graph_preserves_nnbegm_phase_invariance() -> None:
 def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
     """Destination insertion order cannot create numerical phase variation."""
     template = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3)
-    solve_edges = {
+    solve_targets = {
         source: {target: tuple(sorted(ages)) for target, ages in destinations.items()}
         for source, destinations in template.graph.edges.solve.items()
     }
+    solve_edges = {
+        source: Transition(targets=targets, law=n_nbegm_toy.next_regime)
+        for source, targets in solve_targets.items()
+    }
     simulate_edges = {
-        source: dict(reversed(tuple(destinations.items())))
-        for source, destinations in solve_edges.items()
+        source: Transition(
+            targets=dict(reversed(tuple(targets.items()))),
+            law=n_nbegm_toy.next_regime,
+        )
+        for source, targets in solve_targets.items()
     }
     model = Model(
         regimes=template.user_regimes,
@@ -395,25 +388,24 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
     realized_gate = ValueDependentTransition(
         probability=one, gate=gate, routes=routes, gate_references=references
     )
+    source_law = ByAge(
+        cases={
+            0: Phased(
+                solve={"source": one, "target": perceived_gate},
+                simulate={"target": realized_gate},
+            ),
+            1: Phased(
+                solve={"terminal": one},
+                simulate={"target": realized_gate},
+            ),
+        }
+    )
     source = Regime(
-        regime_transitions=ByAge(
-            cases={
-                0: Phased(
-                    solve={"source": one, "target": perceived_gate},
-                    simulate={"target": realized_gate},
-                ),
-                1: Phased(
-                    solve={"terminal": one},
-                    simulate={"target": realized_gate},
-                ),
-            }
-        ),
         states={"x": grid},
         state_transitions={"x": fixed_transition("x")},
         functions={"utility": lambda x: 0.0 * x},
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"x": grid},
         functions={"utility": identity},
     )
@@ -421,14 +413,12 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
         regimes={
             "source": source,
             "other": Regime(
-                regime_transitions=Phased(solve="target", simulate="terminal"),
                 states={"x": grid},
                 state_transitions={"x": fixed_transition("x")},
                 functions={"utility": lambda x: 0.0 * x},
             ),
             "target": terminal,
             "reference": Regime(
-                regime_transitions=ByAge(cases={1: "terminal"}),
                 states={"x": grid},
                 state_transitions={"x": fixed_transition("x")},
                 functions={"utility": identity},
@@ -441,12 +431,17 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
         initial_nodes=((0, "source"), (1, "other")),
         edges=Phased(
             solve={
-                "source": {"source": 0, "target": 0, "fallback": 0, "terminal": 1},
+                "source": Transition(
+                    targets={"source": 0, "target": 0, "fallback": 0, "terminal": 1},
+                    law=source_law,
+                ),
                 "other": {"target": 1},
                 "reference": {"terminal": 1},
             },
             simulate={
-                "source": {"target": 0, "fallback": 0},
+                "source": Transition(
+                    targets={"target": 0, "fallback": 0}, law=source_law
+                ),
                 "other": {"terminal": 1},
             },
         ),
@@ -458,3 +453,57 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
     assert (2, "reference") not in model.graph.nodes
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     assert set(solution.values[2]) == {"target", "terminal"}
+
+
+def test_required_age_without_an_edge_out_names_the_missing_edge() -> None:
+    """A required regime at an age with no edge out names that missing edge."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"requires 'work' at age 1, where `edges` declares no edge out of "
+        r"'work' at that age",
+    ):
+        Model(
+            regimes=_graph_regimes(),
+            ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+            regime_id_class=_GraphRegimeId,
+            initial_nodes=((0, "work"),),
+            edges={"work": {"work": 0}},
+            enable_jit=False,
+        )
+
+
+def test_edge_whose_only_source_age_is_the_final_age_is_rejected() -> None:
+    """No transition leaves the final age, so an edge selecting only it is invalid."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"'work' → 'realized' selects only the final age 1",
+    ):
+        Model(
+            regimes=_graph_regimes(),
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_GraphRegimeId,
+            initial_nodes=((0, "work"),),
+            edges={"work": {"perceived": 0, "realized": 1}},
+            enable_jit=False,
+        )
+
+
+def _phased_graph_model(initial_nodes: object) -> Model:
+    return Model(
+        regimes=_graph_regimes(),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_GraphRegimeId,
+        initial_nodes=initial_nodes,  # ty: ignore[invalid-argument-type]
+        edges=Phased(
+            solve={"work": {"perceived": 0}},
+            simulate={"work": {"realized": 0}},
+        ),
+        enable_jit=False,
+    )
+
+
+def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
+    """`Model.initial_nodes` passed back to `Model` selects the same start pairs."""
+    model = _phased_graph_model({0: "work"})
+    rebuilt = _phased_graph_model(model.initial_nodes)
+    assert rebuilt.initial_nodes == frozenset({(0, "work")})

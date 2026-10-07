@@ -34,12 +34,11 @@ from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
     RegimeId,
     dead,
+    get_edges,
     get_model,
     get_params,
     retirement,
-    retirement_transitions,
     working_life,
-    working_life_transitions,
 )
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
@@ -56,28 +55,12 @@ _PARAMS = get_params(
 def _build_model(*, working_solver: object | None = None) -> Model:
     """Build the retirement model, optionally overriding `working_life`'s solver."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (_N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     overrides = {} if working_solver is None else {"solver": working_solver}
     return Model(
-        edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                "working_life": tuple(ages.exact_values[:-2]),
-                "retirement": tuple(ages.exact_values[:-2]),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                "retirement": tuple(ages.exact_values[:-2]),
-            },
-        },
+        edges=get_edges(ages=ages),
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age),
-                **overrides,
-            ),
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "working_life": working_life.replace(**overrides),
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,

@@ -4,6 +4,7 @@ from _lcm.grids import DiscreteGrid
 from _lcm.params.regime_template import (
     create_regime_params_template,
 )
+from _lcm.regime_law import bind_regime_law
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm import Phased, fixed_transition
 from tests.mock_regime import MockRegime
@@ -18,10 +19,11 @@ def test_create_params_without_processes(binary_category_class):
             "b": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"b": lambda b: b},
-        regime_transitions=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},
@@ -58,13 +60,14 @@ def test_create_params_reads_concrete_function_params(binary_category_class):
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
-        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "net_income": net_income,
         },
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
     assert got["net_income"] == {"tax_rate": "no_annotation_found"}
 
 
@@ -81,13 +84,14 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
-        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "net_income": Phased(solve=solve_income, simulate=simulate_income),
         },
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
     assert got["net_income"] == {
         "solve_rate": "no_annotation_found",
         "simulate_rate": "no_annotation_found",
@@ -117,14 +121,15 @@ def test_create_params_walks_a_phased_function_a_transition_reads(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": next_b},
-        regime_transitions=lambda: 0,
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
             "adjustment": Phased(solve=solve_adjustment, simulate=simulate_adjustment),
         },
     )
 
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
 
     assert got["adjustment"] == {
         "solve_rate": "no_annotation_found",
@@ -148,7 +153,7 @@ def test_create_params_with_custom_W_no_extra_params():
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
         koopmans_aggregator=custom_W,
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(user_regime=regime, law=bind_regime_law(None))
     assert got == ensure_containers_are_immutable(
         {"koopmans_aggregator": {}, "utility": {"c": "no_annotation_found"}}
     )
@@ -168,9 +173,10 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
         states={"discount_factor": None},
         state_transitions={"discount_factor": fixed_transition("discount_factor")},
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
-        regime_transitions=lambda discount_factor: discount_factor,
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda discount_factor: discount_factor)
+    )
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {},
@@ -199,7 +205,7 @@ def test_custom_W_shadowing_state_is_allowed():
         functions={"utility": lambda a, wealth: None},  # noqa: ARG005
         koopmans_aggregator=custom_W,
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(user_regime=regime, law=bind_regime_law(None))
     assert got == ensure_containers_are_immutable(
         {"koopmans_aggregator": {}, "utility": {}}
     )
@@ -226,7 +232,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
         functions={"utility": lambda a, b: None},  # noqa: ARG005
         koopmans_aggregator=Phased(solve=exponential_h, simulate=beta_delta_h),
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(user_regime=regime, law=bind_regime_law(None))
     assert set(got["koopmans_aggregator"]) == {"discount_factor", "beta", "delta"}
 
 
@@ -240,10 +246,11 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "wealth": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"wealth": lambda wealth: wealth},
-        regime_transitions=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},
@@ -279,10 +286,11 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
             "wealth": next_wealth,
             "aime": lambda aime: aime,
         },
-        regime_transitions=lambda: 0,
         functions={"utility": lambda a, wealth, aime: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(user_regime=regime)
+    got = create_regime_params_template(
+        user_regime=regime, law=bind_regime_law(lambda: 0)
+    )
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},

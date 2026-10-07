@@ -24,8 +24,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -103,10 +101,6 @@ def affordable(*, wealth: ContinuousState, consumption: ContinuousAction) -> Boo
     return consumption <= wealth
 
 
-def next_regime() -> ScalarInt:
-    return RegimeId.working
-
-
 _WEALTH = LinSpacedGrid(start=0, stop=N_WEALTH_POINTS - 1, n_points=N_WEALTH_POINTS)
 
 
@@ -117,13 +111,7 @@ def get_model() -> Model:
         The model, with `pref_type` held fixed by `fixed_transition`.
 
     """
-    last_age = AGES.exact_values[-1]
     working = UserRegime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=next_regime),
-            then="terminal",
-        ),
         states={"wealth": _WEALTH, "pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={
             "wealth": next_wealth,
@@ -134,7 +122,6 @@ def get_model() -> Model:
         constraints={"affordable": affordable},
     )
     terminal = UserRegime(
-        regime_transitions=None,
         states={"wealth": _WEALTH, "pref_type": DiscreteGrid(category_class=PrefType)},
         functions={"utility": terminal_utility},
     )

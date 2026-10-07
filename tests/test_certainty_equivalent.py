@@ -14,15 +14,9 @@ import pytest
 
 from _lcm.certainty_equivalent import power_inverse, power_transform
 from _lcm.probability import normalized_scaled_weights, scaled_exact_product
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-    _SupportedStochasticTransition,
-)
 from _lcm.solution.preconditions import check_solver_params
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -34,6 +28,7 @@ from lcm import (
     QuasiArithmeticMean,
     Regime,
     StochasticTransition,
+    Transition,
     affine_breakpoint,
     categorical,
     fixed_transition,
@@ -65,8 +60,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.epstein_zin import get_model, get_params
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def test_power_certainty_equivalent_transform_and_inverse_are_inverses():
@@ -204,10 +197,6 @@ def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.dead
-
-
 def _new_stock(
     *, stock: ContinuousState, investment: ContinuousAction
 ) -> ContinuousState:
@@ -251,13 +240,6 @@ def _check_probes(model: Model) -> None:
 def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) -> Model:
     """Build a minimal model, attaching regime-owned EGM margins as needed."""
     base_alive: dict[str, Any] = {
-        "regime_transitions": ByAge(
-            cases={
-                AgeRange(exclusive_stop=41): _SupportedDeterministicTransition(
-                    func=_next_regime, targets=("dead",)
-                )
-            }
-        ),
         "states": {"wealth": _WEALTH},
         "state_transitions": {"wealth": _next_wealth},
         "actions": {"consumption": _CONSUMPTION},
@@ -265,7 +247,6 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
         "functions": {"utility": _utility_alive},
     }
     base_dead: dict[str, Any] = {
-        "regime_transitions": None,
         "states": {"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
         "functions": {"utility": _utility_dead},
     }
@@ -320,11 +301,12 @@ def _make_model(*, alive_kwargs: dict[str, Any], dead_kwargs: dict[str, Any]) ->
     else:
         alive = Regime(**merged_alive)
     dead = Regime(**merged_dead)
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={40: "alive"},
+        edges={"alive": {"dead": 40}},
     )
 
 
@@ -524,13 +506,6 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -559,7 +534,6 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         return jnp.sqrt(wealth) + 0.0 * kind
 
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -567,11 +541,12 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         functions={"utility": _dead_utility},
     )
     with pytest.raises(RegimeInitializationError, match="jump"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={40: "alive"},
+            edges={"alive": {"dead": 40}},
         )
 
 
@@ -605,13 +580,6 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -634,18 +602,18 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={40: "alive"},
+        edges={"alive": {"dead": 40}},
     )
 
     with pytest.raises(RegimeInitializationError, match="single power"):
@@ -689,13 +657,6 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -721,18 +682,18 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={40: "alive"},
+        edges={"alive": {"dead": 40}},
     )
     template = model.get_params_template()
     assert template["alive"]["certainty_equivalent"] == {"risk_aversion": "float"}
@@ -769,13 +730,6 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -798,18 +752,18 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={40: "alive"},
+        edges={"alive": {"dead": 40}},
     )
 
     with pytest.raises(RegimeInitializationError, match="positive"):
@@ -853,13 +807,6 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_with_transfer,
@@ -882,7 +829,6 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             "kind": DiscreteGrid(category_class=_Kind),
@@ -890,11 +836,12 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         functions={"utility": _dead_utility},
     )
     with pytest.raises(RegimeInitializationError, match="current liquid"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={40: "alive"},
+            edges={"alive": {"dead": 40}},
         )
 
 
@@ -996,8 +943,8 @@ def test_stateless_target_is_transformed_before_the_regime_expectation(
     target carrying no state has no stochastic expectation to take, but it is
     still inside the regime-transition sum, so it must be transformed too.
 
-    `_next_regime` routes to `dead` with probability 1, which makes the identity
-    sharp and independent of the mixture arithmetic: with a single target at
+    The single edge routes `alive` to `dead` with probability 1, which makes the
+    identity sharp and independent of the mixture arithmetic: with a single target at
     `p = 1`, `g` and `g^-1` cancel EXACTLY, so the continuation is `V_dead` for
     ANY `g`, and the solved value is
     `max_{c <= wealth} log(c) + discount_factor * V_dead`.
@@ -1824,13 +1771,6 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        regime_transitions=until_exit(
-            27,
-            law=_SupportedStochasticTransition(
-                func=_survival_probs, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1850,15 +1790,20 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         certainty_equivalent=PowerMean(),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=12.0 * scale, n_points=25)},
         functions={"utility": utility_dead},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={25: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 25, "dead": (25, 26)},
+                law=StochasticTransition(func=_survival_probs),
+            )
+        },
     )
 
 
@@ -1895,13 +1840,6 @@ def _make_mixed_target_model(scale: float) -> Model:
         return consumption
 
     alive = Regime(
-        regime_transitions=until_exit(
-            27,
-            law=_SupportedStochasticTransition(
-                func=_survival_probs, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
             "health": DiscreteGrid(category_class=_Health),
@@ -1920,14 +1858,18 @@ def _make_mixed_target_model(scale: float) -> Model:
         koopmans_aggregator=CESAggregator(),
         certainty_equivalent=PowerMean(),
     )
-    dead = Regime(
-        regime_transitions=None, states={}, functions={"utility": utility_dead}
-    )
-    return with_fixture_graph(
+    dead = Regime(states={}, functions={"utility": utility_dead})
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=27, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={25: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 25, "dead": (25, 26)},
+                law=StochasticTransition(func=_survival_probs),
+            )
+        },
     )
 
 
@@ -2101,14 +2043,6 @@ class _StackedRegimeId:
     dead: ScalarInt
 
 
-def _to_retired() -> ScalarInt:
-    return _StackedRegimeId.retired
-
-
-def _to_dead() -> ScalarInt:
-    return _StackedRegimeId.dead
-
-
 def _make_stacked_model(
     *,
     model_kwargs: dict[str, Any],
@@ -2126,38 +2060,13 @@ def _make_stacked_model(
     # Staggered schedules so each edge lands on a regime solved in the next
     # period, and no non-terminal regime is solved at the last age:
     # working (40) -> retired (41) -> dead (42).
-    working: dict[str, Any] = (
-        base
-        | {
-            "regime_transitions": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=41): _SupportedDeterministicTransition(
-                        func=_to_retired, targets=("retired",)
-                    )
-                }
-            )
-        }
-    ) | working_kwargs
-    retired: dict[str, Any] = (
-        base
-        | {
-            "regime_transitions": ByAge(
-                cases={
-                    AgeRange(
-                        start=41, exclusive_stop=42
-                    ): _SupportedDeterministicTransition(
-                        func=_to_dead, targets=("dead",)
-                    )
-                }
-            )
-        }
-    ) | retired_kwargs
-    return with_fixture_graph(
+    working: dict[str, Any] = base | working_kwargs
+    retired: dict[str, Any] = base | retired_kwargs
+    return Model(
         regimes={
             "working": Regime(**working),
             "retired": Regime(**retired),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5)},
                 functions={"utility": _utility_dead},
             ),
@@ -2165,6 +2074,7 @@ def _make_stacked_model(
         ages=AgeGrid(start=40, inclusive_stop=42, step="Y"),
         regime_id_class=_StackedRegimeId,
         initial_nodes={40: "working"},
+        edges={"working": {"retired": 40}, "retired": {"dead": 41}},
         **model_kwargs,
     )
 

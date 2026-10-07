@@ -243,6 +243,7 @@ class NEGM(TwoMarginSolver):
         validate_negm_regime(
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
+            law=context.laws[context.regime_name],
         )
 
     def validate_build(self, *, context: SolverBuildContext) -> None:

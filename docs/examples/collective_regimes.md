@@ -23,7 +23,6 @@ and its keys are the regime's stakeholders in the order written:
 
 ```python
 couple = Regime(
-    regime_transitions=DeterministicTransition(func=to_couple_terminal),
     states={"wage": LinSpacedGrid(start=8.0, stop=40.0, n_points=2)},
     state_transitions={"wage": next_wage},
     actions={"work": DiscreteGrid(category_class=Work)},
@@ -35,7 +34,8 @@ couple = Regime(
 )
 ```
 
-No `objective` is declared, so the stakeholders carry equal weight.
+No `objective` is declared, so the stakeholders carry equal weight. The couple's only
+outgoing edge, `edges={"couple": {"couple_terminal": 0}}`, is its whole transition law.
 
 ```python
 from lcm_examples.collective_regimes import get_params, get_shared_decision_model
@@ -116,24 +116,31 @@ is the sentinel doing its job rather than a defect.
 `married_with_participation` — the branch where the gate is **open** and the couple
 keeps going — with the gate reading the target's dissolution flag. Each stakeholder's
 route names the role they take inside the surviving couple and the singleton value they
-fall back to when the gate shuts:
+fall back to when the gate shuts. The law sits on `married`'s edges, whose targets
+include both fallback regimes:
 
 ```python
-transition = {
-    "married_with_participation": ValueDependentTransition(
-        probability=StochasticTransition(func=probability_one),
-        gate=lambda D_target: ~D_target,
-        routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
-                fallback=ProjectedRegimeValue(
-                    regime="single_f",
-                    projection={"wage": identity_wage},
-                ),
-            ),
-            # ... and the mirror image for m into single_m
+edges = {
+    "married": Transition(
+        targets={"married_with_participation": 0, "single_f": 0, "single_m": 0},
+        law={
+            "married_with_participation": ValueDependentTransition(
+                probability=StochasticTransition(func=probability_one),
+                gate=lambda D_target: ~D_target,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wage": identity_wage},
+                        ),
+                    ),
+                    # ... and the mirror image for m into single_m
+                },
+            )
         },
-    )
+    ),
+    "married_with_participation": {"married_terminal": 1},
 }
 ```
 

@@ -19,14 +19,13 @@ deliberately different grids, so a solver reading the continuation on its own
 grid disagrees rather than coinciding by accident.
 """
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    StochasticTransition,
+    Model,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -39,14 +38,11 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _CRRA = 2.0
 _DISCOUNT_FACTOR = 0.98
 _RETURN = 0.02
 _INCOME = 0.5
-_LAST_AGE = 3.0
 
 # Source and target discretize their single continuous state differently, so
 # reading the continuation on the source's own nodes is observably wrong rather
@@ -109,14 +105,6 @@ def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolN
     return consumption <= wealth
 
 
-def prob_survive(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 < last_age, 1.0, 0.0)
-
-
-def prob_gone(*, age: int, last_age: float) -> FloatND:
-    return jnp.where(age + 1 >= last_age, 1.0, 0.0)
-
-
 def _model(*, solver, n_consumption=14):
     """A 1-D lifecycle whose terminal regime renames the state it inherits."""
     alive = (ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime)(
@@ -131,15 +119,6 @@ def _model(*, solver, n_consumption=14):
             "estate": {"gone": next_estate},
         },
         constraints={} if isinstance(solver, EGM) else {"feasible": feasible},
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "alive": StochasticTransition(func=prob_survive),
-                "gone": StochasticTransition(func=prob_gone),
-            },
-            exits=("gone",),
-            stays=("alive",),
-        ),
         functions={"utility": utility, "savings": savings},
         solver=solver,
         **(
@@ -156,14 +135,14 @@ def _model(*, solver, n_consumption=14):
         ),
     )
     gone = Regime(
-        regime_transitions=None,
         states={"estate": _ESTATE_GRID},
         functions={"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "gone": gone},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        edges={"alive": {"alive": (0, 1), "gone": 2}},
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
     )
@@ -175,8 +154,8 @@ def _params():
         "alive": {
             "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
-            "alive": {"next_wealth": law, "next_regime": {"last_age": _LAST_AGE}},
-            "gone": {"next_estate": law, "next_regime": {"last_age": _LAST_AGE}},
+            "alive": {"next_wealth": law},
+            "gone": {"next_estate": law},
         },
         "gone": {"utility": {"crra": _CRRA}},
     }

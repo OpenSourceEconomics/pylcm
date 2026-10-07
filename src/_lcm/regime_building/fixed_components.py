@@ -23,6 +23,7 @@ from _lcm.grids import DiscreteGrid
 from _lcm.grids.categorical import categorical
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.regime_building.broadcast import merge_model_slots
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from _lcm.transition_plans import OriginalLotteryLayout, signature_with_state
 from _lcm.typing import RegimeNamesToIds
@@ -145,6 +146,7 @@ def split_initial_conditions(
 def factor_fixed_components(
     *,
     regimes: Mapping[str, Regime],
+    laws: RegimeLaws,
     fixed_params: UserParams,
     states: Mapping[str, object],
     state_transitions: Mapping[str, object],
@@ -174,6 +176,7 @@ def factor_fixed_components(
     # Resolve masks and the exactly-one-level rule without changing ownership.
     merged, _ = merge_model_slots(
         user_regimes=regimes,
+        laws=laws,
         model_slots={
             "states": states,
             "state_transitions": state_transitions,
@@ -220,7 +223,7 @@ def factor_fixed_components(
     new_regimes: dict[str, Regime] = {}
     for regime_name, regime in regimes.items():
         regime_states = dict(regime.states)
-        laws = _lower_state_laws(
+        state_laws = _lower_state_laws(
             laws=regime.state_transitions,
             splits=splits,
             parts=parts,
@@ -243,7 +246,7 @@ def factor_fixed_components(
         new_regimes[regime_name] = dataclasses.replace(
             regime,
             states=regime_states,
-            state_transitions=laws,
+            state_transitions=state_laws,
             functions=regime_functions,
             joint_transitions=_lower_next_output_reads(
                 node=regime.joint_transitions, next_outputs=next_outputs

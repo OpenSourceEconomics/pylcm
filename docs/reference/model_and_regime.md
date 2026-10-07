@@ -28,6 +28,12 @@ Required arguments are `ages`, `regimes`, `edges`, `initial_nodes`, and
 the regime names. A model must contain at least one terminal regime; a model whose
 starts are all terminal needs no other.
 
+`edges` declares every regime transition, structure and law. Each source maps to a plain
+`{target: source_ages}` mapping when every source age has one destination (the graph is
+the law), or to `Transition(targets={target: source_ages, ...}, law=...)` when some
+source age has several. A regime with no outgoing edges is terminal. See
+[Regime transitions and graph support](transitions.md#api-regime-transitions).
+
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
 `actions`, and `derived_categoricals` broadcast declarations to regimes. A name is
 defined at model or regime level, never both. A regime-level `None` masks a broadcast
@@ -44,9 +50,13 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
+- `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, immutable admissible age–regime pairs;
-- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes and
-  pruning reasons;
+- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
+  pruning reasons and `laws`, each regime's law as the model binds it from its edges
+  (`laws[name].terminal` is true for a regime without outgoing edges,
+  `laws[name].gated_edges` holds the edges its `ValueDependentTransition` cells
+  declare);
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -121,26 +131,26 @@ provided.
 
 A general regime declares:
 
-| Field                  | Contract                                                                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `regime_transitions`   | Regime name, `DeterministicTransition`, `StochasticTransition`, per-target mapping, `ByAge` or `Phased` of those; `None` for terminal |
-| `states` / `actions`   | Name-to-grid mappings                                                                                                                 |
-| `functions`            | Named DAG functions; a finalized regime needs utility                                                                                 |
-| `constraints`          | Ordinary predicates or structured `Condition` objects                                                                                 |
-| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions`                                                         |
-| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states                                                            |
-| `derived_categoricals` | Discrete grids for categorical DAG outputs                                                                                            |
-| `solver`               | `lcm.solvers.GridSearch()` by default                                                                                                 |
-| `taste_shocks`         | Optional EV1 taste-shock configuration                                                                                                |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                                                                         |
-| `certainty_equivalent` | Optional regime-level lottery reduction                                                                                               |
-| `description`          | Human-readable description                                                                                                            |
+| Field                  | Contract                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `states` / `actions`   | Name-to-grid mappings                                                         |
+| `functions`            | Named DAG functions; a finalized regime needs utility                         |
+| `constraints`          | Ordinary predicates or structured `Condition` objects                         |
+| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions` |
+| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states    |
+| `derived_categoricals` | Discrete grids for categorical DAG outputs                                    |
+| `solver`               | `lcm.solvers.GridSearch()` by default                                         |
+| `taste_shocks`         | Optional EV1 taste-shock configuration                                        |
+| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                 |
+| `certainty_equivalent` | Optional regime-level lottery reduction                                       |
+| `description`          | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
-Terminality is defined by `transition is None`. Terminal regimes declare no
-`state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty equivalent
-because they have no continuation.
+A regime declares no regime transition; its outgoing edges and their law live in
+`Model(edges=...)`, and a regime without outgoing edges is terminal. Terminal regimes
+declare no `state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty
+equivalent because they have no continuation.
 
 `ConsumptionSavingsRegime` and `NestedConsumptionSavingsRegime` add the economic roles
 required by EGM-family solvers. See

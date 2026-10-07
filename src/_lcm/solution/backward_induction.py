@@ -1349,7 +1349,7 @@ def _run_period_kernel(
     receives the referenced regimes' V arrays of THIS period, read off
     `period_solution` — the within-period topological order guarantees they were
     solved earlier in this period's loop. a source
-    declaring `gated_edges` receives its own rolled Wbar arrays, keyed by target
+    with gated edges receives its own rolled Wbar arrays, keyed by target
     regime name, which the grid-search kernel substitutes for the raw target V in
     `next_regime_to_V_arr`. Every other regime's adapter is called with the
     unchanged uniform signature.

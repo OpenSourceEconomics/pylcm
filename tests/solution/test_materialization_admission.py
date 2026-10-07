@@ -21,7 +21,6 @@ import pytest
 from _lcm.solution import block_major
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -199,10 +198,6 @@ def _terminal(*, wealth: ContinuousState, pref_type: DiscreteState) -> FloatND:
     return wealth + 0.5 * pref_type
 
 
-def _go_terminal() -> ScalarInt:
-    return _Regimes.terminal
-
-
 def _leaf_bytes(*, n_wealth: int = _N_WEALTH) -> int:
     return _N_TYPES * n_wealth * np.dtype(jnp.asarray(0.0).dtype).itemsize
 
@@ -219,7 +214,6 @@ def _model(
     wealth = LinSpacedGrid(start=0, stop=1, n_points=n_wealth)
     states = {"wealth": wealth, "pref_type": DiscreteGrid(category_class=_Types)}
     working = Regime(
-        regime_transitions=DeterministicTransition(func=_go_terminal),
         state_transitions={
             "wealth": fixed_transition("wealth"),
             "pref_type": fixed_transition("pref_type"),
@@ -228,7 +222,6 @@ def _model(
         functions={"utility": _utility},
     )
     terminal = Regime(
-        regime_transitions=None,
         functions={"utility": _terminal},
     )
     return Model(

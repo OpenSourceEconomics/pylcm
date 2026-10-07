@@ -30,7 +30,15 @@ import numpy as np
 import pytest
 
 from _lcm.grids import Grid
-from lcm import AgeGrid, AgeRange, DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    AgeRange,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.transition import StochasticTransition
@@ -140,11 +148,6 @@ def _living(
     bequest: Callable[..., ContinuousState] = _bequest,
 ) -> Regime:
     return Regime(
-        regime_transitions={
-            "alive": StochasticTransition(func=_p_alive),
-            "other": StochasticTransition(func=_p_other),
-            "dead": StochasticTransition(func=_p_dead),
-        },
         states={
             "wealth": WEALTH,
             **({"shock": DiscreteGrid(Shock)} if shock_at_regime else {}),
@@ -169,13 +172,11 @@ def _model(
 ) -> Model:
     dead = (
         Regime(
-            regime_transitions=None,
             states={"wealth": DEAD_WEALTH, "shock": DiscreteGrid(Shock)},
             functions={"utility": _dead_utility_carrying_shock},
         )
         if dead_carries_shock
         else Regime(
-            regime_transitions=None,
             states={"wealth": DEAD_WEALTH},
             functions={"utility": _dead_utility},
         )
@@ -185,16 +186,19 @@ def _model(
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         edges={
-            "alive": {
-                "alive": 0,
-                "other": 0,
-                "dead": AgeRange(start=0, exclusive_stop=2),
-            },
-            "other": {
-                "alive": 0,
-                "other": 0,
-                "dead": AgeRange(start=0, exclusive_stop=2),
-            },
+            source: Transition(
+                targets={
+                    "alive": 0,
+                    "other": 0,
+                    "dead": AgeRange(start=0, exclusive_stop=2),
+                },
+                law={
+                    "alive": StochasticTransition(func=_p_alive),
+                    "other": StochasticTransition(func=_p_other),
+                    "dead": StochasticTransition(func=_p_dead),
+                },
+            )
+            for source in ("alive", "other")
         },
         initial_nodes=((0, "alive"),),
         **(

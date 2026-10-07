@@ -59,9 +59,6 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -88,8 +85,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.envelope_configs import envelope_config
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Lifecycle anchors. The working life starts at 20, retires at 60, and the
 # terminal bequest regime is entered at T = 70. The short default horizon keeps
@@ -258,21 +253,7 @@ def build_model(  # noqa: C901
         retirement_age = START_AGE + max(1, n_periods // 2)
         final_age = START_AGE + n_periods
 
-    def next_regime(age: int) -> ScalarInt:
-        """Transition working to retired when next period reaches retirement."""
-        return jnp.where(
-            age + 1 >= retirement_age,
-            HousingFuesRegimeId.retired,
-            HousingFuesRegimeId.working,
-        )
-
-    def next_regime_from_retired(age: int) -> ScalarInt:
-        """Transition retired to dead when next period reaches the final age."""
-        return jnp.where(
-            age + 1 >= final_age,
-            HousingFuesRegimeId.dead,
-            HousingFuesRegimeId.retired,
-        )
+    edges = _edges(retirement_age=retirement_age, final_age=final_age)
 
     housing_min = housing_max / (2.0 * n_housing)
     stock_levels = jnp.asarray(
@@ -386,7 +367,6 @@ def build_model(  # noqa: C901
 
     housing_grid = DiscreteGrid(category_class=housing_class)
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -399,13 +379,6 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         working = UserRegime(
-            regime_transitions=until_exit(
-                retirement_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("working",)
-                ),
-                exits=("retired",),
-            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -425,14 +398,6 @@ def build_model(  # noqa: C901
             solver=GridSearch(),
         )
         retired = UserRegime(
-            regime_transitions=until_exit(
-                final_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime_from_retired, targets=("retired",)
-                ),
-                exits=("dead",),
-                start=retirement_age,
-            ),
             states={"liquid": liquid_grid, "housing": housing_grid},
             state_transitions={"liquid": next_liquid_brute, "housing": next_housing},
             actions={
@@ -443,12 +408,13 @@ def build_model(  # noqa: C901
             functions={**shared_econ, "income": _retirement_income},
             solver=GridSearch(),
         )
-        return with_fixture_graph(
+        return Model(
             regimes={"working": working, "retired": retired, "dead": dead},
             ages=ages,
             regime_id_class=HousingFuesRegimeId,
             execution_config=execution_config,
             initial_nodes={ages.exact_values[0]: "working"},
+            edges=edges,
         )
 
     inner_solver = DCEGM(
@@ -457,13 +423,6 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     working = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            retirement_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working",)
-            ),
-            exits=("retired",),
-        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -491,14 +450,6 @@ def build_model(  # noqa: C901
         ),
     )
     retired = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            final_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_retired, targets=("retired",)
-            ),
-            exits=("dead",),
-            start=retirement_age,
-        ),
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         actions={
@@ -520,13 +471,32 @@ def build_model(  # noqa: C901
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired, "dead": dead},
         ages=ages,
         regime_id_class=HousingFuesRegimeId,
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges=edges,
     )
+
+
+def _edges(
+    *, retirement_age: int, final_age: int
+) -> dict[str, dict[str, int | tuple[int, ...]]]:
+    """Work until retiring, stay retired until the last alive age, then die."""
+    stay_working = tuple(range(START_AGE, retirement_age - 1))
+    stay_retired = tuple(range(retirement_age, final_age - 1))
+    return {
+        "working": {
+            **({"working": stay_working} if stay_working else {}),
+            "retired": retirement_age - 1,
+        },
+        "retired": {
+            **({"retired": stay_retired} if stay_retired else {}),
+            "dead": final_age - 1,
+        },
+    }
 
 
 def build_params(

@@ -26,11 +26,11 @@ from _lcm.regime_building.processing import (
     prepare_model_structure,
 )
 from _lcm.regime_building.schedules import (
-    RegimeSchedules,
     gated_source_periods,
     lower_demanded_transitions,
     resolve_regime_schedules,
 )
+from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.tuning import _array_ulp_gap
@@ -644,20 +644,37 @@ def pytest_runtest_teardown(item, nextitem):
     session._lcm_mib_at_last_release = resident_mebibytes() or 0
 
 
+def bind_laws(declared: Mapping[RegimeName, object]) -> RegimeLaws:
+    """Bind each regime's declared law the way `Model(edges=...)` binds it.
+
+    `declared` maps every regime to its law between regimes, `None` for a
+    terminal regime.
+    """
+    return MappingProxyType(
+        {name: bind_regime_law(law) for name, law in declared.items()}
+    )
+
+
 def build_prepared_structure(
-    *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
+    *,
+    user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
+    ages: AgeGrid,
 ) -> PreparedModelStructure:
     """Build the `PreparedModelStructure` `process_regimes` requires.
 
     Tests that call `process_regimes` directly (bypassing `Model`) build this
     the same way `Model.__init__` does, rather than `process_regimes` growing
-    a test-only fallback for constructing one internally. `user_regimes` carry
-    their declared `regime_transitions`; pass `lower_declarations` of the same
-    regimes to `process_regimes`.
+    a test-only fallback for constructing one internally. `laws` holds each
+    regime's law as `Model(edges=...)` binds it (see `bind_laws`); the
+    structure carries the engine laws demand lowers them to.
     """
-    schedules = _resolve_schedules(user_regimes=user_regimes, ages=ages)
+    # Regime codes follow the regimes' order, as in `Model`.
+    laws = MappingProxyType({name: laws[name] for name in user_regimes})
+    schedules = resolve_regime_schedules(laws=laws, ages=ages)
     return prepare_model_structure(
-        user_regimes=lower_declarations(user_regimes, ages=ages),
+        user_regimes=user_regimes,
+        laws=lower_laws(laws, ages=ages),
         ages=ages,
         active_periods_by_regime=schedules.coverage_by_regime,
         support_by_phase=schedules.support_by_phase,
@@ -665,33 +682,18 @@ def build_prepared_structure(
     )
 
 
-# keyword-only-exempt: primary-argument=user_regimes
-def lower_declarations(
-    user_regimes: Mapping[RegimeName, FinalizedUserRegime], *, ages: AgeGrid
-) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
-    """Replace each declared `regime_transitions` by its engine law, as `Model` does.
+# keyword-only-exempt: primary-argument=laws
+def lower_laws(laws: RegimeLaws, *, ages: AgeGrid) -> RegimeLaws:
+    """Lower each regime's bound law to its engine law, as `Model` does.
 
     Regime codes follow the mapping's order.
     """
     lowered = lower_demanded_transitions(
-        schedules=_resolve_schedules(user_regimes=user_regimes, ages=ages),
-        declared_transitions={
-            name: regime.regime_transitions for name, regime in user_regimes.items()
-        },
-        code_by_name={name: code for code, name in enumerate(user_regimes)},
+        schedules=resolve_regime_schedules(laws=laws, ages=ages),
+        declared_transitions={name: law.transition for name, law in laws.items()},
+        code_by_name={name: code for code, name in enumerate(laws)},
     )
-    return MappingProxyType(
-        {
-            name: regime.replace(regime_transitions=lowered[name])
-            for name, regime in user_regimes.items()
-        }
-    )
-
-
-def _resolve_schedules(
-    *, user_regimes: Mapping[RegimeName, FinalizedUserRegime], ages: AgeGrid
-) -> RegimeSchedules:
-    return resolve_regime_schedules(user_regimes=user_regimes, ages=ages)
+    return bind_laws(lowered)
 
 
 @pytest.fixture(scope="session")

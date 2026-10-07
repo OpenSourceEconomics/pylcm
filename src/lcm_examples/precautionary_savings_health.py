@@ -18,6 +18,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -104,9 +105,6 @@ def borrowing_constraint(
     return consumption <= wealth + labor_income
 
 
-_DEFAULT_RETIREMENT_AGE = 24
-
-
 def working_life_transitions(*, retirement_age: int) -> ByAge:
     """Work until the age before `retirement_age`, then retire."""
     return ByAge.until(
@@ -117,7 +115,6 @@ def working_life_transitions(*, retirement_age: int) -> ByAge:
 
 
 working_life = Regime(
-    regime_transitions=working_life_transitions(retirement_age=_DEFAULT_RETIREMENT_AGE),
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -149,7 +146,6 @@ working_life = Regime(
 
 
 retirement = Regime(
-    regime_transitions=None,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -168,23 +164,27 @@ def get_model(retirement_age: int = 24) -> Model:
         A configured Model instance.
 
     """
-    wl = working_life.replace(
-        regime_transitions=working_life_transitions(retirement_age=retirement_age),
-    )
-
+    working_targets = {
+        "retirement": tuple(range(18, retirement_age)),
+        **(
+            {"working_life": tuple(range(18, retirement_age - 1))}
+            if tuple(range(18, retirement_age - 1))
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "retirement": tuple(range(18, retirement_age)),
-                **(
-                    {"working_life": tuple(range(18, retirement_age - 1))}
-                    if tuple(range(18, retirement_age - 1))
-                    else {}
-                ),
-            },
+            "working_life": (
+                Transition(
+                    targets=working_targets,
+                    law=working_life_transitions(retirement_age=retirement_age),
+                )
+                if len(working_targets) > 1
+                else working_targets
+            )
         },
         regimes={
-            "working_life": wl,
+            "working_life": working_life,
             "retirement": retirement,
         },
         ages=AgeGrid(start=18, inclusive_stop=retirement_age, step="Y"),

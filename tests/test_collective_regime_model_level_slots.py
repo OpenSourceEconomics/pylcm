@@ -35,7 +35,7 @@ def test_collective_utilities_may_come_from_the_model_level_slot():
     utilities = dict(model.user_regimes["couple"].functions)
 
     broadcast_model = Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes={
             name: replace(regime, functions={})
             for name, regime in model.user_regimes.items()
@@ -62,7 +62,7 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
     model, params = make_two_stakeholder_model()
 
     broadcast_model = Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes={
             name: replace(regime, actions={})
             for name, regime in model.user_regimes.items()

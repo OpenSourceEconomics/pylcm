@@ -30,10 +30,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
-from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0, 3.0))
 
@@ -43,10 +40,6 @@ class RegimeId:
     couple: ScalarInt
     couple_terminal: ScalarInt
     single_f_terminal: ScalarInt
-
-
-def _certain(wage: ContinuousState) -> FloatND:
-    return jnp.ones_like(wage)
 
 
 def _zero(wage: ContinuousState) -> FloatND:
@@ -77,17 +70,11 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 def _make_model(*, participation: bool) -> Model:
     couple = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={"couple_terminal": StochasticTransition(func=_certain)},
-            exits=("couple_terminal",),
-        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -111,11 +98,10 @@ def _make_model(*, participation: bool) -> Model:
         ),
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _outside_option},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "couple": couple,
             "couple_terminal": couple_terminal,
@@ -125,6 +111,7 @@ def _make_model(*, participation: bool) -> Model:
         regime_id_class=RegimeId,
         # The outside option is a value dependency, not an admissible start.
         initial_nodes={0: "couple"},
+        edges={"couple": {"couple_terminal": 0}},
     )
 
 
@@ -286,7 +273,6 @@ def test_a_terminal_singleton_regime_still_refuses_value_constraints() -> None:
     """
     with pytest.raises(Exception, match="value_constraints"):
         Regime(
-            regime_transitions=None,
             states={"wage": _WAGE},
             functions={"utility": _wage_for_her},
             constraints={

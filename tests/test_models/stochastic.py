@@ -18,6 +18,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -31,12 +32,12 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.mortality import (
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
     LaborSupply,
     RegimeId,
     dead,
     is_working,
-    retirement_transitions,
-    working_life_transitions,
 )
 from lcm_examples.mortality import retirement as _base_retirement
 from lcm_examples.mortality import working_life as _base_working_life
@@ -164,36 +165,41 @@ retirement = _base_retirement.replace(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
+    working_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            }
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
+    retirement_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {"retirement": tuple(ages.exact_values[:-2])}
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        "working_life": tuple(ages.exact_values[:-2]),
-                        "retirement": tuple(ages.exact_values[:-2]),
-                    }
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {"retirement": tuple(ages.exact_values[:-2])}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
+            "working_life": (
+                Transition(targets=working_targets, law=WORKING_LIFE_LAW)
+                if len(working_targets) > 1
+                else working_targets
+            ),
+            "retirement": (
+                Transition(targets=retirement_targets, law=RETIREMENT_LAW)
+                if len(retirement_targets) > 1
+                else retirement_targets
+            ),
         },
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age)
-            ),
-            "retirement": retirement.replace(
-                regime_transitions=retirement_transitions(last_age=last_age)
-            ),
+            "working_life": working_life,
+            "retirement": retirement,
             "dead": dead,
         },
         ages=ages,

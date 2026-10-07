@@ -23,6 +23,7 @@ from lcm import (
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime
@@ -96,19 +97,19 @@ def _model(
         "mid": StochasticTransition(func=_mid_mass),
         "high": StochasticTransition(func=_high_mass),
     }
+    law = (
+        Phased(
+            solve=transitions,
+            simulate={
+                "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+                "mid": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+            },
+        )
+        if simulate_high_mass
+        else transitions
+    )
     source = Regime(
-        regime_transitions=(
-            Phased(
-                solve=transitions,
-                simulate={
-                    "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                    "mid": StochasticTransition(func=lambda: jnp.asarray(0.0)),
-                    "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                },
-            )
-            if simulate_high_mass
-            else transitions
-        ),
         state_transitions={
             "wealth": {"mid": _mid_wealth}
             | ({} if joint else {"high": _ordinary_high_wealth})
@@ -131,14 +132,12 @@ def _model(
     )
     regimes = {
         "source": source,
-        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "low": Regime(functions={"utility": _two}),
         "mid": Regime(
-            regime_transitions=None,
             states={"wealth": _wealth_grid()},
             functions={"utility": _wealth_utility},
         ),
         "high": Regime(
-            regime_transitions=None,
             states={"wealth": _wealth_grid()},
             functions={"utility": _wealth_utility},
         ),
@@ -147,7 +146,7 @@ def _model(
         regimes=regimes,
         regime_id_class=_RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": {"low": 0, "mid": 0, "high": 0}},
+        edges={"source": Transition(targets={"low": 0, "mid": 0, "high": 0}, law=law)},
         initial_nodes=((0, "source"),),
         fixed_params=fixed_params,
         enable_jit=False,
@@ -245,19 +244,19 @@ def test_joint_edge_zero_in_one_phase_only_stays_declared_in_both() -> None:
 
 def test_joint_edge_zero_at_one_age_only_keeps_its_lottery_at_the_other() -> None:
     """A joint edge fixed at zero at age 0 is removed there and priced at age 1."""
+    law = ByAge(
+        cases={
+            0: {
+                "low": StochasticTransition(func=lambda p_high: 1.0 - p_high),
+                "high": StochasticTransition(func=_high_mass),
+            },
+            1: {
+                "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+                "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+            },
+        }
+    )
     source = Regime(
-        regime_transitions=ByAge(
-            cases={
-                0: {
-                    "low": StochasticTransition(func=lambda p_high: 1.0 - p_high),
-                    "high": StochasticTransition(func=_high_mass),
-                },
-                1: {
-                    "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                    "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                },
-            }
-        ),
         joint_transitions={
             "high": {
                 "match": JointTransition(
@@ -273,16 +272,15 @@ def test_joint_edge_zero_at_one_age_only_keeps_its_lottery_at_the_other() -> Non
     model = Model(
         regimes={
             "source": source,
-            "low": Regime(regime_transitions=None, functions={"utility": _two}),
+            "low": Regime(functions={"utility": _two}),
             "high": Regime(
-                regime_transitions=None,
                 states={"wealth": _wealth_grid()},
                 functions={"utility": _wealth_utility},
             ),
         },
         regime_id_class=_AgeRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        edges={"source": {"low": (0, 1), "high": (0, 1)}},
+        edges={"source": Transition(targets={"low": (0, 1), "high": (0, 1)}, law=law)},
         initial_nodes=((0, "source"), (1, "source")),
         fixed_params={"p_high": 0.0, "tilt": 1.0},
         enable_jit=False,

@@ -30,10 +30,14 @@ is flagged, not yet replicated).
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
 )
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.grids import DiscreteGrid
 from lcm.regime import Regime
 from lcm.typing import (
@@ -44,8 +48,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -211,7 +213,6 @@ def get_model(
     reference solve.
     """
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
-    final_age = ages.exact_values[-1]
     liquid_grid = LinSpacedGrid(
         start=borrowing_floor, stop=liquid_max, n_points=n_liquid
     )
@@ -231,25 +232,30 @@ def get_model(
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},
         constraints={"feasible": feasible},
-        regime_transitions=until_exit(
-            final_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_from_working, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
+        edges={
+            "working": (
+                Transition(
+                    targets={
+                        "working": ages.exact_values[:-2],
+                        "dead": ages.exact_values[:-1],
+                    },
+                    law=DeterministicTransition(func=next_regime_from_working),
+                )
+                if ages.exact_values[:-2]
+                else {"dead": ages.exact_values[:-1]}
+            )
+        },
     )
 
 

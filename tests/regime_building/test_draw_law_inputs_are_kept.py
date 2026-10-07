@@ -106,10 +106,6 @@ def _identity_unread(*, unread: DiscreteState) -> DiscreteState:
     return unread
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _zero() -> FloatND:
     return jnp.asarray(0.0)
 
@@ -173,7 +169,6 @@ def _model(
         **{name: identities[name] for name in drivers},
     }
     source = Regime(
-        regime_transitions={"dead": StochasticTransition(func=_certain)},
         states=states if declared_at == "regime" else {},
         state_transitions=laws
         if declared_at == "regime"
@@ -181,7 +176,6 @@ def _model(
         functions={"utility": _zero} | helpers,
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _wealth_utility},
     )

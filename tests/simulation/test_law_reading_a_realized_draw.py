@@ -21,8 +21,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 
@@ -66,14 +64,9 @@ def _wealth_from_realized_health(next_health: DiscreteState) -> ScalarFloat:
 
 @pytest.fixture
 def model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=lambda: jnp.float32(1))},
-                    exits=("target",),
-                ),
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),
@@ -87,7 +80,6 @@ def model() -> Model:
                 functions={"utility": _wealth_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": _WEALTH,
                     "health": DiscreteGrid(category_class=Health),
@@ -98,6 +90,7 @@ def model() -> Model:
         ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

@@ -5,18 +5,16 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_allclose, assert_array_almost_equal
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -29,13 +27,10 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
     UserParams,
 )
-from lcm_examples.mortality import retirement_transitions, working_life_transitions
+from lcm_examples.mortality import RETIREMENT_LAW, WORKING_LIFE_LAW
 from tests.conftest import X64_ENABLED
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -49,20 +44,24 @@ from tests.test_models.stochastic import (
 _SPLAY_ATOL = 1e-10 if X64_ENABLED else 1e-5
 
 
-def _lifecycle_edges(
-    *, ages: AgeGrid
-) -> dict[str, dict[str, tuple[UserAge | float, ...]]]:
+def _lifecycle_edges(*, ages: AgeGrid) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age."""
     return {
-        "working_life": {
-            "working_life": tuple(ages.exact_values[:-2]),
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
-        "retirement": {
-            "retirement": tuple(ages.exact_values[:-2]),
-            "dead": tuple(ages.exact_values[:-1]),
-        },
+        "working_life": Transition(
+            targets={
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=WORKING_LIFE_LAW,
+        ),
+        "retirement": Transition(
+            targets={
+                "retirement": tuple(ages.exact_values[:-2]),
+                "dead": tuple(ages.exact_values[:-1]),
+            },
+            law=RETIREMENT_LAW,
+        ),
     }
 
 
@@ -131,7 +130,6 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     n_periods = 4
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working_life.replace(
@@ -139,14 +137,12 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     # Create stochastic model with identity transition function
@@ -155,14 +151,12 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=working_life_transitions(last_age=last_age),
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": StochasticTransition(func=next_health_stochastic),
         },
-        regime_transitions=retirement_transitions(last_age=last_age),
     )
 
     model_deterministic = Model(
@@ -298,20 +292,12 @@ def _make_minimal_stochastic_model(
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            final_age + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, inclusive_stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
@@ -319,6 +305,15 @@ def _make_minimal_stochastic_model(
             axis_widths={"cell": draw_batch_size} if draw_batch_size else {}
         ),
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={
+                    "working_life": AgeRange(exclusive_stop=final_age),
+                    "dead": AgeRange(exclusive_stop=final_age + 1),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -433,19 +428,23 @@ def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
     there is no age left to transition into.
     """
     with pytest.raises(ModelInitializationError, match="nonterminal at the last age"):
-        with_fixture_graph(
+        Model(
             regimes={
-                "working_life": working_life.replace(
-                    regime_transitions=ByAge(
-                        cases={AgeRange(start=40, exclusive_stop=80): "dead"}
-                    )
-                ),
-                "retirement": retirement.replace(
-                    regime_transitions=retirement_transitions(last_age=70)
-                ),
+                "working_life": working_life,
+                "retirement": retirement,
                 "dead": dead,
             },
             ages=AgeGrid(start=40, inclusive_stop=70, step="10Y"),
             regime_id_class=RegimeId,
             initial_nodes={70: "working_life"},
+            edges={
+                "working_life": {"dead": AgeRange(exclusive_stop=70)},
+                "retirement": Transition(
+                    targets=dict.fromkeys(
+                        ("working_life", "retirement", "dead"),
+                        AgeRange(exclusive_stop=70),
+                    ),
+                    law=RETIREMENT_LAW,
+                ),
+            },
         )

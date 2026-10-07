@@ -17,21 +17,15 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-
-
-def one_probability() -> ScalarFloat:
-    return jnp.float32(1)
 
 
 def zero() -> ScalarFloat:
@@ -70,17 +64,13 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
     def enter_at_mean() -> ScalarFloat:
         return jnp.asarray(mu)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=one_probability)
-                },
                 state_transitions={"shock": {"target": enter_at_mean}},
                 functions={"utility": zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=n_points,
@@ -97,6 +87,7 @@ def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     got = source_value(model)

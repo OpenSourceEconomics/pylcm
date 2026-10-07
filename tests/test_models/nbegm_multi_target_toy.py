@@ -15,12 +15,14 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    ByAge,
     ConsumptionSavingsRegime,
     DiscreteGrid,
     LinSpacedGrid,
     LiquidMargin,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime
@@ -39,7 +41,6 @@ from tests.test_models.nbegm_common import (
     savings,
     utility,
 )
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -101,7 +102,6 @@ def _build_living_regime(
     liquid_max: float,
     n_savings: int,
     savings_max: float,
-    final_age: float,
 ) -> Regime:
     """Assemble one living regime transitioning to both living regimes and dead."""
     functions = {
@@ -135,15 +135,6 @@ def _build_living_regime(
             "alive_b": lcm.fixed_transition("kind"),
         },
     }
-    regime_transition = until_exit(
-        final_age,
-        law={
-            "alive_a": StochasticTransition(func=prob_to_alive_a),
-            "alive_b": StochasticTransition(func=prob_to_alive_b),
-            "dead": StochasticTransition(func=prob_to_dead),
-        },
-        exits=("dead",),
-    )
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(solver, NBEGM):
@@ -152,7 +143,6 @@ def _build_living_regime(
             states=regime_states,
             state_transitions=regime_state_transitions,
             constraints=constraints,
-            regime_transitions=regime_transition,
             functions=functions,
             solver=solver,
             liquid=LiquidMargin(
@@ -167,7 +157,6 @@ def _build_living_regime(
         states=regime_states,
         state_transitions=regime_state_transitions,
         constraints=constraints,
-        regime_transitions=regime_transition,
         functions=functions,
         solver=solver,
     )
@@ -212,30 +201,34 @@ def build_model(
             liquid_max=liquid_max,
             n_savings=n_savings,
             savings_max=savings_max,
-            final_age=final_age,
         )
 
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
         solver=GridSearch(),
     )
+    dies = tuple(ages.exact_values[:-1])
+    stays = tuple(ages.exact_values[:-2])
+    to_dead = StochasticTransition(func=prob_to_dead)
+    living_edges = (
+        Transition(
+            targets={"dead": dies, "alive_a": stays, "alive_b": stays},
+            law=ByAge.until(
+                stop_age_exclusive=final_age,
+                law={
+                    "alive_a": StochasticTransition(func=prob_to_alive_a),
+                    "alive_b": StochasticTransition(func=prob_to_alive_b),
+                    "dead": to_dead,
+                },
+                then={"dead": to_dead},
+            ),
+        )
+        if stays
+        else {"dead": dies}
+    )
     return Model(
-        edges={
-            source: {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        target: tuple(ages.exact_values[:-2])
-                        for target in ("alive_a", "alive_b")
-                    }
-                    if ages.n_periods > 2
-                    else {}
-                ),
-            }
-            for source in ("alive_a", "alive_b")
-        },
+        edges={"alive_a": living_edges, "alive_b": living_edges},
         regimes={"alive_a": make(), "alive_b": make(), "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
