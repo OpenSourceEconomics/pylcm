@@ -14,7 +14,7 @@ import pytest
 from asv_runner.benchmarks._base import get_setup_cache_key
 from asv_runner.discovery import disc_benchmarks, update_sys_path
 
-from benchmarks.asv import _gpu_mem, bench_mahler_yum
+from benchmarks.asv import _gpu_mem, bench_aca_baseline, bench_mahler_yum
 from benchmarks.asv._gpu_mem import _PROJECT_ROOT, _subprocess_env
 
 # Blocks the `resource` module before the harness is imported, so the fresh
@@ -814,3 +814,28 @@ def test_gpu_profile_subclass_without_its_own_setup_cache_is_rejected() -> None:
         class InheritsSetupCache(_gpu_mem.GpuPeakMemProfile):
             bench_module = "benchmarks.asv.bench_mahler_yum"
             bench_class = "MahlerYumBudgetedGpu"
+
+
+def test_undiscovered_aca_debug_log_profile_measures_its_own_benchmark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ACA debug-log profile, outside routine discovery, profiles its own class."""
+    calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def _record(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
+        calls.append((bench_module, bench_class, phases))
+        return {}
+
+    monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _record)
+
+    bench_aca_baseline._AcaBaselineDebugLogGpuPeakMem().setup_cache()
+
+    assert calls == [
+        (
+            "benchmarks.asv.bench_aca_baseline",
+            "AcaBaselineDebugLog",
+            _gpu_mem.GPU_MEMORY_PHASES,
+        )
+    ]
