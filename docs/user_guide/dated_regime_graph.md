@@ -141,11 +141,8 @@ The law can be
 
 A `ByAge` law must select every source age with several outgoing edges. It need not
 select an age with a single outgoing edge; that edge is the law there, as age 62 above
-shows. Several outgoing edges without a law are rejected, and so is a `Transition` on a
-source whose every age has at most one outgoing edge: its graph already is its law, and
-a second declaration could only repeat or contradict it. A law carrying a
-`ValueDependentTransition` is the one exception, because the gate adds routing that the
-edge alone does not state.
+shows. Several outgoing edges without a law are rejected. A law that does select an age
+with a single outgoing edge is evaluated there and must put unit mass on that edge.
 
 Plain functions are deterministic. Explicit wrappers and decorator syntax work for both
 regime and state laws:

@@ -36,8 +36,8 @@ declares none. A source maps to either
 
 - a plain `{target: source_ages}` mapping, when it has exactly one outgoing edge at
   every source age — the graph is the law; or
-- `Transition(targets={target: source_ages, ...}, law=...)`, when some source age has
-  several outgoing edges.
+- `Transition(targets={target: source_ages, ...}, law=...)`, required when some source
+  age has several outgoing edges.
 
 A regime with no outgoing edges is terminal. A `Transition` law is one of
 
@@ -50,9 +50,14 @@ A regime with no outgoing edges is terminal. A `Transition` law is one of
 - `ByAge(...)` selecting one of these per source age, or
   `Phased(solve=..., simulate=...)`.
 
-A `ByAge` law must select every age with several outgoing edges; an age with one edge
-uses that edge. A `Transition` on a source whose every age has at most one outgoing edge
-is rejected as redundant, unless its law carries a `ValueDependentTransition`.
+A `Transition` law is evaluated at every source age with outgoing edges, including ages
+with a single declared destination or a single one left after fixed-zero pruning; there
+it must put unit mass on that destination. Write such a law horizon-aware, or let
+`ByAge` (e.g. `ByAge.until`) leave those ages unselected: a `ByAge` law must select
+every age with several outgoing edges, and an age it does not select uses its one edge.
+A law short of unit mass is caught by the probability check at `log_level="debug"`,
+which names the cells dropped for lack of an edge; run a model at that level at least
+once.
 
 The targetless factories `@deterministic_transition()` and `@stochastic_transition()`
 produce the same wrappers for state and regime laws and preserve DAG signatures.

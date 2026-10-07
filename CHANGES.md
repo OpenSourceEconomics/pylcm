@@ -109,8 +109,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
     function returning a regime code (a discrete choice), a full-vector
     `StochasticTransition`, a regime name, `ByAge` or `Phased`. A `ByAge` law must
     select every age with several edges; ages with one edge use that edge.
-  - A `Transition` on a source whose every age has at most one outgoing edge is
-    rejected as redundant, unless its law carries a `ValueDependentTransition`.
+  - A `Transition` law is evaluated at every source age with outgoing edges, also
+    where one edge leaves the source; there it must put unit mass on that edge.
   - A regime with no outgoing edges is terminal.
   - `Phased` edges carry each phase's law in that phase's `Transition`.
   - `DeterministicTransition` and `StochasticTransition` have no `targets` field.

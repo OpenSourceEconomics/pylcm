@@ -111,6 +111,21 @@ def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop):
     }
 
 
+@pytest.mark.parametrize("n_periods", [2, 3, 4])
+def test_edges_template_does_not_depend_on_how_many_edges_the_horizon_leaves(
+    n_periods,
+):
+    """A law keeps its slot when the horizon leaves its source one destination.
+
+    With two periods, retirement is the working regime's only destination; with
+    more, staying at work is a second one before the last source age.
+    """
+    model = _horizon_retirement_model(n_periods=n_periods)
+    assert _leaf_paths(model.get_params_template()["edges"]) == {
+        ("working", "retirement_age")
+    }
+
+
 @pytest.mark.parametrize("death_probability", [0.0, 0.5])
 def test_edges_template_does_not_depend_on_a_fixed_zero_cell(death_probability):
     """A fixed value that prunes a cell leaves the other slots unchanged."""
@@ -447,6 +462,30 @@ def _retirement_model() -> Model:
                 law=DeterministicTransition(func=_retire_at),
             ),
             "retired": {"retired": (60, 61), "dead": 62},
+        },
+    )
+
+
+def _horizon_retirement_model(*, n_periods: int) -> Model:
+    """Working regime that may stay at work until its last source age, then retires.
+
+    The edges follow the age grid from 60 over `n_periods` years; the law is the
+    same at every horizon.
+    """
+    last_source_age = 58 + n_periods
+    targets: dict[str, AgeRange] = {"retired": AgeRange(start=60)}
+    if last_source_age > 60:
+        targets["working"] = AgeRange(start=60, exclusive_stop=last_source_age)
+    return Model(
+        regimes={"working": _alive(), "retired": _alive(), "dead": _dead()},
+        ages=AgeGrid(start=60, inclusive_stop=last_source_age + 1, step="Y"),
+        regime_id_class=_RetirementId,
+        initial_nodes={60: "working"},
+        edges={
+            "working": Transition(
+                targets=targets, law=DeterministicTransition(func=_retire_at)
+            ),
+            "retired": {"dead": AgeRange(start=60)},
         },
     )
 

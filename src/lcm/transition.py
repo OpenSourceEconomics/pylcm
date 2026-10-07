@@ -95,10 +95,10 @@ class Transition:
             "retired": {"dead": (63, 64)},
         }
 
-    A `ByAge` law need not select ages with a single outgoing edge; the edge is
-    the law there. It must select every age with more than one. A source whose
-    every age has at most one outgoing edge takes no `Transition`, unless its law
-    carries a `ValueDependentTransition` gate.
+    A law is evaluated at every source age with outgoing edges, also where only
+    one edge leaves the source, and there it must put unit mass on that edge. A
+    `ByAge` law need not select ages with a single outgoing edge; the edge is the
+    law there. It must select every age with more than one.
     """
 
     targets: Mapping[str, AgeSelector]

@@ -234,16 +234,17 @@ def bind_edge_laws(
     Per phase, a source's law at each source age with outgoing edges is:
 
     - the only destination, where the age has exactly one outgoing edge and the
-      source is a plain `{target: selector}` mapping or its `Transition` law
+      source is a plain `{target: selector}` mapping or its `ByAge` law
       selects nothing there, as a probability-one cell where the other phase's
       law at that age is a per-target probability mapping;
-    - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise.
+    - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise,
+      also at an age with one outgoing edge, where it must put unit mass on
+      that edge.
 
-    A source age with several outgoing edges and no law is rejected, and so is
-    a `Transition` on a source whose every age has at most one outgoing edge,
-    unless its law carries a `ValueDependentTransition` gate. A regime with no
-    outgoing edge in either phase is terminal. Each regime is validated against
-    its bound law, and its joint kernels against the targets its edges reach.
+    A source age with several outgoing edges and no law is rejected. A regime
+    with no outgoing edge in either phase is terminal. Each regime is validated
+    against its bound law, and its joint kernels against the targets its edges
+    reach.
 
     Returns:
         Each regime's bound law, and both phases' edges with their selectors
@@ -377,14 +378,6 @@ def _transition_laws(
     law = transition.law
     if isinstance(law, Phased):
         law = getattr(law, side)
-    if all(len(targets) <= 1 for targets in targets_by_period.values()) and not (
-        _carries_gate(law)
-    ):
-        raise ModelInitializationError(
-            f"Every source age of '{source}' has at most one outgoing {side} edge, "
-            f"so the graph is its law. Declare `edges['{source}']` as the plain "
-            "`{target: source_ages}` mapping instead of a `Transition`."
-        )
     selected = (
         law.resolve(ages).law_by_period
         if isinstance(law, ByAge)
@@ -404,18 +397,6 @@ def _transition_laws(
                 f"{', '.join(targets)}. Give the `Transition` law a case there."
             )
     return laws
-
-
-def _carries_gate(law: object) -> bool:
-    """Whether a law declares a `ValueDependentTransition` cell at any age."""
-    laws = law.laws if isinstance(law, ByAge) else (law,)
-    return any(
-        isinstance(cell, ValueDependentTransition)
-        for one in laws
-        for side in ((one.solve, one.simulate) if isinstance(one, Phased) else (one,))
-        if isinstance(side, Mapping)
-        for cell in side.values()
-    )
 
 
 def _combined_law(
