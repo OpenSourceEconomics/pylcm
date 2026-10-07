@@ -30,6 +30,7 @@ from lcm import (
     StochasticTransition,
     Transition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import (
     InvalidNameError,
@@ -147,6 +148,43 @@ def test_edges_template_does_not_depend_on_a_fixed_zero_cell(death_probability):
     assert _leaf_paths(model.get_params_template()["edges"]) == {
         ("working", "working", "stay_probability"),
     }
+
+
+@pytest.mark.parametrize("variable", ["x", "a"])
+@pytest.mark.parametrize("n_periods", [2, 3, 4])
+def test_variable_read_by_a_dormant_selector_is_no_edge_parameter(
+    *, variable, n_periods
+):
+    """A state or action a declared selector reads is never an edge parameter.
+
+    With two periods the selector's case selects no age and the model drops the
+    variable from the regime; with more periods the selector runs and reads it.
+    The selector's one free parameter is the only edge slot at every horizon.
+    """
+    model = _dormant_selector_model(variable=variable, n_periods=n_periods)
+    assert _leaf_paths(model.get_params_template()["edges"]) == {("alive", "cutoff")}
+
+
+@pytest.mark.parametrize("variable", ["x", "a"])
+def test_short_horizon_drops_the_variable_only_a_dormant_selector_reads(variable):
+    """The variable a dormant selector reads does not stay on the regime's grid."""
+    model = _dormant_selector_model(variable=variable, n_periods=2)
+    assert variable in model.pruned_variables["alive"]
+
+
+@pytest.mark.parametrize("variable", ["x", "a"])
+@pytest.mark.parametrize("n_periods", [2, 3])
+def test_selector_parameter_alone_fills_the_edge_slots_at_every_horizon(
+    *, variable, n_periods
+):
+    """Supplying the selector's free parameter is all its edges require."""
+    model = _dormant_selector_model(variable=variable, n_periods=n_periods)
+    flat_params = model._process_params(
+        {"discount_factor": 0.95, "edges": {"alive": {"cutoff": 0.5}}}
+    )
+    assert float(
+        cast("Array", edge_params(flat_params, source="alive")["cutoff"])
+    ) == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
@@ -554,6 +592,64 @@ def _horizon_retirement_model(*, n_periods: int) -> Model:
             ),
             "retired": {"dead": AgeRange(start=60)},
         },
+    )
+
+
+@categorical(ordered=False)
+class _LifeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+def _constant_utility() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _choose_by_state(*, x: ContinuousState, cutoff: float) -> ScalarInt:
+    return jnp.where(x < cutoff, _LifeId.alive, _LifeId.dead)
+
+
+def _choose_by_action(*, a: ContinuousAction, cutoff: float) -> ScalarInt:
+    return jnp.where(a < cutoff, _LifeId.alive, _LifeId.dead)
+
+
+def _dormant_selector_model(*, variable: str, n_periods: int) -> Model:
+    """An `alive` regime whose selector reads a model-level state or action.
+
+    The selector runs at every source age but the last, which exits into `dead`.
+    With two periods the only source age is the last, so the selector is dormant
+    and the variable it reads has no other reader.
+    """
+    last_age = n_periods - 1
+    last_source_age = last_age - 1
+    targets: dict[str, AgeRange] = {"dead": AgeRange(start=0)}
+    if last_source_age > 0:
+        targets["alive"] = AgeRange(start=0, exclusive_stop=last_source_age)
+    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    is_state = variable == "x"
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=last_age, step="Y"),
+        regimes={
+            "alive": Regime(functions={"utility": _constant_utility}),
+            "dead": Regime(functions={"utility": _constant_utility}),
+        },
+        regime_id_class=_LifeId,
+        initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets=targets,
+                law=ByAge.until(
+                    stop_age_exclusive=last_age,
+                    law=DeterministicTransition(
+                        func=_choose_by_state if is_state else _choose_by_action
+                    ),
+                    then="dead",
+                ),
+            ),
+        },
+        states={"x": grid} if is_state else {},
+        state_transitions={"x": fixed_transition("x")} if is_state else {},
+        actions={} if is_state else {"a": grid},
     )
 
 
