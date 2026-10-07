@@ -8,11 +8,14 @@ The three provenances an edge-side callable mixes, all in one signature:
 
 1. The TARGET's candidate states, and (simulate only) the TARGET's own V/`D`
    interpolation grid.
-2. The SOURCE's params: the gate predicate's own free params, and the free
-   params of the source-declared gate-ref / fallback projections.
-   `backward_induction._evaluate_edge_fold` binds every param the SOLVE-side
-   fold needs from `flat_params[source]`, so this is not a preference between
-   two merges — it is what makes simulate evaluate the same object solve folded.
+2. The SOURCE's edge params: the gate predicate's own free params, and the free
+   params of the source-declared gate-ref / fallback projections. They live in
+   the source's edge namespace, `flat_params["edges"][source]` (read through
+   `edge_params`), apart from the params of the source regime's own functions in
+   `flat_params[source]`. `backward_induction._evaluate_edge_fold` binds every
+   param the SOLVE-side fold needs from that edge namespace, so this is not a
+   preference between two merges — it is what makes simulate evaluate the same
+   object solve folded.
 3. Each REFERENCE regime's own interpolation grid, for a gate ref's or a leg
    fallback's read of that regime's V.
 
@@ -26,7 +29,8 @@ Covered here:
   identically named `x__points` — is pinned in
   `test_simulate_gate_param_and_leg_selection.py`.)
 - **The fallback projector's params.** `route_gated_edges` must project a
-  coordinate with the same `flat_params[source]` the fold projected it with.
+  coordinate with the same `flat_params["edges"][source]` the fold projected it
+  with.
   Calling the projector with `{**candidate_target_states, **flat_params[target]}`
   instead puts the row in the right fallback REGIME at a STATE the solved policy
   never priced, and carries it into the next period.
@@ -2279,14 +2283,11 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         )
 
 
-# A gate/projection arg that is BOTH a TARGET STATE and a
-# SOURCE PARAM binds one fold leaf two ways -- solve reads the param
-# (`_evaluate_edge_fold` overwrites the state grid), simulate reads the state
-# (`_expose` classifies it as a state before recording a source param). The two
-# sides then evaluate different gates. `regime_to_flat_param_names[source]` cannot
-# catch it at construction: a gate/projection param is bound from a BARE key the
-# user adds to `flat_params[source]`, never from the (function-qualified) template.
-# The fence therefore runs at solve, where `flat_params` is in hand.
+# A gate argument named like a target state reads that state. A source function's
+# parameter of the same name lives under the source regime's own namespace
+# (`utility__x`), and a gate's own parameters under
+# `flat_params["edges"][source]` at `<target>__gate__<param>`, so neither shares
+# the fold leaf the target state binds.
 
 
 def _next_y_identity(y: ContinuousState) -> ContinuousState:
@@ -2310,8 +2311,7 @@ def _entry_x() -> FloatND:
 def _u_src_reads_x_param(
     *, y: ContinuousState, work: DiscreteAction, x: FloatND
 ) -> FloatND:
-    """Source utility reads param `x` -> `x` is a genuine source param the user
-    supplies (bare) in `flat_params['src']`. It ALSO names the target's state."""
+    """Source utility reads param `x`, which also names the target's state."""
     return jnp.zeros_like(y) * work + 0.0 * x
 
 
@@ -2328,10 +2328,9 @@ def _make_gate_param_aliases_target_state_regimes(
 ) -> _Spec:
     """Source `y`-regime; target state is `x`; the gate reads `x`.
 
-    With `source_supplies_x_param=True` the source utility also reads param `x`,
-    so the user supplies a bare `x` in `flat_params['src']` -- the collision. With
-    `False` the source never supplies `x`, so `gate(x)` is an unambiguous direct
-    read of the target state (the legitimate case that must still solve).
+    With `source_supplies_x_param=True` the source utility also reads a parameter
+    `x`, filed under the source regime's own namespace. Either way `gate(x)` reads
+    the target state.
     """
     src = (
         Regime(
@@ -2379,75 +2378,45 @@ def _make_gate_param_aliases_target_state_regimes(
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
-    """The solve-time fence rejects the double-bound leaf.
+@pytest.mark.parametrize("source_supplies_x_param", [False, True])
+def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
+    source_supplies_x_param,
+):
+    """A gate reading target state `x` solves, whatever the source's own params.
 
-    Without it the model solves silently, with the solve-side `Wbar` reading the
-    source param `x=0.9` (`_evaluate_edge_fold` overwrites the state grid) and the
-    simulate router reading the realized target state instead -- two different
-    gates for one edge. `x` is a genuine source param (the source utility reads
-    it), supplied bare in `flat_params['src']`, and simultaneously the target
-    state name.
+    With `source_supplies_x_param=True` the source utility reads a parameter
+    `x`, supplied at `flat_params['src']['utility__x']`; it does not reach the
+    gate, which reads the target's state.
     """
+    own_params = {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+    if source_supplies_x_param:
+        own_params["utility__x"] = jnp.asarray(0.9)
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "utility__x": jnp.asarray(0.0),
-                    "x": jnp.asarray(0.9),
-                }
-            ),
+            "src": MappingProxyType(own_params),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
         }
     )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"simultaneously a TARGET state.*and a source parameter",
-    ):
-        _solve_fixture(
-            spec=_make_gate_param_aliases_target_state_regimes(
-                source_supplies_x_param=True
-            ),
-            flat_params=flat_params,
-        )
-
-
-def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
-    """Negative control: a gate reading a target state the source never supplies
-    as a param is a legitimate direct state read and must still solve. The fence
-    keys on membership in `flat_params[source]`, not on the state name alone."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    # Must not raise.
     _solve_fixture(
         spec=_make_gate_param_aliases_target_state_regimes(
-            source_supplies_x_param=False
+            source_supplies_x_param=source_supplies_x_param
         ),
         flat_params=flat_params,
     )
 
 
-# The ENGINE argument namespace must be reserved too.
+# The ENGINE argument namespace is reserved.
 #
 # `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
 # (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) into the fold
-# kwargs, then OVERWRITES them from `flat_params[source]` -- so a source param
+# kwargs, then OVERWRITES them from the source's edge params -- so a source param
 # named after an engine arg is bound as the source scalar on the SOLVE side. The
 # simulate evaluator's `_expose` classifies the same spelling as the engine mapping
 # BEFORE it could be a source param, so SIMULATE reads the engine object. Solve and
 # simulate then evaluate different gates (or the solve side crashes when the source
 # scalar overwrites the value MAPPING). A target STATE named after an engine arg is
-# the same hazard. Intersecting source-params with target STATES alone is not
-# enough; the engine names are reserved too.
+# the same hazard, so the engine names are reserved against both.
 def _gate_reads_params_engine_arg(
     *, V_target: FloatND, same_period_regime_to_params: FloatND
 ) -> BoolND:

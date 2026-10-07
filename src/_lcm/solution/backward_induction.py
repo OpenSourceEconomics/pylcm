@@ -1791,28 +1791,17 @@ def _reject_edge_fold_state_param_collisions(
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     flat_params: FlatParams,
 ) -> None:
-    """Reject a gated edge whose fold binds one leaf as BOTH a target state and a
-    source param.
+    """Reject a gated edge whose source params or target states shadow an engine name.
 
-    A gate / gate-ref projection / fallback projection declares its arguments by
-    bare name. `get_edge_fold` exposes the target's state grids and the source's
-    gate/projection params in ONE flat signature, so a name that is simultaneously
-    a TARGET STATE of the target regime and a gate / projection key of
-    `flat_params["edges"][source]` occupies
-    a single leaf that two binders both claim: `_evaluate_edge_fold` (below)
-    overwrites the state grid with the source param, so the SOLVE-side `Wbar`
-    reads the param, while the simulate evaluator's `_expose`
-    (`get_edge_simulate_gate_evaluator`) classifies the same name as a state
-    BEFORE it would record a source param, so the SIMULATE-side gate reads the
-    realized target state. Solve and simulate then evaluate DIFFERENT predicates
-    for the same edge -- the gate flips, `Wbar` changes, or a fallback
-    coordinate is written from the wrong value, all silently.
+    A gate, gate reference or route projection is folded on the target's grid,
+    where the engine binds its own value and params mappings and the period
+    context under reserved argument names. A source edge parameter or target state
+    spelled like one of them would be bound as the engine object on one side of
+    the solve/simulate seam and as the user's value on the other.
 
-    The fence runs on the params in hand, so it covers every key the edge
-    namespace binds. A LEGITIMATE direct target-state read (a gate that reads a
-    target state the source never supplies as a param -- e.g. a reused state
-    NAME across two regimes) is untouched, because that name is not a key of
-    `flat_params["edges"][source]`.
+    A gate's own parameters cannot collide with a target state: every gated edge
+    slot is qualified as `<target>__<entry>__<param>`, which contains the path
+    delimiter, and no state name may contain it.
     """
     for source_name, source in regimes.items():
         if not source.gated_edges:
@@ -1823,52 +1812,12 @@ def _reject_edge_fold_state_param_collisions(
             if is_gated_cell_slot(key)
         }
         for target_name, edge in source.gated_edges.items():
-            compiled_folds = tuple(edge.folds_by_period.values())
-            if not compiled_folds:
+            if not edge.folds_by_period:
                 # The target regime is active in no period, so it holds no
-                # value to fold and no fold was compiled — there is no
-                # signature to check, and no `Wbar` this edge could ever feed.
+                # value to fold and no fold was compiled, so there is no `Wbar`
+                # this edge could ever feed.
                 continue
-            # Any compiled period answers: a fold's signature is built from
-            # names — the target's states, the gate's and the projections'
-            # parameters — and an `AgeSpecializedGrid` may vary only its nodes,
-            # never a grid's class, shape, or points mode. So every period's
-            # fold exposes the same leaves, and the collisions this rejects are
-            # a property of the edge rather than of one period.
-            # Every name this edge binds, on BOTH sides of the seam: the fold's
-            # operand surfaces, the combiner that gates them (which carries the
-            # projected readers), and the simulate gate evaluator. The check
-            # below is about a name meaning one thing in solve and another in
-            # simulate, so reading one side's signature alone would miss exactly
-            # the names only the other side declares.
-            evaluators = tuple(edge.simulate_gate_evaluators_by_period.values())
-            sig_params = set().union(
-                *(
-                    set(inspect.signature(func).parameters)
-                    for func in (
-                        compiled_folds[0].surfaces,
-                        compiled_folds[0].combine.combine,
-                        *evaluators[:1],
-                    )
-                )
-            )
             target_state_names = set(base_state_action_spaces[target_name].states)
-            collisions = sorted(sig_params & target_state_names & source_param_names)
-            if collisions:
-                msg = (
-                    f"The gated edge '{source_name}' -> '{target_name}' has a gate "
-                    f"or projection argument {collisions} that is simultaneously a "
-                    f"TARGET state of '{target_name}' and a source parameter in "
-                    f"`flat_params['edges']['{source_name}']`. The fold's single "
-                    "leaf for "
-                    "each such name is bound as the source param on the solve side "
-                    "(`_evaluate_edge_fold`) but as the realized target state on the "
-                    "simulate side (`get_edge_simulate_gate_evaluator`), so the "
-                    "solved `Wbar` and the simulate router would evaluate different "
-                    "gates. Rename the source parameter (or the target state) so the "
-                    "two namespaces are disjoint."
-                )
-                raise ModelInitializationError(msg)
             # A source flat-param key (or target state) that shadows one of the
             # internal ENGINE argument names is a second solve/simulate divergence
             # of the same class: on the solve side
