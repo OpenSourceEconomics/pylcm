@@ -590,6 +590,41 @@ def test_simulating_a_block_major_solution_assembles_no_value(
     assert assemblies.calls == []
 
 
+_LOOKUP_STATES = MappingProxyType(
+    {
+        "wealth": jnp.array([1.0, 4.5, 10.0, 2.5, 7.0, 1.0]),
+        "pref_type": jnp.array([0, 1, 2, 0, 1, 2], dtype=jnp.int32),
+        "health": jnp.array([0, 1, 0, 1, 0, 1], dtype=jnp.int32),
+    }
+)
+
+
+def _lookup_column(
+    *, schedule: InvariantBlockSchedule, period: int, column: str
+) -> np.ndarray:
+    params = life_cycle._params(typed_dead=True)
+    model = _life_cycle_model(schedule=schedule)
+    got = model.lookup_policy(
+        params=params,
+        solution=_solution(model=model, params=params),
+        period=period,
+        regime_name="work",
+        states=_LOOKUP_STATES,
+    )
+    return np.asarray(got.value if column == "value" else got.actions[column])
+
+
+@pytest.mark.parametrize("column", ["consumption", "value"])
+@pytest.mark.parametrize("period", [0, 1, 2, 3])
+def test_lookup_policy_on_a_block_major_result_equals_the_period_major_lookup(
+    *, period: int, column: str
+) -> None:
+    """A policy lookup reads a block-major result's values like a period-major one."""
+    got = _lookup_column(schedule=_BLOCK_MAJOR, period=period, column=column)
+    want = _lookup_column(schedule=_PERIOD_MAJOR, period=period, column=column)
+    assert _leaf_bytes(got) == _leaf_bytes(want)
+
+
 @pytest.mark.parametrize("codes", _POPULATIONS)
 def test_combined_simulation_matches_the_reference_routes(
     codes: tuple[int, ...],
