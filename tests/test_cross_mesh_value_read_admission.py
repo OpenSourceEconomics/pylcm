@@ -559,6 +559,7 @@ def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
     restricted = dataclasses.replace(
         inventory,
         device_ids=(device,) if device in inventory.device_ids else (),
+        fixed_bytes={device: inventory.fixed_bytes.get(device, 0)},
         transfer_scratch_bytes={device: scratch_bytes},
     )
     return restricted.resident_bytes(consumes=(), consumed_copies=frozenset())
