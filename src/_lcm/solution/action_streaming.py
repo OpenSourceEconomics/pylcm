@@ -19,7 +19,7 @@ from typing import Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
-from jax.extend.core import Var
+from jax._src.interpreters import partial_eval
 
 from _lcm.regime_building.collective import _weighted_sum
 from _lcm.solution.action_reduction import (
@@ -784,22 +784,23 @@ def _trace_block(
     The empty accumulator is seeded from the shapes, so every block is
     evaluated in the scan body and `Q_and_F` appears once in the staged
     program. The read arrays are the surrounding program's values that reach
-    the block's outputs.
+    the block's outputs, by the same dead-code elimination `jit` applies, so an
+    array passed into a nested call that ignores it is not read.
     """
     closed = jax.make_jaxpr(partial(evaluate_block, block_index=jnp.int32(0)))()
-    jaxpr = closed.jaxpr
-    live = {var for var in jaxpr.outvars if isinstance(var, Var)}
-    for eqn in reversed(jaxpr.eqns):
-        if eqn.effects or any(var in live for var in eqn.outvars):
-            live.update(var for var in eqn.invars if isinstance(var, Var))
+    _, used = partial_eval.dce_jaxpr(
+        partial_eval.convert_constvars_jaxpr(closed.jaxpr), used_outputs=True
+    )
     return _BlockTrace(
         shapes=tuple(
             jax.ShapeDtypeStruct(aval.shape, aval.dtype) for aval in closed.out_avals
         ),
         read_arrays=[
             const
-            for var, const in zip(jaxpr.constvars, closed.consts, strict=True)
-            if var in live and isinstance(const, jax.Array)
+            for const, is_used in zip(
+                closed.consts, used[: len(closed.consts)], strict=True
+            )
+            if is_used and isinstance(const, jax.Array)
         ],
     )
 

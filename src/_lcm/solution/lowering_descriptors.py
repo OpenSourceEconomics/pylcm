@@ -80,6 +80,15 @@ def _describe_jax(value: object) -> object:
                 describe_lowering_value(value.spec.unreduced),
             ),
         )
+    if isinstance(value, jax.sharding.AbstractMesh):
+        # JAX's trace context carries the ambient abstract mesh, which is empty
+        # unless `jax.set_mesh` is active.
+        return (
+            "abstract_mesh",
+            describe_lowering_value(value.shape_tuple),
+            describe_lowering_value(value.axis_types),
+            describe_lowering_value(value.abstract_device),
+        )
     raise ExecutionPlanningError(f"Unspecified JAX descriptor type: {type(value)}")
 
 
@@ -95,6 +104,7 @@ def _describe_tree(value: object) -> object:
             np.ndarray,
             jax.tree_util.PyTreeDef,
             jax.sharding.Sharding,
+            jax.sharding.AbstractMesh,
         ),
     ):
         return _describe_jax(value)

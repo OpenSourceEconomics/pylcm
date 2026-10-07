@@ -148,7 +148,10 @@ def replay_period(*, directory: Path) -> PeriodReplay:
 
     The cores are lowered and compiled for this one period only, so the call
     costs one kernel rather than a backward induction. The returned `V_arr` is
-    what the original solve produced for that regime-period.
+    what a solve on the backend's default placement produces for that
+    regime-period. A solve that spread the regime over several devices compiled
+    different per-device programs, which may round differently in the last
+    place; `replay_period_on_recorded_layout` repeats that placement.
 
     Args:
         directory: A capture directory written during a solve.

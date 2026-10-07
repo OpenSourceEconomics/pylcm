@@ -165,6 +165,10 @@ def pytest_configure(config):
     DECIMAL_PRECISION = 12 if X64_ENABLED else 5
 
     jax_config.update("jax_enable_x64", val=X64_ENABLED)
+    # The config update reaches this interpreter only. Exporting the flag makes
+    # every child interpreter a test spawns run at the same precision; a child
+    # whose environment sets `JAX_ENABLE_X64` itself keeps its own value.
+    os.environ["JAX_ENABLE_X64"] = "1" if X64_ENABLED else "0"
 
     # `--precision` is meant to say what the suite runs at, and on a recent
     # NVIDIA GPU the default answer is quietly less than it claims: a float32

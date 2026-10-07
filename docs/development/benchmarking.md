@@ -38,7 +38,10 @@ pixi run -e benchmarks-cuda12 asv-run-and-publish-main
 ```
 
 Both workflows run `asv-run` (which requires a clean worktree) followed by their
-respective post-processing step.
+respective post-processing step. The PR workflow passes `asv-run` an ASV `--bench` regex
+that skips the ACA debug-log timing (`AcaBaselineDebugLog`); only the main-branch run
+measures it. The PR comparison table lists the benchmarks HEAD ran, so a benchmark with
+a main result but none on HEAD gets no row.
 
 Individual tasks are also available:
 
@@ -164,6 +167,8 @@ continuous line per benchmark:
   workload, not a regression;
 - a benchmark that changed from an ASV-native `time_*` method to a `track_*` method
   carries its history over under the new name.
+- the stored results of benchmark classes retired from the suite (the ACA GPU-memory
+  profiles) are dropped.
 
 The normalised results are pushed back with the dashboard, so the pass is applied once
 and repeating it changes nothing.

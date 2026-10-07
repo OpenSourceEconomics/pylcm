@@ -264,21 +264,41 @@ def test_a_capture_without_recorded_layouts_is_refused_by_name(tmp_path):
 
 
 def test_a_capture_without_recorded_layouts_still_replays_logically(tmp_path):
-    """Dropping the layout block leaves the logical entry point working."""
+    """Dropping the layout block leaves the logical entry point working.
+
+    The logical replay runs where the backend places the restored arrays, on one
+    device, so it reproduces the same model solved on that device exactly. The
+    captured solve spread `kind` over four devices and compiled different
+    per-device programs, which may round differently in the last place.
+    """
     body = """
+    import lcm
+
+    os.environ.pop("LCM_CAPTURE_PERIOD")
+    os.environ.pop("LCM_CAPTURE_DIR")
+    one_device = toy.build_model(
+        variant="brute",
+        n_periods=4,
+        n_liquid=24,
+        n_consumption=16,
+        n_savings=32,
+        distributed_kind=True,
+        execution_config=lcm.ExecutionConfig(devices=(0,)),
+    ).solve(params=toy.build_params(), log_level="off")
     rewrite(lambda payload: payload.pop(period_capture.LAYOUTS_KEY))
     replay = period_replay.replay_period(directory=directory)
     print(
         "LOGICAL",
+        replay.output.value.devices() == {jax.devices()[0]},
         bool(
             np.array_equal(
                 np.asarray(replay.output.value),
-                np.asarray(solution.values[1]["alive"]),
+                np.asarray(one_device.values[1]["alive"]),
             )
         ),
     )
     """
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == ["True", "True"]
 
 
 def test_a_layout_replay_reproduces_the_value_array_of_the_full_solve(tmp_path):
