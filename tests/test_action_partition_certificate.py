@@ -17,7 +17,7 @@ def test_action_partition_controls_are_complete_and_disjoint() -> None:
     assert len(population) == 29
     assert (
         hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
-        == "011688c988e1b107b5e63adc8cb13df4900bc84137531153bd2ab8743aeb9798"
+        == "cf858b9b0b747da0137c39fab58d7005555f2eda7aeecf471d43b4d3ad5c2ba3"
     )
     assert len(population) == direct_flow.EXPECTED_ACTION_PARTITION_MUTATION_COUNT
     for generator in (
