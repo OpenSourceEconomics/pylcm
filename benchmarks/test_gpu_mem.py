@@ -2,16 +2,19 @@
 
 # ruff: noqa: SLF001
 
+import importlib
 import json
+import pkgutil
 import secrets
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from asv_runner.benchmarks._base import get_setup_cache_key
 from asv_runner.discovery import disc_benchmarks, update_sys_path
 
-from benchmarks.asv import _gpu_mem, bench_mahler_yum
+from benchmarks.asv import _gpu_mem, bench_aca_baseline, bench_mahler_yum
 from benchmarks.asv._gpu_mem import _PROJECT_ROOT, _subprocess_env
 
 # Blocks the `resource` module before the harness is imported, so the fresh
@@ -744,3 +747,95 @@ def test_helpers_carry_no_asv_benchmark_prefix() -> None:
         for name, obj in vars(_gpu_mem).items()
         if callable(obj) and name.startswith(prefixes)
     ] == []
+
+
+def _discoverable_gpu_profile_classes() -> tuple[type, ...]:
+    """Every `GpuPeakMemProfile` subclass ASV discovers in `benchmarks/asv`."""
+    for module_info in pkgutil.iter_modules(
+        [str(_PROJECT_ROOT / "benchmarks" / "asv")]
+    ):
+        if module_info.name.startswith("bench_"):
+            importlib.import_module(f"benchmarks.asv.{module_info.name}")
+    pending = list(_gpu_mem.GpuPeakMemProfile.__subclasses__())
+    found: list[type] = []
+    while pending:
+        cls = pending.pop()
+        pending.extend(cls.__subclasses__())
+        if not cls.__name__.startswith("_") and cls.__module__.startswith(
+            "benchmarks.asv."
+        ):
+            found.append(cls)
+    return tuple(sorted(found, key=lambda cls: cls.__qualname__))
+
+
+def test_discoverable_gpu_profile_classes_are_plain_aca_and_budgeted_mahler() -> None:
+    """The profile population is the plain ACA and the budgeted Mahler series."""
+    assert [cls.__qualname__ for cls in _discoverable_gpu_profile_classes()] == [
+        "AcaBaselineGpuPeakMem",
+        "MahlerYumBudgetedGpuPeakMem",
+    ]
+
+
+def test_gpu_profile_setup_cache_keys_are_distinct_per_class() -> None:
+    """ASV caches each profile class's `setup_cache` result under its own key."""
+    keys = [
+        get_setup_cache_key(cls.setup_cache)
+        for cls in _discoverable_gpu_profile_classes()
+    ]
+    assert len(set(keys)) == len(keys)
+
+
+@pytest.mark.parametrize(
+    "cls", _discoverable_gpu_profile_classes(), ids=lambda cls: cls.__qualname__
+)
+def test_gpu_profile_setup_cache_measures_its_own_benchmark(
+    *, cls: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each profile class's `setup_cache` profiles its own module, class and phases."""
+    calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def _record(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
+        calls.append((bench_module, bench_class, phases))
+        return {}
+
+    monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _record)
+
+    cls().setup_cache()
+
+    assert calls == [(cls.bench_module, cls.bench_class, cls.phases)]
+
+
+def test_gpu_profile_subclass_without_its_own_setup_cache_is_rejected() -> None:
+    """A discoverable profile class must define `setup_cache` in its own body."""
+    with pytest.raises(TypeError, match="must define its own `setup_cache`"):
+
+        class InheritsSetupCache(_gpu_mem.GpuPeakMemProfile):
+            bench_module = "benchmarks.asv.bench_mahler_yum"
+            bench_class = "MahlerYumBudgetedGpu"
+
+
+def test_undiscovered_aca_debug_log_profile_measures_its_own_benchmark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ACA debug-log profile, outside routine discovery, profiles its own class."""
+    calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def _record(
+        *, bench_module: str, bench_class: str, phases: tuple[str, ...]
+    ) -> dict[str, int]:
+        calls.append((bench_module, bench_class, phases))
+        return {}
+
+    monkeypatch.setattr(_gpu_mem, "measure_gpu_memory_profile", _record)
+
+    bench_aca_baseline._AcaBaselineDebugLogGpuPeakMem().setup_cache()
+
+    assert calls == [
+        (
+            "benchmarks.asv.bench_aca_baseline",
+            "AcaBaselineDebugLog",
+            _gpu_mem.GPU_MEMORY_PHASES,
+        )
+    ]
