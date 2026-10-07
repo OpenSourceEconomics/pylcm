@@ -40,7 +40,6 @@ from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
-    dcegm_retirement_full,
     dcegm_working_life,
     get_full_params,
     get_retirement_only_params,
@@ -120,9 +119,7 @@ def _full_model(*, envelope, n_periods):
         ),
         regimes={
             "working_life": _with_backend(regime=dcegm_working_life, envelope=envelope),
-            "retirement": _with_backend(
-                regime=dcegm_retirement_full, envelope=envelope
-            ),
+            "retirement": _with_backend(regime=dcegm_retirement, envelope=envelope),
             "dead": base.dead,
         },
         ages=ages,
@@ -208,10 +205,10 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
                 ),
                 "retirement": _with_backend(
-                    regime=dcegm_retirement_full, envelope=envelope
+                    regime=dcegm_retirement, envelope=envelope
                 ).replace(
                     state_transitions={
-                        "wealth": dcegm_retirement_full.state_transitions["wealth"],
+                        "wealth": dcegm_retirement.state_transitions["wealth"],
                     },
                 ),
                 "dead": base.dead,

@@ -43,7 +43,6 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
-    dcegm_retirement_full,
     dcegm_working_life,
     get_full_model,
     get_full_params,
@@ -144,9 +143,9 @@ def _get_skill_model() -> Model:
             "labor_income": labor_income_by_skill,
         },
     )
-    retirement = dcegm_retirement_full.replace(
+    retirement = dcegm_retirement.replace(
         state_transitions={
-            "wealth": dcegm_retirement_full.state_transitions["wealth"],
+            "wealth": dcegm_retirement.state_transitions["wealth"],
         },
     )
     return Model(
@@ -175,7 +174,7 @@ def _get_must_retire_model() -> Model:
             "working_life": dcegm_working_life.replace(
                 constraints={"must_retire": must_retire},
             ),
-            "retirement": dcegm_retirement_full,
+            "retirement": dcegm_retirement,
             "dead": base.dead,
         },
         ages=ages,
@@ -375,7 +374,7 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
     lost = base.dead.replace(functions={"utility": _lost_utility})
     shared_regimes = {
         "working_life": base.working_life,
-        "retirement": dcegm_retirement_full,
+        "retirement": dcegm_retirement,
         "dead": base.dead,
     }
     with_lost = Model(
@@ -422,9 +421,9 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
         "working_life": dcegm_working_life.replace(
             constraints={"nothing_is_feasible": _nothing_is_feasible},
         ),
-        "retirement": dcegm_retirement_full.replace(
+        "retirement": dcegm_retirement.replace(
             state_transitions={
-                "wealth": dcegm_retirement_full.state_transitions["wealth"],
+                "wealth": dcegm_retirement.state_transitions["wealth"],
             },
         ),
         "dead": base.dead,

@@ -9,23 +9,22 @@ The DC-EGM contract changes the model spec, not just a flag:
   functions.
 
 The builders here emit mathematically equivalent specs for both solvers so tests can
-compare value functions on the shared wealth grid. Importable only once `lcm.solvers`
-exists.
+compare value functions on the shared wealth grid.
 """
 
 import dataclasses
 import functools
 from typing import Literal
 
-from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model, Transition
+from lcm import AgeGrid, DiscreteGrid, IrregSpacedGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
-from lcm.typing import UserAge
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
     WEALTH_GRID,
     LaborSupply,
     dead,
+    get_edges,
     inverse_marginal_utility,
     is_working,
     labor_income,
@@ -106,20 +105,6 @@ dcegm_working_life = ConsumptionSavingsRegime(
 )
 
 
-dcegm_retirement_full = ConsumptionSavingsRegime(
-    actions={"consumption": CONSUMPTION_GRID},
-    states={"wealth": WEALTH_GRID},
-    state_transitions={"wealth": next_wealth_from_savings},
-    functions={
-        "utility": utility_retirement,
-        "savings": savings,
-        "inverse_marginal_utility": inverse_marginal_utility,
-    },
-    solver=DCEGM_SOLVER,
-    liquid=LIQUID_MARGIN,
-)
-
-
 @functools.cache
 def get_retirement_only_model(
     *, solver: Literal["brute_force", "dcegm"], n_periods: int
@@ -162,10 +147,10 @@ def get_full_model(
         else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
-        edges=lifecycle_edges(ages=ages),
+        edges=get_edges(ages=ages),
         regimes={
             "working_life": dcegm_working_life.replace(solver=dcegm_solver),
-            "retirement": dcegm_retirement_full.replace(solver=dcegm_solver),
+            "retirement": dcegm_retirement.replace(solver=dcegm_solver),
             "dead": dead,
         },
         ages=ages,
@@ -175,32 +160,6 @@ def get_full_model(
             (ages.exact_values[0], "retirement"),
         ),
     )
-
-
-def lifecycle_edges(
-    *, ages: AgeGrid
-) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
-    """Edges and laws of the worker/retirement/dead model on `ages`.
-
-    Before the second-to-last age a worker keeps working, retires, or dies and a
-    retiree stays retired or dies, chosen by `base.working_life_transitions` and
-    `base.retirement_transitions`; from the second-to-last age both die.
-    """
-    dies = tuple(ages.exact_values[:-1])
-    stays = tuple(ages.exact_values[:-2])
-    if not stays:
-        return {"working_life": {"dead": dies}, "retirement": {"dead": dies}}
-    last_age = ages.exact_values[-1]
-    return {
-        "working_life": Transition(
-            targets={"dead": dies, "working_life": stays, "retirement": stays},
-            law=base.working_life_transitions(last_age=last_age),
-        ),
-        "retirement": Transition(
-            targets={"dead": dies, "retirement": stays},
-            law=base.retirement_transitions(last_age=last_age),
-        ),
-    }
 
 
 def get_retirement_only_params(
@@ -228,7 +187,8 @@ def get_full_params(
     """Params for the full-model pair; valid for both solver variants.
 
     The laws reading `final_age_alive` exist only where some age has several
-    outgoing edges (see `lifecycle_edges`), so a two-period model takes none.
+    outgoing edges (see `lcm_examples.iskhakov_et_al_2017.get_edges`), so a
+    two-period model takes none.
     """
     return base.get_params(
         n_periods=n_periods,

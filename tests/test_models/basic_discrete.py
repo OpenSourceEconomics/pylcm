@@ -55,7 +55,11 @@ dead = UserRegime(
 
 
 def get_model() -> Model:
-    """Create a minimal model with discrete + continuous states and two regimes."""
+    """Create a minimal model with discrete + continuous states and three regimes.
+
+    `working_life` and `retirement` are the two economic regimes; both lead to
+    the terminal `dead` regime.
+    """
     return Model(
         edges={
             "working_life": {"dead": (25, 35, 45, 55, 65)},

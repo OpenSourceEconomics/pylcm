@@ -259,7 +259,7 @@ VALID = dcegm_variants.dcegm_retirement.replace(
         envelope=FUESEnvelope(),
     ),
 )
-PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
+PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement.replace(
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
