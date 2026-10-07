@@ -172,6 +172,9 @@ def write_atomically(*, path: Path, write: Callable[[Path], None]) -> None:
     `write` fills the temporary file it is given. A reader of `path` sees the
     previous file or the complete new one; a failure leaves neither a partial
     `path` nor the temporary file.
+
+    The file keeps the permissions `tempfile.mkstemp` gives the temporary file:
+    readable and writable by its owner only (`0600`).
     """
     descriptor, temporary_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
