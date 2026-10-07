@@ -53,6 +53,16 @@ def inventory_digest(sources: list[dict[str, str]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def upgrade_inventory(payload: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade an inventory to the current schema."""
+    raise NotImplementedError
+
+
+def profile_sources(payload: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """Resolve each profile's effective candidate sources."""
+    raise NotImplementedError
+
+
 def build_inventory(repo_root: Path) -> dict[str, Any]:
     """Build the canonical inventory from certificate obligations and source bytes."""
     root = repo_root.resolve()
