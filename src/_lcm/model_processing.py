@@ -20,6 +20,12 @@ from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
+from _lcm.params.edges import (
+    EDGES,
+    edge_params,
+    flat_namespaces,
+    regime_kernel_params,
+)
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -54,6 +60,7 @@ from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
@@ -188,6 +195,7 @@ def _build_regimes_and_template_with_fixed_params(
             user_regimes=user_regimes,
             laws=prepared_structure.laws,
             regime_names_to_ids=regime_names_to_ids,
+            declared_laws=prepared_structure.declared_laws,
         )
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
@@ -810,21 +818,32 @@ def _remove_fixed_params_from_template(
 
     """
 
-    return cast(
-        "ParamsTemplate",
-        MappingProxyType(
-            {
-                regime_name: MappingProxyType(
-                    _trim_fixed_params(
-                        branch=regime_template,
-                        prefix=(),
-                        fixed=fixed_flat_params.get(regime_name, MappingProxyType({})),
-                    )
-                )
-                for regime_name, regime_template in template.items()
-            }
-        ),
-    )
+    trimmed: dict[str, MappingProxyType[str, object]] = {
+        regime_name: MappingProxyType(
+            _trim_fixed_params(
+                branch=regime_template,
+                prefix=(),
+                fixed=regime_kernel_params(fixed_flat_params, regime_name=regime_name),
+            )
+        )
+        for regime_name, regime_template in template.items()
+        if regime_name != EDGES
+    }
+    # The edge branch keeps only the sources with a slot left to supply.
+    edge_branch = {
+        source: MappingProxyType(trimmed_source)
+        for source, source_template in template.get(EDGES, {}).items()
+        if (
+            trimmed_source := _trim_fixed_params(
+                branch=source_template,
+                prefix=(),
+                fixed=edge_params(fixed_flat_params, source=source),
+            )
+        )
+    }
+    if edge_branch:
+        trimmed[EDGES] = MappingProxyType(edge_branch)
+    return cast("ParamsTemplate", MappingProxyType(trimmed))
 
 
 def _trim_fixed_params(
@@ -854,7 +873,9 @@ def _partial_fixed_params_into_regimes(
     """Partial fixed params into all compiled functions on each Regime."""
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
-        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
+        regime_fixed = dict(
+            regime_kernel_params(fixed_flat_params, regime_name=regime_name)
+        )
         # A DC-EGM source carrying into a *different* target regime also binds
         # that target's fixed params (it reads the target's resources /
         # transition functions in its per-asset-node solve). Gate the rebuild on
@@ -862,7 +883,7 @@ def _partial_fixed_params_into_regimes(
         # transition target's — exists; the per-adapter `with_fixed_params`
         # decides which of them actually reach each core.
         reachable_fixed = bool(regime_fixed) or any(
-            fixed_flat_params.get(target_name, MappingProxyType({}))
+            regime_kernel_params(fixed_flat_params, regime_name=target_name)
             for target_name in regime.solution.transitions
         )
         if not reachable_fixed:
@@ -1013,9 +1034,9 @@ def _validate_param_types(flat_params: FlatParams) -> None:
     time this runs, every leaf must be a JAX `Array`, or a `MappingLeaf` /
     `SequenceLeaf` whose contents recursively satisfy the same rule.
     """
-    for regime_name, regime_params in flat_params.items():
+    for path, regime_params in flat_namespaces(flat_params):
         for key, value in regime_params.items():
-            _check_leaf(value=value, path=f"{regime_name}__{key}")
+            _check_leaf(value=value, path=qname_from_tree_path((*path, key)))
 
 
 def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
@@ -1026,7 +1047,9 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
     declaring taste shocks — not by `scale = 0`.
     """
     for regime_name, regime_params in flat_params.items():
-        scale = regime_params.get(TASTE_SHOCK_SCALE_PARAM)
+        if regime_name == EDGES:
+            continue
+        scale = cast("FlatRegimeParams", regime_params).get(TASTE_SHOCK_SCALE_PARAM)
         if isinstance(scale, Array) and float(scale) <= 0:
             msg = (
                 f"The taste-shock scale of regime {regime_name!r} is "

@@ -79,6 +79,7 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_arguments import (
@@ -3147,10 +3148,10 @@ class _ProbeArguments:
         target regime and reads that target's params.
         """
         merged: dict[str, object] = {}
-        for name, regime_params in flat_params.items():
-            if name != regime_name:
+        for path, regime_params in flat_namespaces(flat_params):
+            if path != (regime_name,) and path[0] != EDGES:
                 merged.update(regime_params)
-        merged.update(flat_params.get(regime_name, MappingProxyType({})))
+        merged.update(regime_kernel_params(flat_params, regime_name=regime_name))
         return replace(self, param_values=MappingProxyType(merged))
 
     def fill(

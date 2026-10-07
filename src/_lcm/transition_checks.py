@@ -51,6 +51,7 @@ from _lcm.engine import (
     StateActionSpace,
     _StochasticStateTransition,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
@@ -523,7 +524,9 @@ def validate_regime_transition_probs_all_periods(
                 try:
                     _validate_regime_transition_single(
                         regimes=regimes,
-                        regime_params=flat_params[regime_name],
+                        regime_params=regime_kernel_params(
+                            flat_params, regime_name=regime_name
+                        ),
                         active_regimes_next_period=reachability.targets(
                             period=period, source=regime_name
                         ),
@@ -1144,12 +1147,15 @@ def validate_state_transitions_all_periods(  # noqa: C901
 
             state_action_space = (
                 regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name],
+                    regime_params=regime_kernel_params(
+                        flat_params, regime_name=regime_name
+                    ),
                     process_grid_resolver=process_grid_resolver,
                 )
                 if summary is None
                 else summary.state_action_space(
-                    regime=regime, params=flat_params[regime_name]
+                    regime=regime,
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
             )
             age = ages.values[period]  # noqa: PD011
@@ -1165,7 +1171,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
                         transition=transition,
                         regime_params=_params_callable_for_state_transition(
                             regime=regime,
-                            flat_params_for_regime=flat_params[regime_name],
+                            flat_params_for_regime=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
                             transition=transition,
                         ),
                         state_action_space=state_action_space,
@@ -1214,12 +1222,15 @@ def validate_joint_transitions_all_periods(
                 continue
             state_action_space = (
                 regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name],
+                    regime_params=regime_kernel_params(
+                        flat_params, regime_name=regime_name
+                    ),
                     process_grid_resolver=process_grid_resolver,
                 )
                 if summary is None
                 else summary.state_action_space(
-                    regime=regime, params=flat_params[regime_name]
+                    regime=regime,
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                 )
             )
             # A carried state has no solve grid axis, so a simulate-phase law
@@ -1274,7 +1285,9 @@ def validate_joint_transitions_all_periods(
                             if phase_name == "simulate"
                             else _NO_EXTRA_GRIDS
                         ),
-                        regime_params=flat_params[regime_name],
+                        regime_params=regime_kernel_params(
+                            flat_params, regime_name=regime_name
+                        ),
                         period=period_int32,
                         age=age,
                         regime_name=regime_name,
@@ -1292,7 +1305,9 @@ def validate_joint_transitions_all_periods(
                             transitions=phase.transitions[target],
                             weights=weights,
                             n_cells=n_cells,
-                            regime_params=flat_params[regime_name],
+                            regime_params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
                             period=period_int32,
                             period_index=period,
                             age=age,

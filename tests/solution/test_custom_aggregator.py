@@ -1,6 +1,6 @@
 """Test that a custom Koopmans aggregator can be used in a model."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
@@ -693,7 +693,7 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
 
 def _solve_with_aggregator_slot(
     *, koopmans_aggregator: object, aggregator_params: dict[str, float]
-) -> tuple[dict[str, str | dict[str, str | dict[str, str]]], FloatND]:
+) -> tuple[Mapping[str, object], FloatND]:
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(

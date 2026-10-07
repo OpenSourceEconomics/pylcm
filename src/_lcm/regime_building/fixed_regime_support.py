@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path
 
+from _lcm.params.edges import EDGES
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     find_param_candidates,
@@ -353,7 +354,7 @@ def _prune_law(
         evaluated = (
             _evaluate_fixed_function(
                 func=cell.func,
-                path=(regime_name, target, "next_regime"),
+                path=(EDGES, regime_name, target),
                 side=side,
                 regime=regime,
                 fixed_flat=fixed_flat,
@@ -437,7 +438,13 @@ def _resolve_fixed_argument(
     fixed_flat: Mapping[str, object],
     ancestors: tuple[str, ...],
 ) -> tuple[Any, frozenset[str]] | None:
-    """Resolve one argument through its helper DAG or a fixed parameter leaf."""
+    """Resolve one argument through its helper DAG or a fixed parameter leaf.
+
+    `path` is the params path of the callable reading the argument: a regime
+    function's `(regime, function)`, or a law cell's slot below
+    `("edges", regime, target)`.
+    """
+    regime_name = path[1] if path[0] == EDGES else path[0]
     helper = regime.functions.get(arg_name)
     if isinstance(helper, Phased):
         helper = helper.solve if side == "solve" else helper.simulate
@@ -446,7 +453,7 @@ def _resolve_fixed_argument(
             return None
         return _evaluate_fixed_function(
             func=helper,
-            path=(path[0], arg_name),
+            path=(regime_name, arg_name),
             side=side,
             regime=regime,
             fixed_flat=fixed_flat,
@@ -467,7 +474,7 @@ def _resolve_fixed_argument(
     if isinstance(fixed_flat[key], pd.Series):
         return None
     return _canonicalize_fixed_leaf(
-        regime_name=path[0], qname=qname, value=fixed_flat[key]
+        regime_name=regime_name, qname=qname, value=fixed_flat[key]
     ), frozenset((key,))
 
 

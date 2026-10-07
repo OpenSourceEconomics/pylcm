@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -237,7 +238,7 @@ def _raise_at(
 ) -> None:
     """Run the enriched NaN diagnostic on a single offending row and raise."""
     regime = regimes[row.regime_name]
-    regime_params = flat_params[row.regime_name]
+    regime_params = regime_kernel_params(flat_params, regime_name=row.regime_name)
     # `compute_intermediates` was built from the regime's full `flat_param_names`
     # (per-iteration params + fixed params); the live solve loop merges
     # `resolved_fixed_params` into `regime_params` implicitly via the partialled

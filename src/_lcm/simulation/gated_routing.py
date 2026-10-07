@@ -82,6 +82,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.params.edges import edge_params, edge_user_path, regime_kernel_params
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
@@ -457,7 +458,7 @@ def substitute_gated_edge_continuations(
                 ),
             ),
             same_period_mapping=same_period_mapping,
-            source_flat_params=flat_params[regime_name],
+            source_flat_params=edge_params(flat_params, source=regime_name),
             reference_flat_params=build_reference_params_mapping_for_fold(
                 edge=edge, flat_params=flat_params
             ),
@@ -818,12 +819,14 @@ def bind_provenance_params(
     source_name: RegimeName,
     target_name: RegimeName,
 ) -> dict[str, object]:
-    """Bind an edge callable's params, each from the regime that OWNS it.
+    """Bind an edge callable's params, each from the namespace that OWNS it.
 
     The router holds every regime's flat params and the realized candidate
     target states; `provenance` (published by the callable's builder in
     `_lcm.regime_building.gated_edges`) is what says which of them resolves a
-    given argument. Both merge orders of two name-filtered dicts are wrong — one
+    given argument. A source parameter is a slot of the source's edges,
+    `flat_params["edges"][source]`; a target parameter is the target regime's
+    own. Both merge orders of two name-filtered dicts are wrong — one
     keyword cannot carry two regimes' identically named arrays, and the target
     and the source genuinely can contribute the same qname (`x__points` for a
     state `x` on a runtime irregular grid, in both regimes) — so nothing is
@@ -832,20 +835,26 @@ def bind_provenance_params(
     Raises:
         KeyError: A namespace does not carry a qname the callable declares.
     """
-    regime_of_namespace = {SOURCE_PARAMS: source_name, TARGET_PARAMS: target_name}
+    params_of_namespace = {
+        SOURCE_PARAMS: edge_params(flat_params, source=source_name),
+        TARGET_PARAMS: regime_kernel_params(flat_params, regime_name=target_name),
+    }
     bound: dict[str, object] = {}
     for exposed, (namespace, qname) in provenance.params.items():
-        regime_name = regime_of_namespace[namespace]
-        regime_params = flat_params[regime_name]
-        if qname not in regime_params:
+        namespace_params = params_of_namespace[namespace]
+        if qname not in namespace_params:
+            where = (
+                edge_user_path(source=source_name, key=qname)
+                if namespace == SOURCE_PARAMS
+                else f"flat_params['{target_name}']['{qname}']"
+            )
             msg = (
-                f"A gated edge into '{target_name}' needs the {namespace} "
-                f"regime '{regime_name}''s parameter '{qname}', which is not in "
-                f"flat_params['{regime_name}'] (present: "
-                f"{sorted(regime_params)})."
+                f"A gated edge '{source_name}' -> '{target_name}' needs the "
+                f"{namespace} parameter {where}, which is not supplied (present: "
+                f"{sorted(namespace_params)})."
             )
             raise KeyError(msg)
-        bound[exposed] = regime_params[qname]
+        bound[exposed] = namespace_params[qname]
     return bound
 
 

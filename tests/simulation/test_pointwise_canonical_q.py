@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import _lcm.simulation.simulate as simulate_module
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from lcm import (
@@ -126,7 +127,9 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     age = jnp.asarray(model.ages.period_to_age(period))
     wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
 
-    flat_params = model._process_params(params)["retirement"]
+    flat_params = regime_kernel_params(
+        model._process_params(params), regime_name="retirement"
+    )
     # The flat argmax index is unravelled against the canonical action order
     # (discrete actions first), so the grid mapping must follow that order.
     action_names = regime.solution.state_action_space(

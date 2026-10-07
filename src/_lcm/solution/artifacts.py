@@ -10,6 +10,7 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import ProgramScope, core_program_graph
+from _lcm.params.edges import flat_namespaces
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -358,12 +359,12 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     exact canonical parameters used by a solve; it is not a model fingerprint.
     """
     digest = hashlib.sha256()
-    for regime_name in sorted(flat_params):
-        for param_name in sorted(flat_params[regime_name]):
+    for path, leaves in sorted(flat_namespaces(flat_params)):
+        for param_name in sorted(leaves):
             _update_digest_value(
                 digest=digest,
-                value=flat_params[regime_name][param_name],
-                path=(regime_name, param_name),
+                value=leaves[param_name],
+                path=(*path, param_name),
             )
     return digest.hexdigest()
 

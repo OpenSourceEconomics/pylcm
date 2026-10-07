@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.runtime import SimulationRuntime
 from tests.simulation.test_abstract_simulation_profiles import (
@@ -87,7 +88,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
     spaces = MappingProxyType(
         {
             name: regime.solution.state_action_space(
-                regime_params=result.flat_params[name]
+                regime_params=regime_kernel_params(result.flat_params, regime_name=name)
             )
             for name, regime in model._regimes.items()
         }

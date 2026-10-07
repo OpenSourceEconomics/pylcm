@@ -303,6 +303,33 @@ def bind_edge_laws(
     return laws, GraphEdges(solve=resolved["solve"], simulate=resolved["simulate"])
 
 
+def declared_transition_laws(
+    edges: object,
+) -> MappingProxyType[RegimeName, tuple[object, ...]]:
+    """Return each source's declared `Transition` law, one per phase of `edges`.
+
+    The laws are returned as declared — every `ByAge` case, both sides of a
+    `Phased` law — before any age selects among them. A source declared as a
+    plain `{target: selector}` mapping declares no law and has no entry.
+
+    Args:
+        edges: The `Model(edges=...)` declaration, or a `Phased` pair of them.
+
+    Returns:
+        Per source regime, the laws of its `Transition` declarations.
+
+    """
+    phases = (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges,)
+    laws: dict[RegimeName, list[object]] = {}
+    for phase in phases:
+        if not isinstance(phase, Mapping):
+            continue
+        for source, declaration in phase.items():
+            if isinstance(declaration, Transition):
+                laws.setdefault(source, []).append(declaration.law)
+    return MappingProxyType({source: tuple(found) for source, found in laws.items()})
+
+
 def _targets_by_period(
     *, resolved: Mapping[RegimeName, frozenset[UserAge]], ages: AgeGrid
 ) -> dict[int, tuple[RegimeName, ...]]:

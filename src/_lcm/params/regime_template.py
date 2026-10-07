@@ -1,32 +1,32 @@
 """Derive one regime's params template from what its callables actually read.
 
 `create_regime_params_template` inspects the finalized user regime — its
-functions, constraints, transitions, gated edges, Koopmans aggregator,
-certainty equivalent and Pareto objective — and returns the nested template of
-parameters a caller must supply. It fails closed on a name that shadows a
-function and on a transition-local node read from outside its transition.
+functions, constraints, state transitions, Koopmans aggregator, certainty
+equivalent and Pareto objective — and returns the nested template of parameters
+a caller must supply. It fails closed on a name that shadows a function and on a
+transition-local node read from outside its transition.
+
+`create_edge_params_template` reads the callables a source's `Model(edges=...)`
+declaration holds — its regime-transition law, gates, gate references and route
+fallbacks — and returns that source's branch of `params["edges"]`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.gated_edge import GatedEdge
 from _lcm.grids import IrregSpacedGrid
+from _lcm.params.edges import FALLBACK, GATE, GATE_REFERENCES, PROBABILITY, ROUTES
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
-from _lcm.regime_building.gated_edges import (
-    EDGE_GATE_ENTRY,
-    edge_gate_ref_entry,
-    edge_leg_fallback_entry,
-    is_target_value_operand,
-)
+from _lcm.regime_building.gated_edges import is_target_value_operand
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import RegimeLaw
 from _lcm.typing import (
+    EdgeParamsTemplate,
     FunctionName,
     RegimeName,
     RegimeParamsTemplate,
@@ -35,11 +35,17 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args
+from lcm.collective import ValueDependentTransition
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
-from lcm.transition import JointTransition, StochasticTransition
+from lcm.transition import (
+    ByAge,
+    DeterministicTransition,
+    JointTransition,
+    StochasticTransition,
+)
 from lcm.typing import UserFunction
 
 
@@ -48,9 +54,6 @@ def create_regime_params_template(
     user_regime: UserRegime,
     law: RegimeLaw,
     other_regime_state_names: frozenset[StateName] = frozenset(),
-    state_names_by_regime: Mapping[RegimeName, frozenset[StateName]] = MappingProxyType(
-        {}
-    ),
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -82,13 +85,10 @@ def create_regime_params_template(
     entries to the template under pseudo-function keys matching the state or
     action name.
 
-    A gated edge's gate predicate and its gate-reference / leg-fallback
-    projections are user callables like any other, so their free scalars are
-    parameters too. They nest under the edge's target regime
-    (`template[target][<edge callable>]`), next to that target's per-target
-    transition cell. The names they read on the target regime's grid — the
-    target's states, its `V_target` value components and `D_target` flag, and
-    the edge's own gate-reference keys — are engine-wired and never surface.
+    The regime-transition law and a gated edge's gate, gate references and
+    route fallbacks are read here only for the checks on what they may read.
+    Their parameters belong to the source's branch of `params["edges"]`, which
+    `create_edge_params_template` builds from the declared law.
 
     Args:
         user_regime: User-form `Regime` instance.
@@ -97,38 +97,12 @@ def create_regime_params_template(
             model. Their `next_<state>` forms are withheld from the parameter
             namespace so that a law reading one is adjudicated as a transition
             value rather than silently rebound to a parameter.
-        state_names_by_regime: State names declared by each regime of the model.
-            A gated edge's callables run on ONE target regime's grid, so the
-            names the engine binds for them come from that regime alone. Falls
-            back to `other_regime_state_names` for a caller that supplies no
-            per-regime breakdown.
 
     Returns:
         The regime parameter template with type annotations as values.
 
     """
-    variables = {
-        *set(user_regime.states),
-        *set(user_regime.actions),
-        *user_regime.decomposed_functions,
-        "period",
-        "age",
-        "CE",
-    }
-    if user_regime.stakeholders is not None:
-        # A collective regime carries per-stakeholder
-        # `utility_<s>` functions instead of a singleton `utility`, but the
-        # Bellman aggregator H still takes a `utility` argument — engine-wired
-        # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
-        # so the name must not surface as a user-facing param.
-        variables.add("utility")
-        # Value-constraint predicates read the
-        # engine-computed per-stakeholder action values `Q_<s>` and the
-        # interpolated same-period reference values (keyed by the
-        # `same_period_refs` names) as named arguments — engine-wired, never
-        # user-facing params.
-        variables.update(f"Q_{s}" for s in user_regime.stakeholders)
-        variables.update(user_regime.same_period_refs)
+    variables = _wired_names(user_regime)
 
     # `next_<state>` names a value, never a parameter. Whether a consumer may
     # read it is a question of whether that value exists where the consumer runs.
@@ -179,49 +153,37 @@ def create_regime_params_template(
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[str, Any]] = {}
 
-    # A gated edge's callables run on the target regime's grid, so they are
-    # collected one per callable and filed under the template entry that names
-    # them within the edge — the same entry `_lcm.regime_building.gated_edges`
-    # qualifies their parameters with.
-    edge_template_keys = {
-        name: template_key for name, (template_key, _func) in edge_entries.items()
-    }
-    edge_non_params_by_target = {
-        target: variables
-        | _gated_edge_wired_names(
-            edge=edge,
-            target_state_names=state_names_by_regime.get(
-                target, other_regime_state_names
-            ),
-        )
-        for target, edge in law.gated_edges.items()
-    }
+    # The law and the gated-edge callables join the checks above, but their
+    # parameters belong to the edge namespace (`create_edge_params_template`).
+    edge_entry_names = set(edge_entries) | (
+        set()
+        if law.terminal
+        else set(_regime_transition_entries(law.decomposed_transition))
+    )
 
     for name, func in template_functions.items():
+        if name in edge_entry_names:
+            continue
         # State and action names appearing in a function's signature are
         # exempt from param-template extraction: pylcm wires those values
         # through `states_actions_params` at call time, so they must not
-        # surface as user-facing params in the template. A gated edge's
-        # callables run on the TARGET regime's grid, so their exempt set is a
-        # different one.
-        is_edge_entry = name in edge_template_keys
-        if is_edge_entry:
-            non_params = edge_non_params_by_target[tree_path_from_qname(name)[-1]]
-        elif tree_path_from_qname(name)[0] in transition_role:
-            non_params = variables_in_transition_role
-        else:
-            non_params = variables
+        # surface as user-facing params in the template.
+        non_params = (
+            variables_in_transition_role
+            if tree_path_from_qname(name)[0] in transition_role
+            else variables
+        )
         params = _discovered_params(
             name=name,
             func=func,
             non_params=non_params,
-            strip_target_value_operands=is_edge_entry,
+            strip_target_value_operands=False,
         )
 
         _drop_engine_provided_args(name=name, params=params, user_regime=user_regime)
 
         _record_params(
-            name=edge_template_keys.get(name, name),
+            name=name,
             params=params,
             function_params=function_params,
             per_target_params=per_target_params,
@@ -281,6 +243,207 @@ def create_regime_params_template(
     )
 
 
+def create_edge_params_template(
+    *,
+    user_regime: UserRegime,
+    declared_laws: tuple[object, ...],
+    state_names_by_regime: Mapping[RegimeName, frozenset[StateName]],
+) -> EdgeParamsTemplate:
+    """Create a source regime's branch of the `edges` parameter template.
+
+    Every parameter sits at its declaration path below `params["edges"][source]`:
+
+    - a law over all targets ⇒ `[<param>]`;
+    - a per-target cell ⇒ `[<target>][<param>]`;
+    - a value-dependent cell's probability ⇒ `[<target>]["probability"][<param>]`;
+    - its gate ⇒ `[<target>]["gate"][<param>]`;
+    - a gate reference's projection of one reference-regime state ⇒
+      `[<target>]["gate_references"][<reference>][<state>][<param>]`;
+    - a route fallback's projection ⇒
+      `[<target>]["routes"][<route>]["fallback"][<state>][<param>]`, with a
+      `"solve"` / `"simulate"` level after `"fallback"` when it is `Phased`.
+
+    The template is read off the declared laws, every `ByAge` case and both
+    phases included, so its slots do not depend on the horizon or on which cells
+    a fixed zero prunes. A law reads the source regime's variables; a gate and a
+    projection run on the target regime's grid and also read its states, its
+    `V_target` value components, `D_target` and the cell's gate-reference keys.
+    None of those is a parameter.
+
+    Args:
+        user_regime: The source regime, whose engine-wired names the law reads.
+        declared_laws: The `Transition` laws declared for the source, one per
+            phase of `Model(edges=...)`.
+        state_names_by_regime: State names declared by each regime of the model.
+
+    Returns:
+        The nested template, empty for a source whose edges declare no parameter.
+
+    Raises:
+        InvalidNameError: If one path is both a parameter and a branch, e.g. a
+            law over all targets reading an argument named like a target whose
+            cell has parameters.
+
+    """
+    variables = _wired_names(user_regime)
+    template: dict[str, Any] = {}
+    for law in declared_laws:
+        for path, func, cell in iter_edge_callables(law=law, path=()):
+            non_params = (
+                variables
+                if cell is None
+                else variables
+                | _gated_edge_wired_names(
+                    gate_reference_names=frozenset(cell.gate_references),
+                    target_state_names=state_names_by_regime.get(path[0], frozenset()),
+                )
+            )
+            params = _discovered_params(
+                name="edge",
+                func=func,
+                non_params=non_params,
+                strip_target_value_operands=cell is not None,
+            )
+            for param_name, annotation in params.items():
+                _insert_edge_slot(
+                    template=template,
+                    path=(*path, param_name),
+                    annotation=annotation,
+                )
+    return cast("EdgeParamsTemplate", _freeze_template_node(template))
+
+
+def iter_edge_callables(
+    *, law: object, path: tuple[str, ...]
+) -> Iterator[tuple[tuple[str, ...], UserFunction, ValueDependentTransition | None]]:
+    """Yield every callable a declared law holds, at its declaration path.
+
+    Args:
+        law: A declared law, or one of its cases, phases or cells.
+        path: The declaration path of `law` below the source's edge branch.
+
+    Yields:
+        Triples of the path, the callable, and the value-dependent cell when the
+        callable runs on that cell's target grid (a gate or a projection).
+
+    """
+    if law is None or isinstance(law, str):
+        return
+    if isinstance(law, ByAge):
+        for case in law.laws:
+            yield from iter_edge_callables(law=case, path=path)
+    elif isinstance(law, Phased):
+        yield from iter_edge_callables(law=law.solve, path=path)
+        yield from iter_edge_callables(law=law.simulate, path=path)
+    elif isinstance(law, ValueDependentTransition):
+        yield from _value_dependent_callables(cell=law, path=path)
+    elif isinstance(law, DeterministicTransition | StochasticTransition):
+        yield path, cast("UserFunction", law.func), None
+    elif isinstance(law, Mapping):
+        for target_regime_name, cell in law.items():
+            yield from iter_edge_callables(law=cell, path=(*path, target_regime_name))
+    elif callable(law):
+        yield path, cast("UserFunction", law), None
+
+
+def _value_dependent_callables(
+    *, cell: ValueDependentTransition, path: tuple[str, ...]
+) -> Iterator[tuple[tuple[str, ...], UserFunction, ValueDependentTransition | None]]:
+    """Yield a value-dependent cell's callables at their declaration paths."""
+    probability = cell.probability
+    yield (
+        (*path, PROBABILITY),
+        cast(
+            "UserFunction",
+            probability.func
+            if isinstance(probability, StochasticTransition)
+            else probability,
+        ),
+        None,
+    )
+    yield (*path, GATE), cell.gate, cell
+    for ref_name, ref in cell.gate_references.items():
+        for state_name, projection in ref.projection.items():
+            yield (*path, GATE_REFERENCES, ref_name, state_name), projection, cell
+    for route_name, route in cell.routes.items():
+        for phase, ref in _fallbacks_by_phase(
+            solve=route.solve_fallback,
+            simulate=route.simulate_fallback,
+            is_phased=route.fallback_is_phased,
+        ):
+            prefix = (
+                *path,
+                ROUTES,
+                route_name,
+                FALLBACK,
+                *(() if phase is None else (phase,)),
+            )
+            for state_name, projection in ref.projection.items():
+                yield (*prefix, state_name), projection, cell
+
+
+def _insert_edge_slot(
+    *, template: dict[str, Any], path: tuple[str, ...], annotation: str
+) -> None:
+    """File one parameter at its path, in place, refusing a leaf/branch clash."""
+    branch = template
+    for depth, segment in enumerate(path[:-1]):
+        node = branch.setdefault(segment, {})
+        if not isinstance(node, dict):
+            raise InvalidNameError(_edge_slot_clash(path=path[: depth + 1]))
+        branch = node
+    if isinstance(branch.get(path[-1]), dict):
+        raise InvalidNameError(_edge_slot_clash(path=path))
+    branch[path[-1]] = annotation
+
+
+def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
+    """Name an edge path that is both a parameter and a branch."""
+    spelled = "".join(f"[{segment!r}]" for segment in path)
+    return (
+        f"The edge parameter path {spelled} below a source's `params['edges']` "
+        "branch is both a parameter and a branch of further parameters: a "
+        "law's argument has the name of a target or of a cell entry "
+        "('probability', 'gate', 'gate_references', 'routes'). Rename the argument."
+    )
+
+
+def _wired_names(user_regime: UserRegime) -> set[str]:
+    """Return the names a regime's own callables read that the engine binds.
+
+    Args:
+        user_regime: User-form `Regime` instance.
+
+    Returns:
+        Set of the regime's states, actions and functions, `period`, `age` and
+        `CE`, plus a collective regime's engine-wired aggregator inputs.
+
+    """
+    variables = {
+        *set(user_regime.states),
+        *set(user_regime.actions),
+        *user_regime.decomposed_functions,
+        "period",
+        "age",
+        "CE",
+    }
+    if user_regime.stakeholders is not None:
+        # A collective regime carries per-stakeholder
+        # `utility_<s>` functions instead of a singleton `utility`, but the
+        # Bellman aggregator H still takes a `utility` argument — engine-wired
+        # (the stacked per-stakeholder utilities), exactly like `E_next_V` —
+        # so the name must not surface as a user-facing param.
+        variables.add("utility")
+        # Value-constraint predicates read the
+        # engine-computed per-stakeholder action values `Q_<s>` and the
+        # interpolated same-period reference values (keyed by the
+        # `same_period_refs` names) as named arguments — engine-wired, never
+        # user-facing params.
+        variables.update(f"Q_{s}" for s in user_regime.stakeholders)
+        variables.update(user_regime.same_period_refs)
+    return variables
+
+
 def _record_params(
     *,
     name: FunctionName | TransitionFunctionName,
@@ -290,8 +453,8 @@ def _record_params(
 ) -> None:
     """File one entry's parameters under the branch its key names, in place.
 
-    A dotted qname (`<func>__<target>`) marks a per-target entry — a transition
-    cell or a gated edge's callable — whose parameters nest under the target
+    A dotted qname (`<func>__<target>`) marks a per-target entry — a state
+    transition cell — whose parameters nest under the target
     regime (`template[target][func]`), so each target keeps its own. A bare name
     is a plain regime-level function whose parameters sit at the top level.
     Either way an entry met twice unions with what is already filed.
@@ -1082,7 +1245,7 @@ def _collect_all_functions_for_template(
     user_regime: UserRegime,
     *,
     law: RegimeLaw,
-    edge_entries: Mapping[FunctionName, tuple[FunctionName, UserFunction]],
+    edge_entries: Mapping[FunctionName, UserFunction],
 ) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
     """Collect all regime functions, preserving phase-variant entries.
 
@@ -1128,92 +1291,73 @@ def _collect_all_functions_for_template(
             joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(law.decomposed_transition)
-    result |= {name: func for name, (_template_key, func) in edge_entries.items()}
+    result |= edge_entries
     return result
 
 
-def _gated_edge_entries(
-    law: RegimeLaw,
-) -> dict[FunctionName, tuple[FunctionName, UserFunction]]:
-    """Key every gated-edge callable of a regime for parameter discovery.
+def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
+    """Key every gated-edge callable of a regime for the read checks.
 
     A gated edge is declared with three kinds of user callable, each an ordinary
-    DAG function whose free scalars are model parameters:
+    DAG function:
 
     - the `gate` predicate;
     - one projection per state of each gate reference's reference regime;
-    - one projection per state of each leg fallback's reference regime.
+    - one projection per state of each route fallback's reference regime, per
+      phase when the fallback is `Phased`.
 
-    Every template key ends in `__<target>` so the parameters nest under the
-    edge's target regime (`template[target][<edge callable>]`), next to that
-    target's per-target transition cell. The leading segment names the callable
-    within the edge, in the spelling `_lcm.regime_building.gated_edges` builds
-    its signatures from — the two sides read one name for each parameter.
-
-    A leg is named by the regime it falls back to rather than by its `legs` key,
-    because that is the leg identity the simulate-side projector can spell (see
-    `edge_leg_fallback_entry`). Two legs falling back to the same regime
-    therefore share one template entry, and their parameters are unioned there;
-    the returned keys stay one per callable so no projection's parameters are
-    lost on the way.
+    Every key ends in `__<target>` and is unique per callable; the keys serve
+    only to tell the callables apart.
 
     Args:
         law: The source regime's law, whose gated edges are keyed.
 
     Returns:
-        Dictionary of a per-callable key to the pair `(template key, callable)`,
-        empty for a regime declaring no gated edge.
+        Dictionary of a per-callable key to the callable, empty for a regime
+        declaring no gated edge.
 
     """
-    entries: dict[FunctionName, tuple[FunctionName, UserFunction]] = {}
+    entries: dict[FunctionName, UserFunction] = {}
     for target_regime_name, edge in law.gated_edges.items():
-        gate_entry = qname_from_tree_path((EDGE_GATE_ENTRY, target_regime_name))
-        entries[gate_entry] = (gate_entry, edge.gate)
+        entries[qname_from_tree_path(("gate", target_regime_name))] = edge.gate
         for ref_name, ref in edge.gate_refs.items():
             for state_name, projection in ref.projection.items():
-                entry = qname_from_tree_path(
-                    (
-                        edge_gate_ref_entry(ref_name=ref_name, state_name=state_name),
-                        target_regime_name,
-                    )
-                )
-                entries[entry] = (entry, projection)
+                key = f"gate_references_{ref_name}_{state_name}"
+                entries[qname_from_tree_path((key, target_regime_name))] = projection
         for leg_name, leg in edge.legs.items():
-            # A `Phased` fallback is two callables with two parameter sets, so
-            # each phase gets its own entry; a leg declaring one reference for
-            # both contributes the solve spelling once, exactly as before.
-            phases: tuple[
-                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
-            ] = (
-                (("solve", leg.solve_fallback), ("simulate", leg.simulate_fallback))
-                if leg.fallback_is_phased
-                else (("solve", leg.solve_fallback),)
-            )
-            for phase, ref in phases:
+            for phase, ref in _fallbacks_by_phase(
+                solve=leg.solve_fallback,
+                simulate=leg.simulate_fallback,
+                is_phased=leg.fallback_is_phased,
+            ):
                 for state_name, projection in ref.projection.items():
-                    entry = qname_from_tree_path(
-                        (
-                            edge_leg_fallback_entry(
-                                fallback_regime=ref.regime,
-                                state_name=state_name,
-                                phase=phase,
-                            ),
-                            target_regime_name,
-                        )
+                    key = f"{phase or 'both'}_routes_{leg_name}_{state_name}"
+                    entries[qname_from_tree_path((key, target_regime_name))] = (
+                        projection
                     )
-                    per_callable = qname_from_tree_path(
-                        (
-                            f"{phase}_leg_fallback_{leg_name}_{state_name}",
-                            target_regime_name,
-                        )
-                    )
-                    entries[per_callable] = (entry, projection)
     return entries
+
+
+def _fallbacks_by_phase(
+    *,
+    solve: ProjectedRegimeValue,
+    simulate: ProjectedRegimeValue,
+    is_phased: bool,
+) -> tuple[tuple[Literal["solve", "simulate"] | None, ProjectedRegimeValue], ...]:
+    """Return a route fallback's references, named by phase when `Phased`.
+
+    A `Phased` fallback is two sets of callables with two parameter sets, one per
+    phase; a fallback declaring one reference for both is one set, named by no
+    phase.
+    """
+    if is_phased:
+        return (("solve", solve), ("simulate", simulate))
+    return ((None, solve),)
 
 
 def _gated_edge_wired_names(
     *,
-    edge: GatedEdge,
+    gate_reference_names: frozenset[str],
     target_state_names: frozenset[StateName],
 ) -> set[str]:
     """Return the names ONE edge's callables read that the engine binds itself.
@@ -1223,8 +1367,8 @@ def _gated_edge_wired_names(
 
     - the target regime's states, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
-    - each key of THIS edge's `gate_refs`, bound to that reference's interpolated
-      value.
+    - each key of THIS edge's `gate_references`, bound to that reference's
+      interpolated value.
 
     The set is per edge because that is what makes the answer right. A name that
     is engine-bound on one edge — the target's own state, another edge's
@@ -1238,7 +1382,7 @@ def _gated_edge_wired_names(
     anything the source declares.
 
     Args:
-        edge: The gated edge whose callables are being discovered.
+        gate_reference_names: The keys of the edge's gate references.
         target_state_names: State names declared by that edge's target regime.
 
     Returns:
@@ -1246,7 +1390,7 @@ def _gated_edge_wired_names(
         parameters.
 
     """
-    return {"D_target", *target_state_names, *edge.gate_refs}
+    return {"D_target", *target_state_names, *gate_reference_names}
 
 
 def _drop_engine_provided_args(

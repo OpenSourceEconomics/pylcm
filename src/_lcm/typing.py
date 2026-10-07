@@ -96,7 +96,13 @@ type Params = Mapping[
 type FlatRegimeParams = MappingProxyType[
     str, FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
 ]
-type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
+# The `edges` level of the internal params: per source regime, the flat params of
+# the callables its edges declare, keyed by their declaration path below
+# `params["edges"][source]` joined by the qname delimiter.
+type FlatEdgeParams = MappingProxyType[RegimeName, FlatRegimeParams]
+# Every regime's own flat params under its name, and the edge level under
+# `"edges"`.
+type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams | FlatEdgeParams]
 
 # Immutable templates, used internally. Within a regime, a key is either:
 # - a function name ⇒ that function's params (`{param: type-string}`)
@@ -108,6 +114,12 @@ type RegimeParamsTemplateNode = str | MappingProxyType[str, RegimeParamsTemplate
 type RegimeParamsTemplate = MappingProxyType[
     FunctionName | RegimeName, MappingProxyType[str, RegimeParamsTemplateNode]
 ]
+# One source's branch of the `edges` template: nested by declaration path below
+# `params["edges"][source]`, so its first level mixes parameters (a law over all
+# targets) and target names.
+type EdgeParamsTemplate = MappingProxyType[str, RegimeParamsTemplateNode]
+# One branch per regime, plus an `"edges"` branch mapping each source regime to
+# its `EdgeParamsTemplate` when any source's edges declare a parameter.
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays

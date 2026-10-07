@@ -346,6 +346,7 @@ _REGIME_IDS = MappingProxyType(
 def _leg(source_stakeholder: str | None) -> ResolvedStakeholderRoute:
     """One leg sending its stakeholder home to that stakeholder's own regime."""
     return ResolvedStakeholderRoute(
+        route=str(source_stakeholder),
         source_stakeholder=source_stakeholder,
         target_component_index=None,
         target_stakeholder=source_stakeholder,

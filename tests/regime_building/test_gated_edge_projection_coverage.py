@@ -190,6 +190,8 @@ def test_fallback_state_projector_names_the_state_a_short_projection_omits():
         build_fallback_state_projector(
             ref=_short_ref(),
             fallback_simulate_state_names=("principal",),
+            route="only",
+            phase=None,
             target_regime_name="src_exit",
             target_state_names=("wage",),
             target_functions=MappingProxyType({}),
