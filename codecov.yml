@@ -22,3 +22,4 @@ flags:
     carryforward: false
 ignore:
   - tests/**/*
+  - benchmarks/test_*.py
