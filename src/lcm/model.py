@@ -782,7 +782,9 @@ class Model:
         merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         self._cells_without_edges = prepared_graph.cells_without_edges
         # Lowering reads only the demanded periods, so a case no required
-        # problem selects contributes no argument, parameter or kernel.
+        # problem selects contributes no runtime argument or kernel. Its free
+        # parameters keep their slots: the `edges` template reads the
+        # declarations.
         demanded_transitions = lower_demanded_transitions(
             schedules=schedules,
             declared_transitions=prepared_graph.declarations,
