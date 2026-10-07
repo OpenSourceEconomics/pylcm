@@ -30,7 +30,7 @@ inspect grids, signatures, and Python source) are a separate concern.
 import inspect
 import logging
 import struct
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -1311,7 +1311,7 @@ def validate_joint_transitions_all_periods(
 @contextmanager
 def _own_transition_outputs(
     *, memory: SimulationMemory | None, outputs: object, restore: object = ()
-) -> Iterator[None]:
+) -> Generator[None]:
     """Publish temporary roots for admitted checks and release them reliably."""
     _set_transition_outputs(memory=memory, outputs=outputs)
     try:
