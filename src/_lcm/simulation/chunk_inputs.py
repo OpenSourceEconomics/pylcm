@@ -8,6 +8,7 @@ from typing import cast
 import jax
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -66,7 +67,8 @@ def prepare_simulation_call_inputs(
     spaces = {}
     for name, regime in regimes.items():
         space = regime.solution.state_action_space(
-            regime_params=flat_params[name], process_grid_resolver=process_grid_resolver
+            regime_params=regime_kernel_params(flat_params, regime_name=name),
+            process_grid_resolver=process_grid_resolver,
         )
         spaces[name] = space
         if memory is not None:

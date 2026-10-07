@@ -26,6 +26,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     resolve_value_transfer,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
@@ -71,7 +72,7 @@ def _materialize_program(
     program = core_program_graph(kernel=kernel)["main"]
     context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
-            regime_params=flat_params[regime_name]
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name)
         ),
         next_regime_to_V_arr=next_V,
         next_regime_to_continuation=next_continuation,

@@ -49,6 +49,13 @@ from dags import (
 from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
 
+from _lcm.params.edges import (
+    FALLBACK,
+    GATE,
+    GATE_REFERENCES,
+    ROUTES,
+    regime_kernel_params,
+)
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
@@ -123,15 +130,6 @@ TARGET_PARAMS = "target"
 # distinct in the first place.
 _TARGET_PARAM_PREFIX = "__target_param__"
 _SOURCE_PARAM_PREFIX = "__source_param__"
-
-# Template-entry name of an edge's gate predicate. An edge callable's free
-# scalars are ordinary model parameters of the SOURCE regime, and they carry the
-# flat name `<target>__<entry>__<param>` there — the qualification is what keeps
-# them apart from the source's own parameters, which share that one flat
-# namespace: a runtime irregular grid's helper is named after the STATE alone
-# (`x__points`), and two edges of one source would otherwise collide on any
-# parameter name they happen to share.
-EDGE_GATE_ENTRY: FunctionName = "gate"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -254,68 +252,6 @@ def bind_edge_period_context(
         _EDGE_AGE_ARG: None if fold_age is None else jnp.asarray(fold_age),
     }
     return {name: values[name] for name in accepted}
-
-
-def edge_gate_ref_entry(*, ref_name: str, state_name: StateName) -> FunctionName:
-    """Return the template-entry name of one gate-reference projection.
-
-    Args:
-        ref_name: Key of the reference in the edge's `gate_refs`.
-        state_name: State of the reference regime this projection supplies.
-
-    Returns:
-        The entry name the projection's parameters are collected under.
-
-    """
-    return f"gate_ref_{ref_name}_{state_name}"
-
-
-def edge_leg_fallback_entry(
-    *,
-    fallback_regime: RegimeName,
-    state_name: StateName,
-    phase: Literal["solve", "simulate"] = "solve",
-) -> FunctionName:
-    """Return the template-entry name of one leg-fallback projection.
-
-    The leg is named by the regime it falls back to rather than by its key in
-    the edge's `legs`: the simulate-side projector
-    (`build_fallback_state_projector`) is handed the leg's resolved fallback
-    reference and nothing else, so the fallback regime is the one leg identity
-    both sides of the solve/simulate seam can spell. Two legs of one edge
-    falling back to the same regime therefore share one parameter namespace,
-    which is what a single flat source namespace gives them anyway.
-
-    Args:
-        fallback_regime: Regime the leg falls back to.
-        state_name: State of the fallback regime this projection supplies.
-        phase: Which of a `Phased` fallback's two references this names. The
-            two are separate callables with separate parameters, so they need
-            separate entries even where they fall back to the same regime. A
-            leg declaring one reference for both phases uses the `"solve"`
-            spelling on both sides, so its template is unchanged.
-
-    Returns:
-        The entry name the projection's parameters are collected under.
-
-    """
-    prefix = "leg_fallback" if phase == "solve" else "simulate_leg_fallback"
-    return f"{prefix}_{fallback_regime}_{state_name}"
-
-
-def edge_param_qname(*, target: RegimeName, entry: FunctionName, param: str) -> str:
-    """Return the flat name one edge callable's parameter carries in the source.
-
-    Args:
-        target: Regime the edge lands on.
-        entry: Entry name of the callable within the edge.
-        param: Name the callable declares the parameter under.
-
-    Returns:
-        The parameter's qname in the source regime's flat params.
-
-    """
-    return qname_from_tree_path((target, entry, param))
 
 
 def is_target_value_operand(arg_name: str) -> bool:
@@ -492,6 +428,10 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
 @dataclass(frozen=True, kw_only=True)
 class ResolvedStakeholderRoute:
     """Engine-side form of one source-stakeholder leg of a gated edge."""
+
+    route: str
+    """The route's key in the cell's `routes`, which names its fallback's
+    parameters under `params["edges"][source][target]["routes"]`."""
 
     source_stakeholder: str | None
     """Source stakeholder name, or `None` for a singleton source's single leg."""
@@ -784,8 +724,7 @@ def _projection_seed_args(ref: ResolvedProjectedRegimeValue) -> frozenset[str]:
 def _with_qualified_params(
     *,
     func: Callable[..., FloatND],
-    target: RegimeName,
-    entry: FunctionName,
+    path: tuple[str, ...],
     wired_names: Container[str],
 ) -> Callable[..., FloatND]:
     """Return `func` with every parameter it declares renamed to its flat name.
@@ -793,18 +732,19 @@ def _with_qualified_params(
     An edge callable is written in the target regime's vocabulary, so what it
     declares is a mix of engine-wired names — the target's states, and for a gate
     the injected value operands — and its own free parameters. Only the latter
-    are renamed, to `edge_param_qname`'s `<target>__<entry>__<param>`, which is
-    the name the params template gives them in the source regime's flat params.
-    Renaming BEFORE the callable is concatenated with the target DAG is what
-    keeps the two sides one name: the fold, the simulate gate evaluator, and the
-    leg projector each build their signature out of the renamed callable, so
-    `backward_induction._evaluate_edge_fold`'s name match and the router's
-    provenance lookup both hit the template's own spelling.
+    are renamed, to their declaration path below `params["edges"][source]`
+    joined by the qname delimiter, which is their key in
+    `flat_params["edges"][source]`. Renaming BEFORE the callable is concatenated
+    with the target DAG is what keeps the two sides one name: the fold, the
+    simulate gate evaluator, and the route projector each build their signature
+    out of the renamed callable, so `backward_induction._evaluate_edge_fold`'s
+    name match and the router's provenance lookup both hit the template's own
+    spelling.
 
     Args:
         func: A gate predicate or one projection of a reference.
-        target: Regime the edge lands on.
-        entry: Entry name of this callable within the edge.
+        path: The callable's declaration path below the source's edge branch,
+            starting with the target.
         wired_names: Names the engine binds itself, which are left alone.
 
     Returns:
@@ -813,7 +753,7 @@ def _with_qualified_params(
 
     """
     mapper = {
-        arg: edge_param_qname(target=target, entry=entry, param=arg)
+        arg: qname_from_tree_path((*path, arg))
         for arg in get_union_of_args([func])
         if arg not in wired_names
         and arg not in EDGE_PERIOD_CONTEXT_ARGS
@@ -832,32 +772,27 @@ def _gate_ref_with_qualified_params(
     """Return a gate reference whose projections declare their flat param names."""
     return _ref_with_qualified_params(
         ref=ref,
-        target=target,
-        entry_by_state={
-            state_name: edge_gate_ref_entry(ref_name=ref_name, state_name=state_name)
-            for state_name in ref.projection
-        },
+        path=(target, GATE_REFERENCES, ref_name),
         state_names=state_names,
     )
 
 
-def _leg_fallback_with_qualified_params(
+def _route_fallback_with_qualified_params(
     *,
     ref: ResolvedProjectedRegimeValue,
     target: RegimeName,
+    route: str,
+    phase: Literal["solve", "simulate"] | None,
     state_names: Container[StateName],
-    phase: Literal["solve", "simulate"] = "solve",
 ) -> ResolvedProjectedRegimeValue:
-    """Return a leg fallback whose projections declare their flat param names."""
+    """Return a route fallback whose projections declare their flat param names.
+
+    `phase` names the half of a `Phased` fallback the reference is, and is
+    `None` for a fallback declaring one reference for both phases.
+    """
     return _ref_with_qualified_params(
         ref=ref,
-        target=target,
-        entry_by_state={
-            state_name: edge_leg_fallback_entry(
-                fallback_regime=ref.regime, state_name=state_name, phase=phase
-            )
-            for state_name in ref.projection
-        },
+        path=(target, ROUTES, route, FALLBACK, *(() if phase is None else (phase,))),
         state_names=state_names,
     )
 
@@ -865,8 +800,7 @@ def _leg_fallback_with_qualified_params(
 def _ref_with_qualified_params(
     *,
     ref: ResolvedProjectedRegimeValue,
-    target: RegimeName,
-    entry_by_state: Mapping[StateName, FunctionName],
+    path: tuple[str, ...],
     state_names: Container[StateName],
 ) -> ResolvedProjectedRegimeValue:
     """Return `ref` with each projection's parameters renamed to their flat names.
@@ -877,9 +811,9 @@ def _ref_with_qualified_params(
 
     Args:
         ref: The resolved reference whose projections are rewritten.
-        target: Regime the edge lands on.
-        entry_by_state: Entry name to collect each projection's parameters under,
-            keyed by the reference-regime state the projection supplies.
+        path: The reference's declaration path below the source's edge branch;
+            each projection's parameters sit below it, under the state the
+            projection supplies.
         state_names: The target regime's state names.
 
     Returns:
@@ -892,8 +826,7 @@ def _ref_with_qualified_params(
             {
                 state_name: _with_qualified_params(
                     func=projection,
-                    target=target,
-                    entry=entry_by_state[state_name],
+                    path=(*path, state_name),
                     wired_names=state_names,
                 )
                 for state_name, projection in ref.projection.items()
@@ -1462,8 +1395,7 @@ def _compile_edge_gate(
     # node can carry, which is exactly the collision the fences exist to detect.
     qualified_gate = _with_qualified_params(
         func=edge.gate,
-        target=edge.target,
-        entry=EDGE_GATE_ENTRY,
+        path=(edge.target, GATE),
         wired_names=injected_names | set(state_names),
     )
     qualified_gate_refs = {
@@ -1513,10 +1445,10 @@ def get_edge_fold(
     arguments are the target regime's state grids, the same-period value mapping
     (under `SAME_PERIOD_V_ARG` — the target V, its float dissolution flag, and
     every reference regime's V) and the gate's and projections' flat params.
-    Those params carry the qualified spelling `<target>__<entry>__<param>`
-    (`edge_param_qname`), which is the name the source regime's params template
-    gives them, so `backward_induction._evaluate_edge_fold` binds them by a plain
-    name match against `flat_params[source]`. It returns
+    Those params carry their declaration path below `params["edges"][source]`
+    as qname, which is their key in `flat_params["edges"][source]`, so
+    `backward_induction._evaluate_edge_fold` binds them by a plain name match
+    against that namespace. It returns
     `(*target_state_axes, channels.count)`, one channel per operand.
 
     `combine` is what turns those operands into the source's continuation, at
@@ -1591,8 +1523,12 @@ def get_edge_fold(
     gate_arg_names = compiled.gate_arg_names
 
     qualified_fallbacks = [
-        _leg_fallback_with_qualified_params(
-            ref=leg.fallback, target=edge.target, state_names=state_names
+        _route_fallback_with_qualified_params(
+            ref=leg.fallback,
+            target=edge.target,
+            route=leg.route,
+            phase=None if leg.simulate_fallback is None else "solve",
+            state_names=state_names,
         )
         for leg in edge.legs
     ]
@@ -1886,10 +1822,9 @@ def get_edge_simulate_gate_evaluator(
           helpers internally;
         - the params named by the returned `EdgeArgProvenance`, exposed under
           NAMESPACE-QUALIFIED leaves (`__target_param__x__points` vs
-          `__source_param__x__points`). A source param's own qname is the
-          edge-qualified `<target>__<entry>__<param>` the params template gives
-          it (`edge_param_qname`), so the router finds it in
-          `flat_params[source]` under exactly that name.
+          `__source_param__x__points`). A source param's own qname is its
+          declaration path below `params["edges"][source]`, so the router
+          finds it in `flat_params["edges"][source]` under exactly that name.
 
         The namespace qualification is load-bearing: a runtime grid
         helper is named after the STATE alone (`x__points`), so a source and
@@ -2089,7 +2024,8 @@ def build_fallback_state_projector(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    entry_phase: Literal["solve", "simulate"] = "solve",
+    route: str,
+    phase: Literal["solve", "simulate"] | None,
 ) -> Callable[..., Mapping[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
@@ -2146,9 +2082,9 @@ def build_fallback_state_projector(
     of argument without a namespace prefix: it holds no interpolator of its own,
     so the target-params namespace (the source of the identically-named-leaf
     problem there) is empty here and nothing can collide. A parameter still
-    carries the edge-qualified qname `<target>__<entry>__<param>`
-    (`edge_leg_fallback_entry`), which is both what the params template emits and
-    what the solve-side fold's reader for this leg declares.
+    carries its declaration path below `params["edges"][source]` as qname,
+    which is both its key in `flat_params["edges"][source]` and what the
+    solve-side fold's reader for this route declares.
 
     Args:
         ref: The leg's resolved fallback reference
@@ -2165,10 +2101,10 @@ def build_fallback_state_projector(
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        entry_phase: Which template entry this projection's parameters carry.
-            `"solve"` — the shared spelling — for a leg whose one reference
-            serves both phases; `"simulate"` for the simulate half of a
-            `Phased` fallback, whose parameters are its own.
+        route: The route's key in the cell's `routes`.
+        phase: Which half of a `Phased` fallback `ref` is, whose parameters
+            are its own; `None` for a fallback declaring one reference for both
+            phases.
 
     Returns:
         A callable, keyed by (a subset of) the target's state names plus any
@@ -2197,11 +2133,12 @@ def build_fallback_state_projector(
     # The same qualification the solve-side fold applies to this very leg's
     # fallback reader, from the same helper, so the coordinate simulate projects
     # is read off the parameter the fold projected it with.
-    qualified_ref = _leg_fallback_with_qualified_params(
+    qualified_ref = _route_fallback_with_qualified_params(
         ref=ref,
         target=target_regime_name,
+        route=route,
+        phase=phase,
         state_names=target_state_names,
-        phase=entry_phase,
     )
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}
@@ -2789,7 +2726,7 @@ def edge_may_fold_at_period(
 def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
-    flat_params: Mapping[RegimeName, Mapping[str, _ParamsLeaf]],
+    flat_params: Mapping[str, object],
 ) -> MappingProxyType[RegimeName, Mapping[str, _ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 
@@ -2803,7 +2740,7 @@ def build_reference_params_mapping_for_fold(
     """
     return MappingProxyType(
         {
-            regime_name: flat_params[regime_name]
+            regime_name: regime_kernel_params(flat_params, regime_name=regime_name)
             for regime_name in dict.fromkeys((edge.target, *edge.reference_regimes))
         }
     )

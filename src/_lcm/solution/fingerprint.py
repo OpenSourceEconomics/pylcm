@@ -45,6 +45,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
@@ -353,15 +354,20 @@ def project_solution_params(
         solution_param_projection(regimes) if projection is None else projection
     )
     projected: dict[RegimeName, MappingProxyType[str, object]] = {}
-    for regime_name, regime_params in flat_params.items():
-        realized_only = realized_only_by_regime[regime_name]
-        projected[regime_name] = MappingProxyType(
-            {
-                name: value
-                for name, value in regime_params.items()
-                if name not in realized_only
-            }
+    projected_edges: dict[RegimeName, MappingProxyType[str, object]] = {}
+    # A source's law slots are read by its own transitions, so the source's
+    # realized-only names apply to its edge slots as well.
+    for path, leaves in flat_namespaces(flat_params):
+        realized_only = realized_only_by_regime[path[-1]]
+        kept = MappingProxyType(
+            {name: value for name, value in leaves.items() if name not in realized_only}
         )
+        if path[0] == EDGES and len(path) > 1:
+            projected_edges[path[1]] = kept
+        else:
+            projected[path[0]] = kept
+    if EDGES in flat_params:
+        projected[EDGES] = MappingProxyType(projected_edges)
     return cast("FlatParams", MappingProxyType(projected))
 
 
@@ -387,12 +393,14 @@ def fingerprint_solution_support(
             name: (
                 _grid_support(
                     regime=regime,
-                    regime_params=flat_params[name],
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
                     process_grid_resolver=process_grid_resolver,
                 ),
                 {
                     param_name: _param_shape_signature(value)
-                    for param_name, value in flat_params[name].items()
+                    for param_name, value in regime_kernel_params(
+                        flat_params, regime_name=name
+                    ).items()
                 },
             )
             for name, regime in regimes.items()
@@ -597,7 +605,7 @@ def fingerprint_model_programs(
         {
             name: _grid_support(
                 regime=regime,
-                regime_params=flat_params[name],
+                regime_params=regime_kernel_params(flat_params, regime_name=name),
                 process_grid_resolver=process_grid_resolver,
             )
             for name, regime in regimes.items()

@@ -89,6 +89,7 @@ def _edge(
         gate_refs=MappingProxyType(gate_refs),
         legs=(
             ResolvedStakeholderRoute(
+                route="only",
                 source_stakeholder=None,
                 target_component_index=None,
                 fallback=ResolvedProjectedRegimeValue(

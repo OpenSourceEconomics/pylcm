@@ -543,6 +543,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_laws=model._declared_laws,
     )
     np.testing.assert_allclose(
         cast("FloatND", edge_params(result, source="alive")["probs_array"]),

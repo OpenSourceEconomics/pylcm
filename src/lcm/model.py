@@ -41,6 +41,7 @@ from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
+    declared_transition_laws,
     naming_cells_without_edges,
     prepare_graph,
 )
@@ -55,6 +56,7 @@ from _lcm.pandas_utils import (
     has_series,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -687,6 +689,9 @@ class Model:
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self.edges = edges
+        # The laws as declared, before any age selects among them: the `edges`
+        # parameter template and its Series conversion read these.
+        self._declared_laws = declared_transition_laws(edges)
         laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
@@ -888,6 +893,7 @@ class Model:
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
+            declared_laws=self._declared_laws,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -2616,7 +2622,9 @@ class Model:
             if route is None:
                 continue
             base_state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
                 process_grid_resolver=process_grid_resolver,
             )
             for period in regime.active_periods:
@@ -3038,7 +3046,9 @@ class Model:
                 if process_grid_resolver is not None:
                     for regime_name, regime in self._regimes.items():
                         regime.solution.resolve_process_grids(
-                            regime_params=flat_params[regime_name],
+                            regime_params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
                             process_grid_resolver=process_grid_resolver,
                         )
                     process_grid_resolver.seal()
@@ -3546,7 +3556,8 @@ class Model:
         if resolver is not None:
             for name, each in self._regimes.items():
                 each.solution.resolve_process_grids(
-                    regime_params=flat_params[name], process_grid_resolver=resolver
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
+                    process_grid_resolver=resolver,
                 )
             resolver.seal()
         resolved = self._resolve_solution_result(
@@ -3651,7 +3662,7 @@ class Model:
                         flat_params=flat_params,
                         period=period,
                     ),
-                    params=flat_params[regime_name],
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
                 ),
@@ -3730,7 +3741,9 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
         states = regime.solution.state_action_space(
-            regime_params=self._process_params(params)[regime_name]
+            regime_params=regime_kernel_params(
+                self._process_params(params), regime_name=regime_name
+            )
         ).states
         if state_name not in states:
             msg = f"Regime {regime_name!r} has no state {state_name!r}; known: "
@@ -4044,6 +4057,7 @@ class Model:
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
+                declared_laws=self._declared_laws,
             )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves

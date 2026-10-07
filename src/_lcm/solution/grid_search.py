@@ -65,6 +65,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -721,7 +722,7 @@ class _GridSearchArgumentBuilder:
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
-            **dict(flat_params[self.regime_name]),
+            **dict(regime_kernel_params(flat_params, regime_name=self.regime_name)),
             "period": jnp.int32(context.period),
             "age": ages.values[context.period],
         }
@@ -792,7 +793,10 @@ class _GridSearchArgumentBuilder:
                 }
             ),
             "edge_reference_regime_to_params": MappingProxyType(
-                {name: flat_params[name] for name in self.edge_reference_regimes}
+                {
+                    name: regime_kernel_params(flat_params, regime_name=name)
+                    for name in self.edge_reference_regimes
+                }
             ),
         }
 
@@ -801,7 +805,10 @@ class _GridSearchArgumentBuilder:
     ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
         """Return each same-period reference regime's own flat parameters."""
         return MappingProxyType(
-            {name: flat_params[name] for name in self.same_period_ref_regimes}
+            {
+                name: regime_kernel_params(flat_params, regime_name=name)
+                for name in self.same_period_ref_regimes
+            }
         )
 
 
@@ -844,9 +851,8 @@ class _GridSearchPeriodKernel:
         program = next(iter(self._core_programs.values()))
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
         regime_fixed = dict(
-            fixed_flat_params.get(
-                argument_builder.regime_name,
-                MappingProxyType({}),
+            regime_kernel_params(
+                fixed_flat_params, regime_name=argument_builder.regime_name
             )
         )
         if not regime_fixed:

@@ -147,6 +147,11 @@ from _lcm.execution.workspace_planning import (
     proposed_width,
     workspace_width_candidates,
 )
+from _lcm.params.edges import (
+    edge_params,
+    is_gated_cell_slot,
+    regime_kernel_params,
+)
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -1768,7 +1773,7 @@ def _roll_gated_edges(
                 ),
             ),
             same_period_mapping=same_period_mapping,
-            source_flat_params=flat_params[source_name],
+            source_flat_params=edge_params(flat_params, source=source_name),
             reference_flat_params=build_reference_params_mapping_for_fold(
                 edge=edge, flat_params=flat_params
             ),
@@ -1792,7 +1797,8 @@ def _reject_edge_fold_state_param_collisions(
     A gate / gate-ref projection / fallback projection declares its arguments by
     bare name. `get_edge_fold` exposes the target's state grids and the source's
     gate/projection params in ONE flat signature, so a name that is simultaneously
-    a TARGET STATE of the target regime and a key of `flat_params[source]` occupies
+    a TARGET STATE of the target regime and a gate / projection key of
+    `flat_params["edges"][source]` occupies
     a single leaf that two binders both claim: `_evaluate_edge_fold` (below)
     overwrites the state grid with the source param, so the SOLVE-side `Wbar`
     reads the param, while the simulate evaluator's `_expose`
@@ -1802,19 +1808,20 @@ def _reject_edge_fold_state_param_collisions(
     for the same edge -- the gate flips, `Wbar` changes, or a fallback
     coordinate is written from the wrong value, all silently.
 
-    Why this is a solve-time (not construction-time) fence: a gate/projection
-    param is bound from a BARE key the user adds to `flat_params[source]`, never
-    from the function-qualified regime params template, so it is absent from
-    `regime_to_flat_param_names[source]` and the collision is only visible once
-    `flat_params` is in hand. A LEGITIMATE direct target-state read (a gate that
-    reads a target state the source never supplies as a param -- e.g. a reused
-    state NAME across two regimes) is untouched, because that name is not a key of
-    `flat_params[source]`.
+    The fence runs on the params in hand, so it covers every key the edge
+    namespace binds. A LEGITIMATE direct target-state read (a gate that reads a
+    target state the source never supplies as a param -- e.g. a reused state
+    NAME across two regimes) is untouched, because that name is not a key of
+    `flat_params["edges"][source]`.
     """
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
-        source_param_names = set(flat_params[source_name])
+        source_param_names = {
+            key
+            for key in edge_params(flat_params, source=source_name)
+            if is_gated_cell_slot(key)
+        }
         for target_name, edge in source.gated_edges.items():
             compiled_folds = tuple(edge.folds_by_period.values())
             if not compiled_folds:
@@ -1852,7 +1859,8 @@ def _reject_edge_fold_state_param_collisions(
                     f"The gated edge '{source_name}' -> '{target_name}' has a gate "
                     f"or projection argument {collisions} that is simultaneously a "
                     f"TARGET state of '{target_name}' and a source parameter in "
-                    f"`flat_params['{source_name}']`. The fold's single leaf for "
+                    f"`flat_params['edges']['{source_name}']`. The fold's single "
+                    "leaf for "
                     "each such name is bound as the source param on the solve side "
                     "(`_evaluate_edge_fold`) but as the realized target state on the "
                     "simulate side (`get_edge_simulate_gate_evaluator`), so the "
@@ -2213,7 +2221,9 @@ def _iter_edge_topologies(
             if target_name not in target_shapes:
                 target = regimes[target_name]
                 target_states = target.solution.state_action_space(
-                    regime_params=flat_params[target_name],
+                    regime_params=regime_kernel_params(
+                        flat_params, regime_name=target_name
+                    ),
                     process_grid_resolver=process_grid_resolver,
                 ).states
                 target_shapes[target_name] = tuple(
@@ -2263,7 +2273,7 @@ def _build_base_state_action_spaces(
     """
     return {
         regime_name: regime.solution.state_action_space(
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
         for regime_name, regime in regimes.items()
@@ -5972,7 +5982,9 @@ def _build_structural_blueprint(
                 all_programs=all_programs, regime_name=regime_name, period=period
             )
             state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
                 process_grid_resolver=process_grid_resolver,
             )
         binding = declaration.invariant_binding
