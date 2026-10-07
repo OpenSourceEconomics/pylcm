@@ -133,7 +133,7 @@ def normalize_regime_phases(
     )
 
     errors = (
-        slots.errors
+        list(slots.errors)
         + transition_errors
         + terminal_errors
         + ([] if terminal else aggregator_errors)
@@ -183,7 +183,7 @@ def validate_law_free_phase_grammar(user_regime: lcm.regime.Regime) -> None:
     """
     errors = _resolve_law_free_slots(user_regime=user_regime).errors
     if errors:
-        raise RegimeInitializationError(format_messages(errors))
+        raise RegimeInitializationError(format_messages(list(errors)))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -193,10 +193,10 @@ class _LawFreeSlots:
     pools: _PhaseFunctionPools
     """Each phase's function pool and grid states."""
 
-    solve_state_transitions: dict[StateName, _PhaseStateTransition]
+    solve_state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
     """Solve-phase state transitions, without carried-only states."""
 
-    simulate_state_transitions: dict[StateName, _PhaseStateTransition]
+    simulate_state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
     """Simulate-phase state transitions."""
 
     solve_joint_transitions: _PhaseJointTransitions
@@ -208,7 +208,7 @@ class _LawFreeSlots:
     carried_only: frozenset[StateName]
     """States on the simulate grid only."""
 
-    errors: list[str]
+    errors: tuple[str, ...]
     """Function-pool, carried-law and joint-transition errors, in that order."""
 
 
@@ -233,16 +233,18 @@ def _resolve_law_free_slots(*, user_regime: lcm.regime.Regime) -> _LawFreeSlots:
     ]
     return _LawFreeSlots(
         pools=pools,
-        solve_state_transitions={
-            name: law
-            for name, law in solve_state_transitions.items()
-            if name not in carried_only
-        },
-        simulate_state_transitions=simulate_state_transitions,
+        solve_state_transitions=MappingProxyType(
+            {
+                name: law
+                for name, law in solve_state_transitions.items()
+                if name not in carried_only
+            }
+        ),
+        simulate_state_transitions=MappingProxyType(simulate_state_transitions),
         solve_joint_transitions=solve_joint_transitions,
         simulate_joint_transitions=simulate_joint_transitions,
         carried_only=carried_only,
-        errors=pools.errors + carried_errors + joint_transition_errors,
+        errors=(*pools.errors, *carried_errors, *joint_transition_errors),
     )
 
 
@@ -283,7 +285,7 @@ def _build_phase_spec(
     constraints: dict[str, ConstraintLike],
     functions: dict[FunctionName, UserFunction],
     grid_states: dict[StateName, Grid | AgeSpecializedGrid],
-    state_transitions: dict[StateName, _PhaseStateTransition],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     joint_transitions: _PhaseJointTransitions,
     regime_transition: _PhaseRegimeTransition,
     koopmans_aggregator: UserFunction | None,
