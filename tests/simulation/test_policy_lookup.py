@@ -545,15 +545,30 @@ def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
 ):
     """Views that other models leave on the result count against a later lookup.
 
-    The first call fits a `3S` budget. Three unbudgeted consumers of the same
-    restored result then retain three more resolved views, so the archive cache
-    and four views (`5S`) exceed the budget and the repeat call must refuse.
+    Let `S` be the restored value payload, at least fifteen wealth-grid-sized
+    arrays (one per working-life decision period). At its peak the cold first
+    call holds the archive cache, one transient copy and the resolved view of
+    every value array (at most `3S`) plus the model's own grids and the lookup
+    workspace, which together stay below one further `S`. So a `4S` budget
+    admits it, and it returns the analytic policy. Afterwards the result keeps
+    the cache and that view (`2S`). Three unbudgeted consumers of the same
+    result each retain one more resolved view, so the repeat call by
+    the budgeted consumer starts with at least `5S > 4S` held and must refuse.
     """
     restored, params, build_budgeted, payload = _restored_owner_fixture(
         tmp_path=tmp_path, archive_state="cold"
     )
-    consumer = build_budgeted(3 * payload)
-    _final_decision_lookup(model=consumer, params=params, restored=restored)
+    consumer = build_budgeted(4 * payload)
+    first = _final_decision_lookup(model=consumer, params=params, restored=restored)
+    np.testing.assert_allclose(
+        [
+            first.actions["consumption"][0],
+            first.actions["labor_supply"][0],
+            first.value[0],
+        ],
+        [2.0, 1.0, log(2)],
+        rtol=1e-5,
+    )
     for _ in range(3):
         _final_decision_lookup(
             model=build_budgeted(None), params=params, restored=restored
