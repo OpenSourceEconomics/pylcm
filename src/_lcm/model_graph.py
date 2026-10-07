@@ -657,6 +657,15 @@ def _resolve_edges(
             raise ModelInitializationError(
                 f"Graph names unknown source regime {source!r}."
             )
+        if isinstance(destinations, Phased):
+            raise ModelInitializationError(
+                f"Graph source '{source}' maps to a `Phased` pair of transitions. "
+                "Phase the law inside one `Transition`, whose targets both phases "
+                f"share: `edges={{'{source}': Transition(targets={{...}}, "
+                "law=Phased(solve=..., simulate=...))}`. Destinations that differ "
+                "between the phases go in `Model(edges=Phased(solve={...}, "
+                "simulate={...}))`."
+            )
         if not isinstance(destinations, Mapping):
             raise ModelInitializationError(
                 f"Graph source '{source}' must map destinations "
