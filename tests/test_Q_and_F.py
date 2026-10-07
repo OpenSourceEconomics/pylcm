@@ -226,6 +226,31 @@ def test_get_multiply_weights():
     assert_array_equal(shifts, jnp.zeros_like(expected, dtype=jnp.int32))
 
 
+def test_joint_weight_without_stochastic_axes_is_the_certain_event():
+    """A target with no stochastic next-state axis has weight one at scale zero."""
+    weight, shift = _get_joint_weights_function(regime_name="test", variables=())()
+
+    assert (weight.dtype, float(weight), shift.dtype, int(shift)) == (
+        jnp.zeros(()).dtype,
+        1.0,
+        jnp.dtype(jnp.int32),
+        0,
+    )
+
+
+def test_joint_weight_without_stochastic_axes_closes_over_no_empty_array():
+    """The weight's staged program reads no zero-size array.
+
+    An array a simulation body closes over becomes an operand of the
+    `shard_map` that splits subjects over devices, and the CPU compiler crashes
+    on a zero-size operand of a manual computation.
+    """
+    weights = _get_joint_weights_function(regime_name="test", variables=())
+    closed = jax.make_jaxpr(weights)()
+
+    assert [np.shape(const) for const in closed.consts if np.size(const) == 0] == []
+
+
 def test_joint_weights_axes_follow_the_declared_variable_order():
     """The axis order of the outer product is the order the caller passes in.
 

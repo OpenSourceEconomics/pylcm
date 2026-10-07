@@ -30,6 +30,14 @@ from lcm.period_capture import PeriodCapture, PeriodCaptureRecord
 
 _GRID_SEARCH_ROUTE = "_lcm.solution.grid_search._GridSearchPeriodKernel"
 
+#: One `name = value : type` entry of a flat MLIR attribute dictionary.
+_ATTRIBUTE_ENTRY = r'[A-Za-z_][\w.$]* = [^{}\[\]"\n,]+'
+
+#: A flat MLIR attribute dictionary of scalar entries.
+_ATTRIBUTE_DICTIONARY = re.compile(
+    rf"\{{{_ATTRIBUTE_ENTRY}(?:, {_ATTRIBUTE_ENTRY})*\}}"
+)
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class CaptureContext:
@@ -173,11 +181,13 @@ def capture_public_entry(
         or (kernel_kwargs["regime_name"], period) not in context.request.periods
     ):
         return None
-    if (
-        kernel_kwargs["next_regime_to_continuation"]
-        or kernel_kwargs["next_edge_to_V_arr"]
+    # Gated-edge values belong to the regimes declaring the edges. A target without
+    # gated edges of its own never reads them, so its entry records none.
+    if kernel_kwargs["next_regime_to_continuation"] or (
+        regime.gated_edges and kernel_kwargs["next_edge_to_V_arr"]
     ):
         raise ValueError("Unsupported continuation or edge inputs in period capture.")
+    kernel_kwargs = {**kernel_kwargs, "next_edge_to_V_arr": MappingProxyType({})}
     if kernel_kwargs["selected_artifact_keys"] or any(
         core.donated_arguments for core in compiled_cores.values()
     ):
@@ -376,6 +386,11 @@ def _canonicalize_optimized_hlo(text: str) -> str:
     XLA can reorder JSON members when deserializing the same executable. Skip
     quoted HLO strings when finding configuration fields, and retain everything
     outside their JSON values except insignificant trailing whitespace.
+
+    Some custom calls (Cholesky, eigendecomposition, triangular solve) print an
+    MLIR attribute dictionary such as `{uplo = 76 : ui8}` instead of JSON. MLIR
+    sorts dictionary attributes by name, so that text is canonical as printed and
+    is retained verbatim.
     """
     decoder = json.JSONDecoder(
         parse_int=_BackendJsonNumber,
@@ -388,14 +403,20 @@ def _canonicalize_optimized_hlo(text: str) -> str:
     for match in re.finditer(r'"(?:\\.|[^"\\])*"|backend_config=', text):
         if match.group() != "backend_config=" or match.start() < cursor:
             continue
-        value, end = decoder.raw_decode(text, match.end())
+        attribute = _ATTRIBUTE_DICTIONARY.match(text, match.end())
+        if attribute is None:
+            value, end = decoder.raw_decode(text, match.end())
+            encoded = _encode_backend_json(value)
+        else:
+            end = attribute.end()
+            encoded = attribute.group()
         boundary = end
         while boundary < len(text) and text[boundary] in " \t":
             boundary += 1
         if boundary < len(text) and text[boundary] not in ",\n\r":
             raise ValueError("Malformed backend JSON boundary in optimized HLO.")
         pieces.append(text[cursor : match.end()])
-        pieces.append(_encode_backend_json(value))
+        pieces.append(encoded)
         cursor = end
     pieces.append(text[cursor:])
     return "\n".join(line.rstrip() for line in "".join(pieces).splitlines()).rstrip()

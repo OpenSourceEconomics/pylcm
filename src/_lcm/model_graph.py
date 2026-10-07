@@ -1,6 +1,6 @@
 """Resolve explicit model topology and bind it to the numerical transition laws."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -165,7 +165,7 @@ class GraphPreparation:
 @contextmanager
 def naming_cells_without_edges(
     cells_without_edges: CellsWithoutEdges,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Name the missing edges when a law's mass falls short because of them.
 
     A law cell toward a target the graph gives no edge at that age is dropped when

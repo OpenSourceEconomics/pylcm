@@ -696,12 +696,21 @@ def _union_callable_params(
     """Union signature-derived parameters over one role's phase variants."""
     tree: dict[str, str] = {}
     for index, func in enumerate(functions):
-        tree |= dict(dt.create_tree_with_input_types({f"role_{index}": func}))
+        tree |= _input_types({f"role_{index}": func})
     return {
         arg_name: annotation
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
     }
+
+
+def _input_types(functions: Mapping[str, UserFunction]) -> dict[str, str]:
+    """Return argument name to type annotation for the arguments of `functions`.
+
+    Every key of `functions` is a flat, unqualified name, so dags returns a flat
+    mapping whose values are annotation strings.
+    """
+    return cast("dict[str, str]", dict(dt.create_tree_with_input_types(functions)))
 
 
 def _discovered_params(
@@ -750,8 +759,10 @@ def _discovered_params(
         names=[arg for arg in dt.flatten_to_qnames(tree) if arg not in non_params],
     ):
         raise InvalidNameError(errors[0])
+    # The check above admits no delimiter in a parameter's name, so every
+    # parameter is a top-level leaf of `tree` holding its annotation string.
     return {
-        arg_name: annotation
+        arg_name: cast("str", annotation)
         for arg_name, annotation in sorted(tree.items())
         if arg_name not in non_params
         and not (strip_target_value_operands and is_target_value_operand(arg_name))
@@ -1132,15 +1143,11 @@ def _add_koopmans_aggregator_params(
         )
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased):
-        tree = dict(
-            dt.create_tree_with_input_types({"koopmans_aggregator": aggregator.solve})
-        ) | dict(
-            dt.create_tree_with_input_types(
-                {"koopmans_aggregator": aggregator.simulate}
-            )
+        tree = _input_types({"koopmans_aggregator": aggregator.solve}) | _input_types(
+            {"koopmans_aggregator": aggregator.simulate}
         )
     else:
-        tree = dt.create_tree_with_input_types({"koopmans_aggregator": aggregator})
+        tree = _input_types({"koopmans_aggregator": aggregator})
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),

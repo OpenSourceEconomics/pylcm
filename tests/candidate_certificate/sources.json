@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "761bdd759463aaa93096301cc55ee476782e439df367c9829ee836e1b1956f69",
+  "source_inventory_sha256": "e9773b0239106af0443aaa967be3c227620a99c3bd56b6b9c5ea38d1f4a1bc20",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -122,7 +122,7 @@
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "6c42aca77a219c321e9af6988fa80e421c270be38669571d708aba9d8566c76f"
+      "sha256": "a943cefab4ab1e84e0307102cf8666da40d6f83577d08d49b47d2cf93ff4a452"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -346,11 +346,11 @@
     },
     {
       "path": "src/_lcm/solution/action_streaming.py",
-      "sha256": "86940bb57c3ccda2b2b9b5fee82caf0152d4c65ca73c926f92523839b42573b6"
+      "sha256": "2457ee9f24c02ba28ab88310f354186c82cb829df7a731724c464de70046cddd"
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "6f9d7c855ff24d6e11d48cacdc440222a74c54abd8ef9f304083876d802c477e"
+      "sha256": "8a3d59d953a707276ed65bad005b85ab8738b38017197967afee2448a5bf4667"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -430,7 +430,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "e5f55f1c9b8ea8bb619bc4137e36f0af32aa1c5e3825c091e567381869ef715b"
+      "sha256": "450d4825875be507f24ed0e18b75e336d0a2f6e35fcaaddeb858704d2f1191a5"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -438,7 +438,7 @@
     },
     {
       "path": "src/_lcm/utils/dispatchers.py",
-      "sha256": "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1"
+      "sha256": "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf"
     },
     {
       "path": "src/_lcm/utils/functools.py",
@@ -454,7 +454,7 @@
     },
     {
       "path": "src/_lcm/variables.py",
-      "sha256": "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6"
+      "sha256": "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139"
     },
     {
       "path": "src/_lcm/zero_safe.py",

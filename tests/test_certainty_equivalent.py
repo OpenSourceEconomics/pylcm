@@ -1530,7 +1530,8 @@ def test_certainty_equivalent_subclass_must_supply_an_aggregation():
             return frozenset()
 
     with pytest.raises(TypeError, match="aggregate"):
-        OnlyParamNames()
+        # The instantiation the type checker rejects is the behaviour under test.
+        OnlyParamNames()  # ty: ignore[call-non-callable]
 
 
 @pytest.mark.parametrize("overridden", ["transform", "inverse"])

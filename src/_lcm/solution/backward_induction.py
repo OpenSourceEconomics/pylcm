@@ -5228,18 +5228,17 @@ class CompilationWave:
         self._logger.info(
             "  lowered in %s", format_duration(seconds=time.monotonic() - start)
         )
-        future = self._pool.submit(
-            contextvars.copy_context().run,
-            functools.partial(
-                _compile_and_log,
-                lowering_key=lowering_key,
-                low=low,
-                label=label,
-                log_kernel_memory=self._log_kernel_memory,
-                logger=self._logger,
-                phase=self._compile_phase,
-            ),
+        compile_one = functools.partial(
+            _compile_and_log,
+            lowering_key=lowering_key,
+            low=low,
+            label=label,
+            log_kernel_memory=self._log_kernel_memory,
+            logger=self._logger,
+            phase=self._compile_phase,
         )
+        context = contextvars.copy_context()
+        future = self._pool.submit(lambda: context.run(compile_one))
         self._futures[future] = label
         self._futures_by_key[lowering_key] = (future, label)
         self._out_info[lowering_key] = low.out_info
