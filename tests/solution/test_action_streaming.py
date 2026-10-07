@@ -416,3 +416,43 @@ def test_streaming_reduces_a_device_varying_state(route: str) -> None:
         np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(sharded)]),
         np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(expected)]),
     )
+
+
+@jax.jit
+def _first_of(*, value: jax.Array, ignored: jax.Array) -> jax.Array:
+    """Return `value`; `ignored` is an argument the call never reads."""
+    del ignored
+    return value
+
+
+def _partly_reading_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A Q that hands `ignored` to a nested call which never reads it."""
+    return jnp.sin(choice) + _first_of(value=shift, ignored=ignored), jnp.ones(
+        (), dtype=bool
+    )
+
+
+def test_streamed_program_takes_no_argument_its_blocks_never_read() -> None:
+    """An argument reaching `Q_and_F` only through a nested call that ignores it
+    stays a dead argument of the compiled program, as it is without streaming."""
+
+    def reduce_actions(
+        *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
+    ) -> tuple[jax.Array, ...]:
+        return build_streaming_max_Q_over_a(
+            Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
+        )(choice=choice, shift=shift, ignored=ignored)
+
+    compiled = (
+        jax.jit(reduce_actions)
+        .lower(choice=_CHOICE, shift=jnp.asarray(0.25), ignored=jnp.asarray(1.0))
+        .compile()
+    )
+    _, keyword_shardings = compiled.input_shardings
+    assert {name: sharding is None for name, sharding in keyword_shardings.items()} == {
+        "choice": False,
+        "shift": False,
+        "ignored": True,
+    }
