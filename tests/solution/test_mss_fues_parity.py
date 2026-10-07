@@ -27,6 +27,7 @@ from lcm import (
     StochasticTransition,
     Transition,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import (
     RETIREMENT_LAW,
@@ -50,7 +51,7 @@ _PARITY_RTOL = 1e-5
 
 
 def _lifecycle_edges(
-    *, ages: AgeGrid, working_life_law: object, retirement_law: object
+    *, ages: AgeGrid, working_life_law: TransitionLaw, retirement_law: TransitionLaw
 ) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age."""
     return {

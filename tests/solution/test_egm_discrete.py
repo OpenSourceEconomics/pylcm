@@ -29,6 +29,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -56,7 +57,9 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 N_PERIODS = 4
 
 
-def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Transition]:
+def _lifecycle_edges(
+    *, ages: AgeGrid, retirement_law: TransitionLaw
+) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age.
 
     The worker chooses by `WORKING_LIFE_LAW`; the retiree follows

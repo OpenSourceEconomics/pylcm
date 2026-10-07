@@ -15,7 +15,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 from beartype import beartype
@@ -90,11 +90,23 @@ type PhaseTransitionLaw = (
     | Mapping[RegimeName, TargetLawCell]
 )
 
-# What `Transition(law=...)` takes: one phase's law for both phases, a `Phased`
-# pair of them, or a `ByAge` selecting among them per source age.
-type TransitionLaw = (
-    PhaseTransitionLaw | Phased[PhaseTransitionLaw, PhaseTransitionLaw] | ByAge
-)
+# A law one `ByAge` case selects: one phase's law for both phases, or a
+# `Phased` pair of them.
+type AgeCaseLaw = PhaseTransitionLaw | Phased[PhaseTransitionLaw, PhaseTransitionLaw]
+
+# What `Transition(law=...)` takes: a case law, or a `ByAge` selecting among
+# case laws per source age.
+type TransitionLaw = AgeCaseLaw | ByAge
+
+if TYPE_CHECKING:
+    type _DeclaredCaseLaw = AgeCaseLaw
+    type _DeclaredTransitionLaw = TransitionLaw
+else:
+    # The runtime checks also admit `None` and a nested `ByAge`, so that
+    # `Transition` and `ByAge` refuse them with their own messages rather than
+    # with a type violation.
+    type _DeclaredCaseLaw = AgeCaseLaw | ByAge | None
+    type _DeclaredTransitionLaw = TransitionLaw | None
 
 
 @beartype(conf=REGIME_CONF)
@@ -151,7 +163,7 @@ class Transition:
     names none, so it requires `targets`.
     """
 
-    law: object
+    law: _DeclaredTransitionLaw
     """The numerical law choosing among the destinations."""
 
     gates: Mapping[RegimeName, Gate] = field(
@@ -641,10 +653,10 @@ class ByAge:
     without outgoing edges in `Model(edges=...)`.
     """
 
-    def __init__(
+    def __init__[K: AgeSelector](
         self,
         *,
-        cases: Mapping[AgeSelector, object],
+        cases: Mapping[K, _DeclaredCaseLaw],
         default: object = _MISSING,
     ) -> None:
         if not cases and default is _MISSING:
@@ -711,7 +723,7 @@ class ByAge:
                 until=dataclasses.replace(self._until, law=law, then=then)
             )
         cases = cast(
-            "Mapping[AgeSelector, object]",
+            "Mapping[AgeSelector, AgeCaseLaw]",
             {
                 selector: law
                 for (selector, _), law in zip(self._cases, mapped, strict=False)

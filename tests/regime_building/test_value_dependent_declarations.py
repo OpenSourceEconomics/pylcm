@@ -40,7 +40,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.transition import StochasticTransition
+from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import FloatND, ScalarInt, UserFunction
 from tests.conftest import DECIMAL_PRECISION, bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
@@ -174,7 +174,7 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
     declaration solves to.
     """
     married = _married_transition()
-    (law,) = cast("ByAge", married.law).laws
+    (law,) = cast("tuple[PhaseTransitionLaw]", cast("ByAge", married.law).laws)
     phased = _solve(
         regimes=_new_vocabulary_regimes(),
         married=Transition(

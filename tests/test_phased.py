@@ -36,6 +36,7 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError, RegimeInitializationError
 from lcm.persistence import load_solution
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 
 
@@ -463,7 +464,7 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
-def _exit_at_62(*, law: object) -> dict[str, Transition]:
+def _exit_at_62(*, law: TransitionLaw) -> dict[str, Transition]:
     """Stay or die at 60 as `law` chooses; die at 62."""
     return {"working": Transition(targets={"working": 60, "dead": (60, 62)}, law=law)}
 

@@ -21,6 +21,7 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -105,7 +106,9 @@ _WORKING_RETIRED_EDGES = {
 }
 
 
-def _a_to_b_edges(*, law_a: object, law_b: object) -> dict[str, Transition]:
+def _a_to_b_edges(
+    *, law_a: TransitionLaw, law_b: TransitionLaw
+) -> dict[str, Transition]:
     return {
         "regime_a": Transition(
             targets={"dead": (0, 1, 2), "regime_b": (0, 1, 2), "regime_a": (0, 1)},

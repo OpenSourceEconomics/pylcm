@@ -11,7 +11,14 @@ live in `_lcm.typing`.
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from fractions import Fraction
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    runtime_checkable,
+)
 
 import numpy as np
 import pandas as pd
@@ -19,6 +26,11 @@ from jax import Array
 from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+
+if TYPE_CHECKING:
+    # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
+    # `lcm.__init__` binds it here through `_bind_forward_refs`.
+    from lcm.transition import AgeSelector  # noqa: F401  (re-exported)
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -179,3 +191,14 @@ def __getattr__(name: str) -> object:
         return getattr(engine_typing, name)
     msg = f"module 'lcm.typing' has no attribute {name!r}"
     raise AttributeError(msg)
+
+
+def _bind_forward_refs(*, age_selector: TypeAliasType) -> None:
+    """Bind `AgeSelector` into this module's globals.
+
+    `lcm.transition` defines it beside `AgeRange` and imports this module, so
+    it cannot be imported here at module level. `lcm.__init__` calls this
+    helper once `lcm.transition` is loaded, which makes
+    `from lcm.typing import AgeSelector` resolve at runtime.
+    """
+    globals()["AgeSelector"] = age_selector

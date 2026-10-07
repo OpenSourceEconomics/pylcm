@@ -122,7 +122,7 @@ def _dated_edges(
     }
 
 
-def _choice_edges(*, working_law: object) -> dict[str, object]:
+def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
     """Working stays until 55, where `working_law` picks retirement or death."""
     return {
         "working": Transition(targets=CHOICE_TARGETS, law=working_law),
@@ -633,6 +633,14 @@ def test_declared_transitions_carry_the_targets_a_law_names() -> None:
         "dead": (25, 35, 45),
         "retirement": (55,),
     }
+
+
+def test_declared_transitions_read_the_declared_law_typed() -> None:
+    """A declared `Transition`'s law reads back as declared, typed `TransitionLaw`."""
+    declared = _working_law()
+    model = _dated_model(edges=_dated_edges(working_law=declared))
+    law: TransitionLaw = model.declared_transitions["solve"]["working"].law
+    assert law is declared
 
 
 def test_declared_transitions_read_a_declared_gate_typed() -> None:

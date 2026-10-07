@@ -8,6 +8,7 @@ import platform
 from collections.abc import Iterator, Mapping
 from dataclasses import make_dataclass
 from types import MappingProxyType
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -36,7 +37,7 @@ from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.collective import Gate
-from lcm.transition import Transition
+from lcm.transition import Transition, TransitionLaw
 from lcm.tuning import _array_ulp_gap
 from lcm.typing import ScalarInt
 from tests.ci import pytest_policy
@@ -707,7 +708,7 @@ def build_prepared_structure(
             name: (
                 Transition(
                     targets=dict.fromkeys(laws, 0),
-                    law=law.transition,
+                    law=cast("TransitionLaw", law.transition),
                     gates={
                         target: Gate(
                             predicate=edge.gate,
