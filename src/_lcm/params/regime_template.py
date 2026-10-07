@@ -63,6 +63,7 @@ def create_regime_params_template(
     user_regime: UserRegime,
     law: RegimeLaw,
     other_regime_state_names: frozenset[StateName] = frozenset(),
+    declared_variables: frozenset[ReferenceName] = frozenset(),
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -106,12 +107,15 @@ def create_regime_params_template(
             model. Their `next_<state>` forms are withheld from the parameter
             namespace so that a law reading one is adjudicated as a transition
             value rather than silently rebound to a parameter.
+        declared_variables: Names the regime declares before demand prunes any
+            (see `create_edge_vocabulary`). A function nothing demands keeps
+            reading a pruned state or action as a variable, never as a parameter.
 
     Returns:
         The regime parameter template with type annotations as values.
 
     """
-    variables = _wired_names(user_regime)
+    variables = _wired_names(user_regime) | declared_variables
 
     # `next_<state>` names a value, never a parameter. Whether a consumer may
     # read it is a question of whether that value exists where the consumer runs.

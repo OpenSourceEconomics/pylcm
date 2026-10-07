@@ -399,8 +399,8 @@ def _transition_targets(
     non-final ages the case covers, and each gate's route fallbacks at the ages
     of the gated target. A `Transition` declared for one phase of a `Phased`
     edges declaration reaches only that phase's fallbacks; one shared by both
-    phases reaches both. Supplied `targets` must then say the same; a law over
-    all targets uses the supplied ones.
+    phases reaches both. Supplied `targets` must then say the same at every
+    non-final age; a law over all targets uses the supplied ones.
     """
     derived = _derived_target_ages(
         transition=transition, ages=ages, fallback_phases=fallback_phases
@@ -413,6 +413,9 @@ def _transition_targets(
         period_by_age: dict[object, int] = {
             age: period for period, age in enumerate(ages.exact_values)
         }
+        # No transition leaves the final age, so a selector that also selects
+        # it names the same destinations as one that stops before it.
+        final_age = ages.exact_values[-1]
         supplied = {
             target: _selected_source_ages(
                 selector=selector,
@@ -420,6 +423,7 @@ def _transition_targets(
                 ages=ages,
                 period_by_age=period_by_age,
             )
+            - {final_age}
             for target, selector in transition.targets.items()
         }
         if supplied != derived:
