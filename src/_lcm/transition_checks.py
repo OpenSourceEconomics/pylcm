@@ -59,6 +59,7 @@ from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.next_state import get_next_stochastic_weights_function
 from _lcm.regime_building.Q_and_F import _get_feasibility
+from _lcm.regime_building.schedules import Side
 from _lcm.simulation.host_operations import StaticArgument
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -70,6 +71,8 @@ from _lcm.simulation.residency import (
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.transition_plans import LotteryLifetime, declared_law_over_codes
 from _lcm.typing import (
+    EconFunction,
+    EconFunctionsMapping,
     FlatParams,
     FlatRegimeParams,
     RegimeName,
@@ -92,13 +95,14 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionName,
     IntND,
     ScalarFloat,
     ScalarInt,
 )
 
 _NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
-_NO_FUNCTIONS: Mapping[str, Callable[..., object]] = MappingProxyType({})
+_NO_FUNCTIONS: EconFunctionsMapping = MappingProxyType({})
 _NO_FUNCTION_PARAMS: FlatRegimeParams = MappingProxyType({})
 type _RegimeProbabilityOutput = tuple[
     Mapping[RegimeName, FloatND], Mapping[StateOrActionName, FloatND | IntND]
@@ -1815,7 +1819,7 @@ def _validate_state_transition_single(
     logger: logging.Logger,
     summary: _ValidationSummary | None = None,
     memory: SimulationMemory | None = None,
-    functions: Mapping[str, Callable[..., object]] = _NO_FUNCTIONS,
+    functions: EconFunctionsMapping = _NO_FUNCTIONS,
     function_params: FlatRegimeParams = _NO_FUNCTION_PARAMS,
     extra_grids: Mapping[StateOrActionName, FloatND | IntND] = _NO_EXTRA_GRIDS,
 ) -> None:
@@ -1938,9 +1942,9 @@ def _through_functions(
     *,
     transition: _StochasticStateTransition,
     regime_params: FlatRegimeParams,
-    functions: Mapping[str, Callable[..., object]],
+    functions: EconFunctionsMapping,
     function_params: FlatRegimeParams,
-    inputs: frozenset[str],
+    inputs: frozenset[StateOrActionName],
 ) -> tuple[_StochasticStateTransition, FlatRegimeParams]:
     """Evaluate a law through the regime functions it reads, with their params."""
     law = _law_through_functions(
@@ -1959,8 +1963,8 @@ def _through_functions(
 def _law_through_functions(
     *,
     law: Callable[..., FloatND],
-    functions: Mapping[str, Callable[..., object]],
-    inputs: frozenset[str],
+    functions: EconFunctionsMapping,
+    inputs: frozenset[StateOrActionName],
 ) -> Callable[..., FloatND]:
     """Compose a state law with the regime functions computing what it reads.
 
@@ -1982,10 +1986,10 @@ def _law_through_functions(
 
 
 def _functions_read(
-    *, func: Callable[..., object], pool: Mapping[str, Callable[..., object]]
-) -> frozenset[str]:
+    *, func: Callable[..., FloatND], pool: Mapping[FunctionName, EconFunction]
+) -> frozenset[FunctionName]:
     """The pool functions `func` reads, directly or through other pool functions."""
-    read: set[str] = set()
+    read: set[FunctionName] = set()
     pending = [name for name in inspect.signature(func).parameters if name in pool]
     while pending:
         name = pending.pop()
@@ -1999,8 +2003,8 @@ def _functions_read(
 
 
 def _phase_functions(
-    *, regime: Regime, phase: str | None, period: int
-) -> Mapping[str, Callable[..., object]]:
+    *, regime: Regime, phase: Side | None, period: int
+) -> EconFunctionsMapping:
     """The regime functions of a law's phase, resolved at `period`."""
     owner = regime.simulation if phase == "simulate" else regime.solution
     pool = owner.feasibility_pools_by_period.get(period)
@@ -2008,7 +2012,7 @@ def _phase_functions(
 
 
 def _phase_extra_grids(
-    *, regime: Regime, phase: str | None
+    *, regime: Regime, phase: Side | None
 ) -> Mapping[StateOrActionName, FloatND | IntND]:
     """The simulate grids of carried states, which the solve space lacks."""
     if phase != "simulate":

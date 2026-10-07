@@ -38,12 +38,20 @@ from _lcm.engine import Regime
 from _lcm.params.edges import EDGES, user_path
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
-from _lcm.typing import FlatParams, ParamsTemplate, RegimeName
+from _lcm.typing import (
+    EdgeParamsTemplate,
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    ParamsTemplate,
+    RegimeName,
+    RegimeParamsTemplateNode,
+)
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.typing import UserParams
+from lcm.typing import ParameterName, UserParams
 
 
 def process_params(
@@ -149,7 +157,8 @@ def broadcast_to_template(
     template_flat = flatten_regime_namespace(template)
     params_flat = flatten_regime_namespace(params)
 
-    result: dict[str, dict[str, object]] = {
+    # User values, unvalidated until `cast_params_to_canonical_dtypes`.
+    result: dict[RegimeName, dict[str, object]] = {
         name: {} for name in template if name != EDGES
     }
     edge_result: dict[RegimeName, dict[str, object]] = {
@@ -192,7 +201,9 @@ def broadcast_to_template(
             )
         raise InvalidParamsError(" ".join(messages))
 
-    frozen: dict[str, object] = {k: MappingProxyType(v) for k, v in result.items()}
+    frozen: dict[RegimeName, MappingProxyType[str, object]] = {
+        k: MappingProxyType(v) for k, v in result.items()
+    }
     if EDGES in template:
         frozen[EDGES] = MappingProxyType(
             {source: MappingProxyType(v) for source, v in edge_result.items()}
@@ -201,7 +212,7 @@ def broadcast_to_template(
 
 
 def _edge_slot_hints(
-    *, unknown: set[str], template_flat: Mapping[str, object]
+    *, unknown: set[str], template_flat: Mapping[str, str]
 ) -> list[str]:
     """Point each unknown key written under a source regime at its edge slots.
 
@@ -217,7 +228,7 @@ def _edge_slot_hints(
         One message per unknown key with matching edge slots, in key order.
 
     """
-    slots: dict[tuple[RegimeName, str], list[str]] = {}
+    slots: dict[tuple[RegimeName, ParameterName], list[str]] = {}
     for qname in template_flat:
         path = tree_path_from_qname(qname)
         if path[0] == EDGES:
@@ -308,45 +319,44 @@ def cast_params_to_canonical_dtypes(
     # identity and large array leaves are not copied per slot.
     memo: dict[int, Any] = {}
 
-    return cast(
-        "FlatParams",
-        MappingProxyType(
-            {
-                regime: (
-                    MappingProxyType(
-                        {
-                            source: _cast_flat_leaves(
-                                leaves=source_leaves,
-                                prefix=f"{EDGES}{QNAME_DELIMITER}{source}",
-                                memo=memo,
-                                array_writer=array_writer,
-                            )
-                            for source, source_leaves in cast(
-                                "Mapping[str, Mapping[str, object]]", leaves
-                            ).items()
-                        }
-                    )
-                    if regime == EDGES
-                    else _cast_flat_leaves(
-                        leaves=leaves,
-                        prefix=regime,
-                        memo=memo,
-                        array_writer=array_writer,
-                    )
+    return MappingProxyType(
+        {
+            regime: (
+                MappingProxyType(
+                    {
+                        source: _cast_flat_leaves(
+                            leaves=source_leaves,
+                            prefix=f"{EDGES}{QNAME_DELIMITER}{source}",
+                            memo=memo,
+                            array_writer=array_writer,
+                        )
+                        for source, source_leaves in cast(
+                            "FlatEdgeParams", leaves
+                        ).items()
+                    }
                 )
-                for regime, leaves in flat_params.items()
-            }
-        ),
+                if regime == EDGES
+                else _cast_flat_leaves(
+                    leaves=leaves,
+                    prefix=regime,
+                    memo=memo,
+                    array_writer=array_writer,
+                )
+            )
+            for regime, leaves in flat_params.items()
+        }
     )
 
 
 def _cast_flat_leaves(
     *,
+    # User values, cast here; unvalidated until then.
     leaves: Mapping[str, object],
     prefix: str,
+    # Shared with `_cast_shared`, whose memo holds the canonical leaves.
     memo: dict[int, Any],
     array_writer: CanonicalArrayWriter | None,
-) -> MappingProxyType[str, Any]:
+) -> FlatRegimeParams:
     """Cast one flat mapping's leaves, naming each by `prefix` and its key."""
     return MappingProxyType(
         {
@@ -631,10 +641,13 @@ def create_params_template(
         arg_names=arg_names,
     )
 
-    return ensure_containers_are_immutable(template | _edges_branch(regimes))
+    return cast(
+        "ParamsTemplate",
+        ensure_containers_are_immutable(template | _edges_branch(regimes)),
+    )
 
 
-def _edge_arg_names(regimes: Mapping[RegimeName, Regime]) -> set[str]:
+def _edge_arg_names(regimes: Mapping[RegimeName, Regime]) -> set[ParameterName]:
     """Return the argument names every source's edge slots read."""
     return {
         path[-1]
@@ -643,7 +656,9 @@ def _edge_arg_names(regimes: Mapping[RegimeName, Regime]) -> set[str]:
     }
 
 
-def _edges_branch(regimes: Mapping[RegimeName, Regime]) -> dict[str, Any]:
+def _edges_branch(
+    regimes: Mapping[RegimeName, Regime],
+) -> dict[str, dict[RegimeName, EdgeParamsTemplate]]:
     """Return the template's `edges` branch, or nothing when no source has a slot."""
     sources = {
         name: regime.edge_params_template
@@ -653,16 +668,14 @@ def _edges_branch(regimes: Mapping[RegimeName, Regime]) -> dict[str, Any]:
     return {EDGES: sources} if sources else {}
 
 
-def _leaf_paths(branch: Mapping[str, object]) -> list[tuple[str, ...]]:
+def _leaf_paths(
+    branch: Mapping[str, RegimeParamsTemplateNode],
+) -> list[tuple[str, ...]]:
     """Return the key path of every leaf below a nested template branch."""
     return [
         (name, *path)
         for name, value in branch.items()
-        for path in (
-            _leaf_paths(cast("Mapping[str, object]", value))
-            if isinstance(value, Mapping)
-            else [()]
-        )
+        for path in (_leaf_paths(value) if isinstance(value, Mapping) else [()])
     ]
 
 
@@ -738,7 +751,9 @@ def _fail_if_template_names_invalid(
         )
 
 
-def get_flat_param_names(regime_params_template: Mapping[str, object]) -> set[str]:
+def get_flat_param_names(
+    regime_params_template: Mapping[str, RegimeParamsTemplateNode],
+) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like `{"utility": {"risk_aversion": type}}`

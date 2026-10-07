@@ -295,7 +295,7 @@ from lcm.solvers import (
     UniformObservedFixedCost,
 )
 from lcm.transition import JointTransition, StochasticTransition, Transition
-from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.typing import Float1D, FloatND, Int1D, IntND, ParameterName, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -6393,7 +6393,7 @@ def _with_cell_param_keys(
         return cast("EconFunction", func)
     target_branch = edge_params_template.get(target_regime_name)
     target_branch = target_branch if isinstance(target_branch, Mapping) else {}
-    mapper: dict[str, str] = {}
+    mapper: dict[ParameterName, str] = {}
     for arg in get_union_of_args([func]):
         if isinstance(target_branch.get(arg), str):
             mapper[arg] = qname_from_tree_path((target_regime_name, arg))
@@ -7897,7 +7897,8 @@ class _RegimeTransitionProbsByName:
     """The transition, returning one probability per regime id."""
     regime_names: tuple[RegimeName, ...]
     """The regime names in regime-id order."""
-    annotations: dict[str, Any]
+    # Annotation objects: classes, aliases or strings, whatever the callable declares.
+    annotations: Mapping[ParameterName, object]
     """The transition's argument annotations, without its return."""
 
     def __post_init__(self) -> None:

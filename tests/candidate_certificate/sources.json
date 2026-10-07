@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "08a7a373c440a8fe56a6ed0151cfcde6dac868aa751299fed215bfe78c1346dd",
+  "source_inventory_sha256": "6b037e17c7e6e85dc317396e0b9c8c91145f8fb227f7d5e2e19bfcf19b3376f0",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -110,19 +110,19 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "6fcabc7f5ec1a8b5138640f5cdbf17d3dd9fd0200ac470f1b928863bd65a75d3"
+      "sha256": "8d26adbb0c957134c3af0b94d97e1909ca3e21a9c9606beed52e3b1b8a19b3f2"
     },
     {
       "path": "src/_lcm/pandas_utils.py",
-      "sha256": "966b368ea1e691097f79a2f6d995e89aab24bacff5e74b3163081ed188d3a535"
+      "sha256": "56a4e3f78305412342e0e2e63a091c7e0c135edd01c1cd6fec91c939b13b2a0d"
     },
     {
       "path": "src/_lcm/params/processing.py",
-      "sha256": "9156f269c1e3e884d3d01ed006b28ba896d95c98c5692380d11ed51c39488ade"
+      "sha256": "365fcc4bf215b1c5d69aa5b77f04fd7ae6f80add2974f8235374da4f39f634db"
     },
     {
       "path": "src/_lcm/params/regime_template.py",
-      "sha256": "626ee1150b2a845df1f9842a184e0aac1a2d5f5c00f8f219c263c24a660a49ab"
+      "sha256": "6c42aca77a219c321e9af6988fa80e421c270be38669571d708aba9d8566c76f"
     },
     {
       "path": "src/_lcm/persistence/solution.py",
@@ -166,7 +166,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "356a362f277ced5d60af738eb8cf9aa5aab583f0ccb7b9612aad0912b7929e50"
+      "sha256": "c167333e7e8671b0f89f83a7e2acc0586edfd915331e27fefdf566e0d5eba035"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -374,7 +374,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "1114c56ece042772de88a7b4dc058331371c666f2b8486d12dc34b59636ef943"
+      "sha256": "0736975de4e3d83dd4e1c70f7fd8623952dfbca7ab6d9249865541fb6c2b5208"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -430,7 +430,7 @@
     },
     {
       "path": "src/_lcm/transition_checks.py",
-      "sha256": "7f81579937e5ebc6598fecc33bba897874ce328998b7db32b6f39cdaea53806f"
+      "sha256": "e5f55f1c9b8ea8bb619bc4137e36f0af32aa1c5e3825c091e567381869ef715b"
     },
     {
       "path": "src/_lcm/utils/containers.py",
@@ -478,7 +478,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "25e732fd7a6af8e56bb942d324281af2b4ef02fe463fd3eb9321e8738e0d7e36"
+      "sha256": "7a803a6f1264e26daca558352e81fac72f897d7e468bf8c2424d15ce545a4172"
     },
     {
       "path": "src/lcm/result.py",

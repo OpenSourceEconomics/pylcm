@@ -63,6 +63,7 @@ def union_free_params(
     pension payout factor the source never reads), so the core needs the union;
     captured functions read only the keys they need.
     """
+    # Leaves of several regimes, passed through untouched.
     params: dict[str, object] = dict(
         regime_kernel_params(flat_params, regime_name=regime_name)
     )
@@ -83,6 +84,7 @@ def union_fixed_params(
     transition_target_names: tuple[RegimeName, ...],
 ) -> dict[str, object]:
     """Union the regime's and its targets' fixed params for core binding."""
+    # Leaves of several regimes, passed through untouched.
     bound: dict[str, object] = dict(
         regime_kernel_params(fixed_flat_params, regime_name=regime_name)
     )

@@ -39,6 +39,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -299,7 +300,7 @@ def get_dcegm_model(n_periods: int) -> Model:
     )
 
 
-def get_edges(*, ages: AgeGrid) -> dict[str, object]:
+def get_edges(*, ages: AgeGrid) -> dict[RegimeName, Transition]:
     """Build the regime graph of the model on `ages`, with each source's law.
 
     Working life leads to work, retirement or death and retirement to retirement

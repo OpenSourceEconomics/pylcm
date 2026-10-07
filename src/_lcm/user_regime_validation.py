@@ -27,7 +27,7 @@ from _lcm.regime_building.phases import (
     normalize_regime_phases,
     validate_law_free_phase_grammar,
 )
-from _lcm.regime_law import RegimeLaw, RegimeLaws
+from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
 from _lcm.typing import ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -621,7 +621,7 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
 
 # keyword-only-exempt: primary-argument=regime
 def _validate_law_consistency(
-    regime: lcm.regime.Regime, *, transition: object, terminal: bool
+    regime: lcm.regime.Regime, *, transition: DecomposedTransition, terminal: bool
 ) -> None:
     """Validate the regime's law and what the regime declares against it.
 
@@ -1729,7 +1729,9 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
 
 
 # keyword-only-exempt: primary-argument=regime
-def _validate_fold_law_reads(regime: lcm.regime.Regime, *, transition: object) -> None:
+def _validate_fold_law_reads(
+    regime: lcm.regime.Regime, *, transition: DecomposedTransition
+) -> None:
     """Reject a regime transition that reads a folded shock's realized value.
 
     Args:

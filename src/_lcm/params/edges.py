@@ -45,7 +45,10 @@ _EMPTY: FlatRegimeParams = MappingProxyType({})
 
 # keyword-only-exempt: primary-argument=flat_params
 def edge_params(
-    flat_params: Mapping[str, object], *, source: RegimeName
+    # `object` leaves: the claw would otherwise check every leaf on every call.
+    flat_params: Mapping[str, object],
+    *,
+    source: RegimeName,
 ) -> FlatRegimeParams:
     """Return the parameters of the callables `source`'s edges declare.
 
@@ -64,7 +67,10 @@ def edge_params(
 
 # keyword-only-exempt: primary-argument=flat_params
 def regime_kernel_params(
-    flat_params: Mapping[str, object], *, regime_name: RegimeName
+    # `object` leaves: the claw would otherwise check every leaf on every call.
+    flat_params: Mapping[str, object],
+    *,
+    regime_name: RegimeName,
 ) -> FlatRegimeParams:
     """Return everything a regime's own kernels bind by name.
 
@@ -132,6 +138,7 @@ def is_gated_cell_slot(key: str) -> bool:
 
 
 def flat_namespaces(
+    # `object` leaves: the claw would otherwise check every leaf on every call.
     flat_params: Mapping[str, object],
 ) -> Iterator[tuple[tuple[str, ...], FlatRegimeParams]]:
     """Yield every flat namespace of the engine's params with its path.

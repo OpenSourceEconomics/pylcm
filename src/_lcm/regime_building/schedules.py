@@ -60,7 +60,7 @@ from lcm.transition import (
     _fail_if_invalid_age_selector,
     _select_periods,
 )
-from lcm.typing import Period
+from lcm.typing import Period, UserFunction
 
 type PhaseKey = str
 type Side = Literal["solve", "simulate"]
@@ -69,6 +69,24 @@ type Side = Literal["solve", "simulate"]
 type NonterminalLaw = (
     str | DeterministicTransition | StochasticTransition | Mapping[str, Any] | Phased
 )
+
+# One per-target probability cell, as declared or bound.
+type ProbabilityCell = StochasticTransition | UserFunction | Phased
+# One phase's law at one source age: a regime name, a function or
+# `DeterministicTransition` returning a regime code, a vector
+# `StochasticTransition`, or a per-target mapping of probability cells.
+type PhaseLaw = (
+    RegimeName
+    | DeterministicTransition
+    | StochasticTransition
+    | UserFunction
+    | Mapping[RegimeName, ProbabilityCell]
+)
+# A law at one source age: one law for both phases, or a `Phased` pair.
+type CaseLaw = PhaseLaw | Phased[PhaseLaw, PhaseLaw]
+# A source's whole regime-transition law: a case law, an age schedule of case
+# laws, or `None` for a terminal regime.
+type RegimeTransitionLaw = CaseLaw | ByAge | None
 
 
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
@@ -118,7 +136,7 @@ class RegimeSchedules:
     """Per source regime, its gated edges by gated target."""
 
     @property
-    def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[str]]:
+    def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[RegimeName]]:
         """Per source regime, every target its support names in either phase."""
         return MappingProxyType(
             {
@@ -180,6 +198,8 @@ def declaration_view(transition: object) -> object:
 
 def resolve_regime_schedules(
     *,
+    # `RegimeLaw` values; `_lcm.regime_law` imports this module, so it cannot be
+    # imported here.
     laws: Mapping[RegimeName, Any],
     ages: AgeGrid,
     source_ages_by_phase: Mapping[str, Mapping[str, Mapping[str, frozenset[object]]]]
@@ -615,8 +635,8 @@ def _unavailable_message(
 
 
 def _gate_references(
-    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[str, ...]
-) -> tuple[str, ...]:
+    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[RegimeName, ...]
+) -> tuple[RegimeName, ...]:
     """The regimes whose value the gates of the reached `targets` read."""
     return tuple(
         reference.regime
@@ -627,8 +647,11 @@ def _gate_references(
 
 
 def _fallbacks(
-    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[str, ...], side: Side
-) -> tuple[str, ...]:
+    *,
+    gated_edges: Mapping[RegimeName, GatedEdge],
+    targets: tuple[RegimeName, ...],
+    side: Side,
+) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the reached gated `targets`, for one phase side."""
     return tuple(
         (route.solve_fallback if side == "solve" else route.simulate_fallback).regime

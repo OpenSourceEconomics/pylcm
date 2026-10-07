@@ -48,7 +48,7 @@ from _lcm.optimization.golden_section import GoldenSectionResult
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
+from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
     AffineBreakpoint,
@@ -354,7 +354,7 @@ def project_solution_params(
         solution_param_projection(regimes) if projection is None else projection
     )
     projected: dict[RegimeName, MappingProxyType[str, object]] = {}
-    projected_edges: dict[RegimeName, MappingProxyType[str, object]] = {}
+    projected_edges: dict[RegimeName, FlatRegimeParams] = {}
     # A source's law slots are read by its own transitions, so the source's
     # realized-only names apply to its edge slots as well.
     for path, leaves in flat_namespaces(flat_params):
@@ -752,7 +752,10 @@ _TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 
 # keyword-only-exempt: primary-argument=regime
 def _project_user_regime_declaration(
-    regime: object, *, law: RegimeLaw
+    # A dataclass or `SimpleNamespace` declaration; the branches below inspect it.
+    regime: object,
+    *,
+    law: RegimeLaw,
 ) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
 
