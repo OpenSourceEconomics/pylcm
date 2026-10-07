@@ -393,7 +393,7 @@ _SOURCE_SEALS = {
     SIMULATION_RESIDENCY_SOURCE: "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc",
     SIMULATION_GATED_ROUTING_SOURCE: "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce",
     VALUE_TOPOLOGY_SOURCE: "03872c6ce87f4a5b817caf0ac922ff92073c4d4b15213b3bcfebf151b9a672fa",
-    RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
+    RETAINED_BUFFERS_SOURCE: "2d7f264b78fc834bb920eab3029174375a24d6300ca05576ee1f580b32a94a0e",
     SCHEDULER_SOURCE: "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
@@ -412,7 +412,7 @@ _SOURCE_SEALS = {
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
     FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
-    ACTION_STREAMING_SOURCE: "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58",
+    ACTION_STREAMING_SOURCE: "86940bb57c3ccda2b2b9b5fee82caf0152d4c65ca73c926f92523839b42573b6",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
     DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "d1f978107dba2d0fee0cd35c4072f653d294816fa1381773815ef18dac629ce2",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "8c3393343a21a4e277cfbb73a3e28ea70ccfa725285889fb20dbffd45bac15a4",
+    MODEL_SOURCE: "c03094723c7fc06cac93a8ac75dc5f063d6bef53c0dc01c48233be3cd656460a",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "89a3f19b84506cb3f008abcec7b763e8f488f58e7bca68f275e488a61be5cee6",
     PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
@@ -2355,19 +2355,21 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "build_streaming_collective_max_Q_over_a": "9b855229c633e1a03ccbd56aa626be0d6f5ab668b1881d9f54f9010083842d70",
                 "build_streaming_ev1_max_Q_over_a": "58c1d90efaa42c39bf4e8fb919a74cc1462bdec5420f016cc509af1151491236",
                 "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
-                "_StreamingHardMax.__call__": "98e334a19ebeaa5e3aab9f87205166256a7cad545eba2bc2e7c1bc758d334b5b",
-                "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
-                "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
+                "_StreamingHardMax.__call__": "f820f280a0303df25e68e8540dff89558ce32f9e1e5fb710bae93160a4c3ff09",
+                "_StreamingCollectiveHardMax.__call__": "d174d02e634e382d0134103a198bb7e33fea9db8d0db028a222db663920b25b4",
+                "_StreamingEV1ExpectedMax.__call__": "47212748bc00334a2e76f499a9777ee6f02c0259a155e93e353781d524956cc0",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
                 "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
                 "_evaluate_ev1_branch_block": "5f88bff6dc8900c8d179df8c4be4763ff7c9656ee66bc78fe44f10f3939517fe",
                 "_evaluate_collective_block": "33db932726923fa9e5cde59e3d1974b6500ef8cfebc166cc65f67a39d6dd8616",
+                "_block_shape": "4eff77f9f7201391522ebcddf61a94aa649619eea5f65417091fc1f749a33c29",
+                "_empty_reduction": "f4f0b658a78296fdf3699a0c03f287672b232c47e95b26092ad1276a4b9714e7",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
-                "_scan_remaining_blocks": "c22ed2d6f392d72483a2d8cfbf5e741d8c248a8aef1baf9b914938ef255f03d2",
+                "_scan_blocks": "90d220fa12e133d9921aaad62053012fc47ab1917b16a623db2abea8a2ecc62f",
                 "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
                 "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
                 "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
-                "_scan_remaining_collective_blocks": "e40fba3b89b43e03a36d8b5fd6ebc32560bbe7fb8b5817c47bd8735fa27b641b",
+                "_scan_collective_blocks": "2af8554d14cb82cab0ccd29f86fe325860add8700fd726b33bffe92a95b4aa7a",
                 "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
                 "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
                 "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
@@ -2378,7 +2380,7 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
                 "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
                 "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-                "_scan_remaining_ev1_blocks": "219ff26f338b96e2fce757277ef6495afcda3bf134c7a36fe1d8822aaa0151a9",
+                "_scan_ev1_blocks": "e7e3248f6d4c9e175e76f3099655e7a1fb830c83803d49b89a912d8f53ea6f3f",
                 "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
             },
         )
@@ -3351,7 +3353,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
             },
         ),
         MODEL_SOURCE: (
-            "1d796f986817326e60a0b78f3c6a96644e7d5ef5601af129f0e8452ab214ac65",
+            "89ac9288a18a7e8857d9d6f3082686f9ce530f86f1622d3eaabc62b7ad97a11b",
             {
                 "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
                 "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -3701,11 +3703,11 @@ _SIMULATION_ADAPTER_CONTRACTS = {
         },
     ),
     RETAINED_BUFFERS_SOURCE: (
-        "394e2c6abaa4e8b59852f53358fb5005572d79fa46638faf4461dfd74a42fefb",
+        "ce79b7df172a647f8aba2b355f7b030464a1c2f36242f72983b745b46130ee95",
         {
             "retained_solution_buffers": "75b31cd7df576899d18b203e4963dd06acd47b900bf1b6c13c678c62e9d12d58",
             "_RetainedBuffers.collect": "3388eed966975167c9162aa814f2870da5d61cb6dcd2a6d217ecd7215065481e",
-            "_RetainedBuffers.collect_lazy": "ddff92c86acac4cfec6093996a8f2ebec04cdd0a3ae2618e8d254b63d20426f9",
+            "_RetainedBuffers.collect_lazy": "e0390ecdd855167c8261898538e6d28ae62b33ce7170c9ec1c96d2d824edb634",
             "_RetainedBuffers.collect_authority": "402406b70f1437e1d6427b96af3bea127d3ec5906a9a97eb9b19de07c8c0b081",
             "_RetainedBuffers.collect_reader": "ab65de29bcfc68b9a694f47a926115124c4ee19dfd455b1c2f4a9b58317b7d99",
             "_unsupported": "5eb49f472abdea16b95d9f0c9a4f6e56297f0cf65466d18cd87cb4ff530dd21b",
@@ -4004,7 +4006,7 @@ _FINITE_BUDGET_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "1d796f986817326e60a0b78f3c6a96644e7d5ef5601af129f0e8452ab214ac65",
+        "89ac9288a18a7e8857d9d6f3082686f9ce530f86f1622d3eaabc62b7ad97a11b",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -4377,14 +4379,14 @@ _COMBINED_INPUT_CONTRACTS = {
         },
     ),
     "src/lcm/model.py": (
-        "1d796f986817326e60a0b78f3c6a96644e7d5ef5601af129f0e8452ab214ac65",
+        "89ac9288a18a7e8857d9d6f3082686f9ce530f86f1622d3eaabc62b7ad97a11b",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
             "Model.__init__": "fd428b834e9f2d02a66a779adfb094c4f4cdc993e5731b74c8b71a9cffb19ee8",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
-            "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
+            "Model._consume_foreign_solution": "33e8f8379ca9ec254e599e219dc1e9c3037b82f5b77d82daa5ff9c59868c764e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
@@ -5641,7 +5643,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             "singleton_action_partitioned_solve": (
                 "admitted GridSearch request -> device-mapped kernel over the "
                 "action axis -> per-device contiguous run of whole C-order blocks, "
-                "block zero outside the scan, unowned and padded slots infeasible "
+                "every block inside the scan, unowned and padded slots infeasible "
                 "-> exact hard-max accumulator -> gather over the action axis -> "
                 "ascending-order exact hard-max merge -> VALUE-only compiled core"
             ),
@@ -6690,7 +6692,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
         },
     ),
     "src/lcm/model.py": (
-        "1d796f986817326e60a0b78f3c6a96644e7d5ef5601af129f0e8452ab214ac65",
+        "89ac9288a18a7e8857d9d6f3082686f9ce530f86f1622d3eaabc62b7ad97a11b",
         {
             "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -6703,7 +6705,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
             "Model._solve_compiled": "a604e0b9d37df95a39e556a6a98883c5d4c8303498fd51019d31b60ab169dabc",
             "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
             "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
-            "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
+            "Model._consume_foreign_solution": "33e8f8379ca9ec254e599e219dc1e9c3037b82f5b77d82daa5ff9c59868c764e",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
             "Model.simulate": "1d57c66bea61171cc622858cfe95be483fb4e36a57c0c1dfa76e3800a84cd639",
@@ -7854,8 +7856,8 @@ def allocation_reservation_mutation_specs(
 # The action-partitioned singleton solve is its own corridor. GridSearch selects
 # it only for an admitted request; the device-mapped kernel hands Q_and_F
 # exactly its declared arguments and the planner-bound width; every device
-# streams the contiguous run of whole blocks the layout assigns it, block zero
-# outside the scan as on the unpartitioned stream, with blocks it does not own
+# streams the contiguous run of whole blocks the layout assigns it, every block
+# inside the scan as on the unpartitioned stream, with blocks it does not own
 # and padded slots infeasible; the per-device hard-max accumulators are
 # gathered over the action axis and merged in ascending partition order with the
 # exact hard-max law. Shared stream helpers are pinned here too, at the digests
@@ -7884,7 +7886,7 @@ _ACTION_PARTITION_CONTRACTS = {
         },
     ),
     ACTION_STREAMING_SOURCE: (
-        "1d6f50bb41c017a1bc8200411ea6fc5ebadedf763beceab0b4608720b3c4fde1",
+        "18e320fbaa32997df10c7eafc3d19b22b919aa37669c7d31948a55124ba8e89d",
         {
             "build_partitioned_streaming_max_Q_over_a": "c5d535574a8f38951a58347fdb54875ad8904fb75ca883397ce392a687df5e38",
             "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
@@ -7895,7 +7897,7 @@ _ACTION_PARTITION_CONTRACTS = {
             "ActionPartitionLayout.block_range": "c306308ded5a8642519248ce4bd7f400c8ea13b25b06a3fe2c01c24c90f03845",
             "ActionPartitionLayout.action_interval": "dbaa877fae3466c4ea5af7c2657fe18be813c4487ed3a26e6cbb06b1fac17aba",
             "_PartitionedStreamingHardMax.__call__": "26e4d541e495cc023c1c1850682225cd9e74d08e6e0cbb1c0b29e7227e0c3b60",
-            "_PartitionedStreamingHardMax.local": "679866bf38deece50d7e7ecea0c41b653ab6c8bf656d6bf73c6c395f68e8c169",
+            "_PartitionedStreamingHardMax.local": "13cf5ff7e5add6629a2d33bfe02a0e3aed39b74280e335d2b69dafa3f6f2bf7a",
             "_evaluate_owned_block": "f95eb5df6591891562f8d2779dd24a879e5f6fd931f146888b46393b7f4e6366",
             "_validate_streaming_configuration": "aadcd9931b24e60ef8ecdac59f540163642ce656cc10c88e7d58eafa0c790210",
             "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
@@ -7903,7 +7905,8 @@ _ACTION_PARTITION_CONTRACTS = {
             "_evaluate_one_action": "4898f988e87d4d49195e08da2651e4dc9a7c2601e827f686460e71dfd95d1e89",
             "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
             "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
-            "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
+            "_block_shape": "4eff77f9f7201391522ebcddf61a94aa649619eea5f65417091fc1f749a33c29",
+            "_empty_reduction": "f4f0b658a78296fdf3699a0c03f287672b232c47e95b26092ad1276a4b9714e7",
             "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
             "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
         },
@@ -8014,24 +8017,20 @@ _ACTION_PARTITION_MUTATIONS = {
         "jnp.int32(0)",
         1,
     ),
-    "action_partition:block_zero_outside_scan_removed": (
+    "action_partition:scan_starts_at_block_zero": (
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        (
-            "_start_reduction(block=_evaluate_owned_block(block_index=zero, "
-            "first_block_index=first_block_index, "
-            "stop_block_index=stop_block_index, evaluate_block=evaluate_block))"
-        ),
-        "HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros(()))",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
         1,
     ),
-    "action_partition:block_zero_rescanned": (
+    "action_partition:scan_skips_first_owned_block": (
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        "jnp.maximum(first_block_index, 1)",
-        "first_block_index",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
         1,
     ),
     "action_partition:start_bound_off_by_one": (
@@ -9313,8 +9312,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     action_streaming_cases = {
         "streaming_blocks:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=1,
         ),
         "streaming_blocks:admit_padded_tail": _replace_nth(
@@ -9342,14 +9341,14 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_ev1:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=2,
         ),
         "streaming_collective_blocks:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=3,
         ),
         "streaming_collective_blocks:admit_padded_tail": replace_once(

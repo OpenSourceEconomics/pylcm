@@ -367,12 +367,10 @@ class _StreamingHardMax:
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
         )
-        first_block = evaluate_block(block_index=jnp.asarray(0, dtype=jnp.int32))
-        accumulator = _start_reduction(block=first_block)
-        accumulator = _scan_remaining_blocks(
-            accumulator=accumulator,
+        accumulator = _scan_blocks(
+            accumulator=_empty_reduction(evaluate_block=evaluate_block),
             evaluate_block=evaluate_block,
-            n_remaining=n_blocks - 1,
+            n_blocks=n_blocks,
         )
         return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
 
@@ -422,21 +420,12 @@ class _PartitionedStreamingHardMax:
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
         )
-        # Every participant evaluates block zero outside the scan and every
-        # other block inside it, exactly as the unpartitioned stream does, so
-        # each action's value comes from the same traced expression on either
-        # route. Block zero counts only for the participant owning it.
-        zero = jnp.int32(0)
-        accumulator = _start_reduction(
-            block=_evaluate_owned_block(
-                block_index=zero,
-                first_block_index=first_block_index,
-                stop_block_index=stop_block_index,
-                evaluate_block=evaluate_block,
-            )
-        )
-        # A block outside this participant's run is padding: every slot of it
-        # is infeasible, so an empty partition keeps the empty accumulator.
+        # Every participant evaluates each block inside the scan body, exactly
+        # as the unpartitioned stream does, so each action's value comes from
+        # the same traced expression on either route. The scan starts at the
+        # participant's first block and runs the longest run's length; a block
+        # past its own run is padding whose every slot is infeasible, so an
+        # empty partition keeps the empty accumulator.
         (accumulator, _), _history = jax.lax.scan(
             partial(
                 _scan_one_block,
@@ -447,7 +436,7 @@ class _PartitionedStreamingHardMax:
                     evaluate_block=evaluate_block,
                 ),
             ),
-            (accumulator, jnp.maximum(first_block_index, 1)),
+            (_empty_reduction(evaluate_block=evaluate_block), first_block_index),
             xs=None,
             length=layout.blocks_per_partition,
         )
@@ -502,24 +491,16 @@ class _StreamingEV1ExpectedMax:
                 dtype=jnp.int32,
             ),
         )
-        first_block_index = jnp.asarray(0, dtype=jnp.int32)
-        first_block = evaluate_block(block_index=first_block_index)
+        values = _block_shape(evaluate_block=evaluate_block)[0]
         accumulator = _initialize_ev1_reduction(
-            branch_value_template=jnp.zeros_like(first_block[0][..., 0]),
-            completed_value_template=jnp.zeros_like(first_block[0][0, 0]),
+            branch_value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype),
+            completed_value_template=jnp.zeros(values.shape[2:], dtype=values.dtype),
             reduction=reduction,
         )
-        accumulator = _add_ev1_block(
-            accumulator=accumulator,
-            block=first_block,
-            block_index=first_block_index,
-            blocks_per_branch_group=blocks_per_branch_group,
-            reduction=reduction,
-        )
-        accumulator = _scan_remaining_ev1_blocks(
+        accumulator = _scan_ev1_blocks(
             accumulator=accumulator,
             evaluate_block=evaluate_block,
-            n_remaining=n_blocks - 1,
+            n_blocks=n_blocks,
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         )
@@ -567,12 +548,15 @@ class _StreamingCollectiveHardMax:
             stakeholders=self.stakeholders,
             weights=self.weights,
         )
-        first_block = evaluate_block(block_index=jnp.asarray(0, dtype=jnp.int32))
-        accumulator = _start_collective_reduction(block=first_block)
-        accumulator = _scan_remaining_collective_blocks(
-            accumulator=accumulator,
+        stakeholder_values = _block_shape(evaluate_block=evaluate_block)[1]
+        accumulator = _scan_collective_blocks(
+            accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
+                stakeholder_template=jnp.zeros(
+                    stakeholder_values.shape[1:], dtype=stakeholder_values.dtype
+                )
+            ),
             evaluate_block=evaluate_block,
-            n_remaining=n_blocks - 1,
+            n_blocks=n_blocks,
         )
         return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
 
@@ -774,8 +758,27 @@ def _evaluate_one_action(
     return Q_and_F(**fixed_kwargs, **action_kwargs)
 
 
+def _block_shape(
+    *, evaluate_block: Callable[..., tuple[jax.Array, ...]]
+) -> tuple[jax.ShapeDtypeStruct, ...]:
+    """Return one block's output shapes and dtypes without staging the block.
+
+    Seeds an empty accumulator, so every block is evaluated in the scan body
+    and `Q_and_F` appears once in the staged program.
+    """
+    return jax.eval_shape(partial(evaluate_block, block_index=jnp.int32(0)))
+
+
+def _empty_reduction(*, evaluate_block: Callable[..., _Block]) -> HardMaxAccumulator:
+    """Create the empty hard-max accumulator for the blocks `evaluate_block` makes."""
+    values = _block_shape(evaluate_block=evaluate_block)[0]
+    return HARD_MAX_REDUCTION.initialize(
+        value_template=jnp.zeros(values.shape[1:], dtype=values.dtype)
+    )
+
+
 def _start_reduction(*, block: _Block) -> HardMaxAccumulator:
-    """Seed a hard-max reduction from the first evaluated block."""
+    """Seed a hard-max reduction from one evaluated block."""
     values, feasible, global_ids = block
     accumulator = HARD_MAX_REDUCTION.initialize(
         value_template=jnp.zeros_like(values[0])
@@ -788,18 +791,18 @@ def _start_reduction(*, block: _Block) -> HardMaxAccumulator:
     )
 
 
-def _scan_remaining_blocks(
+def _scan_blocks(
     *,
     accumulator: HardMaxAccumulator,
     evaluate_block: Callable[..., _Block],
-    n_remaining: int,
+    n_blocks: int,
 ) -> HardMaxAccumulator:
-    """Use a source-level scan whose returned history is the ``None`` pytree."""
+    """Scan every block in order; the returned history is the ``None`` pytree."""
     (accumulator, _), _history = jax.lax.scan(
         partial(_scan_one_block, evaluate_block=evaluate_block),
-        (accumulator, jnp.asarray(1, dtype=jnp.int32)),
+        (accumulator, jnp.asarray(0, dtype=jnp.int32)),
         xs=None,
-        length=n_remaining,
+        length=n_blocks,
     )
     return accumulator
 
@@ -920,15 +923,15 @@ def _keep_ev1_accumulator(
     return accumulator
 
 
-def _scan_remaining_ev1_blocks(
+def _scan_ev1_blocks(
     *,
     accumulator: _EV1ActionAccumulator,
     evaluate_block: Callable[..., _Block],
-    n_remaining: int,
+    n_blocks: int,
     blocks_per_branch_group: int,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Scan later vector blocks while keeping one branch group open."""
+    """Scan every vector block in order while keeping one branch group open."""
     (accumulator, _), _history = jax.lax.scan(
         partial(
             _scan_one_ev1_block,
@@ -936,9 +939,9 @@ def _scan_remaining_ev1_blocks(
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         ),
-        (accumulator, jnp.asarray(1, dtype=jnp.int32)),
+        (accumulator, jnp.asarray(0, dtype=jnp.int32)),
         xs=None,
-        length=n_remaining,
+        length=n_blocks,
     )
     return accumulator
 
@@ -999,7 +1002,7 @@ def _reduce_no_action(
 def _start_collective_reduction(
     *, block: _CollectiveBlock
 ) -> CollectiveHardMaxAccumulator:
-    """Seed a collective hard-max reduction from the first evaluated block."""
+    """Seed a collective hard-max reduction from one evaluated block."""
     objectives, stakeholder_values, feasible, global_ids = block
     accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
         stakeholder_template=jnp.zeros_like(stakeholder_values[0])
@@ -1013,18 +1016,18 @@ def _start_collective_reduction(
     )
 
 
-def _scan_remaining_collective_blocks(
+def _scan_collective_blocks(
     *,
     accumulator: CollectiveHardMaxAccumulator,
     evaluate_block: Callable[..., _CollectiveBlock],
-    n_remaining: int,
+    n_blocks: int,
 ) -> CollectiveHardMaxAccumulator:
-    """Scan remaining collective blocks without retaining a block history."""
+    """Scan every collective block in order without retaining a block history."""
     (accumulator, _), _history = jax.lax.scan(
         partial(_scan_one_collective_block, evaluate_block=evaluate_block),
-        (accumulator, jnp.asarray(1, dtype=jnp.int32)),
+        (accumulator, jnp.asarray(0, dtype=jnp.int32)),
         xs=None,
-        length=n_remaining,
+        length=n_blocks,
     )
     return accumulator
 
