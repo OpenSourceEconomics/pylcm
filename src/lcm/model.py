@@ -3597,7 +3597,7 @@ class Model:
             call_live = functools.partial(
                 _lookup_live_footprint,
                 allocations=allocations,
-                call_roots=(states, space, grids),
+                call_roots=(states, space.states, grids),
             )
             unit = SimulationUnitExecutor(
                 runtime=executor,
@@ -3650,7 +3650,7 @@ class Model:
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
                         allocations=allocations,
-                        call_roots=(states, space, grids, indices, value),
+                        call_roots=(states, space.states, grids, indices, value),
                     ),
                     budget_devices=unit.budget_devices,
                     budget_bytes=allocations.budget_bytes,
