@@ -65,7 +65,8 @@
   "coverage-solution-4",
   "coverage-solution-5",
   "coverage-solution-6",
-  "coverage-solution-7"
+  "coverage-solution-7",
+  "coverage-benchmarks"
  ],
  "general_shard_universe": [
   "tests/candidate_certificate/test_check_mutation_anchors.py",
