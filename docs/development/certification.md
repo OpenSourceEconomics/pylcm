@@ -233,8 +233,8 @@ Facts worth knowing before you touch it:
   lightest bin — a longest-processing-time partition whose result depends only on its
   inputs. Under `--dist loadfile` a whole file is one indivisible atom, so the largest
   file is a lower bound on its bin no matter how many bins there are.
-- **Guardrail budgets** (`tests/ci/test_ci_workloads_guardrails.py`): 24 minutes of
-  payload and 30 minutes total per job, and 30 seconds for an ordinary `notslow` test.
+- **Guardrail budgets** (`tests/ci/test_ci_workloads_guardrails.py`): 30 minutes of
+  payload and 40 minutes total per job, and 30 seconds for an ordinary `notslow` test.
   These are operating budgets, enforced only against files that have an observed weight.
 
 ### Registering a new test file

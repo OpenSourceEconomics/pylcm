@@ -3,6 +3,8 @@
 # ruff: noqa: SLF001
 
 import json
+import re
+import tomllib
 from io import BytesIO
 from pathlib import Path
 from urllib.error import URLError
@@ -267,10 +269,6 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
                         [6.0],
                         [],
                     ],
-                    ("bench_aca_baseline.AcaBaselineGpuPeakMem.track_gpu_peak_mem"): [
-                        [400.0],
-                        [],
-                    ],
                 }
             }
         ),
@@ -292,10 +290,6 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
                         [3.0],
                         [],
                     ],
-                    "bench_aca_baseline.AcaBaseline.track_peak_gpu_mem": [
-                        [200.0],
-                        [],
-                    ],
                 }
             }
         ),
@@ -311,9 +305,57 @@ def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path)
         "time_execution",
         "peakmem_execution",
         "track_compilation_time",
-        "track_gpu_peak_mem",
     }
     assert {row.ratio for row in rows} == {0.5}
+
+
+def test_comparison_omits_benchmarks_that_head_did_not_run(tmp_path: Path):
+    """A benchmark with a main result but none on HEAD gets no row and no alert."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.track_execution_time": [
+                        [2.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaselineDebugLog.track_execution_time": [
+                        [5.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.track_execution_time": [
+                        [3.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(base_file=base_file, head_file=head_file)
+
+    assert rows == [
+        pr_comment._BenchmarkRow(
+            class_name="AcaBaseline",
+            method_name="time_execution",
+            params="",
+            before_value="2.000 s",
+            after_value="3.000 s",
+            ratio=1.5,
+        )
+    ]
 
 
 def test_benchmark_report_labels_are_specific_to_verified_workloads(
@@ -590,10 +632,10 @@ def test_simulation_dispatch_units_preserve_raw_values_and_ratios(
         ),
         (
             (
-                "bench_aca_baseline.AcaBaselineGpuPeakMem."
+                "bench_mahler_yum.MahlerYumBudgetedGpuPeakMem."
                 "track_peak_gpu_mem_load_supplied_solution_simulate"
             ),
-            ("ACA (reduced)", "peak GPU mem: load saved solution + simulate"),
+            ("Mahler-Yum", "peak GPU mem: load saved solution + simulate"),
         ),
         (
             "bench_collective_household.ReferenceChainSolve.track_execution_time",
@@ -620,10 +662,6 @@ def test_display_sort_key_orders_families_then_execution_time_first() -> None:
     names = [
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
-        (
-            "bench_aca_baseline.AcaBaselineGpuPeakMem."
-            "track_peak_gpu_mem_automatic_solve_simulate"
-        ),
         "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem",
         "bench_aca_baseline.AcaBaseline.track_compilation_time",
         "bench_aca_baseline.AcaBaseline.track_execution_time",
@@ -633,10 +671,46 @@ def test_display_sort_key_orders_families_then_execution_time_first() -> None:
         "bench_aca_baseline.AcaBaseline.track_execution_time",
         "bench_aca_baseline.AcaBaseline.track_compilation_time",
         "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem",
-        (
-            "bench_aca_baseline.AcaBaselineGpuPeakMem."
-            "track_peak_gpu_mem_automatic_solve_simulate"
-        ),
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time",
         "bench_mahler_yum.MahlerYumBudgetedGpu.track_compilation_time",
     ]
+
+
+def _pixi_tasks() -> dict:
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    return tomllib.loads(pyproject.read_text(encoding="utf-8"))["tool"]["pixi"]["tasks"]
+
+
+@pytest.mark.parametrize(
+    ("benchmark_name", "selected"),
+    [
+        ("bench_aca_baseline.AcaBaseline.track_execution_time", True),
+        ("bench_aca_baseline.AcaBaseline.track_peak_cpu_mem", True),
+        ("bench_mahler_yum.MahlerYumBudgetedGpu.track_execution_time", True),
+        ("bench_aca_baseline.AcaBaselineDebugLog.track_execution_time", False),
+        ("bench_aca_baseline.AcaBaselineDebugLog.track_compilation_time", False),
+        ("bench_aca_baseline.AcaBaselineDebugLog.track_peak_cpu_mem", False),
+    ],
+)
+def test_pr_benchmark_run_skips_only_the_aca_debug_log_timing(
+    *, benchmark_name: str, selected: bool
+) -> None:
+    """The PR run's ASV selection, matched as ASV matches it, skips debug logging."""
+    (run_step, _) = _pixi_tasks()["asv-run-and-pr-comment"]["depends-on"]
+    assert run_step["task"] == "asv-run"
+    (bench_regex,) = run_step["args"]
+    assert (re.search(bench_regex, benchmark_name) is not None) is selected
+
+
+def test_main_benchmark_run_selects_every_benchmark() -> None:
+    """The main-branch run uses the default selection, which matches any name."""
+    tasks = _pixi_tasks()
+    assert tasks["asv-run-and-publish-main"]["depends-on"] == [
+        "asv-run",
+        "asv-publish",
+    ]
+    (bench_arg,) = tasks["asv-run"]["args"]
+    assert re.search(
+        bench_arg["default"],
+        "bench_aca_baseline.AcaBaselineDebugLog.track_execution_time",
+    )
