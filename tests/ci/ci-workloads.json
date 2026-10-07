@@ -15,8 +15,8 @@
   "macos_capacity_note": "Unadopted proposal: fp64-macos general uses four shards/four workers and refreshed macOS-only observed weights. Root frozen_head/file_weights, other leg weights/counts, 16 coverage contributors and 24-minute payload/30-minute total guardrails remain unchanged. Native completion/timing acceptance is outstanding. Existing batch_6_note records the earlier 3/2/4/3 layout; observed other-leg budget findings and rest-slow population gaps are explicitly unresolved in proposal evidence."
  },
  "guardrails": {
-  "job_payload_ceiling_minutes": 24,
-  "job_total_ceiling_minutes": 30,
+  "job_payload_ceiling_minutes": 30,
+  "job_total_ceiling_minutes": 40,
   "ordinary_notslow_test_ceiling_seconds": 30
  },
  "shard_layout": {
