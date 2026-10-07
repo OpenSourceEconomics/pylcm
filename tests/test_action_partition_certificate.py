@@ -34,6 +34,17 @@ def test_action_partition_controls_are_complete_and_disjoint() -> None:
         assert set(population).isdisjoint(generator(repo_root=root))
 
 
+def test_action_partition_expected_name_digest_matches_population() -> None:
+    """The self-test's pinned name digest is the digest of the live population."""
+    population = direct_flow.action_partition_mutation_specs(
+        repo_root=Path(__file__).parents[1]
+    )
+    assert (
+        hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
+        == direct_flow.EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256
+    )
+
+
 def test_direct_flow_names_the_action_partitioned_route() -> None:
     """The certificate states the partitioned route it proves."""
     result = direct_flow.verify_direct_candidate_flow(
