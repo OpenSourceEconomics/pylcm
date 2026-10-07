@@ -37,12 +37,13 @@ _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 class _RegimeId:
     alive: ScalarInt
     couple: ScalarInt
+    retired: ScalarInt
     dead: ScalarInt
 
 
-# Leave `alive` for one of the two terminal regimes, half and half.
+# Leave `alive` for one of the two terminal singleton regimes, half and half.
 _EXIT_LAW = {
-    "couple": StochasticTransition(func=lambda age: 0.5 * jnp.ones_like(age)),
+    "retired": StochasticTransition(func=lambda age: 0.5 * jnp.ones_like(age)),
     "dead": StochasticTransition(func=lambda age: 0.5 * jnp.ones_like(age)),
 }
 
@@ -72,7 +73,7 @@ def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
     """A law with no age schedule names its targets out of every non-final age."""
     model = _model(Transition(law=_EXIT_LAW))
     assert dict(model.graph.edges.simulate["alive"]) == {
-        "couple": frozenset({0, 1, 2}),
+        "retired": frozenset({0, 1, 2}),
         "dead": frozenset({0, 1, 2}),
     }
 
@@ -80,10 +81,10 @@ def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
 def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
     """Spelling out the derived destinations changes nothing."""
     model = _model(
-        Transition(targets={"couple": (0, 1, 2), "dead": (0, 1, 2)}, law=_EXIT_LAW)
+        Transition(targets={"retired": (0, 1, 2), "dead": (0, 1, 2)}, law=_EXIT_LAW)
     )
     assert dict(model.graph.edges.solve["alive"]) == {
-        "couple": frozenset({0, 1, 2}),
+        "retired": frozenset({0, 1, 2}),
         "dead": frozenset({0, 1, 2}),
     }
 
@@ -91,10 +92,10 @@ def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
 @pytest.mark.parametrize(
     "targets",
     [
-        pytest.param({"couple": (0, 1, 2), "dead": (0, 1)}, id="fewer-ages"),
-        pytest.param({"couple": (0, 1, 2)}, id="missing-target"),
+        pytest.param({"retired": (0, 1, 2), "dead": (0, 1)}, id="fewer-ages"),
+        pytest.param({"retired": (0, 1, 2)}, id="missing-target"),
         pytest.param(
-            {"couple": (0, 1, 2), "dead": (0, 1, 2), "alive": 0}, id="extra-target"
+            {"retired": (0, 1, 2), "dead": (0, 1, 2), "alive": 0}, id="extra-target"
         ),
     ],
 )
@@ -178,6 +179,9 @@ def _model(alive_edges: object) -> Model:
                         utilities={"f": _utility, "m": _utility}
                     )
                 },
+            ),
+            "retired": Regime(
+                states={"wealth": _WEALTH}, functions={"utility": _utility}
             ),
             "dead": Regime(states={"wealth": _WEALTH}, functions={"utility": _utility}),
         },
