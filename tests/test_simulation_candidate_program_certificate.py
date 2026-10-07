@@ -248,6 +248,11 @@ _PROFILED_HELPER_MUTATIONS = {
         "                        self.model_roots,",
         "                        (),",
     ),
+    "simulation_entry:entry_model_roots_omitted": (
+        "src/lcm/model.py",
+        "            model_roots=(\n                self.ages.values,",
+        "            model_roots=() and (\n                self.ages.values,",
+    ),
     "simulation_entry:preflight_owner_inventory_omitted": (
         "src/lcm/model.py",
         (

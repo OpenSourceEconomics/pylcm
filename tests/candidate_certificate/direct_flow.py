@@ -410,7 +410,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
-    FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
+    FOOTPRINT_SOURCE: "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "9d1e42c3e5e46b092d863cbdc29865a994161820591a3ff4087d8a0b9aa54a58",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
@@ -1009,6 +1009,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
             "Model.__init__": "ed2e3840f33946996360f8e2ec2b70ced75eb3e4b3eaaed7e7eb0ed32e79ffe5",
             "Model.simulate": "dfbf32901480696ebf13eebe597343ead34e85601ada28313dc97502d43e84e7",
+            "Model._open_entry_allocations": "a1290ef470627e4d6179bc1c11924964cd812a59d2056a8335c1c53f21ef4c32",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
             "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
             "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
@@ -4808,6 +4809,7 @@ _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
             "Model.__init__",
             "Model._runtime_regimes_for_shape",
             "Model.simulate",
+            "Model._open_entry_allocations",
             # Fixed caller owners flow through both private automatic-solve
             # boundaries without becoming numerical operands or cache keys.
             "Model._solve_from_flat_params",
@@ -5355,6 +5357,7 @@ _FINITE_BUDGET_CONTRACTS = _contracts(
             "_supports_unsharded_continuous_process",
             "Model.__init__",
             "Model.simulate",
+            "Model._open_entry_allocations",
         ),
     }
 )
@@ -7885,6 +7888,7 @@ _UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = _contracts(
             "Model._check_solution_result_structure",
             "Model._build_external_replay_readers",
             "Model.simulate",
+            "Model._open_entry_allocations",
             "Model._resolve_compile_batch_size",
         ),
         "src/_lcm/processes/grid_resolution.py": (

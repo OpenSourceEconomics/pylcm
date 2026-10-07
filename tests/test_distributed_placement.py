@@ -87,6 +87,10 @@ from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
 from tests.simulation._profile_comparison import assert_values_agree
+from tests.test_transition_checks import (
+    _health_probs_reading_effort,
+    _model_with_function_reading_health_probs,
+)
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -1868,3 +1872,55 @@ def _uniform_placement_model(
         initial_nodes={0: "alive"},
         edges={"alive": {"done": 0}},
     )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(("execution_device", "admitted"), [(0, (0,)), (1, (0, 1))])
+def test_solve_admission_covers_code_owners_held_off_the_execution_device(
+    *,
+    execution_device: int,
+    admitted: tuple[int, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codes a law keeps on device 0 are admitted when the solve runs elsewhere.
+
+    The model is built under device 0, so the two-code int32 array its stochastic
+    law keeps for validation lives there. A budgeted solve on device 1 still
+    decides every candidate on device 0 as well, charging at least those 8 bytes.
+    """
+    with jax.default_device(jax.devices()[0]):
+        model = _model_with_function_reading_health_probs(
+            next_health_func=_health_probs_reading_effort,
+            execution_config=ExecutionConfig(
+                devices=(execution_device,), device_memory_bytes=2**28
+            ),
+        )
+    codes = tuple(
+        code
+        for regime in model._regimes.values()
+        for code in regime.derived_categorical_code_arrays
+    )
+    assert [(code.nbytes, code.devices()) for code in codes] == [
+        (8, {jax.devices()[0]})
+    ]
+    captured: list[Mapping[Any, ResidentInventory]] = []
+    original = backward_induction._resident_inventory_by_triple
+
+    def record(**kwargs: Any) -> Mapping[Any, ResidentInventory]:
+        inventories = original(**kwargs)
+        captured.append(inventories)
+        return inventories
+
+    monkeypatch.setattr(backward_induction, "_resident_inventory_by_triple", record)
+    model.solve(params={"discount_factor": 0.95}, log_level="off")
+
+    inventories = [inventory for mapping in captured for inventory in mapping.values()]
+    assert inventories
+    assert {
+        (
+            inventory.admission_device_ids,
+            inventory.fixed_bytes.get(0, 0) >= 8,
+            inventory.resident_bytes(consumes=()) >= inventory.fixed_bytes[0],
+        )
+        for inventory in inventories
+    } == {(admitted, True, True)}
