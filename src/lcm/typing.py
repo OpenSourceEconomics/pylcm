@@ -63,6 +63,7 @@ type LoopIndex = int | Int[Scalar, ""]
 # String-label aliases. Runtime-equivalent to `str`; they exist purely to make
 # signatures self-documenting about which kind of name a string slot carries.
 type RegimeName = str
+type Phase = Literal["solve", "simulate"]
 type StateName = str
 type ActionName = str
 type StateOrActionName = str

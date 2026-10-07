@@ -296,6 +296,7 @@ from lcm.typing import (
     FloatND,
     InitialNodes,
     IntND,
+    Phase,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -1003,28 +1004,16 @@ class Model:
         return self._edges
 
     @property
-    def declared_laws(self) -> Mapping[RegimeName, tuple[TransitionLaw, ...]]:
-        """Each `Transition` source's law exactly as declared, one per phase.
+    def declared_laws(self) -> Mapping[Phase, Mapping[RegimeName, TransitionLaw]]:
+        """Each `Transition` source's law exactly as declared, by phase and source.
 
-        A source maps to its `Transition.law`:
+        - Edges declared for both phases give both phases the same laws.
+        - `Phased` edges give each phase the laws that phase declares.
 
-        - once, under edges declared for both phases;
-        - its solve law, then its simulate law, under `Phased` edges; a phase
-          that declares the source as a plain mapping contributes none.
-
-        A source declared only as a plain `{target: selector}` mapping declares
-        no law and has no entry. `model.graph.laws` holds the law as bound to the
-        graph.
+        A source without a `Transition` in a phase is absent from that phase.
+        `model.graph.laws` holds the law as bound to the graph.
         """
-        # `bind_edge_laws` accepted every declared law as a declaration form.
-        return MappingProxyType(
-            {
-                source: tuple(
-                    cast("TransitionLaw", transition.law) for transition in transitions
-                )
-                for source, transitions in self._declared_transitions.items()
-            }
-        )
+        raise NotImplementedError
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
