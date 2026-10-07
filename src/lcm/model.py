@@ -122,8 +122,10 @@ from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
     measure_buffer_footprint,
     resolve_budget_devices,
+    union_buffer_footprints,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
@@ -1718,6 +1720,46 @@ class Model:
                 )
             return self._simulate_runtime_regimes[compile_batch_size]
 
+    def _open_entry_allocations(
+        self, *, params: object, inputs: object, solution: object | None
+    ) -> SimulationEntryAllocations | None:
+        """Own a budgeted public call's original inputs, solution and model roots.
+
+        Refuses an already-infeasible existing residency before any conversion.
+        Without a budget, returns `None` and the eager path is unchanged.
+        """
+        entry_inputs = capture_simulation_entry_inputs(
+            execution=self._execution,
+            params=params,
+            initial_conditions=inputs,
+            solution=solution,
+        )
+        if entry_inputs is None:
+            return None
+        return SimulationEntryAllocations(
+            operations=self._simulate_entry_operations,
+            original_inputs=entry_inputs,
+            solution=solution,
+            model_roots=(
+                self.ages.values,  # noqa: PD011
+                self.regime_names_to_ids,
+                tuple(
+                    (
+                        regime.resolved_fixed_params,
+                        regime.solution.resolved_fixed_params,
+                        regime.solution._base_state_action_space.states,  # noqa: SLF001
+                        regime.solution._base_state_action_space.actions,  # noqa: SLF001
+                        regime.derived_categorical_code_arrays,
+                    )
+                    for regime in self._regimes.values()
+                ),
+            ),
+            devices=placed_devices_for_ids(
+                submesh_device_ids=(), visible_device_ids=self._execution.device_ids
+            ),
+            budget_bytes=cast("int", self._execution.device_memory_bytes),
+        )
+
     def _resolve_solution_result(
         self,
         *,
@@ -2955,39 +2997,8 @@ class Model:
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
                 )
-                entry_inputs = capture_simulation_entry_inputs(
-                    execution=self._execution,
-                    params=params,
-                    initial_conditions=initial_conditions,
-                    solution=solution,
-                )
-                entry_allocations = (
-                    None
-                    if entry_inputs is None
-                    else SimulationEntryAllocations(
-                        operations=self._simulate_entry_operations,
-                        original_inputs=entry_inputs,
-                        solution=solution,
-                        model_roots=(
-                            self.ages.values,  # noqa: PD011
-                            self.regime_names_to_ids,
-                            tuple(
-                                (
-                                    regime.resolved_fixed_params,
-                                    regime.solution.resolved_fixed_params,
-                                    regime.solution._base_state_action_space.states,  # noqa: SLF001
-                                    regime.solution._base_state_action_space.actions,  # noqa: SLF001
-                                    regime.derived_categorical_code_arrays,
-                                )
-                                for regime in self._regimes.values()
-                            ),
-                        ),
-                        devices=placed_devices_for_ids(
-                            submesh_device_ids=(),
-                            visible_device_ids=self._execution.device_ids,
-                        ),
-                        budget_bytes=cast("int", self._execution.device_memory_bytes),
-                    )
+                entry_allocations = self._open_entry_allocations(
+                    params=params, inputs=initial_conditions, solution=solution
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3468,10 +3479,63 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        flat_params = self._process_params(params)
-        V_arrs, sim_policies, _, replay_readers = self._resolve_solution_result(
-            solution=solution, flat_params=flat_params
+        allocations = self._open_entry_allocations(
+            params=params, inputs=(states, action_grids), solution=solution
         )
+        try:
+            return self._lookup_policy(
+                params=params,
+                solution=solution,
+                period=period,
+                regime_name=regime_name,
+                states=states,
+                action_grids=action_grids,
+                allocations=allocations,
+            )
+        finally:
+            if allocations is not None:
+                allocations.close()
+
+    def _lookup_policy(
+        self,
+        *,
+        params: UserParams,
+        solution: _SolutionResultBoundary,
+        period: int,
+        regime_name: RegimeName,
+        states: Mapping[StateName, jax.Array],
+        action_grids: Mapping[ActionName, jax.Array] | None,
+        allocations: SimulationEntryAllocations | None,
+    ) -> PolicyLookup:
+        """Run a validated lookup under the call's entry owner, if budgeted.
+
+        A budgeted call admits parameter conversion, process grids, solution
+        materialization, the decision program and action decoding against the
+        original inputs, every retained owner of `solution` and the call's own
+        arrays.
+        """
+        regime = self._regimes[regime_name]
+        flat_params = (
+            self._process_params(params)
+            if allocations is None
+            else self._process_params(params, array_writer=allocations)
+        )
+        resolver = None if allocations is None else allocations.process_grid_resolver
+        if resolver is not None:
+            for name, each in self._regimes.items():
+                each.solution.resolve_process_grids(
+                    regime_params=flat_params[name], process_grid_resolver=resolver
+                )
+            resolver.seal()
+        resolved = self._resolve_solution_result(
+            solution=solution,
+            flat_params=flat_params,
+            entry_allocations=allocations,
+            process_grid_resolver=resolver,
+        )
+        if allocations is not None:
+            allocations.update_solution(solution=solution, resolved_inputs=resolved)
+        V_arrs, sim_policies, _, replay_readers = resolved
         if (
             sim_policies.get(period, {}).get(regime_name) is not None
             or replay_readers.get(period, {}).get(regime_name) is not None
@@ -3482,7 +3546,9 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
         base = _build_base_state_action_spaces(
-            regimes=self._regimes, flat_params=flat_params, process_grid_resolver=None
+            regimes=self._regimes,
+            flat_params=flat_params,
+            process_grid_resolver=resolver,
         )[regime_name]
         _fail_if_off_grid(
             kind="state",
@@ -3527,18 +3593,21 @@ class Model:
         )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
-        if (
-            isinstance(executor, SimulationRuntime)
-            and executor.execution.device_memory_bytes is not None
-        ):
-            live = measure_buffer_footprint(tree=(V_arrs, flat_params, states, grids))
-            executor = SimulationUnitExecutor(
+        unit = None
+        if allocations is not None and isinstance(executor, SimulationRuntime):
+            call_live = functools.partial(
+                _lookup_live_footprint,
+                allocations=allocations,
+                call_roots=(states, space.states, grids),
+            )
+            unit = SimulationUnitExecutor(
                 runtime=executor,
-                live_footprint=lambda: live,
+                live_footprint=call_live,
                 budget_devices=resolve_budget_devices(
-                    execution_devices=executor.subject_devices, live=live
+                    execution_devices=executor.subject_devices, live=call_live()
                 ),
             )
+            executor = unit
         indices, value = cast(
             "tuple[IntND, FloatND]",
             executor.dispatch(
@@ -3566,13 +3635,31 @@ class Model:
                 ),
             ),
         )
-        return PolicyLookup(
-            actions=_lookup_values_from_indices(
-                flat_indices=indices,
-                grids=MappingProxyType({n: grids[n] for n in space.actions}),
-            ),
-            value=value,
-        )
+        lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
+        if unit is None or allocations is None:
+            actions = _lookup_values_from_indices(
+                flat_indices=indices, grids=lookup_grids
+            )
+        else:
+            actions = cast(
+                "MappingProxyType[ActionName, FloatND | IntND]",
+                allocations.operations.dispatch(
+                    function=_lookup_values_from_indices,
+                    arguments={"flat_indices": indices, "grids": lookup_grids},
+                    subject_arg_names=("flat_indices",) if indices.ndim else (),
+                    devices=unit.runtime.subject_devices,
+                    live_footprint=functools.partial(
+                        _lookup_live_footprint,
+                        allocations=allocations,
+                        call_roots=(states, space.states, grids, indices, value),
+                    ),
+                    budget_devices=unit.budget_devices,
+                    budget_bytes=allocations.budget_bytes,
+                ),
+            )
+            jax.block_until_ready(actions)
+            unit.close()
+        return PolicyLookup(actions=actions, value=value)
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
@@ -4260,3 +4347,12 @@ def _fail_if_a_sharded_state_is_pruned(
             "devices. Drop the name, or make some regime use the state."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _lookup_live_footprint(
+    *, allocations: SimulationEntryAllocations, call_roots: object
+) -> DeviceBufferFootprint:
+    """Union the entry owner's current inventory with a lookup's call-local arrays."""
+    return union_buffer_footprints(
+        footprints=(allocations.snapshot(), measure_buffer_footprint(tree=call_roots))
+    )
