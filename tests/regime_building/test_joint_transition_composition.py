@@ -126,7 +126,6 @@ def _helper_params() -> UserParams:
     return {
         "source": {
             "target": {
-                "next_regime": {},
                 "match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_income": {},
@@ -508,7 +507,6 @@ def test_callable_phased_support_keeps_one_static_schema() -> None:
             params={
                 "source": {
                     "target": {
-                        "next_regime": {},
                         "match": {"support": {}, "probabilities": {}},
                         "next_wealth": {},
                     },

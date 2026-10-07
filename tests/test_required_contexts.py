@@ -555,7 +555,7 @@ def test_conflicting_schemas_of_one_required_parameter_fail() -> None:
 def test_a_schema_conflict_in_an_unrequired_case_is_not_required() -> None:
     """With only the late case required, `rate` has the late case's schema."""
     template = _two_schema_model({55: "working"}).get_params_template()
-    assert template["working"]["working"]["next_regime"] == {"rate": "ScalarInt"}
+    assert template["edges"]["working"]["working"] == {"rate": "ScalarInt"}
 
 
 @categorical(ordered=False)

@@ -75,7 +75,6 @@ def _solve_with_geometric_certainty_equivalent():
         "alive": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "next_regime": {"low": {}, "high": {}},
             "certainty_equivalent": {"risk_aversion": 1.0},
         },
         "low": {"utility": {}},

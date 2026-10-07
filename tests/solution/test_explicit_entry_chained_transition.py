@@ -63,7 +63,6 @@ PARAMS = {
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": 2.0},
         "target": {
-            "next_regime": {},
             "next_shock": {},
             "next_other": {},
         },

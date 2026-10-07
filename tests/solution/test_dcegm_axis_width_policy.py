@@ -219,11 +219,9 @@ def _captured_widths(
     model = _model(execution_config=execution_config)
     model.solve(
         params={
-            "working": {
-                "koopmans_aggregator": {"discount_factor": 0.95},
-                "final_age_alive": 50.0,
-            },
+            "working": {"koopmans_aggregator": {"discount_factor": 0.95}},
             "dead": {},
+            "edges": {"working": {"final_age_alive": 50.0}},
         },
         log_level="off",
     )

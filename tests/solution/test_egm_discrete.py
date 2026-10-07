@@ -336,10 +336,11 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     # The granular transition replaces the age-based one, so its param goes
     # and the per-cell survival rate (set to NaN) arrives.
     del params["final_age_alive"]
-    params["retirement"] = {
-        **params.get("retirement", {}),
-        "retirement": {"next_regime": {"survival_rate": float("nan")}},
-        "dead": {"next_regime": {"survival_rate": float("nan")}},
+    params["edges"] = {
+        "retirement": {
+            "retirement": {"survival_rate": float("nan")},
+            "dead": {"survival_rate": float("nan")},
+        }
     }
 
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):

@@ -50,12 +50,14 @@ from collections.abc import Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
@@ -237,12 +239,12 @@ def _same_period_mappings(*, regimes, flat_params, solution):
 # source's parameter; the target's identically named one exists only to make the
 # target-bound misbinding SILENT rather than a crash (both halves are asserted below).
 #
-# An edge callable's parameters are qualified by the edge's target regime and by
-# the callable within it (`<target>__<entry>__<param>`), which is the name the
-# source's params template emits and the name both the fold and the simulate
-# evaluator declare. The TARGET's competing entry is spelled identically here so
-# the contest stays a contest: two namespaces, one qname, different values.
-_SHIFT_QNAME = "target__gate_ref_ref_v_x__shift"
+# An edge callable's parameter is keyed by its declaration path below
+# `params["edges"]["src"]` (target, `gate_references`, reference, projected state,
+# parameter), the name both the fold and the simulate evaluator declare. The
+# TARGET's competing entry is spelled identically here so the contest stays a
+# contest: two namespaces, one qname, different values.
+_SHIFT_QNAME = "target__gate_references__ref_v__x__shift"
 _SRC_SHIFT = 0.1
 _TARGET_SHIFT = 0.9
 
@@ -335,14 +337,14 @@ def _shift_flat_params(*, target_declares_shift: bool = True):
     return MappingProxyType(
         {
             "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _SHIFT_QNAME: jnp.asarray(_SRC_SHIFT),
-                }
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "target": MappingProxyType(target_params),
             "refregime": MappingProxyType({}),
             "fallback": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {"src": MappingProxyType({_SHIFT_QNAME: jnp.asarray(_SRC_SHIFT)})}
+            ),
         }
     )
 
@@ -359,7 +361,8 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     from the target's namespace (replayed by feeding that value into the leaf)
     CLOSES the gate, binding it from the source's OPENS it,
     and the two differ. The published provenance says SOURCE — matching the
-    solve-side fold, which bound this same argument from `flat_params["src"]`.
+    solve-side fold, which bound this same argument from
+    `flat_params["edges"]["src"]`.
     """
     flat_params = _shift_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
@@ -382,7 +385,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
 
     # The fixture is a genuine counterexample only if the two namespaces
     # disagree about the contested qname.
-    assert float(flat_params["src"][_SHIFT_QNAME]) != float(
+    assert float(flat_params["edges"]["src"][_SHIFT_QNAME]) != float(
         flat_params["target"][_SHIFT_QNAME]
     )
 
@@ -542,11 +545,12 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
 
 # The fallback projector must project the coordinate the FOLD projected.
 
-# The leg fallback's projection parameter, qualified by the edge's target regime
-# and by the leg — which the params template and both sides of the solve/simulate
-# seam name by the regime the leg falls back to. The target's competing entry is
-# spelled identically so the two namespaces still contest one qname.
-_PROJ_SHIFT_QNAME = "target__leg_fallback_fallback_z__shift"
+# The route fallback's projection parameter, keyed by its declaration path below
+# `params["edges"]["src"]` (target, `routes`, route, `fallback`, projected state,
+# parameter), the name both sides of the solve/simulate seam read. The target's
+# competing entry is spelled identically so the two namespaces still contest one
+# qname.
+_PROJ_SHIFT_QNAME = "target__routes__only__fallback__z__shift"
 _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
@@ -635,9 +639,13 @@ def _projector_flat_params():
     return MappingProxyType(
         {
             "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
+            "edges": MappingProxyType(
                 {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_SRC_SHIFT),
+                    "src": MappingProxyType(
+                        {_PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_SRC_SHIFT)}
+                    )
                 }
             ),
             "target": MappingProxyType(
@@ -665,7 +673,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
-    assert float(flat_params["src"][_PROJ_SHIFT_QNAME]) != float(
+    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(
         flat_params["target"][_PROJ_SHIFT_QNAME]
     )
 
@@ -729,7 +737,9 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
     supplied = {
         **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
-        **flat_params["src"],
+        **cast(
+            "Mapping[str, Any]", regime_kernel_params(flat_params, regime_name="src")
+        ),
         "period": jnp.int32(1),
         "age": jnp.asarray(_AGES.period_to_age(1)),
     }
@@ -2732,16 +2742,24 @@ def test_source_param_near_engine_name_still_solves():
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    # The gate declares it, so it is an edge parameter and carries
-                    # the edge-qualified spelling; the near-miss the control is
-                    # about is in the name the GATE reads.
-                    "target__gate__same_period_regime_to_params_user": jnp.asarray(0.1),
-                }
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
+            # The gate declares it, so it is an edge parameter at its declaration
+            # path; the near-miss the control is about is in the name the GATE
+            # reads.
+            "edges": MappingProxyType(
+                {
+                    "src": MappingProxyType(
+                        {
+                            "target__gate__same_period_regime_to_params_user": (
+                                jnp.asarray(0.1)
+                            )
+                        }
+                    )
+                }
+            ),
         }
     )
 

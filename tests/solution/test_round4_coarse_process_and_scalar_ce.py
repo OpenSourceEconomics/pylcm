@@ -134,7 +134,6 @@ def _solve_coarse_into_process_only_target(
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}, "shock": _process_params(process)},
     }
@@ -223,7 +222,6 @@ def _solve_with_entry_law(level: float):
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }

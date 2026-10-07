@@ -431,7 +431,6 @@ def _bdy_params() -> UserParams:
     return {
         "single": {
             "couple": {
-                "next_regime": {},
                 "partner_match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_ybar_p": {},

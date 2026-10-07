@@ -129,8 +129,8 @@ def _build_model(
         "discount_factor": 0.95,
         "alive": {
             "consumption": {"points": consumption_points},
-            "next_regime": {"last_alive_age": last_alive_age},
         },
+        "edges": {"alive": {"last_alive_age": last_alive_age}},
     }
     return model, params
 
@@ -399,8 +399,8 @@ def _build_alive_dead_model(
         "alive": {
             "utility": {"consumption_weight": cw_arr},
             "consumption": {"points": jnp.linspace(0.5, 5.0, 5)},
-            "next_regime": {"last_alive_age": last_alive_age},
         },
+        "edges": {"alive": {"last_alive_age": last_alive_age}},
         "dead": {
             "utility": {
                 "bequest_shifter": 100.0,
@@ -548,8 +548,8 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         "discount_factor": 0.95,
         "alive": {
             "wealth": {"points": jnp.linspace(1.0, 10.0, 4)},
-            "next_regime": {"last_alive_age": last_alive_age},
         },
+        "edges": {"alive": {"last_alive_age": last_alive_age}},
     }
     initial_conditions = {
         "age": jnp.array([0.0, 0.0, 0.0]),

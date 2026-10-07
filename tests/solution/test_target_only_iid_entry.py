@@ -355,7 +355,6 @@ def test_the_entry_law_decides_the_action() -> None:
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
                 "next_wealth": {},
-                "next_regime": {},
             },
             "stay": {"utility": {}},
             "enter": {"utility": {}},

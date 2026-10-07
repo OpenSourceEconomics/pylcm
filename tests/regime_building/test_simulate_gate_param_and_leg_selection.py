@@ -124,12 +124,12 @@ _SOURCE_POINTS = (0.0, 10.0)
 #     coordinate 0.06 -> V = 1.12 < 2.0 -> gate CLOSED (misroute).
 _GATE_THRESHOLD = 2.0
 
-# The name the gate's own parameter carries in `flat_params["src"]`: an edge
-# callable's parameters are qualified by the edge's target regime and by the
-# callable within it (`<target>__<entry>__<param>`). The source's `x__points`
-# below is a runtime-grid helper of the source ITSELF, not an edge entry, so it
-# keeps its bare name — which is what leaves it collidable with the target's, the
-# collision this fixture is built on.
+# The name the gate's own parameter carries in `flat_params["edges"]["src"]`:
+# its declaration path below `params["edges"]["src"]` (target, `gate`,
+# parameter). The source's `x__points` below is a runtime-grid helper of the
+# source ITSELF, not an edge entry, so it keeps its bare name in
+# `flat_params["src"]` — which is what leaves it collidable with the target's,
+# the collision this fixture is built on.
 _GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
 
 
@@ -232,7 +232,6 @@ def _solve_f2_fixture():
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _GATE_THRESHOLD_QNAME: jnp.asarray(_GATE_THRESHOLD),
                     # The collision: the SOURCE's own `x` grid points, named
                     # exactly like the target's.
                     "x__points": jnp.asarray(_SOURCE_POINTS),
@@ -240,6 +239,13 @@ def _solve_f2_fixture():
             ),
             "target": MappingProxyType({"x__points": jnp.asarray(_TARGET_POINTS)}),
             "fallback": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {
+                    "src": MappingProxyType(
+                        {_GATE_THRESHOLD_QNAME: jnp.asarray(_GATE_THRESHOLD)}
+                    )
+                }
+            ),
         }
     )
     _bi_result = solve(
