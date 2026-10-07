@@ -88,15 +88,18 @@ class RepinOutcome:
     """Messages naming pins this tool refuses to touch."""
 
 
-def collect_pins(*, repo_root: Path) -> tuple[CorridorPin, ...]:
+def collect_pins(*, tree: ast.Module, module: ModuleType) -> tuple[CorridorPin, ...]:
     """Return every corridor pin in the store, attributed to its source.
 
     The store is `{source: (surface or None, {qualname: digest})}`; the source key
     is a module-level `*_SOURCE` constant, resolved against the loaded module
     rather than guessed.
+
+    Args:
+        tree: The parsed `direct_flow.py`.
+        module: The same file, loaded.
+
     """
-    tree = ast.parse((repo_root / DIRECT_FLOW_PATH).read_text(encoding="utf-8"))
-    module = _load_direct_flow(root=repo_root)
     store = _store(tree)
     pins: list[CorridorPin] = []
     for key_node, value_node in zip(store.keys, store.values, strict=True):
@@ -124,14 +127,23 @@ def collect_pins(*, repo_root: Path) -> tuple[CorridorPin, ...]:
 
 
 def evaluate(*, repo_root: Path, changed_sources: frozenset[str]) -> RepinOutcome:
-    """Recompute every pin and split the drift into in-scope and out-of-scope."""
+    """Recompute every pin and split the drift into in-scope and out-of-scope.
+
+    `direct_flow.py` is read once per evaluation, so the pins and the helpers
+    that recompute them come from one snapshot of the file.
+    """
     module = _load_direct_flow(root=repo_root)
+    direct_flow_tree = ast.parse(
+        (repo_root / DIRECT_FLOW_PATH).read_text(encoding="utf-8")
+    )
     trees: dict[str, ast.Module] = {}
     drifted: list[tuple[CorridorPin, str]] = []
     foreign: list[tuple[CorridorPin, str]] = []
     ambiguous: list[str] = []
 
-    for pin, conflicting in _distinct_pins(collect_pins(repo_root=repo_root)):
+    for pin, conflicting in _distinct_pins(
+        collect_pins(tree=direct_flow_tree, module=module)
+    ):
         if conflicting:
             ambiguous.append(
                 f"{pin.source}::{pin.name}: pinned to {len(conflicting)} different "
