@@ -45,6 +45,7 @@ values for the contested name (`_SRC_SHIFT` != `_TARGET_SHIFT`, `_REF_POINTS`
 != `_SRC_POINTS`) and asserts the disagreement itself.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from inspect import signature
@@ -61,7 +62,7 @@ from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
     ResolvedProjectedRegimeValue,
-    _reached_target_param_leaves,
+    _fence_edge_consumer,
     _reject_gate_operand_state_name_collision,
 )
 from _lcm.regime_building.processing import process_regimes
@@ -1399,10 +1400,9 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     assert _ref_value(_SINGLE_POINTS) <= 5.0
 
 
-# A param introduced by the TARGET regime's OWN functions, read by a
-# source-declared gate, would be mis-owned as source (and collapse with a
-# same-named source param). Origin-preserving edge compilation is deferred, so
-# the builder FENCES this topology instead of silently misbinding it.
+# A gate or projection that names a TARGET regime function would have that
+# function's own parameters bound from the source's namespace. Any argument
+# naming a target-DAG node is refused at construction, whatever the node reads.
 _HELPER_TARGET_SCALE = 0.9
 
 
@@ -1410,10 +1410,7 @@ def _target_scaled_x(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
     """A helper declared in the TARGET regime's functions.
 
     `target_scale` is a parameter the TARGET regime binds from
-    `flat_params[target]` — NOT a parameter the source edge declares. The current
-    collective-edge provenance binds every non-injected gate argument from
-    `flat_params[source]`, so this leaf would be evaluated from the wrong
-    namespace; the builder must reject the topology rather than misbind it.
+    `flat_params[target]` — NOT a parameter the source edge declares.
     """
     return x * target_scale
 
@@ -1467,9 +1464,8 @@ def _make_target_helper_regimes() -> _Spec:
 
 
 def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
-    """Building an edge whose gate reads a target-regime function
-    with a free dynamic parameter must raise, rather than silently binding that
-    parameter from the source namespace."""
+    """A gate naming a target-regime function is refused at construction, and the
+    message names that function, so its parameter is never bound from the source."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -1483,7 +1479,11 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"target_scale.*introduced by the TARGET regime's own functions",
+        match=(
+            r"get_edge_fold \(solve-side gate\): the edge to regime 'target' "
+            r"declares gate/projection argument\(s\) \['target_scaled_x'\] that "
+            r"name the TARGET regime's own function"
+        ),
     ):
         _solve_fixture(spec=_make_target_helper_regimes(), flat_params=flat_params)
 
@@ -1577,13 +1577,11 @@ def _make_gate_ref_target_helper_regimes() -> _Spec:
 
 
 def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
-    """A gate-ref projection reaching a target helper's param must raise.
+    """A gate-ref projection naming a target helper is refused at construction.
 
-    A fence that inspects only the concatenated gate predicate misses this: a
-    gate-ref reader is compiled separately (`_build_same_period_ref_reader`), and
-    classifying its args source-owned binds the target-owned `target_scale` from
-    the source in both the solve fold and the simulate gate. Construction raises
-    instead of building silently.
+    The gate-ref reader is compiled apart from the gate predicate, and binding its
+    args from the source would read the target-owned `target_scale` from the
+    source in both the solve fold and the simulate gate.
     """
     flat_params = MappingProxyType(
         {
@@ -1599,69 +1597,257 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"target_scale.*introduced by the TARGET regime's own functions",
+        match=(
+            r"get_edge_fold \(solve-side gate-ref 'scaled_ref' projection\): the "
+            r"edge to regime 'target' declares gate/projection argument\(s\) "
+            r"\['target_scaled_x'\] that name the TARGET regime's own function"
+        ),
     ):
         _solve_fixture(
             spec=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
         )
 
 
-# The fence must be ancestry-aware — it must not reject a valid direct source
-# param merely because an UNRELATED target helper reuses the name. This is a
-# property of the leaf-set computation itself, so it is pinned as a unit test on
-# `_reached_target_param_leaves` (a full-solve fixture would instead exercise
-# pylcm's function-param qualification `helper__param`, which cannot collide with
-# a bare source qname and so cannot reproduce the finding at all).
-def _reached_helper(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
-    """A target node the consumer DOES reach — contributes `target_scale`."""
-    return x * target_scale
+def _make_leg_fallback_target_helper_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=_gate_uses_v_target,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _project_through_target_helper},
+                                )
+                            )
+                        },
+                    )
+                }
+            }
+        ),
+    )
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def _unrelated_helper(*, y: ContinuousState, shift: FloatND) -> FloatND:
-    """A target node the consumer does NOT reach — its `shift` must stay clean."""
-    return y * shift
+def test_leg_fallback_projection_naming_a_target_helper_is_rejected():
+    """A leg-fallback projection naming a target helper is refused at construction.
 
-
-def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
-    """The fence returns only the target params a consumer REACHES.
-
-    Unioning the free args of every target-DAG function and rejecting on a bare
-    name match would reject a gate declaring `shift` directly, merely because an
-    unrelated target helper also has a `shift`. The ancestry-aware form walks the
-    consumer's own closure: a gate that
-    reaches `reached_helper` (hence `target_scale`) but declares `shift` as its
-    OWN source param yields exactly `{target_scale}` — never `shift`.
+    The projection would otherwise evaluate the helper's `target_scale` from the
+    source's namespace when it writes the routed row's fallback state.
     """
-    dag_pool = {
-        "reached_helper": _reached_helper,
-        "unrelated_helper": _unrelated_helper,
-    }
-    state_names = frozenset({"x", "y"})
-
-    # A gate reaching `reached_helper` and declaring `shift` directly.
-    reached = _reached_target_param_leaves(
-        dag_pool=dag_pool,
-        seed_args=("V_target", "reached_helper", "shift"),
-        state_names=state_names,
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
+            "target": MappingProxyType(
+                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
+            ),
+            "fallback": MappingProxyType({}),
+        }
     )
-    assert reached == frozenset({"target_scale"})
-    assert "shift" not in reached  # the unrelated helper's param is NOT contested
-
-    # A gate declaring only `shift` directly reaches no target node at all.
-    assert (
-        _reached_target_param_leaves(
-            dag_pool=dag_pool, seed_args=("V_target", "shift"), state_names=state_names
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"get_edge_fold \(solve-side leg fallback projection\): the edge to "
+            r"regime 'target' declares gate/projection argument\(s\) "
+            r"\['target_scaled_x'\] that name the TARGET regime's own function"
+        ),
+    ):
+        _solve_fixture(
+            spec=_make_leg_fallback_target_helper_regimes(), flat_params=flat_params
         )
-        == frozenset()
+
+
+# The edge-consumer fence on a hand-checked target DAG: a chain
+# `wage -> labor_income -> net_income`, a diamond joining `net_income` and
+# `transfers` in `resources`, and a helper no consumer below names.
+def _pool_wage(*, human_capital: FloatND, wage_level: float) -> FloatND:
+    return human_capital * wage_level
+
+
+def _pool_labor_income(*, wage: FloatND, hours: float) -> FloatND:
+    return wage * hours
+
+
+def _pool_net_income(*, labor_income: FloatND, tax_rate: float) -> FloatND:
+    return labor_income * (1 - tax_rate)
+
+
+def _pool_transfers(*, wage: FloatND, transfer_rate: float) -> FloatND:
+    return wage * transfer_rate
+
+
+def _pool_resources(
+    *, net_income: FloatND, transfers: FloatND, wealth: FloatND
+) -> FloatND:
+    return net_income + transfers + wealth
+
+
+def _pool_unrelated_helper(*, wealth: FloatND, shift: float) -> FloatND:
+    return wealth * shift
+
+
+_FENCE_DAG_POOL = MappingProxyType(
+    {
+        "wage": _pool_wage,
+        "labor_income": _pool_labor_income,
+        "net_income": _pool_net_income,
+        "transfers": _pool_transfers,
+        "resources": _pool_resources,
+        "unrelated_helper": _pool_unrelated_helper,
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("seed_args", "named_nodes"),
+    [
+        pytest.param(("V_target", "net_income"), "['net_income']", id="chain-tail"),
+        pytest.param(("resources", "wealth"), "['resources']", id="diamond-join"),
+        pytest.param(("wage",), "['wage']", id="chain-head"),
+        pytest.param(
+            ("transfers", "net_income", "source_own_param"),
+            "['net_income', 'transfers']",
+            id="several-nodes-listed-sorted",
+        ),
+    ],
+)
+def test_fence_edge_consumer_rejects_every_argument_naming_a_target_node(
+    *, seed_args: tuple[str, ...], named_nodes: str
+) -> None:
+    """A consumer argument naming a target-DAG node is refused, and the message
+    lists exactly the named nodes, however deep a parameter sits below them."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"^ctx: the edge to regime 'target' declares gate/projection "
+            rf"argument\(s\) {re.escape(named_nodes)} that name the TARGET "
+            r"regime's own function"
+        ),
+    ):
+        _fence_edge_consumer(  # ty: ignore[missing-argument]
+            dag_pool=_FENCE_DAG_POOL,
+            seed_args=seed_args,
+            edge_target="target",
+            context="ctx",
+        )
+
+
+@pytest.mark.parametrize(
+    "seed_args",
+    [
+        pytest.param(("V_target", "wealth", "human_capital"), id="target-states"),
+        pytest.param(("source_own_param",), id="source-param"),
+        pytest.param(("shift",), id="param-named-like-an-unrelated-helper-param"),
+        pytest.param((), id="no-arguments"),
+    ],
+)
+def test_fence_edge_consumer_accepts_arguments_naming_no_target_node(
+    seed_args: tuple[str, ...],
+) -> None:
+    """Arguments that name no target-DAG node pass, including a source parameter
+    spelled like a parameter some target helper reads."""
+    assert (
+        _fence_edge_consumer(  # ty: ignore[missing-argument]
+            dag_pool=_FENCE_DAG_POOL,
+            seed_args=seed_args,
+            edge_target="target",
+            context="ctx",
+        )
+        is None
     )
 
-    # For contrast: a global-union fence WOULD flag `shift`, because
-    # `unrelated_helper` contributes it to the whole-pool leaf set.
-    global_leaves: set[str] = set()
-    for fn in dag_pool.values():
-        global_leaves |= set(get_union_of_args([fn]))
-    global_leaves -= set(dag_pool) | state_names
-    assert "shift" in global_leaves
+
+def _gate_reads_own_target_scale(
+    *, V_target: FloatND, x: ContinuousState, target_scale: FloatND
+) -> BoolND:
+    """A source gate whose OWN parameter shares its name with the parameter of the
+    target's `target_scaled_x` helper."""
+    return V_target > x * target_scale
+
+
+def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": ValueDependentTransition(
+                        probability=StochasticTransition(func=_prob_one),
+                        gate=_gate_reads_own_target_scale,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback", projection={"x": _identity_x}
+                                )
+                            )
+                        },
+                    )
+                }
+            }
+        ),
+    )
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
+
+
+def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
+    """A gate that reads a target state and its own parameter builds, and binds that
+    parameter from the source under the gate's declaration path, even though a
+    target helper reads a parameter of the same name."""
+    regimes_dict, laws = _make_own_param_named_like_target_helper_param_regimes()
+    regimes, _ = _process(regimes_dict=regimes_dict, laws=laws, ages=_AGES)
+    evaluator = (
+        regimes["src"].gated_edges["target"].simulate_gate_evaluator_at(period=1)
+    )
+    source_qnames = sorted(
+        qname
+        for namespace, qname in evaluator.arg_provenance.params.values()
+        if namespace == SOURCE_PARAMS
+    )
+    assert source_qnames == ["target__gate__target_scale"]
 
 
 # An injected gate-ref key that collides with a target function name must be
@@ -1765,10 +1951,9 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
 
 
 # Two residual namespace defects survive the fences above:
-#   - a gate/projection arg naming a STATE-ONLY target node reaches no dynamic
-#     leaf, so `_reject_target_function_params` stays silent -- but name-based
-#     concatenation still rebinds the arg to the node and drops a same-named
-#     source parameter (a silent gate reversal / wrong projected fallback state);
+#   - a gate/projection arg naming a STATE-ONLY target node: name-based
+#     concatenation rebinds the arg to the node and drops a same-named source
+#     parameter (a silent gate reversal / wrong projected fallback state);
 #   - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
 #     operand; the `injected_names` SET collapses the duplicate and the built-in
 #        wins, silently discarding the computed reference value.
@@ -1835,11 +2020,10 @@ def _make_threshold_shadow_regimes() -> _Spec:
 def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
     """A gate arg naming a STATE-ONLY target node must be rejected.
 
-    `_reject_target_function_params` sees no dynamic leaf (the node reads only the
-    target state `x`), so it stays silent -- but `concatenate_functions` still binds
-    the gate's `threshold` to `_target_threshold`, dropping the source's `threshold`
-    parameter and evaluating `V_target > 0.9` where the source meant `> 0.1`. The
-    build must raise rather than silently misbind.
+    The node reads only the target state `x`, yet `concatenate_functions` would
+    bind the gate's `threshold` to `_target_threshold`, dropping the source's
+    `threshold` parameter and evaluating `V_target > 0.9` where the source meant
+    `> 0.1`. The build must raise rather than silently misbind.
     """
     flat_params = MappingProxyType(
         {
