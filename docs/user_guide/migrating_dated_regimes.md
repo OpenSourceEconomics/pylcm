@@ -10,8 +10,8 @@ structure and its law. Initial age–regime pairs are required explicitly throug
 
 ## Move transitions onto Model
 
-`Regime` has no `regime_transitions` argument; passing one raises a `TypeError`. The
-removed form declared the law on the source regime:
+`Regime` takes no regime transition law. The removed form declared the law on the source
+regime and now raises a `TypeError`:
 
 ```python
 # Removed: raises TypeError. Shown only to identify code that needs migrating.
@@ -25,7 +25,7 @@ working = Regime(
 )
 ```
 
-Delete `regime_transitions=` from every `Regime` and declare the destinations in
+Delete that argument from every `Regime` and declare the destinations in
 `Model(edges=...)`. Where each source age has a single destination, the edges alone are
 the law:
 
@@ -52,16 +52,16 @@ model = Model(
 ```
 
 This replaces laws such as `"dead"`, `ByAge.until(law="working", then="retired")` or a
-selector that only ever returns the one available destination. A regime that declared
-`regime_transitions=None` simply has no outgoing edges.
+selector that only ever returns the one available destination. A regime whose removed
+law was `None` simply has no outgoing edges.
 
 `Regime.terminal`, `Regime.gated_edges` and `Regime.decomposed_transition` are removed.
 Code that read a regime's law back reads it from the model graph:
 `model.graph.laws[name].terminal`, `model.graph.laws[name].gated_edges` and
 `model.graph.laws[name].decomposed_transition`.
 
-Where a source age has several destinations, move the former `regime_transitions` value
-unchanged into a `Transition` that replaces the source's destination mapping:
+Where a source age has several destinations, move the former law unchanged into a
+`Transition` that replaces the source's destination mapping:
 
 ```python
 # Fragment: a choice between continuing to work and retiring.
@@ -112,11 +112,10 @@ initial states still belong to `Population` and `InitialConditions`.
 
 A shared edge mapping applies to both phases. Use `Phased(solve=..., simulate=...)` on
 `edges` for perceived versus realized connectivity; a former
-`regime_transitions=Phased(solve=..., simulate=...)` moves into each phase's
-`Transition`, or stays whole as the law of one `Transition` on shared edges. State
-handoffs stay phase-specific on the source regime. Physically visited nodes require
-solve values plus their perceived dependencies; extra valued nodes do not imply realized
-visits.
+`Phased(solve=..., simulate=...)` law moves into each phase's `Transition`, or stays
+whole as the law of one `Transition` on shared edges. State handoffs stay phase-specific
+on the source regime. Physically visited nodes require solve values plus their perceived
+dependencies; extra valued nodes do not imply realized visits.
 
 Inspect `model.graph.edges.solve` and `.simulate` for declared exact source ages,
 `.solution` and `.simulation` for effective period-indexed graphs, `.nodes` for valued

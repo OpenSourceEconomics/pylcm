@@ -91,7 +91,8 @@ source age inside a `Transition`. Its selectors are exact ages, tuples, integer 
 or half-open `AgeRange(start=..., exclusive_stop=...)` intervals. `ByAge.until` uses
 `law` before `stop_age_exclusive`, except that the last selected source age uses `then`.
 It does not declare topology or initial nodes. `AgeGrid(inclusive_stop=...)` includes
-its final coordinate; a graph edge cannot originate there.
+its final coordinate, where no effective edge originates; a declared selector may still
+name it as dormant metadata alongside earlier source ages.
 
 Ordinary scalar cells can be pruned from the effective graph when their complete DAG
 uses only construction-fixed leaves and yields exactly represented zero. Dynamic leaves

@@ -9,8 +9,9 @@ action for all of them. Two further capabilities travel with it: feasibility tha
 values rather than only states, and a transition whose branch depends on values at the
 target regime.
 
-Six declarations express this, and each one goes inside a slot `Regime` already has, so
-a collective model has no extra constructor arguments to learn.
+Six declarations express this, and each one goes inside an argument `Regime` or `Model`
+already has — a regime slot, or a `Transition` law in `Model(edges=...)` — so a
+collective model has no extra constructor arguments to learn.
 
 | Declaration                | Where it is declared                                                              | What it expresses                                   |
 | -------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------- |
@@ -338,11 +339,11 @@ checked at evaluation only fires once the model runs.
 | a **constant** weight is finite and non-negative; the constants leave a positive total              | `Regime` construction                                             | `RegimeInitializationError` |
 | a `ValueDependentConstraint` on a singleton regime                                                  | `Regime` construction                                             | `RegimeInitializationError` |
 | a regime-level reference projection introduces no free parameter                                    | `Regime` construction                                             | `RegimeInitializationError` |
-| a gate is a plain callable, not a `StochasticTransition`                                            | `Regime` construction                                             | `RegimeInitializationError` |
-| `routes` covers the source's stakeholder structure                                                  | `Regime` construction                                             | `RegimeInitializationError` |
-| phased declarations make a target value-dependent in both phases and agree on the edge              | `Regime` construction                                             | `RegimeInitializationError` |
+| a gate is a plain callable, not a `StochasticTransition`                                            | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| `routes` covers the source's stakeholder structure                                                  | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| phased declarations make a target value-dependent in both phases and agree on the edge              | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime | `Regime` construction                                             | `NotImplementedError`       |
-| the same three on the SOURCE regime of a `ValueDependentTransition`                                 | `Regime` construction                                             | `NotImplementedError`       |
+| the same three on the SOURCE regime of a `ValueDependentTransition`                                 | model build, binding the edge law to its source                   | `NotImplementedError`       |
 | a reference or fallback regime exists, and `stakeholder` matches its structure                      | model build                                                       | `ModelInitializationError`  |
 | a projection covers exactly the states its position owes                                            | model build                                                       | `ModelInitializationError`  |
 | the same-period reference graph is acyclic                                                          | model build                                                       | `ModelInitializationError`  |
@@ -497,7 +498,8 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
 The **source** regime of a `ValueDependentTransition` carries the same three
 restrictions, whether or not it is collective: it reads the folded continuation through
 the grid-search machinery, which a DC-EGM, taste-shock or certainty-equivalent source
-does not have.
+does not have. A source restriction raises at model build, when the edge law is bound to
+its source, since a `Regime` on its own declares no edge.
 
 A `fold=True` IID process is a further restriction, and a different one: a fold
 integrates the shock's node axis away immediately after the period's collective readout,
