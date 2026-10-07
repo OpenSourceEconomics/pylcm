@@ -695,7 +695,8 @@ def process_regimes(
     # A gated edge's callables are discovered against the ONE regime they run on,
     # so the edge template reads a per-regime vocabulary. It joins the
     # representative regime's names with those the regime declares before demand
-    # prunes any: a declared law keeps every variable it reads as a variable.
+    # prunes any: a declared law, and a regime function nothing demands, keeps
+    # every variable it reads as a variable.
     runtime_edge_vocabulary = create_edge_vocabulary(representative_user_regimes)
     edge_vocabulary = MappingProxyType(
         {
@@ -719,6 +720,7 @@ def process_regimes(
                     if other_name != regime_name
                     for state_name in other.states
                 ),
+                declared_variables=edge_vocabulary[regime_name].variables,
             )
             for regime_name, user_regime in representative_user_regimes.items()
         }
