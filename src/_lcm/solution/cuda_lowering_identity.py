@@ -10,7 +10,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Mapping
-from importlib.metadata import distributions
+from importlib.metadata import Distribution, distributions
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 
@@ -21,6 +21,12 @@ from lcm.exceptions import ExecutionPlanningError
 
 _PROC_MAPS_FIELD_COUNT = 6
 _NVIDIA_SMI_FIELD_COUNT = 5
+
+#: CUDA package digests per installed inventory of `(name, version, location)`.
+_CUDA_PACKAGE_DIGESTS: dict[
+    tuple[tuple[str, str, str], ...],
+    tuple[MappingProxyType[str, tuple[tuple[str, str], ...]], frozenset[Path]],
+] = {}
 
 
 def capture_cuda_lowering_identity(
@@ -206,17 +212,36 @@ def _physical_device() -> tuple[tuple[str, ...], ...]:
 def _capture_cuda_packages() -> tuple[
     dict[str, tuple[tuple[str, str], ...]], set[Path]
 ]:
-    """Identify installed CUDA package bytes and actual PJRT library paths."""
-    packages = {}
+    """Identify installed CUDA package bytes and actual PJRT library paths.
+
+    File digests are computed once per process for each installed inventory of
+    distributions, identified by name, version and location.
+    """
+    installed = tuple(distributions())
+    inventory = tuple(
+        (str(package.metadata["Name"]), package.version, str(package.locate_file("")))
+        for package in installed
+    )
+    if inventory not in _CUDA_PACKAGE_DIGESTS:
+        _CUDA_PACKAGE_DIGESTS[inventory] = _hash_cuda_packages(packages=installed)
+    packages, pjrt_libraries = _CUDA_PACKAGE_DIGESTS[inventory]
+    return dict(packages), set(pjrt_libraries)
+
+
+def _hash_cuda_packages(
+    *, packages: tuple[Distribution, ...]
+) -> tuple[MappingProxyType[str, tuple[tuple[str, str], ...]], frozenset[Path]]:
+    """Hash the files of the installed CUDA packages."""
+    digests = {}
     pjrt_libraries = set()
-    for package in distributions():
+    for package in packages:
         declared_name = package.metadata["Name"]
         if not isinstance(declared_name, str) or not declared_name:
             raise ExecutionPlanningError("Runtime package has no name identity.")
         name = declared_name.lower().replace("_", "-")
         if not name.startswith(("jax-cuda", "nvidia-")):
             continue
-        if name in packages or not package.files:
+        if name in digests or not package.files:
             raise ExecutionPlanningError(
                 "CUDA package inventory is ambiguous or empty."
             )
@@ -233,11 +258,11 @@ def _capture_cuda_packages() -> tuple[
                 pjrt_libraries.add(installed.resolve(strict=True))
         if not files:
             raise ExecutionPlanningError("CUDA package has no identifiable files.")
-        packages[name] = tuple(files)
-    if not {"jax-cuda12-plugin", "jax-cuda12-pjrt"} <= packages.keys() or any(
+        digests[name] = tuple(files)
+    if not {"jax-cuda12-plugin", "jax-cuda12-pjrt"} <= digests.keys() or any(
         name.startswith("jax-cuda")
         and name not in {"jax-cuda12-plugin", "jax-cuda12-pjrt"}
-        for name in packages
+        for name in digests
     ):
         raise ExecutionPlanningError("Lowering requires the CUDA12 plugin profile.")
-    return packages, pjrt_libraries
+    return MappingProxyType(digests), frozenset(pjrt_libraries)
