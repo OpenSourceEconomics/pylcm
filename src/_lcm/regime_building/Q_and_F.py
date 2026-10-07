@@ -3630,6 +3630,12 @@ class _OuterJointWeights:
         # probability, and it comes back with its own scale rather than as a
         # plain float, because a product below the normal range is not
         # something a float can carry through a fused region here.
+        if not kwargs:
+            # The empty product is the certain event. Building it from an
+            # empty factor array would close a zero-size array into the
+            # program, and the CPU compiler crashes on a zero-size operand of
+            # the `shard_map` that splits subjects over devices.
+            return jnp.ones(()), jnp.zeros((), dtype=jnp.int32)
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
 
