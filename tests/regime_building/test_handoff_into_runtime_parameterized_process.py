@@ -19,13 +19,10 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _RUNTIME_PROCESS = NormalIIDProcess(n_points=3, gauss_hermite=False)
 _SHOCK_PARAMS = {"mu": 1.0, "sigma": 0.5, "n_std": 2.0}
@@ -44,10 +41,6 @@ class RegimeId:
     target: ScalarInt
 
 
-def _to_target() -> ScalarFloat:
-    return jnp.float32(1)
-
-
 def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
@@ -58,20 +51,15 @@ def _reset_shock(shock: ScalarFloat) -> ScalarFloat:
 
 
 def _build(*, source_states, source_state_transitions) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_to_target)},
-                    exits=("target",),
-                ),
                 states=source_states,
                 state_transitions=source_state_transitions,
                 functions={"utility": _shock_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _RUNTIME_PROCESS},
                 functions={"utility": _shock_utility},
             ),

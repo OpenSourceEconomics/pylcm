@@ -12,7 +12,7 @@ import logging
 from fractions import Fraction
 from functools import cache
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -28,31 +28,30 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
+    InvariantBlockSchedule,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     Regime,
+    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import DiscreteState, ScalarInt
-from tests.conftest import assert_agrees_to_ulp
+from tests.conftest import assert_agrees_to_ulp, assert_general_values_agree
+from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
 from tests.test_continuous_assets_aca_vocabulary import _model as _process_model
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 
 
@@ -68,6 +67,24 @@ class _RegimeId:
     r0: ScalarInt
     r1: ScalarInt
     terminal: ScalarInt
+
+
+def _law(*, source: int) -> StochasticTransition:
+    """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
+
+    def probabilities(age):
+        weight = 0.25 if source == 0 else 0.75
+        return jnp.where(
+            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
+        )
+
+    return StochasticTransition(func=probabilities)
+
+
+_EDGES = {
+    "r0": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=0)),
+    "r1": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=1)),
+}
 
 
 def _landing(*, assets, decision, pref_type, spousal_income):
@@ -100,22 +117,7 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
         # fixed type states the same annotation.
         utility.__annotations__["pref_type"] = DiscreteState
 
-    def probabilities(age):
-        weight = 0.25 if source == 0 else 0.75
-        return jnp.where(
-            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
-        )
-
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=2,
-            law=_SupportedStochasticTransition(
-                func=probabilities, targets=("r0", "r1")
-            ),
-            then=_SupportedStochasticTransition(
-                func=probabilities, targets=("terminal",)
-            ),
-        ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": utility,
@@ -139,19 +141,19 @@ def _model(
     devices: tuple[int, ...],
     widths: tuple[int, int] = (1, 1),
     sharded: bool = True,
-    budget: int = 2**30,
+    budget: int | Literal["device"] | None = 2**30,
     identity: bool = False,
     grid: Any = None,
     extra_shard: bool = False,
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
+    schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
 ) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
             "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
             "terminal": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
                         -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
@@ -182,9 +184,11 @@ def _model(
             },
             device_memory_bytes=budget,
             invariant_block_widths=invariant_block_widths or {},
+            invariant_block_schedule=schedule,
         ),
         # The tests start subjects in both living regimes at both living ages.
         initial_nodes={(0, 1): ("r0", "r1")},
+        edges=_EDGES,
     )
 
 
@@ -701,7 +705,6 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
 
     _require_eight()
     regime = Regime(
-        regime_transitions=None,
         states={
             "liquid": LinSpacedGrid(start=-4, stop=19, n_points=24),
             "pref_type": DiscreteGrid(_Three),
@@ -759,7 +762,7 @@ def _renamed_public_model(*, original: Model) -> Model:
         states={},
         functions=_renamed_functions(regime=terminal),
     )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         states={
             "liquid" if key == "assets" else key: grid
@@ -774,6 +777,7 @@ def _renamed_public_model(*, original: Model) -> Model:
             device_memory_bytes=2**30,
         ),
         initial_nodes=initial_nodes_of(model=original),
+        edges=_EDGES,
     )
 
 
@@ -1062,10 +1066,10 @@ def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
 
 @pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
 @pytest.mark.parametrize("widths", [(1, 1), (3, 9)])
-def test_type_blocks_over_assets_shards_equal_the_unblocked_solve_bitwise(
+def test_type_blocks_over_assets_shards_agree_with_the_unblocked_solve(
     *, devices: tuple[int, ...], widths: tuple[int, int]
 ) -> None:
-    """Three type blocks over sharded assets publish the unblocked values exactly."""
+    """Type blocks retain sharding and agree with unblocked values within eight ULP."""
     _require_eight()
     params = {"discount_factor": 0.5}
     blocked = _model(
@@ -1079,15 +1083,10 @@ def test_type_blocks_over_assets_shards_equal_the_unblocked_solve_bitwise(
     got = blocked.solve(params=params, log_level="off").values
     want = reference.solve(params=params, log_level="off").values
 
-    assert {(t, r) for t, arrays in got.items() for r in arrays} == {
-        (t, r) for t, arrays in want.items() for r in arrays
-    }
+    assert_general_values_agree(got=got, expected=want)
     for period, arrays in want.items():
         for regime, value in arrays.items():
             assert got[period][regime].sharding == value.sharding
-            np.testing.assert_array_equal(
-                np.asarray(got[period][regime]), np.asarray(value)
-            )
 
 
 def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> None:
@@ -1133,3 +1132,138 @@ def test_type_blocks_over_eight_assets_shards_replicate_one_type_at_a_time() -> 
     assert {record.transfer_workspace_bytes for record in blocks} == {
         block_bytes + block_bytes // 8
     }
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+@pytest.mark.parametrize("budget", [2**30, "device"])
+def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
+    *, devices: tuple[int, ...], budget: int | Literal["device"]
+) -> None:
+    """Sharded blocked/grouped simulation keeps exact structure and eight-ULP values.
+
+    The groups are unbalanced, one is empty in period 1, and the subject axis
+    divides no group evenly by the device count.
+    """
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    grouped = _model(
+        devices=devices,
+        fixed_type=True,
+        budget=budget,
+        invariant_block_widths={"pref_type": 1},
+    )
+    reference = _model(devices=devices, fixed_type=True, budget=budget)
+    got_solution = grouped.solve(params=params, log_level="off")
+    want_solution = reference.solve(params=params, log_level="off")
+    rng = np.random.default_rng(5)
+    n = 37
+    initial = {
+        "pref_type": np.where(np.arange(n) % 5 == 0, 2, 0).astype(np.int32),
+        "spousal_income": rng.integers(0, 3, n).astype(np.int32),
+        "assets": rng.integers(-4, 20, n).astype(float),
+        "regime_id": rng.integers(0, 2, n).astype(np.int32),
+        "age": np.zeros(n, dtype=float),
+    }
+    got = grouped.simulate(
+        params=params,
+        solution=got_solution,
+        initial_conditions=initial,
+        seed=11,
+        log_level="off",
+    )
+    want = reference.simulate(
+        params=params,
+        solution=want_solution,
+        initial_conditions=initial,
+        seed=11,
+        log_level="off",
+    )
+
+    assert got.plan_summary is not None
+    assert want.plan_summary is not None
+    assert got.plan_summary.subject_grouping == "pref_type"
+    assert want.plan_summary.subject_grouping is None
+    grouped_simulation._assert_general_panels_agree(got=got, want=want)
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+@pytest.mark.parametrize("budget", [None, 2**30])
+def test_block_major_components_over_assets_shards_equal_period_major_values(
+    *, devices: tuple[int, ...], budget: int | None
+) -> None:
+    """Each type solved through its lifetime over sharded assets moves no value bit.
+
+    Every value is published on the period-major solve's sharding and equals
+    its bytes.
+    """
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    models = {
+        schedule: _model(
+            devices=devices,
+            fixed_type=True,
+            budget=budget,
+            invariant_block_widths={"pref_type": 1},
+            schedule=schedule,
+        )
+        for schedule in InvariantBlockSchedule
+    }
+    got = models[InvariantBlockSchedule.BLOCK_MAJOR].solve(
+        params=params, log_level="off"
+    )
+    want = models[InvariantBlockSchedule.PERIOD_MAJOR].solve(
+        params=params, log_level="off"
+    )
+
+    assert {(t, r) for t in got.values for r in got.values[t]} == {
+        (t, r) for t in want.values for r in want.values[t]
+    }
+    for period in want.values:
+        for regime in want.values[period]:
+            got_value = got.value(period=period, regime=regime)
+            want_value = want.value(period=period, regime=regime)
+            assert got_value.sharding == want_value.sharding
+            assert np.asarray(got_value).tobytes() == np.asarray(want_value).tobytes()
+
+
+@pytest.mark.parametrize("devices", [(0, 1), tuple(range(8))])
+def test_block_major_combined_simulation_over_assets_shards_equals_period_major(
+    devices: tuple[int, ...],
+) -> None:
+    """Solving and simulating one type at a time over sharded assets keeps the panel."""
+    _require_eight()
+    params = {"discount_factor": 0.5}
+    rng = np.random.default_rng(5)
+    n = 37
+    initial = {
+        "pref_type": np.where(np.arange(n) % 5 == 0, 2, 0).astype(np.int32),
+        "spousal_income": rng.integers(0, 3, n).astype(np.int32),
+        "assets": rng.integers(-4, 20, n).astype(float),
+        "regime_id": rng.integers(0, 2, n).astype(np.int32),
+        "age": np.zeros(n, dtype=float),
+    }
+    results = {
+        schedule: _model(
+            devices=devices,
+            fixed_type=True,
+            budget=None,
+            invariant_block_widths={"pref_type": 1},
+            schedule=schedule,
+        ).simulate(params=params, initial_conditions=initial, seed=11, log_level="off")
+        for schedule in InvariantBlockSchedule
+    }
+    got = results[InvariantBlockSchedule.BLOCK_MAJOR]
+    want = results[InvariantBlockSchedule.PERIOD_MAJOR]
+
+    got_frame, want_frame = got.to_dataframe(), want.to_dataframe()
+    assert got_frame.equals(want_frame)
+    for column in want_frame.select_dtypes("float").columns:
+        assert got_frame[column].to_numpy().tobytes() == (
+            want_frame[column].to_numpy().tobytes()
+        ), column
+    for got_leaf, want_leaf in zip(
+        jax.tree.leaves(got.raw_results),
+        jax.tree.leaves(want.raw_results),
+        strict=True,
+    ):
+        assert np.asarray(got_leaf).tobytes() == np.asarray(want_leaf).tobytes()

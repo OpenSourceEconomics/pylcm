@@ -18,12 +18,10 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -34,10 +32,6 @@ class RegimeId:
 
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
-
-
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _process() -> NormalIIDProcess:
@@ -69,7 +63,6 @@ PARAMS = {
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": 2.0},
         "target": {
-            "next_regime": {},
             "next_shock": {},
             "next_other": {},
         },
@@ -79,12 +72,9 @@ PARAMS = {
 
 
 def _build_model(*, enable_jit: bool) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "other": {"target": _enter_other},
@@ -93,7 +83,6 @@ def _build_model(*, enable_jit: bool) -> Model:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _process(), "other": _process()},
                 functions={"utility": _target_utility},
             ),
@@ -103,6 +92,7 @@ def _build_model(*, enable_jit: bool) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

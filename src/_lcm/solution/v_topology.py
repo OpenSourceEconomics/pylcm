@@ -22,6 +22,7 @@ from _lcm.engine import (
     _RegimeSharding,
     placed_devices_for_ids,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import FlatParams, RegimeName, StateName
@@ -124,7 +125,7 @@ def _get_regime_V_shapes_and_shardings(
     topology: dict[RegimeName, _RegimeVTopology] = {}
     for regime_name, regime in regimes.items():
         state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
         # Folded IID-process states are integrated out of the stored value by
@@ -162,6 +163,7 @@ def _get_regime_V_shapes_and_shardings(
                 grids=regime.solution.grids,
                 sharded_state_names=regime.solution.sharded_state_names,
                 devices=devices,
+                action_partitions=regime.solution.action_partitions,
             ),
             state_order=state_order,
             devices=devices,

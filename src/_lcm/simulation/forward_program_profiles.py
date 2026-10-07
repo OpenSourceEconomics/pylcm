@@ -17,6 +17,7 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
@@ -33,6 +34,7 @@ from _lcm.simulation.program_arguments import (
     transition_arguments,
 )
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
 from _lcm.typing import FlatParams
@@ -202,7 +204,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     }
     states = {state: current[state] for state in base.states}
     carried = {state: current[state] for state in regime.simulation.carried_grids}
-    params = _shared_tree(tree=flat_params[name], devices=devices)
+    params = _shared_tree(
+        tree=regime_kernel_params(flat_params, regime_name=name), devices=devices
+    )
     age = jax.ShapeDtypeStruct((), ages.values.dtype, sharding=shared)
     period_value = jax.ShapeDtypeStruct((), np.dtype(np.int32), sharding=shared)
     next_values = (
@@ -284,7 +288,10 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {ref: values[period][ref] for ref in regime.same_period_ref_regimes}
         )
         references[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in regime.same_period_ref_regimes
+            }
         )
     edge_references = regime.simulation.edge_reference_regimes_by_period.get(period)
     if edge_references is not None:
@@ -292,7 +299,10 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {ref: values[period + 1][ref] for ref in edge_references}
         )
         references[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in edge_references}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in edge_references
+            }
         )
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject
@@ -324,6 +334,19 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             ),
         )
     else:
+        # A grouped decision reads each continuation carrying the grouping
+        # state through one code's block, which has that axis removed.
+        grouping = regime.simulation.programs.grouping
+        decision_values = MappingProxyType(
+            {
+                target: type_local_template(
+                    route=grouping,
+                    regime=target,
+                    leaf=cast("jax.Array | jax.ShapeDtypeStruct", leaf),
+                )
+                for target, leaf in next_values.items()
+            }
+        )
         arguments = decision_arguments(
             states=states,
             discrete_actions=_shared_tree(tree=base.discrete_actions, devices=devices),
@@ -333,7 +356,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             taste_keys={"taste_shock_key": decision_key}
             if regime.has_taste_shocks
             else {},
-            next_values=_shared_tree(tree=next_values, devices=devices),
+            next_values=_shared_tree(tree=decision_values, devices=devices),
             references=_shared_tree(tree=references, devices=devices),
             params=params,
             period=period_value,
@@ -343,7 +366,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             "tuple[jax.ShapeDtypeStruct, object]",
             _prepare_program(
                 runtime=runtime,
-                program=regime.simulation.programs.decision[period],
+                program=regime.simulation.programs.forward_decision[period],
                 arguments=arguments,
                 period=period,
                 n_subjects=n_subjects,

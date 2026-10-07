@@ -79,10 +79,10 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
         savings_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=4)
     )
     regimes: Mapping[RegimeName, UserRegime] = {
-        "reader": MockRegime(solver=continuation_reader),
-        "value_only": MockRegime(solver=GridSearch()),
-        "needed": MockRegime(solver=GridSearch()),
-        "unused": MockRegime(solver=GridSearch()),
+        "reader": MockRegime(terminal=True, solver=continuation_reader),
+        "value_only": MockRegime(terminal=True, solver=GridSearch()),
+        "needed": MockRegime(terminal=True, solver=GridSearch()),
+        "unused": MockRegime(terminal=True, solver=GridSearch()),
     }
 
     demands = _continuation_demands(

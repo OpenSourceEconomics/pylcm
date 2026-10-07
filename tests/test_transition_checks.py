@@ -6,23 +6,34 @@ transitions, the process-time AST subscript-order check, and the way the
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from _lcm.simulation import initial_conditions as initial_conditions_module
+from _lcm.simulation.entry_allocations import SimulationEntryAllocations
+from _lcm.simulation.memory import SimulationMemory
+from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
+    measure_buffer_footprint,
+    resident_bytes_by_device,
 )
+from _lcm.solution import backward_induction as backward_induction_module
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     Model,
+    Phased,
     StochasticTransition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
 from lcm.regime import Regime as UserRegime
@@ -34,8 +45,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -62,14 +71,6 @@ def _budget(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND
     return consumption <= wealth
 
 
-def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
-    # Alive is active only at age 0, so the next-period regime is always
-    # the terminal one — keeping this transition simple lets the tests
-    # focus on the state-transition validator rather than regime
-    # bookkeeping.
-    return jnp.asarray(_RegimeId.terminal)
-
-
 def _utility_alive(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
@@ -80,7 +81,6 @@ def _utility_terminal(wealth: ContinuousState) -> FloatND:
 
 def _terminal_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
     )
@@ -96,19 +96,13 @@ def _model_with_state_probs(next_health_func) -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -240,9 +234,6 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         # body indexes as [health, period].
         return probs_array[health, period]
 
-    def _local_next_regime(age: float) -> ScalarInt:  # noqa: ARG001
-        return jnp.asarray(_LocalRegimeId.terminal)
-
     alive = UserRegime(
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Local)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -252,26 +243,19 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_local_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
     terminal = UserRegime(
-        regime_transitions=None,
         functions={"utility": _utility_terminal},
         states={"wealth": WEALTH_GRID},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="subscript"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "terminal": terminal},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_LocalRegimeId,
             initial_nodes={0: "alive"},
+            edges={"alive": {"terminal": 0}},
         )
 
 
@@ -321,9 +305,6 @@ def test_per_target_dict_validates_each_entry() -> None:
     ) -> FloatND:
         return wealth * heir_present
 
-    def _to_dead(age: float) -> ScalarInt:  # noqa: ARG001
-        return jnp.asarray(_RegId.dead)
-
     alive = UserRegime(
         functions={"utility": _utility_alive},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=3)},
@@ -331,27 +312,20 @@ def test_per_target_dict_validates_each_entry() -> None:
             "wealth": next_wealth_passthrough,
             "heir_present": {"dead": StochasticTransition(func=bad_heir_probs)},
         },
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_to_dead, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": _utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
             "heir_present": DiscreteGrid(category_class=_Heir),
         },
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
     with pytest.raises(InvalidStateTransitionProbabilitiesError, match="sum to 1"):
         model.solve(log_level="debug", params={"discount_factor": 0.95})
@@ -418,19 +392,13 @@ def test_model_with_no_markov_transitions_solves_normally() -> None:
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
     model.solve(log_level="debug", params={"discount_factor": 0.95})
 
@@ -457,20 +425,14 @@ def _model_with_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -522,25 +484,18 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
     terminal = UserRegime(
-        regime_transitions=None,
         functions={"utility": _utility_terminal_with_health},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "terminal": terminal},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.1},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
 
@@ -589,20 +544,14 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         },
         functions={"utility": _utility_alive},
         constraints={"budget": _budget},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "terminal")
-            ),
-            exits=("terminal",),
-        ),
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "terminal": _terminal_regime()},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         fixed_params={"transition_bias": 0.6},
         initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
     )
 
     with pytest.raises(InvalidStateTransitionProbabilitiesError):
@@ -628,3 +577,343 @@ def test_a_subnormal_probability_is_a_valid_row() -> None:
     V = model.solve(log_level="debug", params={"discount_factor": 0.95}).values
 
     assert not bool(jnp.any(jnp.isnan(jnp.asarray(V[0]["alive"]))))
+
+
+@categorical(ordered=False)
+class _Effort:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _effort(consumption: ContinuousAction) -> ScalarInt:
+    # Never `high` on the consumption grid: the validator must still check the
+    # law at `high`, because it sweeps every declared code of a derived
+    # categorical rather than only the codes the regime functions reach.
+    return jnp.where(consumption > 10.0, _Effort.high, _Effort.low)
+
+
+def _income(wealth: ContinuousState) -> FloatND:
+    return 0.1 * wealth
+
+
+def _model_with_function_reading_health_probs(
+    *, next_health_func, phased: bool = False, **model_options: Any
+) -> Model:
+    """Build a model whose `health` law reads regime-function outputs.
+
+    `effort` is a derived categorical (a regime function with a declared
+    `DiscreteGrid`); `income` is a plain continuous function output. With
+    `phased`, the solve and simulate phases each declare their own copy of the law.
+    """
+    law = StochasticTransition(func=next_health_func)
+    alive = UserRegime(
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": Phased(solve=law, simulate=law) if phased else law,
+        },
+        functions={"utility": _utility_alive, "effort": _effort, "income": _income},
+        derived_categoricals={"effort": DiscreteGrid(category_class=_Effort)},
+        constraints={"budget": _budget},
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
+        **model_options,
+    )
+
+
+def test_state_validator_checks_law_reading_derived_categorical(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A law reading a derived categorical is numerically validated, not skipped."""
+
+    def health_probs(*, health: DiscreteState, effort: ScalarInt) -> FloatND:
+        good = jnp.where(effort == _Effort.high, 0.9, 0.7)
+        return jnp.where(
+            health == _Health.good,
+            jnp.stack([1.0 - good, good]),
+            jnp.array([0.5, 0.5]),
+        )
+
+    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_raises_on_invalid_law_at_unreached_derived_code() -> None:
+    """Invalid probabilities at any declared derived-categorical code raise."""
+
+    def health_probs(
+        *,
+        health: DiscreteState,  # noqa: ARG001
+        effort: ScalarInt,
+    ) -> FloatND:
+        return jnp.where(
+            effort == _Effort.high, jnp.array([0.5, 0.2]), jnp.array([0.3, 0.7])
+        )
+
+    model = _model_with_function_reading_health_probs(next_health_func=health_probs)
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' in regime 'alive' .* do not sum to 1",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def _health_from_income(*, income: FloatND) -> FloatND:
+    return jnp.stack([1.0 - income, income])
+
+
+def _health_beside_income(*, income: FloatND) -> FloatND:
+    return jnp.stack([jnp.asarray(0.5), income])
+
+
+def test_state_validator_checks_law_reading_non_categorical_function_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A law reading a plain function output is evaluated through that function.
+
+    `income = 0.1 * wealth` lies in `[0.1, 1]` on the wealth grid, so the row
+    `[1 - income, income]` is valid and nothing is skipped.
+    """
+    model = _model_with_function_reading_health_probs(
+        next_health_func=_health_from_income
+    )
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_rejects_invalid_law_reading_function_output() -> None:
+    """The row `[0.5, income]` sums to `0.6` at `wealth = 1` and is refused."""
+    model = _model_with_function_reading_health_probs(
+        next_health_func=_health_beside_income
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' in regime 'alive'",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _health_from_share(*, carried_share: ContinuousState) -> FloatND:
+    return jnp.stack([1.0 - carried_share, carried_share])
+
+
+def _health_from_stray_share(*, carried_share: ContinuousState) -> FloatND:
+    return _health_from_share(carried_share=2.0 * carried_share - 0.5)
+
+
+def _model_with_carried_share_health_probs(*, simulate_law: Callable) -> Model:
+    """Build a model whose `health` laws read the carried state `carried_share`.
+
+    `carried_share` is the function `0.5` in the solve phase and the grid
+    `{0, 1}` in the simulate phase. The solve law is `[1 - s, s]`; the
+    simulate law is `simulate_law`.
+    """
+    alive = UserRegime(
+        states={
+            "wealth": WEALTH_GRID,
+            "health": DiscreteGrid(category_class=_Health),
+            "carried_share": Phased(
+                solve=_half, simulate=LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+            ),
+        },
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": Phased(
+                solve=StochasticTransition(func=_health_from_share),
+                simulate=StochasticTransition(func=simulate_law),
+            ),
+            "carried_share": fixed_transition("carried_share"),
+        },
+        functions={"utility": _utility_alive},
+        constraints={"budget": _budget},
+    )
+    return Model(
+        regimes={"alive": alive, "terminal": _terminal_regime()},
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+        initial_nodes={0: "alive"},
+        edges={"alive": {"terminal": 0}},
+    )
+
+
+def test_state_validator_checks_laws_reading_a_carried_state_in_both_phases(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The solve law reads the carried state's function, the simulate law its grid."""
+    model = _model_with_carried_share_health_probs(simulate_law=_health_from_share)
+    with caplog.at_level(logging.WARNING, logger="lcm"):
+        model.solve(log_level="warning", params={"discount_factor": 0.95})
+
+    skips = [r for r in caplog.records if "not numerically validated" in r.message]
+    assert skips == []
+
+
+def test_state_validator_rejects_a_simulate_law_invalid_on_the_carried_grid() -> None:
+    """At `carried_share = 0` the simulate row is `[1.5, -0.5]` and is refused."""
+    model = _model_with_carried_share_health_probs(
+        simulate_law=_health_from_stray_share
+    )
+    with pytest.raises(
+        InvalidStateTransitionProbabilitiesError,
+        match=r"state 'health' \(simulate phase\) in regime 'alive'",
+    ):
+        model.solve(log_level="debug", params={"discount_factor": 0.95})
+
+
+def _health_probs_reading_effort(
+    *,
+    health: DiscreteState,
+    effort: ScalarInt,
+) -> FloatND:
+    good = jnp.where(effort == _Effort.high, 0.9, 0.7)
+    return jnp.where(
+        health == _Health.good, jnp.stack([1.0 - good, good]), jnp.array([0.5, 0.5])
+    )
+
+
+def _budgeted_model_with_derived_law(*, phased: bool) -> Model:
+    return _model_with_function_reading_health_probs(
+        next_health_func=_health_probs_reading_effort,
+        phased=phased,
+        execution_config=ExecutionConfig(device_memory_bytes=2**28),
+    )
+
+
+def _derived_code_footprint(*, model: Model, phased: bool) -> DeviceBufferFootprint:
+    """Measure the validation code arrays each law keeps, read off its metadata."""
+    codes = tuple(
+        code
+        for regime in model._regimes.values()
+        for transition in regime.stochastic_state_transitions.values()
+        for code in transition.derived_categorical_codes.values()
+    )
+    footprint = measure_buffer_footprint(tree=codes)
+    # A plain law keeps one two-code int32 array; a phased law keeps one per phase.
+    assert len(codes) == (2 if phased else 1)
+    assert sum(
+        end - start for spans in footprint.spans.values() for start, end in spans
+    ) == 8 * len(codes)
+    return footprint
+
+
+def _uncovered_code_bytes(
+    *, codes: DeviceBufferFootprint, inventory: DeviceBufferFootprint
+) -> int:
+    return sum(
+        resident_bytes_by_device(
+            live=codes, arguments=inventory, devices=tuple(codes.spans)
+        ).values()
+    )
+
+
+_INITIAL_CONDITIONS = {
+    "age": np.array([0.0]),
+    "wealth": np.array([10.0]),
+    "health": np.array([_Health.good], dtype=np.int32),
+    "regime_id": np.array([_RegimeId.alive], dtype=np.int32),
+}
+
+
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_simulate_entry_inventory_charges_derived_categorical_codes(
+    *, phased: bool, log_level: LogLevel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every simulation entry snapshot covers the law validation code arrays."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    snapshots: list[DeviceBufferFootprint] = []
+    original = SimulationEntryAllocations.snapshot
+
+    def record(self: SimulationEntryAllocations) -> DeviceBufferFootprint:
+        snapshot = original(self)
+        snapshots.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(SimulationEntryAllocations, "snapshot", record)
+    model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions=_INITIAL_CONDITIONS,
+        seed=0,
+        log_level=log_level,
+    )
+
+    assert snapshots
+    assert [
+        _uncovered_code_bytes(codes=codes, inventory=snapshot) for snapshot in snapshots
+    ] == [0] * len(snapshots)
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_simulation_preflight_charges_derived_categorical_codes(
+    *, phased: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The validation preflight admits its buffers against the code arrays."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    memories: list[SimulationMemory] = []
+    original = initial_conditions_module._preflight_memory
+
+    def record(**arguments: Any) -> SimulationMemory | None:
+        memory = original(**arguments)
+        assert memory is not None
+        memories.append(memory)
+        return memory
+
+    monkeypatch.setattr(initial_conditions_module, "_preflight_memory", record)
+    model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions=_INITIAL_CONDITIONS,
+        seed=0,
+        log_level="debug",
+    )
+
+    assert [
+        _uncovered_code_bytes(codes=codes, inventory=memory.inputs)
+        for memory in memories
+    ] == [0]
+
+
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+def test_solve_fixed_inventory_charges_derived_categorical_codes(
+    *, phased: bool, log_level: LogLevel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A standalone budgeted solve counts the code arrays among its fixed owners."""
+    model = _budgeted_model_with_derived_law(phased=phased)
+    codes = _derived_code_footprint(model=model, phased=phased)
+    trees: list[object] = []
+    original: Callable[..., object] = backward_induction_module.concrete_device_bytes
+
+    def record(*, tree: object) -> object:
+        trees.append(tree)
+        return original(tree=tree)
+
+    monkeypatch.setattr(backward_induction_module, "concrete_device_bytes", record)
+    model.solve(params={"discount_factor": 0.95}, log_level=log_level)
+
+    assert trees
+    assert [
+        _uncovered_code_bytes(
+            codes=codes, inventory=measure_buffer_footprint(tree=tree)
+        )
+        for tree in trees
+    ] == [0] * len(trees)

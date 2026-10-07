@@ -1,7 +1,7 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
 A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
-`ValueDependentTransition` can cover the feature at either of two altitudes.
+`Gate` can cover the feature at either of two altitudes.
 Most drive it through `Model`, so the public route the documentation describes
 is what runs. The rest call the engine directly — `process_regimes`, a bare
 `solve`, `route_gated_edges` — which is the right altitude for pinning a
@@ -75,55 +75,18 @@ def _passes_keyword(*, source: str, keyword: str) -> bool:
 
 
 def _reaches_public_model(*, source: str) -> bool:
-    """Recognize `Model` or the explicitly imported domain fixture builder."""
-    if _calls(source=source, name="Model"):
-        return True
-    tree = ast.parse(source)
-    aliases = {
-        alias.asname or alias.name
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom) and node.module == "tests.test_models.graph"
-        for alias in node.names
-        if alias.name == "with_fixture_graph"
-    }
-
-    def reaches(*, node: ast.AST, visible: set[str]) -> bool:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            arguments = {
-                argument.arg
-                for argument in (
-                    *node.args.posonlyargs,
-                    *node.args.args,
-                    *node.args.kwonlyargs,
-                )
-            }
-            assigned = {
-                child.id
-                for child in ast.walk(node)
-                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
-            }
-            visible = visible - arguments - assigned
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in visible
-        ):
-            return True
-        return any(
-            reaches(node=child, visible=visible) for child in ast.iter_child_nodes(node)
-        )
-
-    return reaches(node=tree, visible=aliases)
+    """Recognize a call to `Model`, plain or as an attribute."""
+    return _calls(source=source, name="Model")
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary now: a regime says who its stakeholders are, what a
+#: There is one vocabulary: a regime says who its stakeholders are, what a
 #: value-reading constraint is, and where a value-dependent transition routes,
 #: each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
     "ValueDependentConstraint",
-    "ValueDependentTransition",
+    "Gate",
 )
 
 
@@ -214,7 +177,7 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("CollectiveUtility(utilities={})", True),
         ("lcm.CollectiveUtility(utilities={})", True),
         ("ValueDependentConstraint(predicate=p)", True),
-        ("ValueDependentTransition(gate=g)", True),
+        ("Gate(predicate=g)", True),
         ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("collective_utility = 1", False),
@@ -230,57 +193,19 @@ def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
     [
         ("Model(regimes={})", True),
         ("lcm.Model(regimes={})", True),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph\n"
-                "with_fixture_graph(regimes={})"
-            ),
-            True,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph as build\n"
-                "build(regimes={})"
-            ),
-            True,
-        ),
-        ("with_fixture_graph(regimes={})", False),
-        (
-            (
-                "from other_module import with_fixture_graph\n"
-                "with_fixture_graph(regimes={})"
-            ),
-            False,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph\n"
-                "def run(with_fixture_graph):\n"
-                "    return with_fixture_graph(regimes={})"
-            ),
-            False,
-        ),
-        (
-            (
-                "from tests.test_models.graph import with_fixture_graph as build\n"
-                "def run():\n"
-                "    build = lambda **kwargs: None\n"
-                "    return build(regimes={})"
-            ),
-            False,
-        ),
+        ("build_model(regimes={})", False),
         ('"""Builds no Model, only mentions one."""', False),
     ],
 )
 def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
-    """A public route calls `Model` or its explicitly imported fixture builder."""
+    """A public route calls `Model`."""
     assert _reaches_public_model(source=source) is expected
 
 
-#: What a regime's three declarations decompose into. A model author never
-#: writes one: `stakeholders`, `pareto_objective`, `value_constraints`,
-#: `same_period_refs` and `gated_edges` are read off a regime, and `GatedEdge`
-#: is the engine's own form of an edge.
+#: What a regime's declarations and its law decompose into. A model author never
+#: writes one: `stakeholders`, `pareto_objective`, `value_constraints` and
+#: `same_period_refs` are read off a regime, `gated_edges` off the law the model
+#: binds for it, and `GatedEdge` is the engine's own form of an edge.
 _DECOMPOSED_NAMES = (
     "stakeholders",
     "pareto_objective",
@@ -320,6 +245,7 @@ _ENGINE_CONSTRUCTORS = frozenset(
         "MockRegime",
         "_MockRegime",
         "build_pareto_weights",
+        "build_streaming_collective_max_Q_over_a",
         "get_max_Q_over_a",
         "get_streaming_max_Q_over_a",
     }

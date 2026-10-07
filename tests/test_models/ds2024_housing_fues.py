@@ -23,16 +23,15 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -56,8 +55,6 @@ from tests.test_models.ds2024_housing import (
     income_transition,
     income_value,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 START_AGE = 60
 
@@ -141,6 +138,7 @@ def build_model(  # noqa: C901
     n_savings = n_grid if n_savings is None else n_savings
 
     ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + n_periods - 1, step="Y")
+    stays = ages.exact_values[:-2]
     final_age = int(ages.exact_values[-1])
 
     stock_levels = jnp.asarray(
@@ -257,8 +255,15 @@ def build_model(  # noqa: C901
             DS2024HousingFuesRegimeId.alive,
         )
 
+    dies = ages.exact_values[:-1]
+    edges = {
+        "alive": Transition(
+            targets={**({"alive": stays} if stays else {}), "dead": dies},
+            law=DeterministicTransition(func=next_regime),
+        )
+    }
+
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -273,13 +278,6 @@ def build_model(  # noqa: C901
 
     if variant == "brute":
         alive = UserRegime(
-            regime_transitions=until_exit(
-                final_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("alive", "dead")
-                ),
-                exits=("dead",),
-            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -295,11 +293,12 @@ def build_model(  # noqa: C901
             functions=shared,
             solver=GridSearch(),
         )
-        return with_fixture_graph(
+        return Model(
             regimes={"alive": alive, "dead": dead},
             ages=ages,
             regime_id_class=DS2024HousingFuesRegimeId,
             initial_nodes={ages.exact_values[0]: "alive"},
+            edges=edges,
         )
 
     inner_solver = DCEGM(
@@ -308,13 +307,6 @@ def build_model(  # noqa: C901
         n_constrained_points=32,
     )
     alive = ConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            final_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -340,11 +332,12 @@ def build_model(  # noqa: C901
             post_decision_state="savings",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=DS2024HousingFuesRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges=edges,
     )
 
 

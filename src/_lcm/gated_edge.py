@@ -1,10 +1,11 @@
-"""The gated edge a `ValueDependentTransition` decomposes into.
+"""The engine's form of a `Gate`.
 
-A model author declares a value-dependent transition in the regime's own
-`regime_transitions` slot and reads the result back as `regime.gated_edges`. This is
-that result: the engine's form of one edge, carrying the gate, the routes, the
-references the gate reads and the off-grid contract. It lives here rather than
-in the public package because nothing constructs it — it is derived.
+A model author declares a gate in the `gates` of the source's `Transition` in
+`Model(edges=...)`; the model graph keeps the result on that source's
+`RegimeLaw.gated_edges`. This is that result: the engine's form of one edge,
+carrying the predicate, the routes, the references the predicate reads and the
+off-grid contract. It lives here rather than in the public package because
+nothing constructs it — it is derived.
 """
 
 from collections.abc import Mapping
@@ -16,8 +17,26 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
-from lcm.typing import UserFunction
+from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm.typing import RegimeName, UserFunction
+
+
+def gated_edge_from_gate(gate: Gate) -> GatedEdge:
+    """Return the engine's form of a declared `Gate`.
+
+    Args:
+        gate: The gate a `Transition` declares on one target.
+
+    Returns:
+        The gated edge into that target.
+
+    """
+    return GatedEdge(
+        gate=gate.predicate,
+        legs=gate.routes,
+        gate_refs=gate.references,
+        off_grid=gate.off_grid,
+    )
 
 
 @beartype(conf=REGIME_CONF)
@@ -31,7 +50,7 @@ class GatedEdge:
     singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
     raw transitions between different-stakeholder regimes stay rejected.
 
-    A source regime declares `gated_edges` as a mapping of TARGET regime name
+    A source regime's law carries `gated_edges` as a mapping of TARGET regime name
     to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
     row enters when the gate is true — and each leg's `fallback` is where the
     gate-false branch sends it. A dissolution edge is therefore keyed by the
@@ -115,3 +134,21 @@ class GatedEdge:
         object.__setattr__(
             self, "gate_refs", ensure_containers_are_immutable(self.gate_refs)
         )
+
+    def reference_regimes(
+        self, *, phases: tuple[Literal["solve", "simulate"], ...]
+    ) -> tuple[RegimeName, ...]:
+        """Return the regimes this edge reads a projected current value from.
+
+        Every gate reference, then each leg's fallback in each of `phases`,
+        deduplicated in that order.
+        """
+        names = [ref.regime for ref in self.gate_refs.values()]
+        for leg in self.legs.values():
+            names.extend(
+                (
+                    leg.solve_fallback if phase == "solve" else leg.simulate_fallback
+                ).regime
+                for phase in phases
+            )
+        return tuple(dict.fromkeys(names))

@@ -18,6 +18,8 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    AgeRange,
+    ByAge,
     CESAggregator,
     LinSpacedGrid,
     Model,
@@ -25,13 +27,12 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_PERIODS = 3
 _FIRST_AGE = 20
@@ -91,18 +92,18 @@ def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
 
 def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
+    alive_law = ByAge.until(
+        stop_age_exclusive=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+        law={
+            "alive": StochasticTransition(func=_prob_alive),
+            "dead": StochasticTransition(func=_prob_dead),
+        },
+        then={"dead": StochasticTransition(func=_prob_dead)},
+    )
     alive = ConsumptionSavingsRegime(
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},
         actions={"consumption": _CONSUMPTION_GRID},
-        regime_transitions=until_exit(
-            final_age_alive + 5,
-            law={
-                "alive": StochasticTransition(func=_prob_alive),
-                "dead": StochasticTransition(func=_prob_dead),
-            },
-            exits=("dead",),
-        ),
         functions={
             "utility": _utility,
             "resources": _resources,
@@ -122,11 +123,10 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _LIQUID_GRID},
         functions={"utility": _bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=_RegimeId,
         ages=AgeGrid(
@@ -136,6 +136,15 @@ def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
         ),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=alive_law,
+            )
+        },
     )
 
 

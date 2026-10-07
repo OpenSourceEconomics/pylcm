@@ -17,14 +17,13 @@ investment, and the branch on dense grids, and is the agreement oracle.
 import jax.numpy as jnp
 
 from _lcm.grids.base import Grid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -42,7 +41,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy as smooth
-from tests.test_models.schedules import until_exit
 
 # Flat utility gain from holding insurance — makes the branch worth buying.
 INSURANCE_UTILITY = 0.15
@@ -115,13 +113,8 @@ def build_model(
         "illiquid_investment": illiquid_investment_grid,
         "buy_private": DiscreteGrid(category_class=BuyPrivate),
     }
-    transitions = until_exit(
-        final_age_alive + 5,
-        law=_SupportedDeterministicTransition(
-            func=smooth.next_regime, targets=("alive", "dead")
-        ),
-        exits=("dead",),
-    )
+    transitions = DeterministicTransition(func=smooth.next_regime)
+    stays = tuple(range(20, final_age_alive, 5))
     if variant == "brute":
         # Same oracle correction as the smooth toy: reaching `s'` through an
         # investment action would let the oracle land on only 3 of the 15 outer
@@ -138,7 +131,6 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             constraints={"budget_feasible": smooth.budget_feasible},
             solver=build_solver(variant=variant),
@@ -148,7 +140,6 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             solver=build_solver(variant=variant),
             liquid=LiquidMargin(
@@ -165,20 +156,18 @@ def build_model(
             ),
         )
     dead = Regime(
-        regime_transitions=None,
         states=states,
         functions={"utility": smooth.terminal_utility},
     )
     return Model(
         edges={
-            "alive": {
-                "dead": tuple(range(20, final_age_alive + 1, 5)),
-                **(
-                    {"alive": tuple(range(20, final_age_alive, 5))}
-                    if final_age_alive > 20
-                    else {}
-                ),
-            },
+            "alive": Transition(
+                targets={
+                    "dead": tuple(range(20, final_age_alive + 1, 5)),
+                    **({"alive": stays} if stays else {}),
+                },
+                law=transitions,
+            ),
         },
         regimes={"alive": alive, "dead": dead},
         regime_id_class=smooth.RegimeId,

@@ -122,6 +122,9 @@ from lcm.typing import Float1D, FloatND, UserFunction
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
+    from _lcm.regime_law import RegimeLaw
+
+    RegimeLawsMapping: TypeAlias = Mapping[RegimeName, RegimeLaw]  # noqa: UP040
 
     UserRegimesMapping: TypeAlias = Mapping[  # noqa: UP040
         RegimeName, FinalizedUserRegime
@@ -134,6 +137,7 @@ else:
     # which re-exports `Solver` from this module. ty reads the precise types
     # above; the beartype claw checks only the outer container at runtime.
     UserRegimesMapping = Mapping
+    RegimeLawsMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
 
 
@@ -146,6 +150,9 @@ class SolverModelContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of every finalized user regime in the model."""
+
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized solve-phase declarations for this regime.
@@ -225,6 +232,9 @@ class SolverBuildContext:
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 
+    laws: RegimeLawsMapping
+    """Every regime's law, bound from `Model(edges=...)`, by regime name."""
+
     continuation_specs: MappingProxyType[RegimeName, ContinuationSpec] = (
         MappingProxyType({})
     )
@@ -266,6 +276,14 @@ class SolverBuildContext:
 
     sharded_state_names: frozenset[StateName] = frozenset()
     """State axes assigned to devices by the model's execution configuration."""
+
+    action_partitions: int = 1
+    """Devices sharing this regime's action product; one when it is not shared.
+
+    Set from `ExecutionConfig.action_partitions`. Above one, the regime's mesh
+    carries a trailing action axis of this size, and a solver serving the
+    request reduces each device's run of the action product separately.
+    """
 
     axis_widths: MappingProxyType[str, int] = MappingProxyType({})
     """Immutable mapping of execution axis name to the width it is fixed at.
@@ -350,12 +368,24 @@ class SolverBuildContext:
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None
-    """Immutable mapping of period to each regime's age-specialized grid signature.
+    """Immutable mapping of period to each regime's age-specialization signature.
 
-    The user's own `AgeSpecializedGrid.signature(age)` values, so a solver that
-    groups periods into shared compiled programs can fold its targets' signatures
-    at `period + 1` into the group key. Periods whose continuation grids differ
-    then never share a trace. `None` when no regime has an age-specialized state.
+    The user's own `AgeSpecializedGrid.signature(age)` values, joined by the
+    `AgeSpecializedFunction.signature(age)` values of a regime declaring a function
+    marker, so a solver that groups periods into shared compiled programs can fold
+    its targets' signatures at `period + 1` into the group key. Periods whose
+    continuation grids or target functions differ then never share a trace. `None`
+    when no regime declares an age marker.
+    """
+
+    period_to_user_regimes: MappingProxyType[int, UserRegimesMapping] | None = None
+    """Immutable mapping of period to every regime's declaration at that period.
+
+    Each regime's `AgeSpecializedFunction`s and `AgeSpecializedGrid`s are resolved
+    at the period; a regime declaring none, or inactive there, keeps its
+    representative declaration. A period-`t` kernel reading a target's own DAG
+    (its resources map) reads the target at `t + 1`. `None` when no regime
+    declares an age marker.
     """
 
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]]
@@ -427,8 +457,8 @@ class SolverBuildContext:
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`. The grid-search kernel then substitutes each such target's
+    Non-empty only for a source regime with
+    gated edges. The grid-search kernel then substitutes each such target's
     gated continuation object `Wbar` (supplied by the solve loop under
     `edge_regime_to_V_arr`) for the raw target V in the `next_regime_to_V_arr`
     mapping it reads and lowers against. Empty for every other regime.
@@ -483,7 +513,18 @@ class SolverBuildContext:
             states=self.state_action_space.states,
             fold_state_names=self.fold_state_names,
             submesh_device_ids=self.submesh_device_ids,
+            action_partitions=self.action_partitions,
         )
+
+    def user_regimes_at(self, *, period: int) -> UserRegimesMapping:
+        """Return every regime's declaration with its age markers resolved at `period`.
+
+        The representative declarations when no regime declares an age marker
+        active at `period`.
+        """
+        if self.period_to_user_regimes is None:
+            return self.user_regimes
+        return self.period_to_user_regimes.get(period, self.user_regimes)
 
 
 @dataclass(frozen=True, kw_only=True)

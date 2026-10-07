@@ -16,7 +16,7 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
-from lcm import ByAge, DeterministicTransition
+from lcm import DeterministicTransition, Transition
 
 from . import _gpu_mem
 
@@ -133,11 +133,11 @@ def _make_model_and_params(
         return 1.0 / marginal_continuation
 
     ages = AgeGrid(start=40, inclusive_stop=40 + _N_PERIODS - 1, step="Y")
-    last_age = ages.exact_values[-1]
 
     wealth_grid = LinSpacedGrid(start=1, stop=400, n_points=wealth_n_points)
     consumption_grid = LinSpacedGrid(start=1, stop=400, n_points=consumption_n_points)
 
+    working_life_law = DeterministicTransition(func=next_regime_from_working)
     working_life = Regime(
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -146,11 +146,6 @@ def _make_model_and_params(
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=next_regime_from_working),
-            then=DeterministicTransition(func=next_regime_from_working),
-        ),
         functions={
             "utility": utility_working,
             "labor_income": labor_income,
@@ -159,12 +154,8 @@ def _make_model_and_params(
         taste_shocks=ExtremeValueTasteShocks(),
     )
 
+    retirement_law = DeterministicTransition(func=next_regime_from_retirement)
     retirement = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=next_regime_from_retirement),
-            then=DeterministicTransition(func=next_regime_from_retirement),
-        ),
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},
         state_transitions={"wealth": next_wealth},
@@ -199,7 +190,6 @@ def _make_model_and_params(
             "inverse_marginal_utility": inverse_marginal_utility,
         }
         working_life = ConsumptionSavingsRegime(
-            regime_transitions=working_life.regime_transitions,
             states=working_life.states,
             actions=working_life.actions,
             taste_shocks=working_life.taste_shocks,
@@ -210,7 +200,6 @@ def _make_model_and_params(
             liquid=liquid_margin,
         )
         retirement = ConsumptionSavingsRegime(
-            regime_transitions=retirement.regime_transitions,
             states=retirement.states,
             actions=retirement.actions,
             state_transitions={"wealth": next_wealth_from_savings},
@@ -221,21 +210,26 @@ def _make_model_and_params(
         )
 
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
     model = Model(
         edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                "working_life": tuple(ages.exact_values[:-2]),
-                "retirement": tuple(ages.exact_values[:-2]),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                "retirement": tuple(ages.exact_values[:-2]),
-            },
+            "working_life": Transition(
+                targets={
+                    "dead": tuple(ages.exact_values[:-1]),
+                    "working_life": tuple(ages.exact_values[:-2]),
+                    "retirement": tuple(ages.exact_values[:-2]),
+                },
+                law=working_life_law,
+            ),
+            "retirement": Transition(
+                targets={
+                    "dead": tuple(ages.exact_values[:-1]),
+                    "retirement": tuple(ages.exact_values[:-2]),
+                },
+                law=retirement_law,
+            ),
         },
         regimes={
             "working_life": working_life,

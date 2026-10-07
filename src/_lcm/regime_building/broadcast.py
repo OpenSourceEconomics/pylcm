@@ -38,6 +38,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
     normalize_regime_phases,
 )
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
@@ -70,6 +71,7 @@ _BROADCASTABLE_SLOTS = (
 def merge_model_slots(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     model_slots: Mapping[str, Mapping[str, object]],
 ) -> tuple[
     MappingProxyType[RegimeName, UserRegime],
@@ -80,6 +82,7 @@ def merge_model_slots(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, which says whether it is terminal.
         model_slots: Mapping of slot names (`functions`, `constraints`,
             `states`, `state_transitions`, `actions`) to model-level entries.
 
@@ -98,11 +101,10 @@ def merge_model_slots(
 
     for regime_name, user_regime in user_regimes.items():
         replacements: dict[str, Mapping[str, object]] = {}
-        variable_names: set[StateOrActionName] = set()
         for slot_name in _BROADCASTABLE_SLOTS:
             regime_slot = dict(getattr(user_regime, slot_name))
             model_slot = dict(model_slots.get(slot_name, {}))
-            if slot_name == "state_transitions" and user_regime.terminal:
+            if slot_name == "state_transitions" and laws[regime_name].terminal:
                 # Terminal regimes consume no laws of motion; broadcast laws
                 # are inert there and must not violate the empty-transitions
                 # rule.
@@ -124,8 +126,6 @@ def merge_model_slots(
                     model_slot=model_slot,
                 )
             )
-            if slot_name in ("states", "actions"):
-                variable_names |= model_slot.keys() & regime_slot.keys()
             replacements[slot_name] = {**model_slot, **regime_slot}
         # A masked state's broadcast law is dropped with it.
         masked_states = {
@@ -159,6 +159,7 @@ def merge_model_slots(
 def prune_broadcast_variables(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     koopmans_aggregator: UserFunction,
     ages: AgeGrid | None = None,
@@ -181,6 +182,7 @@ def prune_broadcast_variables(
 
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
+        laws: Each regime's law, by regime name.
         broadcast_variables: Per regime, the broadcast state/action names.
         koopmans_aggregator: The model-level Bellman aggregator, used as a
             reachability root in every non-terminal regime that declares none
@@ -200,7 +202,7 @@ def prune_broadcast_variables(
 
     """
     specs = {
-        regime_name: normalize_regime_phases(user_regime)
+        regime_name: normalize_regime_phases(user_regime, law=laws[regime_name])
         for regime_name, user_regime in user_regimes.items()
     }
     all_regime_names = frozenset(user_regimes)
@@ -215,6 +217,7 @@ def prune_broadcast_variables(
     kept = _joint_phase_closure(
         specs=specs,
         user_regimes=user_regimes,
+        laws=laws,
         broadcast_variables=broadcast_variables,
         koopmans_aggregator=koopmans_aggregator,
         kept=kept,
@@ -278,7 +281,7 @@ def root_functions(
     *,
     regime_name: RegimeName,
     regime: UserRegime,
-    all_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     phase: Literal["solve", "simulate"],
     koopmans_aggregator: UserFunction | None = None,
 ) -> MappingProxyType[str, UserFunction]:
@@ -301,8 +304,8 @@ def root_functions(
     - for each gated edge *whose target is this regime*, the edge's gate, its
       gate-reference projections, and its legs' fallback projections.
 
-    That last group is why `all_regimes` is an argument: a gated edge is
-    declared on the SOURCE regime but gate, gate references and fallbacks are
+    That last group is why every regime's law is an argument: a gated edge is
+    declared on the SOURCE's law but gate, gate references and fallbacks are
     all evaluated on the TARGET regime's grid, so nothing in the target's own
     slots mentions them and a walk over one regime in isolation cannot see the
     read.
@@ -316,8 +319,9 @@ def root_functions(
     Args:
         regime_name: Name of the regime whose roots are collected.
         regime: The regime itself.
-        all_regimes: Mapping of regime names to every regime of the model,
-            scanned for gated edges pointing at `regime_name`.
+        laws: Every regime's law, by regime name: this regime's for its
+            routing roots, the others' scanned for gated edges pointing at
+            `regime_name`.
         phase: Which side of a `Phased` slot the roots are taken from.
         koopmans_aggregator: The model-level aggregator, used when the regime
             declares none of its own. `None` leaves the aggregator out, which
@@ -329,17 +333,21 @@ def root_functions(
     """
     return MappingProxyType(
         _valuation_roots(
-            regime=regime, phase=phase, koopmans_aggregator=koopmans_aggregator
+            regime=regime,
+            law=laws[regime_name],
+            phase=phase,
+            koopmans_aggregator=koopmans_aggregator,
         )
-        | _transition_roots(regime=regime, phase=phase)
+        | _transition_roots(regime=regime, law=laws[regime_name], phase=phase)
         | _value_aware_roots(regime=regime)
-        | _incoming_edge_roots(regime_name=regime_name, all_regimes=all_regimes)
+        | _incoming_edge_roots(regime_name=regime_name, laws=laws)
     )
 
 
 def _valuation_roots(
     *,
     regime: UserRegime,
+    law: RegimeLaw,
     phase: Literal["solve", "simulate"],
     koopmans_aggregator: UserFunction | None,
 ) -> dict[str, UserFunction]:
@@ -369,7 +377,7 @@ def _valuation_roots(
         )
         for name, value in regime.decomposed_constraints.items()
     }
-    if not regime.terminal:
+    if not law.terminal:
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
             roots["__koopmans_aggregator"] = aggregator
@@ -377,11 +385,11 @@ def _valuation_roots(
 
 
 def _transition_roots(
-    *, regime: UserRegime, phase: Literal["solve", "simulate"]
+    *, regime: UserRegime, law: RegimeLaw, phase: Literal["solve", "simulate"]
 ) -> dict[str, UserFunction]:
     """Key regime routing plus every edge-local joint probability and output law."""
     roots: dict[str, UserFunction] = {}
-    transition = _for_phase(value=regime.decomposed_transition, phase=phase)
+    transition = _for_phase(value=law.decomposed_transition, phase=phase)
     if isinstance(transition, Mapping):
         roots |= {
             f"__next_regime__{target_regime_name}": cast("UserFunction", cell)
@@ -429,12 +437,12 @@ def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:
 
 
 def _incoming_edge_roots(
-    *, regime_name: RegimeName, all_regimes: Mapping[RegimeName, UserRegime]
+    *, regime_name: RegimeName, laws: RegimeLaws
 ) -> dict[str, UserFunction]:
     """Key the gated-edge functions other regimes evaluate on this regime's grid."""
     roots: dict[str, UserFunction] = {}
-    for source_name, source in all_regimes.items():
-        edge = source.gated_edges.get(regime_name)
+    for source_name, law in laws.items():
+        edge = law.gated_edges.get(regime_name)
         if edge is None:
             continue
         roots[f"__incoming_gate__{source_name}"] = edge.gate
@@ -471,6 +479,7 @@ def _joint_phase_closure(
     *,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     koopmans_aggregator: UserFunction,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -499,6 +508,7 @@ def _joint_phase_closure(
             grown = _phase_fixed_point(
                 specs=specs,
                 user_regimes=user_regimes,
+                laws=laws,
                 broadcast_variables=broadcast_variables,
                 koopmans_aggregator=koopmans_aggregator,
                 kept=grown,
@@ -515,6 +525,7 @@ def _phase_fixed_point(
     *,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]],
     koopmans_aggregator: UserFunction,
     kept: Mapping[RegimeName, frozenset[StateOrActionName]],
@@ -553,7 +564,7 @@ def _phase_fixed_point(
                 phase_slice=phase_slice,
                 regime_name=regime_name,
                 user_regime=user_regime,
-                user_regimes=user_regimes,
+                laws=laws,
                 phase_name=phase_name,
                 koopmans_aggregator=koopmans_aggregator,
                 candidate_targets=candidates_by_source[regime_name],
@@ -713,7 +724,7 @@ def _needed_names(
     phase_slice: RegimePhaseSpec,
     regime_name: RegimeName,
     user_regime: UserRegime,
-    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     phase_name: PhaseName,
     koopmans_aggregator: UserFunction,
     candidate_targets: frozenset[RegimeName],
@@ -746,7 +757,7 @@ def _needed_names(
         root_functions(
             regime_name=regime_name,
             regime=user_regime,
-            all_regimes=user_regimes,
+            laws=laws,
             phase=_PHASE_OF_SLICE[phase_name],
             koopmans_aggregator=koopmans_aggregator,
         )

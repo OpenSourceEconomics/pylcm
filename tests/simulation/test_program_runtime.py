@@ -21,9 +21,6 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.program_types import (
     SUBJECT_WIDTH_KEYWORD,
     SimulationBuildContext,
@@ -34,8 +31,8 @@ from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
+    DiscreteGrid,
+    InvariantBlockSchedule,
     LinSpacedGrid,
     Model,
     categorical,
@@ -44,10 +41,144 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
-from tests.test_models.graph import with_fixture_graph
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+    UserParams,
+)
+from tests.test_models import independent_types
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.processes import MultiRegimeId
+
+
+def _fixed_cost_of_work(*, age: float, reference_age: FloatND) -> FloatND:
+    """Return the age-dependent cost using a namespaced fixed parameter."""
+    return age - reference_age
+
+
+def _fixed_cost_utility(
+    *,
+    consumption: ContinuousAction,
+    pref_type: DiscreteState,
+    fixed_cost_of_work: FloatND,
+) -> FloatND:
+    """Consumption and preference type determine utility net of the work cost."""
+    return consumption + pref_type - fixed_cost_of_work
+
+
+def _fixed_cost_terminal(
+    *, wealth: ContinuousState, pref_type: DiscreteState
+) -> FloatND:
+    """The terminal value retains both state axes."""
+    return wealth + pref_type
+
+
+@pytest.mark.parametrize(
+    ("enable_jit", "subject_sharding"), [(False, False), (True, False), (True, True)]
+)
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize(
+    "schedule",
+    [None, InvariantBlockSchedule.PERIOD_MAJOR, InvariantBlockSchedule.BLOCK_MAJOR],
+)
+def test_simulation_preserves_nested_fixed_parameters(
+    *,
+    enable_jit: bool,
+    subject_sharding: bool,
+    combined: bool,
+    schedule: InvariantBlockSchedule | None,
+) -> None:
+    """A nested fixed work cost reaches the chosen action and published value."""
+    if subject_sharding and jax.local_device_count() < 2:
+        pytest.skip("requires two actual devices for subject sharding")
+    grid = LinSpacedGrid(start=0, stop=2, n_points=3)
+    model = Model(
+        regimes={
+            "working": UserRegime(
+                states={
+                    "wealth": grid,
+                    "pref_type": DiscreteGrid(
+                        category_class=independent_types.PrefType
+                    ),
+                },
+                state_transitions={
+                    "wealth": independent_types.next_wealth,
+                    "pref_type": fixed_transition("pref_type"),
+                },
+                actions={"consumption": grid},
+                functions={
+                    "utility": _fixed_cost_utility,
+                    "fixed_cost_of_work": _fixed_cost_of_work,
+                },
+                constraints={"affordable": independent_types.affordable},
+            ),
+            "terminal": UserRegime(
+                states={
+                    "wealth": grid,
+                    "pref_type": DiscreteGrid(
+                        category_class=independent_types.PrefType
+                    ),
+                },
+                functions={"utility": _fixed_cost_terminal},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=independent_types.RegimeId,
+        initial_nodes={0: "working"},
+        enable_jit=enable_jit,
+        fixed_params={"working": {"fixed_cost_of_work": {"reference_age": -1.0}}},
+        execution_config=ExecutionConfig(
+            devices=tuple(
+                device.id
+                for device in jax.local_devices()[: 2 if subject_sharding else 1]
+            ),
+            simulation_sharding="subjects" if subject_sharding else "legacy",
+            invariant_block_widths={} if schedule is None else {"pref_type": 1},
+            invariant_block_schedule=(
+                InvariantBlockSchedule.PERIOD_MAJOR if schedule is None else schedule
+            ),
+            axis_widths={"subject": 2, "action_product": 2},
+        ),
+        edges={"working": {"terminal": 0}},
+    )
+    params: UserParams = {"working": {"koopmans_aggregator": {"discount_factor": 0.0}}}
+    solution = None if combined else model.solve(params=params, log_level="off")
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": jnp.full(4, 2.0),
+            "pref_type": jnp.asarray([1, 0, 1, 0], dtype=jnp.int32),
+            "age": jnp.zeros(4),
+            "regime_id": jnp.full(4, independent_types.RegimeId.working),
+        },
+        seed=17,
+        log_level="off",
+    )
+    frame = result.to_dataframe(use_labels=False).sort_values(["period", "subject_id"])
+    np.testing.assert_array_equal(
+        np.column_stack(
+            (
+                frame["regime_name"].map({"working": 0, "terminal": 1}),
+                frame[["consumption", "wealth", "pref_type", "value"]],
+            )
+        ),
+        np.asarray(
+            [
+                [0, 2, 2, 1, 2],
+                [0, 2, 2, 0, 1],
+                [0, 2, 2, 1, 2],
+                [0, 2, 2, 0, 1],
+                [1, np.nan, 0, 1, 1],
+                [1, np.nan, 0, 0, 0],
+                [1, np.nan, 0, 1, 1],
+                [1, np.nan, 0, 0, 0],
+            ]
+        ),
+    )
 
 
 @categorical(ordered=False)
@@ -57,15 +188,10 @@ class _WidthCollisionRegimeId:
 
 
 def _width_collision_utility(
-    *, _lcm_subject_width: ContinuousAction, wealth: ContinuousState
+    *, lcm_subject_width: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     """Read a legal user action whose spelling resembles an execution keyword."""
-    return _lcm_subject_width + wealth
-
-
-def _width_collision_next_regime() -> ScalarInt:
-    """Enter the terminal regime after one decision."""
-    return _WidthCollisionRegimeId.done
+    return lcm_subject_width + wealth
 
 
 def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
@@ -75,25 +201,15 @@ def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
 
 def test_user_subject_width_name_remains_an_economic_action() -> None:
     """A legal user action cannot be consumed as an internal static tile width."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(
-                            start=0, exclusive_stop=1
-                        ): _SupportedDeterministicTransition(
-                            func=_width_collision_next_regime, targets=("done",)
-                        )
-                    }
-                ),
                 functions={"utility": _width_collision_utility},
                 actions={
-                    "_lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
+                    "lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
                 },
             ),
             "done": UserRegime(
-                regime_transitions=None,
                 functions={"utility": _width_collision_terminal_utility},
             ),
         },
@@ -103,6 +219,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         state_transitions={"wealth": fixed_transition("wealth")},
         execution_config=ExecutionConfig(axis_widths={"subject": 1}),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
     params: UserParams = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     frame = model.simulate(
@@ -115,7 +232,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         log_level="off",
     ).to_dataframe(use_labels=False)
     np.testing.assert_array_equal(
-        frame.query("period == 0")["_lcm_subject_width"], np.asarray([2.0, 2.0])
+        frame.query("period == 0")["lcm_subject_width"], np.asarray([2.0, 2.0])
     )
 
 
@@ -126,7 +243,7 @@ def test_simulate_dispatches_the_declared_program_body(
     """Runtime dispatch executes each declared family on real subjects."""
     model, params, initial = WITNESSES["multi_regime"]()
     model = Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=MultiRegimeId,

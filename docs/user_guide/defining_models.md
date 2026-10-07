@@ -32,7 +32,11 @@ model = Model(
 
 All arguments are keyword-only. The five required arguments are `regimes`, `ages`,
 `regime_id_class`, `edges` and `initial_nodes`. `edges` maps source regimes to
-destinations and their source-age selectors. Prefer explicit initial pairs such as
+destinations and their source-age selectors, and declares every regime transition. A
+source with one destination at each source age needs nothing more: the graph is its law.
+A source with several destinations at some age is declared as
+`Transition(targets={target: source_ages, ...}, law=...)`, whose law picks one. A regime
+with no outgoing edges is terminal. Prefer explicit initial pairs such as
 `((25, "working"),)`; selector-to-name mappings remain a convenience. There is no
 default. The solved problems are derived from these roots, see
 [Age-indexed regimes](dated_regime_graph.md). The finalized regimes are stored as
@@ -171,7 +175,11 @@ The `Model` constructor validates:
 
 - At least one terminal regime must be provided; terminal-only starts need no
   non-terminal regime.
-- Regime names cannot contain `__` (reserved separator).
+- Names that become parameter-path segments — regime, state, action, function,
+  constraint, stakeholder, route and gate-reference names, and the parameter arguments
+  of model functions — cannot contain `__` (reserved separator) and cannot start or end
+  with `_`. `edges` is reserved: it names the root of the edge parameters, so no regime,
+  function or function argument may take it.
 - `regime_id_class` fields must exactly match the `regimes` dict keys.
 - All states and actions must be used by at least one function (utility, constraints, or
   transitions).
@@ -209,6 +217,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import ScalarInt
@@ -247,7 +256,6 @@ def terminal_utility(wealth):
 
 
 working = Regime(
-    regime_transitions=next_regime,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=50),
     },
@@ -262,7 +270,6 @@ working = Regime(
 )
 
 retired = Regime(
-    regime_transitions=None,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=50),
     },
@@ -274,14 +281,21 @@ model = Model(
     ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),
     regime_id_class=RegimeId,
     edges={
-        "working": {
-            "working": AgeRange(start=25, exclusive_stop=74),
-            "retired": AgeRange(start=25, exclusive_stop=75),
-        }
+        "working": Transition(
+            targets={
+                "working": AgeRange(start=25, exclusive_stop=74),
+                "retired": AgeRange(start=25, exclusive_stop=75),
+            },
+            law=next_regime,
+        )
     },
     initial_nodes=((25, "working"),),
 )
 ```
+
+`working` can stay or retire at every age before 74, so its edges carry `next_regime` as
+their law; at 74 retirement is the only edge, and `next_regime` returns it there.
+`retired` has no outgoing edges and is terminal.
 
 ## Correlated state transitions
 

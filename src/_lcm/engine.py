@@ -24,6 +24,7 @@ from _lcm.continuation import ContinuationPayload, ContinuationSpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.execution.execution_plan import visible_devices
+from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
@@ -35,6 +36,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    EdgeParamsTemplate,
     FlatRegimeParams,
     FunctionName,
     NextStateSimulationFunction,
@@ -448,6 +450,14 @@ class SolutionPhase:
     named the state in `ExecutionConfig.sharded_states` or on the grid itself.
     """
 
+    action_partitions: int = 1
+    """Devices sharing this regime's action product, from
+    `ExecutionConfig.action_partitions`; one when the actions are not shared.
+
+    Above one, the regime's mesh carries a trailing action axis of this size and
+    its devices are its state mesh times this count.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
 
@@ -604,6 +614,7 @@ class SolutionPhase:
                     grids=self.grids,
                     sharded_state_names=self.sharded_state_names,
                     devices=devices,
+                    action_partitions=self.action_partitions,
                 )
                 required = (
                     jax.sharding.SingleDeviceSharding(devices[0])
@@ -715,6 +726,7 @@ class SolutionPhase:
             grids=self.grids,
             sharded_state_names=self.sharded_state_names,
             devices=self.placed_devices(),
+            action_partitions=self.action_partitions,
         )
         return self._base_state_action_space.replace(
             states=distributed_states,
@@ -1210,6 +1222,14 @@ class _StochasticStateTransition:
     which case the AST subscript-order check is permissively skipped.
     """
 
+    derived_categorical_codes: MappingProxyType[str, IntND] = MappingProxyType({})
+    """Every declared code of each derived categorical the function reads.
+
+    The validator sweeps these codes as extra grid axes. They are a superset of
+    the codes the regime functions reach, which is sufficient for the
+    pointwise checks on the law's output.
+    """
+
     phase: Literal["solve", "simulate"] | None = None
     """Phase this kernel belongs to; `None` for a phase-invariant law.
 
@@ -1236,7 +1256,14 @@ class Regime:
     """Period indices during which this regime is active."""
 
     regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
+    """Template for the parameter structure expected by this regime's functions."""
+
+    edge_params_template: EdgeParamsTemplate = MappingProxyType({})
+    """Template of the callables this regime's edges declare, as a source.
+
+    Nested by declaration path, so it is the regime's branch of
+    `params["edges"]`; empty for a source whose edges declare no parameter.
+    """
 
     solution: SolutionPhase
     """Solve-phase view: variables, grids, compiled functions, state-action space."""
@@ -1328,8 +1355,8 @@ class Regime:
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
     """This regime's gated edges keyed by TARGET regime name, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`: each entry folds a gated continuation object `Wbar` on the
+    Non-empty only for a source regime with
+    gated edges: each entry folds a gated continuation object `Wbar` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
 
@@ -1339,15 +1366,31 @@ class Regime:
     re-pairing parallel mappings by target name or by leg position.
     """
 
+    @property
+    def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:
+        """Return the code arrays every stochastic law keeps for validation.
+
+        One entry per law, target and phase that reads a derived categorical.
+        These are the retained owners themselves, so a residency inventory charges
+        their storage for the model's lifetime without allocating anything.
+        """
+        return tuple(
+            code
+            for transition in self.stochastic_state_transitions.values()
+            for code in transition.derived_categorical_codes.values()
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class _RegimeSharding:
     """Per-regime device-sharding plan for state and value-function arrays.
 
-    The mesh has one axis per distributed state, named after the state.
-    `state_sharding` produces the 1-D sharding for a single state grid (or
-    array of subjects); `V_arr_sharding` produces the multi-axis sharding
-    for the V-array given the order of states in the state-action space.
+    The mesh has one axis per distributed state, named after the state, and a
+    trailing `ACTION_PARTITION_AXIS` when the regime's action product is shared
+    by several devices. `state_sharding` produces the 1-D sharding for a single
+    state grid (or array of subjects); `V_arr_sharding` produces the multi-axis
+    sharding for the V-array given the order of states in the state-action
+    space. Neither names the action axis, so both replicate along it.
     """
 
     mesh: jax.sharding.Mesh
@@ -1355,6 +1398,9 @@ class _RegimeSharding:
 
     distributed_state_names: tuple[StateName, ...]
     """Names of states whose axes appear in `mesh`."""
+
+    action_partitions: int = 1
+    """Devices along the trailing action axis; one when the mesh has none."""
 
     def state_sharding(self, state_name: StateName) -> jax.NamedSharding:
         """Return the sharding for a single state's 1-D grid array."""
@@ -1433,11 +1479,18 @@ def _build_regime_sharding(
     grids: MappingProxyType[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     devices: tuple[jax.Device, ...],
+    action_partitions: int = 1,
 ) -> _RegimeSharding | None:
     """Build a `_RegimeSharding` covering this regime's distributed grids.
 
-    Returns `None` when no state is sharded. Model validation restricts the
-    explicit names to discrete states; grids provide only their extents.
+    Returns `None` when no state is sharded and the actions are not
+    partitioned. Model validation restricts the explicit names to discrete
+    states; grids provide only their extents.
+
+    With `action_partitions` above one the mesh gains a trailing
+    `ACTION_PARTITION_AXIS` of that size, and the state axes below take the
+    remaining factor of `devices`. A regime with no sharded state then has a
+    one-axis mesh along which everything is replicated.
 
     Sharding policy depends on the number of distributed grids:
     - exactly one: build a 1-axis mesh with shape `(n_devices,)`, axis name
@@ -1453,17 +1506,34 @@ def _build_regime_sharding(
         sharded_state_names: Explicit state names assigned a device axis.
         devices: Tuple of the devices the placement assigned to this regime;
             the mesh spans exactly them.
+        action_partitions: Devices sharing the regime's action product.
 
     Returns:
-        The regime's sharding plan, or `None` if no grid is distributed.
+        The regime's sharding plan, or `None` if no grid is distributed and the
+        actions are not partitioned.
 
     """
     distributed_grids = {
         name: grid for name, grid in grids.items() if name in sharded_state_names
     }
-    if not distributed_grids:
+    if not distributed_grids and action_partitions == 1:
         return None
-    n_devices = len(devices)
+    if len(devices) % action_partitions != 0:
+        raise PyLCMError(
+            f"An action group of {action_partitions} devices does not divide the "
+            f"{len(devices)} devices placed for the regime."
+        )
+    if not distributed_grids:
+        mesh = jax.make_mesh(
+            (action_partitions,),
+            (ACTION_PARTITION_AXIS,),
+            axis_types=(jax.sharding.AxisType.Auto,),
+            devices=devices,
+        )
+        return _RegimeSharding(
+            mesh=mesh, distributed_state_names=(), action_partitions=action_partitions
+        )
+    n_devices = len(devices) // action_partitions
 
     state_names = tuple(distributed_grids.keys())
     grid_sizes = tuple(grid.to_jax().shape[0] for grid in distributed_grids.values())
@@ -1476,12 +1546,7 @@ def _build_regime_sharding(
                 "a multiple of the available devices. "
                 f"Gridpoints: {n_points} Available devices: {n_devices}"
             )
-        mesh = jax.make_mesh(
-            (n_devices,),
-            state_names,
-            axis_types=(jax.sharding.AxisType.Auto,),
-            devices=devices,
-        )
+        mesh_shape: tuple[int, ...] = (n_devices,)
     else:
         product = math_prod(grid_sizes)
         if product != n_devices:
@@ -1491,14 +1556,22 @@ def _build_regime_sharding(
                 f"available devices. Gridpoints product: {product} "
                 f"Available devices: {n_devices}"
             )
-        mesh = jax.make_mesh(
-            grid_sizes,
-            state_names,
-            axis_types=tuple(jax.sharding.AxisType.Auto for _ in distributed_grids),
-            devices=devices,
-        )
+        mesh_shape = grid_sizes
 
-    return _RegimeSharding(mesh=mesh, distributed_state_names=state_names)
+    action_axes = (ACTION_PARTITION_AXIS,) if action_partitions > 1 else ()
+    mesh = jax.make_mesh(
+        (*mesh_shape, *((action_partitions,) if action_axes else ())),
+        (*state_names, *action_axes),
+        axis_types=tuple(
+            jax.sharding.AxisType.Auto for _ in (*state_names, *action_axes)
+        ),
+        devices=devices,
+    )
+    return _RegimeSharding(
+        mesh=mesh,
+        distributed_state_names=state_names,
+        action_partitions=action_partitions,
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1534,11 +1607,15 @@ def place_template_on_regime_devices[Template](
     states: Mapping[StateName, FloatND | IntND],
     fold_state_names: tuple[StateName, ...],
     submesh_device_ids: tuple[int, ...],
+    action_partitions: int = 1,
 ) -> Template:
     """Place a continuation pytree using the regime's stored-value layout."""
     devices = placed_devices_for_ids(submesh_device_ids=submesh_device_ids)
     plan = _build_regime_sharding(
-        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+        grids=grids,
+        sharded_state_names=sharded_state_names,
+        devices=devices,
+        action_partitions=action_partitions,
     )
     state_order = tuple(name for name in states if name not in fold_state_names)
     replicated = (
@@ -1586,6 +1663,7 @@ def _distribute_states_to_devices(
     grids: MappingProxyType[StateOrActionName, Grid],
     sharded_state_names: frozenset[StateName],
     devices: tuple[jax.Device, ...],
+    action_partitions: int = 1,
 ) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
@@ -1598,6 +1676,7 @@ def _distribute_states_to_devices(
         grids: Immutable mapping of state and action names to their grids.
         sharded_state_names: Explicit state names assigned a device axis.
         devices: Tuple of the devices the placement assigned to this regime.
+        action_partitions: Devices sharing the regime's action product.
 
     Returns:
         Immutable mapping with distributed states placed on the mesh and
@@ -1605,7 +1684,10 @@ def _distribute_states_to_devices(
 
     """
     sharding_plan = _build_regime_sharding(
-        grids=grids, sharded_state_names=sharded_state_names, devices=devices
+        grids=grids,
+        sharded_state_names=sharded_state_names,
+        devices=devices,
+        action_partitions=action_partitions,
     )
     if sharding_plan is None:
         return states

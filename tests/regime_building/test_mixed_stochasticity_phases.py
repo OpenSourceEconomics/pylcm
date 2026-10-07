@@ -13,20 +13,18 @@ from typing import Any
 import jax.numpy as jnp
 import pandas as pd
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
+    Model,
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -89,19 +87,15 @@ def _simulate(law: Any) -> pd.DataFrame:
         "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},
     }
-    live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
-        state_transitions={"good": law},
-        **common,
-    ).replace()
-    last = Regime(regime_transitions=None, state_transitions={}, **common).replace()
-    model = with_fixture_graph(
+    live = Regime(state_transitions={"good": law}, **common)
+    last = Regime(state_transitions={}, **common)
+    model = Model(
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,

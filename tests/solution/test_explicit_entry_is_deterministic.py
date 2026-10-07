@@ -22,11 +22,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -34,7 +32,7 @@ from lcm import (
     PowerMean,
     QuasiArithmeticMean,
     Regime,
-    StochasticTransition,
+    Transition,
     UniformIIDProcess,
     categorical,
     fixed_transition,
@@ -42,7 +40,6 @@ from lcm import (
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 # `mu=1, sigma=0.5, n_std=2` at three points puts the target's nodes on
 # `(0, 1, 2)`, and its payoff is `shock**2`, so its value function is `(0, 1, 4)`.
@@ -65,10 +62,6 @@ def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
     return shock**2
 
 
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _target_process() -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -88,18 +81,14 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
     def _enter_at() -> ScalarFloat:
         return jnp.asarray(entry_value)
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -109,6 +98,7 @@ def _build_model(*, entry_value: float, enable_jit: bool) -> Model:
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 
@@ -117,7 +107,7 @@ _PARAMS = {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-        "target": {"next_regime": {}, "next_shock": {}},
+        "target": {"next_shock": {}},
     },
     "target": {"utility": {}},
 }
@@ -202,12 +192,9 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
     def _enter_at_wealth(wealth: ScalarFloat) -> ScalarFloat:
         return wealth
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 # The top of this grid lies outside the target's `(0, 1, 2)`.
                 states={"wealth": LinSpacedGrid(start=1.0, stop=9.0, n_points=3)},
                 state_transitions={
@@ -217,7 +204,6 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -227,12 +213,13 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -262,18 +249,14 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
     def _enter_at_half() -> ScalarFloat:
         return jnp.asarray(0.5)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at_half}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _one_plus_shock},
             ),
@@ -283,6 +266,7 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
     got = _source_value(model=model, params=_PARAMS)
@@ -311,12 +295,9 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
     def _enter_at() -> ScalarFloat:
         return jnp.asarray(1.5)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=QuasiArithmeticMean(
@@ -325,7 +306,6 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
                 ),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -335,12 +315,13 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -370,12 +351,9 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     def _product_utility(*, shock: ScalarFloat, other: ScalarFloat) -> FloatND:
         return shock**2 + 10.0 * other
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": _enter_first},
                     "other": {"target": _enter_second},
@@ -384,7 +362,6 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "other": UniformIIDProcess(n_points=2, start=0.0, stop=1.0),
@@ -397,13 +374,14 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-            "target": {"next_regime": {}, "next_shock": {}, "next_other": {}},
+            "target": {"next_shock": {}, "next_other": {}},
         },
         "target": {"utility": {}},
     }
@@ -438,18 +416,14 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
     def _sum_utility(*, shock: ScalarFloat, extra: ScalarFloat) -> FloatND:
         return shock**2 + extra
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": _target_process(),
                     "extra": UniformIIDProcess(n_points=2, start=1.0, stop=3.0),
@@ -462,13 +436,14 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -507,12 +482,9 @@ def test_the_entry_representation_decides_the_action() -> None:
     def _choose(go: ScalarInt) -> ScalarInt:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_choose, targets=("stay", "enter")
-                ),
                 actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 state_transitions={
                     "wealth": {"stay": lambda: jnp.asarray(1.0)},
@@ -522,12 +494,10 @@ def test_the_entry_representation_decides_the_action() -> None:
                 certainty_equivalent=PowerMean(),
             ),
             "stay": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
                 functions={"utility": _stay_utility},
             ),
             "enter": Regime(
-                regime_transitions=None,
                 states={"shock": _target_process()},
                 functions={"utility": _squared_shock_utility},
             ),
@@ -537,6 +507,12 @@ def test_the_entry_representation_decides_the_action() -> None:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={
+            "source": Transition(
+                targets={"stay": (20, 21), "enter": (20, 21)},
+                law=DeterministicTransition(func=_choose),
+            )
+        },
     )
     params = {
         "source": {
@@ -545,7 +521,6 @@ def test_the_entry_representation_decides_the_action() -> None:
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "stay": {"utility": {}},
         "enter": {"utility": {}},

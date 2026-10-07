@@ -9,6 +9,7 @@ import jax._src.core
 import jax.numpy as jnp
 import pytest
 
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.forward_program_profiles import profile_forward_programs
 from _lcm.simulation.runtime import SimulationRuntime
 from tests.simulation.test_abstract_simulation_profiles import (
@@ -72,7 +73,7 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
     spaces = MappingProxyType(
         {
             name: regime.solution.state_action_space(
-                regime_params=result.flat_params[name]
+                regime_params=regime_kernel_params(result.flat_params, regime_name=name)
             )
             for name, regime in result._regimes.items()
         }
@@ -145,7 +146,9 @@ def test_independent_taste_profile_keeps_its_actual_key_dtype_under_rbg(
         spaces = MappingProxyType(
             {
                 name: regime.solution.state_action_space(
-                    regime_params=result.flat_params[name]
+                    regime_params=regime_kernel_params(
+                        result.flat_params, regime_name=name
+                    )
                 )
                 for name, regime in model._regimes.items()
             }

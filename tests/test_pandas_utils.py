@@ -17,19 +17,21 @@ from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import edge_params, regime_kernel_params
 from _lcm.params.processing import broadcast_to_template
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
+    AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     JointTransition,
     LinSpacedGrid,
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidParamsError
@@ -41,10 +43,17 @@ from tests.simulation.initial_conditions._models import (
 from tests.test_models.basic_discrete import (
     Health,
 )
-from tests.test_models.graph import with_fixture_graph
+from tests.test_models.regime_markov import EDGES as REGIME_MARKOV_EDGES
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
-from tests.test_models.schedules import until_exit
 from tests.test_models.stochastic import get_model as get_stochastic_model
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 
 @categorical(ordered=False)
@@ -88,7 +97,6 @@ def test_to_categorical_dtype_ordered():
 def test_build_discrete_grid_lookup_basic():
     regimes = {
         "a": UserRegime(
-            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
@@ -101,7 +109,6 @@ def test_build_discrete_grid_lookup_basic():
 def test_build_discrete_grid_lookup_ignores_continuous():
     regimes = {
         "a": UserRegime(
-            regime_transitions=None,
             states={
                 "health": DiscreteGrid(category_class=Health),
                 "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
@@ -122,12 +129,10 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
 
     regimes = {
         "a": UserRegime(
-            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
         "b": UserRegime(
-            regime_transitions=None,
             states={"health": DiscreteGrid(category_class=HealthAlt)},
             functions={"utility": lambda: 0.0},
         ),
@@ -148,8 +153,10 @@ def test_convert_series_heterogeneous_grids() -> None:
     convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
 
 
@@ -161,9 +168,6 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         a: ScalarInt
         dead: ScalarInt
 
-    def _next_regime() -> ScalarInt:
-        return _RId.dead
-
     def _next_wealth(*, wealth: float, rate: float, period: int) -> float:  # noqa: ARG001
         return wealth * rate
 
@@ -174,19 +178,17 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         return 0.0
 
     a = UserRegime(
-        regime_transitions=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("dead",)
-        ),
         states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": _dead_utility})
-    m = with_fixture_graph(
+    dead = UserRegime(functions={"utility": _dead_utility})
+    m = Model(
         regimes={"a": a, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=_RId,
         initial_nodes={25: "a"},
+        edges={"a": {"dead": AgeRange(exclusive_stop=75)}},
     )
     ages = m.ages.exact_values
     sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
@@ -197,8 +199,10 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=m.user_regimes,
+        laws=m.graph.laws,
         ages=m.ages,
         regime_names_to_ids=m.regime_names_to_ids,
+        declared_transitions=m._declared_transitions,
     )
     assert result is not None
 
@@ -524,30 +528,35 @@ def _regime_array_to_series(*, arr, model):
     return pd.Series([r[1] for r in records], index=index)
 
 
-def _alive_regime_law(model: Model) -> StochasticTransition:
-    """Return the `StochasticTransition` the `alive` regime's schedule selects."""
-    schedule = cast("ByAge", model.user_regimes["alive"].regime_transitions)
-    return cast("StochasticTransition", schedule.laws[0])
+def _alive_regime_law() -> StochasticTransition:
+    """Return the `StochasticTransition` the `alive` regime's edges declare."""
+    return cast("StochasticTransition", REGIME_MARKOV_EDGES["alive"].law)
 
 
 def test_convert_series_regime_transition_under_a_schedule() -> None:
-    """A Series for a scheduled regime transition's parameter is converted."""
+    """A Series for a regime transition law's parameter is converted.
+
+    The law returns a probability vector over regimes, so the Series carries a
+    `next_regime` level that becomes the array's trailing outcome axis.
+    """
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     internal = broadcast_to_template(
-        params={"alive": {"next_regime": {"probs_array": series}}},
+        params={"edges": {"alive": {"probs_array": series}}},
         template=model._params_template,
         required=False,
     )
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     np.testing.assert_allclose(
-        cast("FloatND", result["alive"]["next_regime__probs_array"]),
+        cast("FloatND", edge_params(result, source="alive")["probs_array"]),
         arr,
         atol=1e-7,
     )
@@ -558,7 +567,7 @@ def test_array_from_series_regime_transition_basic_round_trip():
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
-    func = _alive_regime_law(model)
+    func = _alive_regime_law()
     result = array_from_series(
         sr=series,
         func=func,
@@ -578,7 +587,7 @@ def test_array_from_series_regime_transition_reordered_levels():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     series = series.reorder_levels(["next_regime", "health", "age"])
-    func = _alive_regime_law(model)
+    func = _alive_regime_law()
     result = array_from_series(
         sr=series,
         func=func,
@@ -598,7 +607,7 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
-    func = _alive_regime_law(model)
+    func = _alive_regime_law()
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
@@ -619,7 +628,7 @@ def test_array_from_series_regime_transition_invalid_label_raises():
     series = _regime_array_to_series(arr=arr, model=model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
-    func = _alive_regime_law(model)
+    func = _alive_regime_law()
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
@@ -877,10 +886,14 @@ def test_convert_series_function_level_series() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
@@ -895,8 +908,10 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     # Model-level param is broadcast to all regimes/functions that need it
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
@@ -918,10 +933,14 @@ def test_convert_series_regime_level_series() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
@@ -944,8 +963,10 @@ def test_convert_series_mixed_dict() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
@@ -974,8 +995,10 @@ def test_convert_series_mapping_leaf() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, UserMappingLeaf)
@@ -1002,8 +1025,10 @@ def test_convert_series_nested_mapping_leaf() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     converted = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted, UserMappingLeaf)
@@ -1073,8 +1098,10 @@ def test_convert_series_with_derived_categoricals() -> None:
         convert_series_in_params(
             flat_params=internal,
             user_regimes=model.user_regimes,
+            laws=model.graph.laws,
             ages=model.ages,
             regime_names_to_ids=model.regime_names_to_ids,
+            declared_transitions=model._declared_transitions,
         )
 
     # With derived_categoricals on the regime, it succeeds
@@ -1089,8 +1116,10 @@ def test_convert_series_with_derived_categoricals() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=updated_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     arr = result["retirement"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1130,28 +1159,27 @@ def test_convert_series_per_target_transition() -> None:
             "wealth": _next_wealth,
         },
         functions={"utility": _utility},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
-                targets=("working", "retired"),
-            ),
-            exits=("retired",),
-        ),
     )
     retired = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         functions={"utility": _utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "working"},
+        edges={
+            "working": Transition(
+                targets={"working": 0, "retired": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working)
+                ),
+            )
+        },
     )
 
     index = pd.MultiIndex.from_tuples(
@@ -1176,8 +1204,10 @@ def test_convert_series_per_target_transition() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     arr = result["working"]["working__next_health__probs_array"]
     assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1240,30 +1270,22 @@ def test_convert_series_structured_derived_categoricals() -> None:
         return wealth
 
     regime_a = UserRegime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
-                targets=("regime_a", "regime_b"),
-            ),
-            exits=("regime_b",),
-        ),
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
         functions={"utility": func_a, "derived": _derived_a},
         derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceA)},
     )
     regime_b = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         functions={"utility": func_b, "derived": _derived_b},
         derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceB)},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "regime_a"},
+        edges={"regime_a": {"regime_b": 0}},
     )
 
     # "derived" has 2 outcomes in regime_a (_ChoiceA: x,y) and 3 in
@@ -1281,8 +1303,10 @@ def test_convert_series_structured_derived_categoricals() -> None:
     result_both = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
     assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
@@ -1298,28 +1322,20 @@ def test_convert_series_runtime_grid_param() -> None:
         dead: ScalarInt
 
     alive = UserRegime(
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
-                targets=("alive", "dead"),
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": IrregSpacedGrid(n_points=4)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": lambda wealth: wealth},
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": IrregSpacedGrid(n_points=4)},
         functions={"utility": lambda wealth: wealth},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"dead": 0}},
     )
 
     sr = pd.Series([1.0, 2.0, 5.0, 10.0])
@@ -1330,8 +1346,10 @@ def test_convert_series_runtime_grid_param() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())  # ty: ignore[no-matching-overload]
 
@@ -1350,8 +1368,10 @@ def test_convert_series_sequence_leaf_traversal() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
     converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, UserSequenceLeaf)
@@ -1430,28 +1450,20 @@ def test_convert_series_cross_grid_transition() -> None:
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": lambda health, wealth: wealth + health},
-        regime_transitions=until_exit(
-            1,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
-                targets=("pre65", "post65"),
-            ),
-            exits=("post65",),
-        ),
     )
     post65 = UserRegime(
-        regime_transitions=None,
         states={
             "health": DiscreteGrid(category_class=_HealthPost),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         functions={"utility": lambda health, wealth: wealth + health},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"pre65": pre65, "post65": post65},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RId,
         initial_nodes={0: "pre65"},
+        edges={"pre65": {"post65": 0}},
     )
 
     # Cross-grid transition probs: 3 source states → 2 target states
@@ -1479,8 +1491,10 @@ def test_convert_series_cross_grid_transition() -> None:
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
     )
 
     arr = result["pre65"]["post65__next_health__health_trans_probs_cross"]
@@ -1513,10 +1527,6 @@ def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
     assert "extra" in grids
 
 
-def _next_regime_stub(_age: float) -> ScalarInt:
-    return jnp.int32(0)
-
-
 def _impute_occupation() -> ScalarInt:
     return jnp.int32(0)
 
@@ -1527,7 +1537,6 @@ def _evolve_occupation(occupation: ScalarInt) -> ScalarInt:
 
 def _occupation_pair_regime() -> UserRegime:
     return UserRegime(
-        regime_transitions=_next_regime_stub,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
             "occupation": Phased(
@@ -1577,10 +1586,6 @@ def test_initial_conditions_map_discrete_pair_labels_to_codes():
 
 # JointTransition parameter roles use one extra qname level for support and
 # probabilities; output parameters retain the ordinary target-local next_* path.
-def _series_joint_target_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _series_joint_support(
     *, support_shift: FloatND, period: ScalarInt
 ) -> dict[str, FloatND]:
@@ -1608,9 +1613,6 @@ def _series_joint_next_wealth(
 def test_convert_series_resolves_joint_support_probability_and_output_roles() -> None:
     """Nested joint qnames resolve to the callable that declares each Series param."""
     source = UserRegime(
-        regime_transitions={
-            "target": StochasticTransition(func=_series_joint_target_probability)
-        },
         functions={"utility": lambda: jnp.asarray(0.0)},
         joint_transitions={
             "target": {
@@ -1624,7 +1626,6 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         },
     )
     target = UserRegime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": lambda wealth: wealth},
     )
@@ -1649,9 +1650,11 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         flat_params=flat_params,
         ages=ages,
         user_regimes={"source": source, "target": target},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
+        declared_transitions=MappingProxyType({}),
     )["source"]
 
     np.testing.assert_allclose(
@@ -1680,9 +1683,6 @@ def _series_joint_next_health(
 def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> None:
     """A target-only categorical output resolves its Series axis on that target."""
     source = UserRegime(
-        regime_transitions={
-            "target": StochasticTransition(func=_series_joint_target_probability)
-        },
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
         joint_transitions={
@@ -1697,7 +1697,6 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         },
     )
     target = UserRegime(
-        regime_transitions=None,
         states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
     )
@@ -1716,9 +1715,11 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         flat_params={"source": {"target__next_health__transition_matrix": series}},
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         user_regimes={"source": source, "target": target},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
         ),
+        declared_transitions=MappingProxyType({}),
     )["source"]["target__next_health__transition_matrix"]
 
     np.testing.assert_allclose(np.asarray(converted), [[0.9, 0.1], [0.2, 0.8]])

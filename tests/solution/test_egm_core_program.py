@@ -120,13 +120,15 @@ def test_the_runtime_call_hands_the_core_exactly_the_builders_arguments():
 
 def test_the_builder_refuses_a_law_falling_in_savings():
     kernel, context = _kernel()
-    flat_params = {
-        regime: {
-            name: (-1.5 if name.endswith("return_liquid") else value)
-            for name, value in regime_params.items()
+    flat_params = _flat_params(
+        {
+            regime: {
+                name: (-1.5 if name.endswith("return_liquid") else value)
+                for name, value in regime_params.items()
+            }
+            for regime, regime_params in context["flat_params"].items()
         }
-        for regime, regime_params in context["flat_params"].items()
-    }
+    )
     assert any(name.endswith("return_liquid") for name in flat_params[_REGIME]), (
         "the fixture carries no liquid return to flip; test is inert"
     )
@@ -156,19 +158,30 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
         context=_build_context(
             {
                 **context,
-                "flat_params": {
-                    regime: {
-                        name: value
-                        for name, value in regime_params.items()
-                        if name != "crra"
+                "flat_params": _flat_params(
+                    {
+                        regime: {
+                            name: value
+                            for name, value in regime_params.items()
+                            if name != "crra"
+                        }
+                        for regime, regime_params in context["flat_params"].items()
                     }
-                    for regime, regime_params in context["flat_params"].items()
-                },
+                ),
             }
         ),
     ).arguments
     assert "crra" not in free_arguments
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
+
+
+def _flat_params(
+    tree: Mapping[str, Mapping[str, Any]],
+) -> MappingProxyType[str, MappingProxyType[str, Any]]:
+    """Freeze edited per-namespace params into the engine's read-only layout."""
+    return MappingProxyType(
+        {name: MappingProxyType(dict(params)) for name, params in tree.items()}
+    )
 
 
 def test_a_replay_lowers_the_program_the_solve_ran(*, monkeypatch, tmp_path):

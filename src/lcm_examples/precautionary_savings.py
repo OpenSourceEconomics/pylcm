@@ -16,7 +16,6 @@ from jax import numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -26,6 +25,7 @@ from lcm import (
     Regime,
     RouwenhorstAR1Process,
     TauchenAR1Process,
+    Transition,
     categorical,
 )
 from lcm.execution import ExecutionConfig
@@ -137,6 +137,7 @@ def create_model(
         **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
     )
 
+    alive_law = DeterministicTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": wealth_grid,
@@ -150,31 +151,24 @@ def create_model(
                 start=0.1, stop=5, n_points=consumption_n_points
             ),
         },
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=final_age_alive + 10,
-            law=DeterministicTransition(func=next_regime),
-            then=DeterministicTransition(func=next_regime),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
 
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
+    alive_targets = {
+        "dead": tuple(range(20, final_age_alive + 1, 10)),
+        **(
+            {"alive": tuple(range(20, final_age_alive, 10))}
+            if tuple(range(20, final_age_alive, 10))
+            else {}
+        ),
+    }
     return Model(
-        edges={
-            "alive": {
-                "dead": tuple(range(20, final_age_alive + 1, 10)),
-                **(
-                    {"alive": tuple(range(20, final_age_alive, 10))}
-                    if tuple(range(20, final_age_alive, 10))
-                    else {}
-                ),
-            },
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},

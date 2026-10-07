@@ -16,7 +16,7 @@ import jax.numpy as jnp
 
 import lcm
 from _lcm.grids.base import Grid
-from lcm import LinSpacedGrid, Model
+from lcm import AgeSpecializedGrid, LinSpacedGrid, Model
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models.nbegm_common import (
     feasible,
@@ -66,7 +66,7 @@ def build_model(
     wage_max: float = 6.0,
     n_savings: int = 200,
     savings_max: float = 28.0,
-    wage_grid: Grid | None = None,
+    wage_grid: Grid | AgeSpecializedGrid | None = None,
 ) -> Model:
     """Create the (alive, dead) toy whose subsidy cliff lives on derived income.
 
@@ -130,7 +130,6 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 3.0,
     fpl_cliff: float = 15.0,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the derived-income subsidy-cliff toy.
 
@@ -154,7 +153,6 @@ def build_params(
                 "next_wage": {"wage_persistence": wage_persistence},
             },
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

@@ -36,11 +36,9 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _N_WEALTH = 8
@@ -60,12 +58,9 @@ type Block = tuple[float, float, float, float]
 def _build_model(*, config: ExecutionConfig, consumption_stop: float = 3.0) -> Model:
     """Build a two-period GridSearch model whose cell axis has extent `_N_WEALTH`."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=_N_WEALTH)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -81,6 +76,7 @@ def _build_model(*, config: ExecutionConfig, consumption_stop: float = 3.0) -> M
         regime_id_class=RegimeId,
         execution_config=config,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"dead": final_age_alive}},
     )
 
 
@@ -123,7 +119,7 @@ def _evaluate(
 ) -> TunedSettings:
     return evaluate_execution_settings(
         build_model=build_model,
-        params=get_params(n_periods=_N_PERIODS),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
         baseline=_BASELINE,
         candidates=candidates,
         budget_seconds=budget_seconds,
@@ -385,7 +381,7 @@ def test_tuned_settings_key_carries_the_parameter_shape_signature(
 def test_tuned_settings_key_is_parameter_value_free() -> None:
     """Two parameter draws of the same shape share one key."""
     record = _evaluate(candidates=(_CEILING_ABOVE_EVERY_CELL_COUNT,))
-    params = get_params(n_periods=_N_PERIODS, disutility_of_work=0.123)
+    params = get_graph_only_params(n_periods=_N_PERIODS, disutility_of_work=0.123)
     redrawn = evaluate_execution_settings(
         build_model=_unperturbed,
         params=params,

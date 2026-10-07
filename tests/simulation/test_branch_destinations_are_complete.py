@@ -17,20 +17,20 @@ import numpy as np
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
+    Gate,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WAGE = IrregSpacedGrid(points=(1.0, 2.0))
 
@@ -67,40 +67,37 @@ def _prosperous_enough(wage: ContinuousState) -> BoolND:
 
 
 def _make_model() -> Model:
-    household = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "household_next": ValueDependentTransition(
-                    probability=StochasticTransition(func=_certain),
-                    gate=_prosperous_enough,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="care_pair",
-                                stakeholder="carer",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="lodging",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
+    household_law = ByAge(
+        cases={0: {"household_next": StochasticTransition(func=_certain)}}
+    )
+    household_gates = {
+        "household_next": Gate(
+            predicate=_prosperous_enough,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="care_pair",
+                        stakeholder="carer",
+                        projection={"wage": _identity_wage},
+                    ),
+                ),
+                "m": StakeholderRoute(
+                    target_stakeholder="m",
+                    fallback=ProjectedRegimeValue(
+                        regime="lodging",
+                        projection={"wage": _identity_wage},
+                    ),
+                ),
             },
-            exits=("household_next",),
-        ),
+        )
+    }
+    household = Regime(
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     household_next = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -109,7 +106,6 @@ def _make_model() -> Model:
         },
     )
     care_pair = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={
             "utility": CollectiveUtility(
@@ -118,11 +114,10 @@ def _make_model() -> Model:
         },
     )
     lodging = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _zero},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "household": household,
             "household_next": household_next,
@@ -132,6 +127,13 @@ def _make_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "household"},
+        edges={
+            "household": Transition(
+                targets={"household_next": 0, "care_pair": 0, "lodging": 0},
+                law=household_law,
+                gates=household_gates,
+            )
+        },
     )
 
 

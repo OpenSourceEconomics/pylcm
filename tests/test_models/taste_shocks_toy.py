@@ -17,9 +17,6 @@ Importable only once `lcm.taste_shocks` exists.
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -38,7 +35,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=6)
 TERMINAL_WEALTH_GRID = LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
@@ -86,18 +82,7 @@ def budget_constraint(
     return consumption <= wealth
 
 
-def next_regime(age: int) -> ScalarInt:  # noqa: ARG001
-    return ToyRegimeId.done
-
-
 alive = UserRegime(
-    regime_transitions=until_exit(
-        41,
-        law=_SupportedDeterministicTransition(
-            func=next_regime, targets=("alive", "done")
-        ),
-        exits=("done",),
-    ),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -110,7 +95,6 @@ alive = UserRegime(
 )
 
 done = UserRegime(
-    regime_transitions=None,
     states={"wealth": TERMINAL_WEALTH_GRID},
     functions={"utility": utility_done},
 )

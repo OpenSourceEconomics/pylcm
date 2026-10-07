@@ -19,8 +19,10 @@ template = model.get_params_template()
 ```
 
 This returns a mutable nested dict showing every parameter the model expects, organized
-as `{regime_name: {function_name: {param_name: type_name}}}`. Use it as a starting point
-to see what values you need to provide.
+as `{regime_name: {function_name: {param_name: type_name}}}`. Parameters of callables
+declared in `Model(edges=...)` sit under one more root, `"edges"`; see
+[Edge parameters](#edge-parameters). Use the template as a starting point to see what
+values you need to provide.
 
 Only *free* parameters appear in the template — arguments that are states, actions, or
 outputs of other functions in the DAG are resolved automatically and do not show up
@@ -111,6 +113,30 @@ A parameter cannot appear at multiple levels within the same subtree. pylcm rais
   (ambiguous)
 - `"risk_aversion"` in `"working_life"` at regime level **and** `"risk_aversion"` in
   `"retirement"` at regime level = **OK** (different subtrees)
+
+(edge-parameters)=
+
+## Edge parameters
+
+The regime-transition law, gates, gate references and route fallbacks are declared in
+`Model(edges=...)`, and their parameters live at their declaration path under
+`params["edges"]` rather than under a regime:
+
+```python
+params = {
+    "discount_factor": 0.95,
+    "working_life": {"utility": {"disutility_of_work": 1.0}},
+    "edges": {"working_life": {"last_working_age": 45}},
+}
+```
+
+A law over all targets reads `params["edges"][source][arg]`; a per-target cell reads
+`params["edges"][source][target][arg]`. Their values resolve from the exact path, from
+`params["edges"][source][arg]` (every edge callable of that source), or from the model
+level. A value under the regime, `params["working_life"]["last_working_age"]`, feeds
+only that regime's own functions and never an edge callable. Per-target state laws
+belong to their regime and keep their paths there. The full path table:
+[Edge parameter paths](../reference/transitions.md#api-edge-parameters).
 
 ## Special Parameters
 

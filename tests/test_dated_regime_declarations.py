@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
+from _lcm.regime_law import bind_regime_law
+from _lcm.user_regime_validation import validate_regimes
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -15,9 +17,11 @@ from lcm import (
     DeterministicTransition,
     Phased,
     StochasticTransition,
+    Transition,
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
+from lcm.typing import AgeSelector
 
 
 def _probs() -> jnp.ndarray:
@@ -53,6 +57,33 @@ def test_by_age_selects_exact_grid_coordinates(*, selector, expected) -> None:
     """Each selector covers exactly the existing grid points it names."""
     schedule = ByAge(cases={selector: "b"}).resolve(ANNUAL)
     assert schedule.covered_ages == expected
+
+
+def test_by_age_takes_cases_typed_by_tuples_of_float_ages() -> None:
+    """Cases keyed by tuples of float ages select those grid ages."""
+    cases: dict[tuple[float, ...], str] = {(61.0, 62.0): "a"}
+    assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == (61, 62)
+
+
+def test_by_age_takes_cases_typed_by_age_ranges() -> None:
+    """Cases keyed by `AgeRange` with per-target cells select the range's ages."""
+    cases: dict[AgeRange, dict[str, StochasticTransition]] = {
+        AgeRange(start=63): {"a": StochasticTransition(func=_probs)}
+    }
+    assert ByAge(cases=cases).resolve(ANNUAL).covered_ages == (63, 64, 65)
+
+
+def test_by_age_takes_cases_typed_by_every_age_selector_form() -> None:
+    """`lcm.typing.AgeSelector` admits every selector form a case may use."""
+    selectors: list[AgeSelector] = [60, (61.0,), range(62, 63), AgeRange(start=63)]
+    schedule = ByAge(cases=dict.fromkeys(selectors, "a"))
+    assert schedule.resolve(ANNUAL).covered_ages == (60, 61, 62, 63, 64, 65)
+
+
+def test_transition_rejects_a_none_law_with_its_own_message() -> None:
+    """A `None` law is refused by `Transition` itself, naming terminality."""
+    with pytest.raises(RegimeInitializationError, match="cannot be `None`"):
+        Transition(targets={"dead": 61}, law=None)  # ty: ignore[invalid-argument-type]
 
 
 def test_range_selects_integers_not_intervening_quarters() -> None:
@@ -164,24 +195,32 @@ _TERMINAL_INSIDE = "marks a terminal regime only as the top-level"
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (lambda: ByAge(cases={61: None}), _TERMINAL_INSIDE),
+        (
+            lambda: ByAge(cases={61: None}),  # ty: ignore[invalid-argument-type]
+            _TERMINAL_INSIDE,
+        ),
         (lambda: ByAge(cases={61: "a"}, default=None), _TERMINAL_INSIDE),
         (
             lambda: ByAge.until(stop_age_exclusive=62, law="a", then=None),
             _TERMINAL_INSIDE,
         ),
         (
-            lambda: ByAge(cases={61: Phased(solve=None, simulate="a")}),
+            lambda: ByAge(
+                cases={61: Phased(solve=None, simulate="a")}  # ty: ignore[invalid-argument-type]
+            ),
             _TERMINAL_INSIDE,
         ),
-        (lambda: ByAge(cases={61: ByAge(cases={61: "a"})}), "cannot be nested"),
+        (
+            lambda: ByAge(cases={61: ByAge(cases={61: "a"})}),  # ty: ignore[invalid-argument-type]
+            "cannot be nested",
+        ),
         (lambda: ByAge(cases={}), "needs at least one case"),
     ],
 )
 def test_none_and_nested_schedules_are_rejected_inside_a_schedule(
     *, build, match: str
 ) -> None:
-    """Only a top-level `regime_transitions=None` is terminal; wrappers cannot be."""
+    """A schedule cannot mark a regime terminal at some ages, nor nest schedules."""
     with pytest.raises(RegimeInitializationError, match=match):
         build()
 
@@ -208,7 +247,7 @@ def _phased(*, schedule_side: str, law: object) -> Phased:
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
 @pytest.mark.parametrize("schedule_side", ["solve", "simulate", "both"])
-def test_regime_rejects_a_schedule_inside_a_top_level_phased(
+def test_law_rejects_a_schedule_inside_a_top_level_phased(
     *, schedule_side: str, law_form: str
 ) -> None:
     """A top-level `Phased` may not wrap a `ByAge` on either side."""
@@ -222,15 +261,19 @@ def test_regime_rejects_a_schedule_inside_a_top_level_phased(
         RegimeInitializationError,
         match=rf"`ByAge` cannot be nested inside `ByAge` or `Phased`.*{side_pattern}",
     ):
-        Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
+        bind_regime_law(transition)
 
 
 @pytest.mark.parametrize("law_form", list(_LAWS))
-def test_regime_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
-    """A top-level `Phased` whose sides are plain laws constructs."""
+def test_law_accepts_a_top_level_phased_of_plain_laws(*, law_form: str) -> None:
+    """A top-level `Phased` whose sides are plain laws binds and validates."""
     transition = Phased(solve=_LAWS[law_form](), simulate=_LAWS[law_form]())
-    regime = Regime(regime_transitions=transition, functions={"utility": lambda: 0.0})
-    assert regime.regime_transitions is transition
+    law = bind_regime_law(transition)
+    validate_regimes(
+        regimes={"regime": Regime(functions={"utility": lambda: 0.0})},
+        laws={"regime": law},
+    )
+    assert law.transition is transition
 
 
 def test_until_rejects_a_stop_age_without_a_predecessor() -> None:
@@ -250,7 +293,7 @@ def test_until_rejects_an_off_grid_stop_age() -> None:
 @pytest.mark.parametrize("targets", [("a", "b"), (), ("a", "a")])
 def test_transition_kernels_reject_topology_metadata(*, wrapper, targets) -> None:
     """The model graph is the sole public owner of regime support."""
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="targets"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets=targets,
@@ -280,7 +323,7 @@ def test_by_age_constructor_takes_only_cases_and_default() -> None:
 @pytest.mark.parametrize("restriction", [AgeRange(exclusive_stop=64), True])
 def test_transition_rejects_embedded_age_restrictions(*, wrapper, restriction) -> None:
     """Source-age support belongs to Model.edges, including invalid metadata."""
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="targets"):
         wrapper(
             func=_code if wrapper is DeterministicTransition else _probs,
             targets={"working": restriction},

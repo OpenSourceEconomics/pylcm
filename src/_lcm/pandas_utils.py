@@ -15,8 +15,11 @@ from jax import Array
 
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.params.edges import EDGES
+from _lcm.params.regime_template import iter_transition_callables
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
@@ -33,8 +36,8 @@ from lcm.exceptions import InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition
-from lcm.typing import Float1D, FloatND, Int1D
+from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition, Transition
+from lcm.typing import Float1D, FloatND, Int1D, UserFunction
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
@@ -288,7 +291,9 @@ def convert_series_in_params(
     flat_params: Mapping[RegimeName, Mapping[str, object]],
     ages: AgeGrid,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     array_writer: CanonicalArrayWriter | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -308,8 +313,12 @@ def convert_series_in_params(
             (`{regime: {func__param: value}}`).
         ages: Age grid for the model.
         user_regimes: Mapping of regime names to user-provided `Regime` instances.
+        laws: Each regime's law, whose transition functions read params too.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
+        declared_transitions: Per source regime, its `Transition`s as
+            `Model(edges=...)` declares them; an `edges` slot's Series is indexed
+            by the declared callable reading it.
         array_writer: Optional owner admitting each Series upload and retaining
             completed leaves while the parameter mapping is assembled.
 
@@ -318,10 +327,29 @@ def convert_series_in_params(
         arrays.
 
     """
-    result: dict[RegimeName, dict[str, object]] = {}
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
+    result: dict[RegimeName, Mapping[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
+        if regime_name == EDGES:
+            result[EDGES] = MappingProxyType(
+                {
+                    source: MappingProxyType(
+                        _convert_edge_params(
+                            source=source,
+                            leaves=cast("Mapping[str, object]", leaves),
+                            declared_transitions=declared_transitions.get(source, ()),
+                            ages=ages,
+                            user_regimes=user_regimes,
+                            regime_names_to_ids=regime_names_to_ids,
+                            array_writer=array_writer,
+                        )
+                    )
+                    for source, leaves in regime_params.items()
+                }
+            )
+            continue
         user_regime = user_regimes[regime_name]
-        all_funcs = dict(user_regime.get_all_functions())
+        all_funcs = dict(user_regime.get_all_functions(law=laws[regime_name]))
         # The Koopmans aggregator is not a regime function; its params live
         # under a pseudo-function key of the same name. Under `Phased` the two
         # variants declare different parameters and the template carries their
@@ -384,6 +412,76 @@ def convert_series_in_params(
         "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def _convert_edge_params(
+    *,
+    source: RegimeName,
+    # User leaves, keyed by slot path; the values are heterogeneous.
+    leaves: Mapping[str, object],
+    declared_transitions: tuple[Transition, ...],
+    ages: AgeGrid,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    regime_names_to_ids: RegimeNamesToIds,
+    array_writer: CanonicalArrayWriter | None,
+) -> dict[str, object]:
+    """Convert the Series leaves of one source's `edges` slots.
+
+    A slot's key is the declaration path of the callable reading it, so that
+    callable decides the Series' indexing axes. A law over all targets returns a
+    probability vector over regimes, which a Series names by a `next_regime`
+    level; a gate or a projection runs on its target's grid, so the target's
+    categoricals resolve its levels.
+
+    Args:
+        source: The source regime.
+        leaves: The source's slots, keyed by declaration path.
+        declared_transitions: The source's `Transition` declarations.
+        ages: Age grid for the model.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        array_writer: Optional owner admitting each Series upload.
+
+    Returns:
+        The slots with every Series replaced by its array.
+
+    """
+    readers: dict[tuple[str, ...], list[tuple[UserFunction, bool]]] = {}
+    for transition in declared_transitions:
+        for path, func, gate in iter_transition_callables(transition):
+            readers.setdefault(path, []).append((func, gate is not None))
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
+    converted: dict[str, object] = {}
+    for key, value in leaves.items():
+        if not _value_contains_series(value):
+            converted[key] = value
+            continue
+        path = tree_path_from_qname(key)
+        slot, param_name = path[:-1], path[-1]
+        slot_readers = readers.get(slot, [])
+        on_target_grid = any(runs_on_target for _, runs_on_target in slot_readers)
+        converted[key] = _convert_param_value(
+            value=value,
+            func=(
+                _variant_declaring(
+                    variants=tuple(func for func, _ in slot_readers),
+                    param_name=param_name,
+                )
+                if slot_readers
+                else None
+            ),
+            param_name=param_name,
+            func_name=(
+                "next_regime" if not slot else qname_from_tree_path((EDGES, *slot))
+            ),
+            ages=ages,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            regime_name=slot[0] if on_target_grid else source,
+            array_writer=array_writer,
+        )
+    return converted
 
 
 def _value_contains_series(value: object) -> bool:

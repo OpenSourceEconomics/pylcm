@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     DiscreteGrid,
     LinearAggregator,
@@ -35,6 +36,14 @@ from lcm.solvers import (
     GridSearch,
 )
 from lcm.typing import ScalarInt
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)
 
@@ -107,7 +116,6 @@ def _regime(
     if solver is None:
         solver = GridSearch()
     return ConsumptionSavingsRegime(
-        regime_transitions=lambda: 0,
         states={"wealth": _GRID},
         actions={"consumption": _GRID},
         functions=_functions() if functions is None else functions,
@@ -133,7 +141,6 @@ def _nested_regime(
     if functions is not None:
         all_functions = functions
     return NestedConsumptionSavingsRegime(
-        regime_transitions=lambda: 0,
         states={"wealth": _GRID, "durable": _GRID},
         actions={"consumption": _GRID, "new_durable": _GRID},
         functions=all_functions,
@@ -254,7 +261,7 @@ def test_pairing_check_rejects_one_margin_solver_on_nested_regime():
 
 def test_plain_regime_rejects_an_unbound_egm_family_solver():
     with pytest.raises(RegimeInitializationError, match="margin declarations"):
-        Regime(regime_transitions=lambda: 0, solver=_fues_dcegm())
+        Regime(solver=_fues_dcegm())
 
 
 def test_tier_one_liquid_names_are_pairwise_distinct():
@@ -297,6 +304,7 @@ def test_finalized_specialization_rejects_a_missing_broadcastable_function():
     with pytest.raises(RegimeInitializationError, match="resources 'resources'"):
         finalize_regimes(
             user_regimes={"working": regime},
+            laws={"working": _NON_TERMINAL_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -336,6 +344,7 @@ def test_composed_resources_are_injected_only_at_model_finalization():
 
     finalized = finalize_regimes(
         user_regimes={"working": regime},
+        laws={"working": _NON_TERMINAL_LAW},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -370,6 +379,7 @@ def test_composition_exclusion_reports_the_complete_rule():
     ):
         finalize_regimes(
             user_regimes={"working": regime},
+            laws={"working": _NON_TERMINAL_LAW},
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),

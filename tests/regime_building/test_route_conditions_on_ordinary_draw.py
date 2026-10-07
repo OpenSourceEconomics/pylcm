@@ -57,20 +57,23 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.regime_building.test_collective_regime_simulate import (
-    _solve_and_process,
-    _solve_consent,
+from tests.regime_building.test_collective_regime_simulate import _solve_consent
+from tests.regime_building.test_gated_edge_arg_provenance import (
+    _process,
+    _Spec,
+    _split,
 )
 
 _BETA = 0.95
@@ -156,7 +159,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     new_subject_regime_ids = jnp.array([target_id, unrelated_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    routed_states, routed_ids, _routed_roles = route_gated_edges(
+    routed_states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -217,7 +220,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     new_subject_regime_ids = jnp.array([target_id, target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -269,16 +272,15 @@ def _u_fallback_b(wage: ContinuousState) -> FloatND:
     return wage + 2.0
 
 
-def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]:
+def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
     """A singleton source with TWO gated edges (targets `a`/`b`), each with its
     own fallback. `edge_order` controls the order in which the two edges are
     declared in `transition` -- both orderings must yield the identical,
     order-independent routing.
     """
-    edges = {
-        "target_a": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+    gates = {
+        "target_a": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -287,9 +289,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
                 )
             },
         ),
-        "target_b": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+        "target_b": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -299,52 +300,69 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
             },
         ),
     }
-    src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
-            }
+    src = (
+        Regime(
+            states={"wage": _WAGE_2},
+            state_transitions={"wage": fixed_transition("wage")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
         ),
-        states={"wage": _WAGE_2},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": _u_src},
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        name: StochasticTransition(func=_prob_half)
+                        for name in edge_order
+                    }
+                }
+            ),
+            gates={name: gates[name] for name in edge_order},
+        ),
     )
-    target_a = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_target_a},
+    target_a = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_target_a},
+        ),
+        None,
     )
-    target_b = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_target_b},
+    target_b = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_target_b},
+        ),
+        None,
     )
-    fallback_a = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_fallback_a},
+    fallback_a = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_fallback_a},
+        ),
+        None,
     )
-    fallback_b = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE_2},
-        functions={"utility": _u_fallback_b},
+    fallback_b = (
+        Regime(
+            states={"wage": _WAGE_2},
+            functions={"utility": _u_fallback_b},
+        ),
+        None,
     )
-    return {
-        "src": src,
-        "target_a": target_a,
-        "target_b": target_b,
-        "fallback_a": fallback_a,
-        "fallback_b": fallback_b,
-    }
+    return _split(
+        {
+            "src": src,
+            "target_a": target_a,
+            "target_b": target_b,
+            "fallback_a": fallback_a,
+            "fallback_b": fallback_b,
+        }
+    )
 
 
 def _solve_dual_edge(*, edge_order: tuple[str, str]):
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regime_names = ["src", "target_a", "target_b", "fallback_a", "fallback_b"]
-    regimes_dict = _make_dual_edge_regimes(edge_order=edge_order)
-    regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=ages, regime_names=regime_names
+    regimes_dict, laws = _make_dual_edge_regimes(edge_order=edge_order)
+    regimes, regime_names_to_ids = _process(
+        regimes_dict=regimes_dict, laws=laws, ages=ages
     )
     flat_params = MappingProxyType(
         {
@@ -402,7 +420,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     new_subject_regime_ids = jnp.array([target_a_id, target_b_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

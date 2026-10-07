@@ -48,7 +48,7 @@ def _rebuilt(*, model, regime_id_class, regime_name, kind, name):
         )
         regime = dataclasses.replace(regime, solver=solver)
     return Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes={**model.user_regimes, regime_name: regime},
         ages=model.ages,
         regime_id_class=regime_id_class,

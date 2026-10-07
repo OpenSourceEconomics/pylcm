@@ -3,7 +3,7 @@
 The forward-simulation counterpart to the solve-side gated-edge fold
 (`_lcm.regime_building.gated_edges`). pylcm's forward simulation recomputes
 argmaxes against the stored solution rather than storing policies; a source
-regime declaring `gated_edges` needs two things this module provides, both
+regime with gated edges needs two things this module provides, both
 built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
 
 1. **Value substitution** (`substitute_gated_edge_continuations`) — exactly
@@ -16,7 +16,7 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    regime it actually occupies next period and with what states. The gate is
    RECOMPUTED at the subject's candidate target-state draw
    (the states `calculate_next_states` already computed for the target via
-   the regime's ordinary `regime_transitions` declaration — a gated edge's target is
+   the source's ordinary regime law — a gated edge's target is
    always ALSO an ordinary Markov transition target, so those candidate
    states already exist): each VALUE operand the gate predicate reads (the
    target's own value components, every declared `gate_refs` entry) is
@@ -80,8 +80,15 @@ from weakref import WeakKeyDictionary
 
 import jax
 import jax.numpy as jnp
+from dags.tree import tree_path_from_qname
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.params.edges import (
+    edge_params,
+    edge_user_path,
+    regime_kernel_params,
+    user_path,
+)
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
@@ -181,49 +188,10 @@ def simulation_gate_route(
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
     on_derived: Callable[[object], None] | None = None,
-) -> tuple[StatesPerRegime, Int1D, Int1D]:
-    """Preserve the three-result routing adapter contract."""
-    states, regime_ids, roles, _closed_masks = _simulation_gate_route_with_closed_masks(
-        regime=regime,
-        fold_period=fold_period,
-        edge_values=edge_values,
-        edge_flags=edge_flags,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
-        flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
-        fold_age=fold_age,
-        subject_devices=subject_devices,
-        subject_width=subject_width,
-        on_derived=on_derived,
-    )
-    return states, regime_ids, roles
-
-
-def _simulation_gate_route_with_closed_masks(
-    *,
-    regime: Regime,
-    fold_period: int,
-    edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    edge_flags: Mapping[RegimeName, BoolND],
-    next_states: StatesPerRegime,
-    regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
-    flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
-    fold_age: object = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
-    on_derived: Callable[[object], None] | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route from raw V and Boolean D, reusing their owned destination copies.
 
-    This adapter performs its own D-to-float conversion, so the fold mapping
+    It performs its own D-to-float conversion, so the fold mapping
     need not stay resident throughout the unit. The extra cast is intentional.
     The observer sees replacement mapping snapshots, then an empty snapshot
     after all route outputs are ready; no callback or mapping is cached here.
@@ -239,7 +207,7 @@ def _simulation_gate_route_with_closed_masks(
         )
         if on_derived is not None:
             on_derived({"same_period_mappings": MappingProxyType(dict(mappings))})
-    outputs = _route_gated_edges_with_closed_masks(
+    outputs = route_gated_edges(
         regime=regime,
         fold_period=fold_period,
         same_period_mappings=mappings,
@@ -290,22 +258,20 @@ def simulation_gate_route_delta(
     subject_width: int | None = None,
 ) -> tuple[MappingProxyType[str, Mapping[str, object]], Int1D, Int1D]:
     """Publish fixed-shape route deltas instead of a duplicate state carrier."""
-    routed, routed_ids, routed_roles, closed_masks = (
-        _simulation_gate_route_with_closed_masks(
-            regime=regime,
-            fold_period=fold_period,
-            edge_values=edge_values,
-            edge_flags=edge_flags,
-            next_states=candidate_states,
-            regime_names_to_ids=regime_names_to_ids,
-            new_subject_regime_ids=new_subject_regime_ids,
-            subjects_in_regime=subjects_in_regime,
-            flat_params=flat_params,
-            own_stakeholder=own_stakeholder,
-            new_own_stakeholder=new_own_stakeholder,
-            fold_age=fold_age,
-            subject_width=subject_width,
-        )
+    routed, routed_ids, routed_roles, closed_masks = simulation_gate_route(
+        regime=regime,
+        fold_period=fold_period,
+        edge_values=edge_values,
+        edge_flags=edge_flags,
+        next_states=candidate_states,
+        regime_names_to_ids=regime_names_to_ids,
+        new_subject_regime_ids=new_subject_regime_ids,
+        subjects_in_regime=subjects_in_regime,
+        flat_params=flat_params,
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=new_own_stakeholder,
+        fold_age=fold_age,
+        subject_width=subject_width,
     )
     delta = {}
     for target, edge in regime.gated_edges.items():
@@ -498,7 +464,7 @@ def substitute_gated_edge_continuations(
                 ),
             ),
             same_period_mapping=same_period_mapping,
-            source_flat_params=flat_params[regime_name],
+            source_flat_params=edge_params(flat_params, source=regime_name),
             reference_flat_params=build_reference_params_mapping_for_fold(
                 edge=edge, flat_params=flat_params
             ),
@@ -544,41 +510,6 @@ def route_gated_edges(
     fold_age: object = None,
     subject_devices: tuple[jax.Device, ...] = (),
     subject_width: int | None = None,
-) -> tuple[StatesPerRegime, Int1D, Int1D]:
-    """Preserve the three-result routing adapter contract."""
-    states, regime_ids, roles, _closed_masks = _route_gated_edges_with_closed_masks(
-        regime=regime,
-        fold_period=fold_period,
-        same_period_mappings=same_period_mappings,
-        next_states=next_states,
-        regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
-        flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=new_own_stakeholder,
-        fold_age=fold_age,
-        subject_devices=subject_devices,
-        subject_width=subject_width,
-    )
-    return states, regime_ids, roles
-
-
-def _route_gated_edges_with_closed_masks(
-    *,
-    regime: Regime,
-    fold_period: int,
-    same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
-    next_states: StatesPerRegime,
-    regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
-    flat_params: FlatParams,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
-    fold_age: object = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route each subject through its regime's declared gated edges.
 
@@ -587,7 +518,7 @@ def _route_gated_edges_with_closed_masks(
 
     For each declared edge: RECOMPUTES the gate at the
     candidate target states `calculate_next_states` already computed for the
-    target (the regime's ordinary `regime_transitions` declaration always
+    target (the source's ordinary regime law always
     structurally reaches a gated edge's target — see module docstring) via
     the edge's own `simulate_gate_evaluator` — which
     interpolates the gate predicate's VALUE operands (the target's own value
@@ -894,12 +825,14 @@ def bind_provenance_params(
     source_name: RegimeName,
     target_name: RegimeName,
 ) -> dict[str, object]:
-    """Bind an edge callable's params, each from the regime that OWNS it.
+    """Bind an edge callable's params, each from the namespace that OWNS it.
 
     The router holds every regime's flat params and the realized candidate
     target states; `provenance` (published by the callable's builder in
     `_lcm.regime_building.gated_edges`) is what says which of them resolves a
-    given argument. Both merge orders of two name-filtered dicts are wrong — one
+    given argument. A source parameter is a slot of the source's edges,
+    `flat_params["edges"][source]`; a target parameter is the target regime's
+    own. Both merge orders of two name-filtered dicts are wrong — one
     keyword cannot carry two regimes' identically named arrays, and the target
     and the source genuinely can contribute the same qname (`x__points` for a
     state `x` on a runtime irregular grid, in both regimes) — so nothing is
@@ -908,20 +841,26 @@ def bind_provenance_params(
     Raises:
         KeyError: A namespace does not carry a qname the callable declares.
     """
-    regime_of_namespace = {SOURCE_PARAMS: source_name, TARGET_PARAMS: target_name}
+    params_of_namespace = {
+        SOURCE_PARAMS: edge_params(flat_params, source=source_name),
+        TARGET_PARAMS: regime_kernel_params(flat_params, regime_name=target_name),
+    }
     bound: dict[str, object] = {}
     for exposed, (namespace, qname) in provenance.params.items():
-        regime_name = regime_of_namespace[namespace]
-        regime_params = flat_params[regime_name]
-        if qname not in regime_params:
+        namespace_params = params_of_namespace[namespace]
+        if qname not in namespace_params:
+            where = (
+                edge_user_path(source=source_name, key=qname)
+                if namespace == SOURCE_PARAMS
+                else user_path(path=(target_name, *tree_path_from_qname(qname)))
+            )
             msg = (
-                f"A gated edge into '{target_name}' needs the {namespace} "
-                f"regime '{regime_name}''s parameter '{qname}', which is not in "
-                f"flat_params['{regime_name}'] (present: "
-                f"{sorted(regime_params)})."
+                f"A gated edge '{source_name}' -> '{target_name}' needs the "
+                f"{namespace} parameter {where}, which is not supplied (present: "
+                f"{sorted(namespace_params)})."
             )
             raise KeyError(msg)
-        bound[exposed] = regime_params[qname]
+        bound[exposed] = namespace_params[qname]
     return bound
 
 

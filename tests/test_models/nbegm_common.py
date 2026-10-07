@@ -27,11 +27,12 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
+    AgeSpecializedGrid,
     ByAge,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
-    StochasticTransition,
+    Transition,
     categorical,
     liquid_law_from_resources,
     liquid_law_from_savings,
@@ -40,8 +41,6 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -153,7 +152,7 @@ def make_alive_dead_model(
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     constraints: Mapping[str, Callable[..., object]],
     extra_actions: Mapping[str, Grid] | None = None,
-    extra_states: Mapping[str, Grid] | None = None,
+    extra_states: Mapping[str, Grid | AgeSpecializedGrid] | None = None,
     extra_state_transitions: Mapping[str, Any] | None = None,
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
@@ -168,8 +167,9 @@ def make_alive_dead_model(
     """Assemble the two-regime (alive, dead) toy around a toy-specific budget DAG.
 
     The alive regime consumes on a dense grid, carries the liquid state (plus any
-    `extra_states`), evolves liquid by `liquid_law` toward both targets, and dies
-    deterministically via the shared survival transition. The dead regime is
+    `extra_states`), evolves liquid by `liquid_law` toward both targets, and by
+    default stays alive until the second-to-last age and dies there, one
+    outgoing edge per age, so no survival law is declared. The dead regime is
     terminal and values remaining wealth as a CRRA bequest.
 
     Args:
@@ -187,7 +187,10 @@ def make_alive_dead_model(
         extra_states: Additional state grids beyond `liquid` (ride-along
             co-states, stochastic processes).
         extra_state_transitions: Transition entries for the extra states.
-        survival_transition: Regime transition for the alive regime.
+        survival_transition: Per-target survival law for the alive regime. When
+            given, the alive regime can die at every non-final age and this law
+            chooses between staying alive and dying at every alive age; at the
+            last alive age it must put unit mass on `"dead"`.
         model_states: States broadcast at model level.
         liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
             `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
@@ -203,6 +206,7 @@ def make_alive_dead_model(
     """
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = ages.exact_values[-1]
+    stays = ages.exact_values[:-2]
     if liquid_grid is None:
         liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     alive_actions = {
@@ -221,14 +225,23 @@ def make_alive_dead_model(
     }
     # Default survival is deterministic: stay alive until the age before
     # `final_age`, then die, one declared target per age.
-    alive_transitions = (
-        until_exit(final_age, law=dict(survival_transition), exits=("dead",))
+    alive_targets = {
+        **({"alive": stays} if stays else {}),
+        "dead": ages.exact_values[:-1]
         if survival_transition is not None
-        else ByAge.until(
-            stop_age_exclusive=final_age,
-            law={"alive": StochasticTransition(func=prob_stay_alive)},
-            then={"dead": StochasticTransition(func=prob_die)},
+        else ages.exact_values[-2],
+    }
+    alive_edges = (
+        Transition(
+            targets=alive_targets,
+            law=ByAge.until(
+                stop_age_exclusive=final_age,
+                law=dict(survival_transition),
+                then={"dead": survival_transition["dead"]},
+            ),
         )
+        if survival_transition is not None
+        else alive_targets
     )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
@@ -239,7 +252,6 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
             solver=alive_solver,
             liquid=LiquidMargin(
@@ -255,19 +267,17 @@ def make_alive_dead_model(
             states=alive_states,
             state_transitions=alive_state_transitions,
             constraints=dict(constraints),
-            regime_transitions=alive_transitions,
             functions=dict(alive_functions),
             solver=alive_solver,
         )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions=dict(dead_functions)
         if dead_functions is not None
         else {"utility": bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,
@@ -275,4 +285,5 @@ def make_alive_dead_model(
         fixed_params=dict(fixed_params) if fixed_params else {},
         execution_config=execution_config,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges={"alive": alive_edges},
     )

@@ -20,6 +20,12 @@ from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
 from _lcm.pandas_utils import convert_series_in_params, has_series
+from _lcm.params.edges import (
+    EDGES,
+    edge_params,
+    flat_namespaces,
+    regime_kernel_params,
+)
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
@@ -48,18 +54,20 @@ from _lcm.regime_building.processing import (
     Regime,
     process_regimes,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.policy_programs import declare_finite_replay_programs
 from _lcm.solution.contract import SolverModelContext
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.typing import (
     FlatParams,
+    FlatRegimeParams,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
     StateName,
 )
 from _lcm.utils.containers import get_field_names_and_values
-from _lcm.utils.error_messages import format_messages
+from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
@@ -185,7 +193,9 @@ def _build_regimes_and_template_with_fixed_params(
             flat_params=fixed_flat_params,
             ages=ages,
             user_regimes=user_regimes,
+            laws=prepared_structure.laws,
             regime_names_to_ids=regime_names_to_ids,
+            declared_transitions=prepared_structure.declared_transitions,
         )
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
@@ -215,6 +225,7 @@ def _build_regimes_and_template_with_fixed_params(
 def validate_model_inputs(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     regime_id_class: type,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
@@ -254,12 +265,13 @@ def validate_model_inputs(
     # type-filtered collection of continuous states, rejecting a valid model.
     solver_validation_regimes = _representative_for_validation(
         user_regimes=user_regimes,
+        laws=laws,
         ages=ages,
         active_periods_by_regime=active_periods_by_regime,
         visited_periods_by_regime=visited_periods_by_regime,
     )
     solver_validation_phase_specs = normalize_all_regime_phases(
-        user_regimes=solver_validation_regimes
+        user_regimes=solver_validation_regimes, laws=laws
     )
     for regime_name, user_regime in solver_validation_regimes.items():
         fail_if_solver_is_not_shipped(
@@ -269,10 +281,13 @@ def validate_model_inputs(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=solver_validation_regimes,
+                laws=laws,
                 solve_functions=solver_validation_phase_specs[
                     regime_name
                 ].solution.functions,
-                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
+                phase_variation_paths=phase_variation_paths(
+                    user_regime=user_regime, law=laws[regime_name]
+                ),
             )
         )
 
@@ -281,16 +296,10 @@ def validate_model_inputs(
     if not user_regimes:
         error_messages.append("At least one terminal regime must be provided.")
 
-    # Validate regime names don't contain separator
-    invalid_names = [name for name in user_regimes if QNAME_DELIMITER in name]
-    if invalid_names:
-        error_messages.append(
-            f"Regime names cannot contain the separator character "
-            f"'{QNAME_DELIMITER}'. The following names are invalid: {invalid_names}."
-        )
+    error_messages.extend(path_segment_name_errors(kind="Regime", names=user_regimes))
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
-    terminal_regimes = [name for name, r in user_regimes.items() if r.terminal]
+    terminal_regimes = [name for name in user_regimes if laws[name].terminal]
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
@@ -307,6 +316,7 @@ def validate_model_inputs(
     error_messages.extend(
         _validate_all_variables_used(
             user_regimes=user_regimes,
+            laws=laws,
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
@@ -317,6 +327,7 @@ def validate_model_inputs(
     error_messages.extend(
         _validate_constraint_phase_invariance(
             user_regimes=user_regimes,
+            laws=laws,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
         )
@@ -340,6 +351,7 @@ def validate_model_inputs(
 def _representative_for_validation(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -356,7 +368,7 @@ def _representative_for_validation(
     """
     if not any(_regime_has_markers(regime) for regime in user_regimes.values()):
         return user_regimes
-    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    phased_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     return normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=phased_specs,
@@ -393,6 +405,7 @@ def _model_wide_conditioning_names(
 def _validate_all_variables_used(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     broadcast_variables: Mapping[RegimeName, frozenset[str]],
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
@@ -433,6 +446,7 @@ def _validate_all_variables_used(
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         broadcast_variables: Per regime, the model-level broadcast state and
             action names to exempt.
         removed_edge_reads: Per regime, each state or action read by a
@@ -449,23 +463,19 @@ def _validate_all_variables_used(
     for regime_name, user_regime in user_regimes.items():
         variable_names = set(user_regime.states) | set(user_regime.actions)
         variable_names -= broadcast_variables.get(regime_name, frozenset())
-        user_functions = dict(user_regime.get_all_functions(phase="solve"))
+        user_functions = dict(
+            user_regime.get_all_functions(phase="solve", law=laws[regime_name])
+        )
         # `root_functions` is the single definition of what a root computation
         # is, shared with the broadcast pruning walk so the two cannot disagree
         # about what counts as a read. It also supplies the reads no per-regime
         # walk can see: a gated edge declared on another regime whose gate,
         # gate references and fallbacks are evaluated on *this* regime's grid.
         solve_roots = root_functions(
-            regime_name=regime_name,
-            regime=user_regime,
-            all_regimes=user_regimes,
-            phase="solve",
+            regime_name=regime_name, regime=user_regime, laws=laws, phase="solve"
         )
         simulate_roots = root_functions(
-            regime_name=regime_name,
-            regime=user_regime,
-            all_regimes=user_regimes,
-            phase="simulate",
+            regime_name=regime_name, regime=user_regime, laws=laws, phase="simulate"
         )
         # A `Phased` slot may consume a variable in only one phase, and the
         # variable is used either way, so a simulate variant that is a different
@@ -647,6 +657,7 @@ def _is_solve_proved_post_decision_lower_bound(
 def _validate_constraint_phase_invariance(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     ages: AgeGrid,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> list[str]:
@@ -675,6 +686,7 @@ def _validate_constraint_phase_invariance(
 
     Args:
         user_regimes: Mapping of finalized regime names to `Regime` instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         ages: The model's age grid.
         active_periods_by_regime: Immutable mapping of regime names to their
             active periods, as resolved from the declarations.
@@ -685,8 +697,9 @@ def _validate_constraint_phase_invariance(
     """
     error_messages = []
     for regime_name, user_regime in user_regimes.items():
-        solve_funcs = dict(user_regime.get_all_functions(phase="solve"))
-        sim_funcs = user_regime.get_all_functions(phase="simulate")
+        law = laws[regime_name]
+        solve_funcs = dict(user_regime.get_all_functions(phase="solve", law=law))
+        sim_funcs = user_regime.get_all_functions(phase="simulate", law=law)
         phase_varying = frozenset(
             name
             for name in solve_funcs
@@ -805,21 +818,33 @@ def _remove_fixed_params_from_template(
 
     """
 
-    return cast(
-        "ParamsTemplate",
-        MappingProxyType(
-            {
-                regime_name: MappingProxyType(
-                    _trim_fixed_params(
-                        branch=regime_template,
-                        prefix=(),
-                        fixed=fixed_flat_params.get(regime_name, MappingProxyType({})),
-                    )
-                )
-                for regime_name, regime_template in template.items()
-            }
-        ),
-    )
+    # Template subtrees: `_trim_fixed_params` copies nodes of any depth.
+    trimmed: dict[RegimeName, MappingProxyType[str, object]] = {
+        regime_name: MappingProxyType(
+            _trim_fixed_params(
+                branch=regime_template,
+                prefix=(),
+                fixed=regime_kernel_params(fixed_flat_params, regime_name=regime_name),
+            )
+        )
+        for regime_name, regime_template in template.items()
+        if regime_name != EDGES
+    }
+    # The edge branch keeps only the sources with a slot left to supply.
+    edge_branch = {
+        source: MappingProxyType(trimmed_source)
+        for source, source_template in template.get(EDGES, {}).items()
+        if (
+            trimmed_source := _trim_fixed_params(
+                branch=source_template,
+                prefix=(),
+                fixed=edge_params(fixed_flat_params, source=source),
+            )
+        )
+    }
+    if edge_branch:
+        trimmed[EDGES] = MappingProxyType(edge_branch)
+    return cast("ParamsTemplate", MappingProxyType(trimmed))
 
 
 def _trim_fixed_params(
@@ -849,7 +874,9 @@ def _partial_fixed_params_into_regimes(
     """Partial fixed params into all compiled functions on each Regime."""
     result: dict[RegimeName, Regime] = {}
     for regime_name, regime in raw_regimes.items():
-        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
+        regime_fixed = dict(
+            regime_kernel_params(fixed_flat_params, regime_name=regime_name)
+        )
         # A DC-EGM source carrying into a *different* target regime also binds
         # that target's fixed params (it reads the target's resources /
         # transition functions in its per-asset-node solve). Gate the rebuild on
@@ -857,7 +884,7 @@ def _partial_fixed_params_into_regimes(
         # transition target's — exists; the per-adapter `with_fixed_params`
         # decides which of them actually reach each core.
         reachable_fixed = bool(regime_fixed) or any(
-            fixed_flat_params.get(target_name, MappingProxyType({}))
+            regime_kernel_params(fixed_flat_params, regime_name=target_name)
             for target_name in regime.solution.transitions
         )
         if not reachable_fixed:
@@ -932,7 +959,12 @@ def _partial_fixed_params_into_regimes(
                             ).items()
                         }
                     )
-                    for family in ("decision", "transition", "route")
+                    for family in (
+                        "decision",
+                        "type_local_decision",
+                        "transition",
+                        "route",
+                    )
                 },
             ),
             Q_and_F=MappingProxyType(
@@ -1003,9 +1035,9 @@ def _validate_param_types(flat_params: FlatParams) -> None:
     time this runs, every leaf must be a JAX `Array`, or a `MappingLeaf` /
     `SequenceLeaf` whose contents recursively satisfy the same rule.
     """
-    for regime_name, regime_params in flat_params.items():
+    for path, regime_params in flat_namespaces(flat_params):
         for key, value in regime_params.items():
-            _check_leaf(value=value, path=f"{regime_name}__{key}")
+            _check_leaf(value=value, path=qname_from_tree_path((*path, key)))
 
 
 def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
@@ -1016,7 +1048,9 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
     declaring taste shocks — not by `scale = 0`.
     """
     for regime_name, regime_params in flat_params.items():
-        scale = regime_params.get(TASTE_SHOCK_SCALE_PARAM)
+        if regime_name == EDGES:
+            continue
+        scale = cast("FlatRegimeParams", regime_params).get(TASTE_SHOCK_SCALE_PARAM)
         if isinstance(scale, Array) and float(scale) <= 0:
             msg = (
                 f"The taste-shock scale of regime {regime_name!r} is "

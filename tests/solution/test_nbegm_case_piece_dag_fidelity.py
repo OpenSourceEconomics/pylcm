@@ -29,12 +29,7 @@ from tests.test_models.nbegm_common import (
     savings,
 )
 
-# Ages run `0 .. _N_PERIODS - 1`, and the last of them is the terminal age at
-# which `alive` goes inactive. The survival law's `final_age_alive` has to name
-# that same age, or the alive regime keeps sending mass to itself past the point
-# where it can receive it.
 _N_PERIODS = 3
-_FINAL_AGE_ALIVE = float(_N_PERIODS - 1)
 
 
 def scaled_utility(
@@ -136,7 +131,7 @@ def _params(
 
     Deep-copied because the toy caches its parameter tree.
     """
-    params = copy.deepcopy(toy.build_params(final_age_alive=_FINAL_AGE_ALIVE))
+    params = copy.deepcopy(toy.build_params())
     params["alive"]["utility"].update(utility_extra or {})
     for target in ("alive", "dead"):
         params["alive"][target]["next_liquid"].update(law_extra or {})

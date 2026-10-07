@@ -9,7 +9,7 @@ the inner liquid post-decision margin, directly or through a sibling law.
 
 import contextlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import cast
 
 import jax.numpy as jnp
@@ -21,9 +21,6 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
@@ -45,8 +42,6 @@ from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import n_nbegm_toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 def _valid_regime() -> NestedConsumptionSavingsRegime:
@@ -63,13 +58,6 @@ def _valid_regime() -> NestedConsumptionSavingsRegime:
             "consumption": n_nbegm_toy.CONSUMPTION_GRID,
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            25,
-            law=_SupportedDeterministicTransition(
-                func=n_nbegm_toy.next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={
             "utility": n_nbegm_toy.utility,
             "new_illiquid": n_nbegm_toy.new_illiquid,
@@ -172,7 +160,6 @@ def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
         states=_VALID.states,
         state_transitions=_VALID.state_transitions,
         actions={"illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID},
-        regime_transitions=_VALID.regime_transitions,
         functions=_VALID.functions,
         solver=n_nbegm_toy.build_solver(variant="brute"),
     )
@@ -261,7 +248,6 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
         }
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -269,11 +255,11 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
         functions={"utility": n_nbegm_toy.terminal_utility},
     )
     with pytest.raises(ModelInitializationError, match="belongs to the inner margin"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
+            edges={"alive": {"dead": 20}},
             regime_id_class=n_nbegm_toy.RegimeId,
             ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
-            fixed_params={"final_age_alive": 20},
             initial_nodes={20: "alive"},
         )
 
@@ -623,7 +609,7 @@ def test_the_published_capability_records_the_outer_state_domain() -> None:
 @contextlib.contextmanager
 def _recorded_published_policies(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[list[object]]:
+) -> Generator[list[object]]:
     """Record every replay policy object either outer search constructs."""
     constructed: list[object] = []
     for name in ("NNBEGMSimPolicy", "NestedEGMSimPolicy"):

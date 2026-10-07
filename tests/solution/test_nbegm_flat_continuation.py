@@ -36,7 +36,6 @@ _PARAMS = {
         "resources": {"base_income": _BASE_INCOME},
         "alive": {"next_liquid": {"return_liquid": 0.03, "income": 1.0}},
         "dead": {"next_liquid": {"return_liquid": 0.03, "income": 1.0}},
-        "final_age_alive": 1.0,
     },
     "dead": {},
 }

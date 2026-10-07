@@ -148,7 +148,7 @@ def test_positive_interval_width_streams_the_read_and_fold_together() -> None:
     reader = solution.split("def _bind_cell_interval_reader_for_pool", 1)[1].split(
         "def _cell_rows_for_pool", 1
     )[0]
-    assert "_map_ride_partitioned" not in reader
+    assert "map_over_leading_axis" not in reader
     assert "return read" in reader
 
 

@@ -87,9 +87,13 @@ class ResidentInventory:
     device_ids: tuple[int, ...]
     """Devices on which this cell's workspace must fit.
 
-    Admission also covers every device a planned transfer operator touches, even
-    one this cell never runs a kernel on: the source of a copy holds its stored
-    shards and the operator's own scratch while the copy is in flight.
+    Admission also covers devices this cell never runs a kernel on:
+
+    - every device a planned transfer operator touches, since the source of a
+      copy holds its stored shards and the operator's own scratch while the copy
+      is in flight
+    - every device holding a nonzero `fixed_bytes` entry, since a solve-lifetime
+      owner stays live wherever it was placed
     """
 
     live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]]
@@ -102,7 +106,11 @@ class ResidentInventory:
     """All aligned input names, used only for the pre-compilation lower bound."""
 
     fixed_bytes: Mapping[int, int] = dataclasses.field(default_factory=dict)
-    """Concrete solve-lifetime owners, conservatively additional to the peak."""
+    """Concrete solve-lifetime owners, conservatively additional to the peak.
+
+    A device with a nonzero entry enters the admission maximum even when it is
+    not a workspace device.
+    """
 
     shared_copies: Mapping[Hashable, ArtifactFootprint] = dataclasses.field(
         default_factory=dict
@@ -150,8 +158,9 @@ class ResidentInventory:
         again, and never owns concrete arrays or executable-specific residency.
 
         The maximum runs over the workspace devices together with every device a
-        transfer operator is charged on, so a source-only endpoint is admitted on
-        what it actually holds. Two burdens belong to the running kernel and are
+        transfer operator is charged on and every device holding fixed owners, so
+        a source-only endpoint or an owner-only device is admitted on what it
+        actually holds. Two burdens belong to the running kernel and are
         therefore charged on workspace devices only:
 
         - `peer_bytes`, the outputs of the units dispatched alongside this one
@@ -184,9 +193,17 @@ class ResidentInventory:
 
     @property
     def admission_device_ids(self) -> tuple[int, ...]:
-        """Return every device this cell's admission is decided on, ascending."""
+        """Return every device this cell's admission is decided on, ascending.
+
+        These are the workspace devices, the transfer endpoints, and every device
+        with nonzero fixed-owner bytes.
+        """
         return tuple(
-            sorted(frozenset(self.device_ids) | frozenset(self.transfer_scratch_bytes))
+            sorted(
+                frozenset(self.device_ids)
+                | frozenset(self.transfer_scratch_bytes)
+                | frozenset(device for device, size in self.fixed_bytes.items() if size)
+            )
         )
 
 

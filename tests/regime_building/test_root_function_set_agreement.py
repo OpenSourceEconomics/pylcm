@@ -16,19 +16,22 @@ import pytest
 
 from _lcm import model_processing
 from _lcm.regime_building import broadcast
+from _lcm.regime_law import RegimeLaws
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -43,7 +46,7 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
+from tests.conftest import bind_laws
 
 # Which regime is asked for its roots, in which phase.
 type RootCallKey = tuple[str, str]
@@ -127,7 +130,20 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
     roots = broadcast.root_functions(
         regime_name="couple_ir",
         regime=_make_regimes()["couple_ir"],
-        all_regimes=_make_regimes(),
+        laws=bind_laws(
+            {
+                "couple": _couple_transition(),
+                "couple_ir": ByAge(
+                    cases={
+                        AgeRange(start=1, exclusive_stop=2): {
+                            "couple_terminal": StochasticTransition(
+                                func=_probability_one
+                            )
+                        }
+                    }
+                ),
+            }
+        ),
         phase="solve",
     )
 
@@ -168,14 +184,14 @@ def _record_root_calls(
             *,
             regime_name: RegimeName,
             regime: Regime,
-            all_regimes: Mapping[RegimeName, Regime],
+            laws: RegimeLaws,
             phase: Literal["solve", "simulate"],
             koopmans_aggregator: UserFunction | None = None,
         ) -> MappingProxyType[str, UserFunction]:
             roots = original(
                 regime_name=regime_name,
                 regime=regime,
-                all_regimes=all_regimes,
+                laws=laws,
                 phase=phase,
                 koopmans_aggregator=koopmans_aggregator,
             )
@@ -187,8 +203,14 @@ def _record_root_calls(
     monkeypatch.setattr(broadcast, "root_functions", make_spy("pruning"))
     monkeypatch.setattr(model_processing, "root_functions", make_spy("usage"))
 
-    with_fixture_graph(
+    Model(
         regimes=_make_regimes(),
+        edges={
+            "couple": _couple_transition(),
+            "couple_ir": {"couple_terminal": 1},
+            "single_f": {"single_terminal": 1},
+            "single_m": {"single_terminal": 1},
+        },
         ages=_AGES,
         regime_id_class=RegimeId,
         states={"bonus": _BONUS_GRID},
@@ -207,37 +229,6 @@ def _make_regimes() -> dict[str, Regime]:
     carries the value constraints and same-period references that flag drives.
     """
     couple = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "couple_ir": ValueDependentTransition(
-                        probability=StochasticTransition(func=_probability_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                        gate_references={
-                            "V_single_ref": ProjectedRegimeValue(
-                                regime="single_f", projection={"wage": _identity_wage}
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -254,13 +245,6 @@ def _make_regimes() -> dict[str, Regime]:
         constraints={"work_pays": _work_pays},
     )
     couple_ir = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "couple_terminal": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -289,7 +273,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     couple_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -299,13 +282,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "single_terminal": StochasticTransition(func=_probability_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -313,7 +289,6 @@ def _make_regimes() -> dict[str, Regime]:
     )
     single_m = single_f.replace(functions={"utility": _utility_single_m})
     single_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_GRID},
         functions={"utility": _utility_terminal_single},
     )
@@ -325,6 +300,50 @@ def _make_regimes() -> dict[str, Regime]:
         "single_m": single_m,
         "single_terminal": single_terminal,
     }
+
+
+def _couple_transition() -> Transition:
+    """The couple's age-0 transition: a gated edge into `couple_ir`.
+
+    The gate reads the target's dissolution flag and a same-period reference
+    to `single_f`; each stakeholder's route falls back to her own single regime.
+    """
+    return Transition(
+        targets={"couple_ir": 0, "single_f": 0, "single_m": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "couple_ir": StochasticTransition(func=_probability_one)
+                }
+            }
+        ),
+        gates={
+            "couple_ir": Gate(
+                predicate=_no_dissolution_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_m",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                },
+                references={
+                    "V_single_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
+            )
+        },
+    )
 
 
 def _probability_one(age: FloatND) -> FloatND:

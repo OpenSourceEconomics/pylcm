@@ -20,10 +20,9 @@ from _lcm.regime_building.invariant_components import (
     analyze_invariant_components,
     fail_if_invariant_blocking_is_unsafe,
 )
-from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from lcm import (
     AgeGrid,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -31,6 +30,7 @@ from lcm import (
     Phased,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -46,6 +46,9 @@ from lcm.typing import (
 from tests.regime_building.test_carried_state_through_gated_self_loop import (
     _make_regimes as _make_gated_self_loop_regimes,
 )
+from tests.regime_building.test_carried_state_through_gated_self_loop import (
+    _src_transition,
+)
 from tests.regime_building.test_same_period_ref_period_axes import (
     _make_model as _make_same_period_ref_model,
 )
@@ -55,8 +58,6 @@ from tests.solution.test_fixed_component_markov import (
 from tests.solution.test_fixed_component_markov import (
     _model as _fixed_component_model,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -154,16 +155,6 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _RegimeId.work, _RegimeId.dead)
 
 
-def _work_dead_transition() -> ByAge:
-    return until_exit(
-        3,
-        law=_SupportedDeterministicTransition(
-            func=_next_regime, targets=("work", "dead")
-        ),
-        exits=("dead",),
-    )
-
-
 def _model(
     *,
     pref_law: object = None,
@@ -190,10 +181,15 @@ def _model(
     if typed_health:
         work_states["health"] = DiscreteGrid(_Health)
         work_laws["health"] = StochasticTransition(func=_next_health)
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "work": Transition(
+                targets={"work": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={
             "work": Regime(
-                regime_transitions=_work_dead_transition(),
                 states=work_states,
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 functions={
@@ -203,7 +199,6 @@ def _model(
                 state_transitions=work_laws,
             ),
             "dead": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": _typed_bequest
                     if terminal_reads_type
@@ -242,30 +237,26 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
     consumption = {"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)}
     entry_law = StochasticTransition(func=_draw_pref_type)
     regime_id = _ReentryRegimeId if drop_and_reenter else _EntryRegimeId
-    work_targets = ("work", "gap", "dead") if drop_and_reenter else ("work", "dead")
-    to_work = _reentry_to_work if drop_and_reenter else _entry_to_work
     next_work_regime = _work_to_gap if drop_and_reenter else _work_to_work
+    edges: dict[str, dict[str, int | tuple[int, ...]] | Transition] = {
+        "young": {"work": 0},
+        "work": Transition(
+            targets={"work": 1, "gap": 1, "dead": (1, 2)}
+            if drop_and_reenter
+            else {"work": 1, "dead": (1, 2)},
+            law=DeterministicTransition(func=next_work_regime),
+        ),
+    }
+    if drop_and_reenter:
+        edges["gap"] = {"dead": 2}
     regimes = {
         "young": Regime(
-            regime_transitions=until_exit(
-                1,
-                law=_SupportedDeterministicTransition(func=to_work, targets=("work",)),
-                exits=("work",),
-            ),
             actions=consumption,
             functions={"utility": _type_free_young_utility},
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "pref_type": entry_law},
         ),
         "work": Regime(
-            regime_transitions=until_exit(
-                3,
-                law=_SupportedDeterministicTransition(
-                    func=next_work_regime, targets=work_targets
-                ),
-                exits=("dead",),
-                start=1,
-            ),
             states={"pref_type": DiscreteGrid(_PrefType)},
             actions=consumption,
             functions={"utility": _work_utility},
@@ -276,27 +267,18 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
             },
         ),
         "gap": Regime(
-            regime_transitions=until_exit(
-                3,
-                law=_SupportedDeterministicTransition(
-                    func=to_work, targets=("work", "dead")
-                ),
-                exits=("dead",),
-                start=2,
-            ),
             actions=consumption,
             functions={"utility": _type_free_young_utility},
             constraints={"feasible": _feasible},
             state_transitions={"wealth": _next_wealth, "pref_type": entry_law},
         ),
-        "dead": Regime(
-            regime_transitions=None, functions={"utility": _type_free_bequest}
-        ),
+        "dead": Regime(functions={"utility": _type_free_bequest}),
     }
     if not drop_and_reenter:
         del regimes["gap"]
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
+        edges=edges,
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=regime_id,
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -306,14 +288,6 @@ def _entry_model(*, drop_and_reenter: bool) -> Model:
 
 def _type_free_young_utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
-
-
-def _entry_to_work(age: float) -> ScalarInt:
-    return jnp.where(age < 3, _EntryRegimeId.work, _EntryRegimeId.dead)
-
-
-def _reentry_to_work(age: float) -> ScalarInt:
-    return jnp.where(age < 3, _ReentryRegimeId.work, _ReentryRegimeId.dead)
 
 
 def _work_to_work(age: float) -> ScalarInt:
@@ -327,7 +301,8 @@ def _work_to_gap(age: float) -> ScalarInt:
 def _components(model: Model) -> dict[str, InvariantComponent]:
     return dict(
         analyze_invariant_components(
-            user_regimes=model._engine_user_regimes,
+            user_regimes=model.user_regimes,
+            laws=model.graph.laws,
             regimes=model._regimes,
             reachability=model.reachability,
             initial_nodes=model.initial_nodes,
@@ -499,8 +474,9 @@ def test_same_period_reference_is_an_unsupported_channel():
 
 def test_gated_edge_is_an_unsupported_channel():
     """A gated edge touching a carrier refuses the coordinate."""
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_gated_self_loop_regimes(),
+        edges={"src": _src_transition()},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GatedRegimeId,
         initial_nodes={0: "src"},

@@ -375,6 +375,7 @@ class DCEGM(OneMarginSolver):
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
             user_regimes=context.user_regimes,
+            laws=context.laws,
             solution_reachability=context.solution_reachability,
         )
 
@@ -482,6 +483,7 @@ class DCEGM(OneMarginSolver):
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
+            laws=context.laws,
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
             constraints=context.constraints,
@@ -492,11 +494,13 @@ class DCEGM(OneMarginSolver):
             regime_to_v_interpolation_info=context.regime_to_v_interpolation_info,
             period_to_regime_v_interp=context.period_to_regime_v_interp,
             period_to_regime_grid_signature=context.period_to_regime_grid_signature,
+            period_to_user_regimes=context.period_to_user_regimes,
             solution_reachability=context.solution_reachability,
             flat_param_names=context.flat_param_names,
             regime_to_flat_param_names=context.regime_to_flat_param_names,
             state_action_space=context.state_action_space,
             has_taste_shocks=context.has_taste_shocks,
+            age_values=context.ages.values,
         )
         steps: Mapping[int, Callable] = build.steps
         argument_builder = _DCEGMArgumentBuilder(

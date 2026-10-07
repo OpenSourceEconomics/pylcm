@@ -7,9 +7,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -24,8 +21,6 @@ from lcm import (
 from lcm.regime import Regime
 from lcm.solvers import NBEGM
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.slow
 
@@ -67,10 +62,6 @@ def next_liquid(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def next_regime(age: int) -> ScalarInt:
-    return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
-
-
 def _model(*, hand_written: bool = False) -> Model:
     borrowing_limit = (
         ref("savings") >= 0.0
@@ -82,14 +73,6 @@ def _model(*, hand_written: bool = False) -> Model:
         states={"liquid": _ACTION_GRID},
         state_transitions={"liquid": {"alive": next_liquid, "dead": next_liquid}},
         constraints={"borrowing_limit": borrowing_limit},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-            stays=("alive",),
-        ),
         functions={
             "utility": utility,
             "savings": Phased(
@@ -101,15 +84,15 @@ def _model(*, hand_written: bool = False) -> Model:
         liquid=_MARGIN,
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": _ACTION_GRID},
         functions={"utility": terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},
+        edges={"alive": {"alive": 0, "dead": 1}},
     )
 
 

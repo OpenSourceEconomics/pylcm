@@ -29,7 +29,6 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -44,7 +43,6 @@ from lcm.typing import (
     UserInitialConditions,
     UserParams,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _FLOAT_DTYPE = canonical_float_dtype()
 
@@ -65,10 +63,6 @@ def _target_utility(*, wealth: ScalarFloat, income: ScalarFloat) -> ScalarFloat:
 
 def _active_target(age: float) -> bool:
     return age == 1
-
-
-def _certain_target() -> FloatND:
-    return jnp.asarray(1, dtype=_FLOAT_DTYPE)
 
 
 def _joint_probabilities() -> FloatND:
@@ -123,12 +117,9 @@ def _inputs(
     budget: int | None,
     devices: tuple[int, ...] | None = None,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_certain_target)
-                },
                 functions={"utility": _utility},
                 joint_transitions={
                     "target": {
@@ -145,7 +136,6 @@ def _inputs(
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "wealth": LinSpacedGrid(start=0, stop=1, n_points=2),
                     "income": LinSpacedGrid(start=0, stop=1, n_points=2),
@@ -157,11 +147,11 @@ def _inputs(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         execution_config=ExecutionConfig(device_memory_bytes=budget, devices=devices),
         initial_nodes={0: "source"},
+        edges={"source": {"target": 0}},
     )
     params: UserParams = {
         "source": {
             "target": {
-                "next_regime": {},
                 "match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_income": {},
@@ -258,11 +248,12 @@ _SELECTED_DEVICE_SCRIPT = textwrap.dedent(
         for sharding in jax.tree.leaves(executable.output_shardings)
     ]
     # The shared compiler also sees the valid regime producer in regime selection,
-    # summary and serial.
+    # summary and serial. The source's single edge is a certain transition, so
+    # that producer publishes one probability per regime: two leaves per stage.
     assert (weight_devices, support_devices, output_devices) == (
         expected_weights,
         expected_supports,
-        [(selected_id,)] * 12,
+        [(selected_id,)] * 15,
     ), (weight_devices, support_devices, output_devices)
     print("JOINT-PRODUCER-PLACEMENT-OK")
     """

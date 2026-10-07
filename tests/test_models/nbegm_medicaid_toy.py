@@ -142,7 +142,6 @@ def build_params(
     subsidy_high: float = 3.0,
     subsidy_low: float = 0.5,
     medicaid_asset_limit: float = 8.0,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the Medicaid one-asset toy.
 
@@ -160,7 +159,6 @@ def build_params(
             "subsidy_private": {"subsidy_low": subsidy_low},
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

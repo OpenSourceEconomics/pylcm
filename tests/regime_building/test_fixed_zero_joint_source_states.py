@@ -25,7 +25,7 @@ as it can up front:
 """
 
 import contextlib
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from fractions import Fraction
 from typing import Any
 
@@ -41,6 +41,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -80,10 +81,6 @@ def _low_mass_beside_mid(*, p_high: ScalarFloat) -> FloatND:
 
 def _half() -> FloatND:
     return jnp.asarray(0.5)
-
-
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _high_mass(*, p_high: ScalarFloat) -> FloatND:
@@ -170,30 +167,27 @@ def _model(
         }
     )
     mid_transition = {"mid": StochasticTransition(func=_half)} if with_mid else {}
+    law = {
+        "low": StochasticTransition(
+            func=_low_mass_beside_mid if with_mid else _low_mass
+        ),
+        "high": StochasticTransition(func=_high_mass),
+    } | mid_transition
     regimes = {
         "source": Regime(
-            regime_transitions={
-                "low": StochasticTransition(
-                    func=_low_mass_beside_mid if with_mid else _low_mass
-                ),
-                "high": StochasticTransition(func=_high_mass),
-            }
-            | mid_transition,
             states=states,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
             functions={"utility": utility},
         ),
-        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "low": Regime(functions={"utility": _two}),
         "high": Regime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
             functions={"utility": _wealth_utility},
         ),
     }
     if with_mid:
         regimes["mid"] = Regime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
             functions={"utility": _wealth_utility},
         )
@@ -201,7 +195,12 @@ def _model(
         regimes=regimes,
         regime_id_class=_RegimeIdWithMid if with_mid else _RegimeId,
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        edges={"source": {"low": 0, "high": 0} | ({"mid": 0} if with_mid else {})},
+        edges={
+            "source": Transition(
+                targets={"low": 0, "high": 0} | ({"mid": 0} if with_mid else {}),
+                law=law,
+            )
+        },
         initial_nodes=((0, "source"),),
         fixed_params={"p_high": probability} if fixed else {},
         enable_jit=enable_jit,
@@ -330,14 +329,12 @@ def _edge_free_wealth_model(*, enable_jit: bool = False) -> Model:
     """The wealth source as authored without the `high` edge and its lottery."""
     regimes = {
         "source": Regime(
-            regime_transitions={"low": StochasticTransition(func=_certain)},
             states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=3)},
             state_transitions={"wealth": {}},
             functions={"utility": _wealth_utility},
         ),
-        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "low": Regime(functions={"utility": _two}),
         "high": Regime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
             functions={"utility": _wealth_utility},
         ),
@@ -384,7 +381,7 @@ _TRANSFORMS = [
 
 
 @contextlib.contextmanager
-def _precision(bits: int) -> Iterator[None]:
+def _precision(bits: int) -> Generator[None]:
     """Build and solve at `bits`-bit floats, restoring the suite's setting."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", bits == 64)
@@ -468,14 +465,12 @@ def _edge_free_driver_model() -> Model:
     """The driver source as authored without the `high` edge and its lottery."""
     regimes = {
         "source": Regime(
-            regime_transitions={"low": StochasticTransition(func=_certain)},
             states={"driver": DiscreteGrid(category_class=_Driver)},
             state_transitions={"driver": fixed_transition(state_name="driver")},
             functions={"utility": _zero},
         ),
-        "low": Regime(regime_transitions=None, functions={"utility": _two}),
+        "low": Regime(functions={"utility": _two}),
         "high": Regime(
-            regime_transitions=None,
             states={"wealth": LinSpacedGrid(start=1.0, stop=4.0, n_points=4)},
             functions={"utility": _wealth_utility},
         ),

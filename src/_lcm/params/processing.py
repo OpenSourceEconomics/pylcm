@@ -35,13 +35,23 @@ from jax import Array
 
 from _lcm.dtypes import CanonicalArrayWriter, safe_to_float_dtype, safe_to_int_dtype
 from _lcm.engine import Regime
+from _lcm.params.edges import EDGES, user_path
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf, UserSequenceLeaf
-from _lcm.typing import FlatParams, ParamsTemplate, RegimeName, RegimeParamsTemplate
+from _lcm.typing import (
+    EdgeParamsTemplate,
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    ParamsTemplate,
+    RegimeName,
+    RegimeParamsTemplateNode,
+)
 from _lcm.utils.containers import ensure_containers_are_immutable
+from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.namespace import ParamsQnameDepth, flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.typing import UserParams
+from lcm.typing import ParameterName, UserParams
 
 
 def process_params(
@@ -61,6 +71,10 @@ def process_params(
     - Target-regime level —
       `{"regime_0": {"target_regime_0": {"func": {"arg_0": 0.0}}}}` is the
       target-regime-specific value for a per-target transition function
+
+    Parameters of the callables `Model(edges=...)` declares sit at their
+    declaration path under `{"edges": {source: ...}}`; `find_param_candidates`
+    lists their levels.
 
     The output always matches the params_template skeleton. Every numeric
     leaf — Python `bool` / `int` / `float`, typed JAX or numpy arrays, and
@@ -143,7 +157,13 @@ def broadcast_to_template(
     template_flat = flatten_regime_namespace(template)
     params_flat = flatten_regime_namespace(params)
 
-    result: dict[str, dict[str, object]] = {name: {} for name in template}
+    # User values, unvalidated until `cast_params_to_canonical_dtypes`.
+    result: dict[RegimeName, dict[str, object]] = {
+        name: {} for name in template if name != EDGES
+    }
+    edge_result: dict[RegimeName, dict[str, object]] = {
+        source: {} for source in template.get(EDGES, {})
+    }
     used_keys: set[str] = set()
     missing: list[str] = []
 
@@ -156,15 +176,18 @@ def broadcast_to_template(
                 f"Found values at: {candidates}"
             )
 
+        path = tree_path_from_qname(qname)
         if candidates:
             chosen = candidates[0]
-            path = tree_path_from_qname(qname)
-            regime = path[0]
-            remainder = qname_from_tree_path(path[1:])
-            result[regime][remainder] = params_flat[chosen]
+            regime, remainder = path[0], qname_from_tree_path(path[1:])
+            if regime == EDGES:
+                source, slot = path[1], qname_from_tree_path(path[2:])
+                edge_result[source][slot] = params_flat[chosen]
+            else:
+                result[regime][remainder] = params_flat[chosen]
             used_keys.add(chosen)
         elif required:
-            missing.append(qname)
+            missing.append(user_path(path=path) if path[0] == EDGES else qname)
 
     unknown = set(params_flat) - used_keys - already_consumed
     if missing or unknown:
@@ -173,12 +196,57 @@ def broadcast_to_template(
             messages.append(f"Missing required parameter(s): {missing}")
         if unknown:
             messages.append(f"Unknown keys: {sorted(unknown)}")
+            messages.extend(
+                _edge_slot_hints(unknown=unknown, template_flat=template_flat)
+            )
         raise InvalidParamsError(" ".join(messages))
 
-    return cast(
-        "FlatParams",
-        MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
-    )
+    frozen: dict[RegimeName, MappingProxyType[str, object]] = {
+        k: MappingProxyType(v) for k, v in result.items()
+    }
+    if EDGES in template:
+        frozen[EDGES] = MappingProxyType(
+            {source: MappingProxyType(v) for source, v in edge_result.items()}
+        )
+    return cast("FlatParams", MappingProxyType(frozen))
+
+
+def _edge_slot_hints(
+    *, unknown: set[str], template_flat: Mapping[str, str]
+) -> list[str]:
+    """Point each unknown key written under a source regime at its edge slots.
+
+    A value written under a regime never reaches a callable `Model(edges=...)`
+    declares. When an unknown key under a regime ends in an argument name that
+    an edge slot of that source reads, the slot's own path is what was meant.
+
+    Args:
+        unknown: The user's flat keys no template slot consumed.
+        template_flat: The flattened template.
+
+    Returns:
+        One message per unknown key with matching edge slots, in key order.
+
+    """
+    slots: dict[tuple[RegimeName, ParameterName], list[str]] = {}
+    for qname in template_flat:
+        path = tree_path_from_qname(qname)
+        if path[0] == EDGES:
+            slots.setdefault((path[1], path[-1]), []).append(user_path(path=path))
+    hints = []
+    for key in sorted(unknown):
+        path = tree_path_from_qname(key)
+        matches = slots.get((path[0], path[-1]), []) if len(path) > 1 else []
+        if matches:
+            hints.append(
+                f"{key!r} is written under the regime {path[0]!r}, which feeds "
+                "only that regime's own functions. A parameter of a callable "
+                "declared in `Model(edges=...)` lives at its declaration path "
+                f"({', '.join(matches)}), once for every callable of the source "
+                f"at {user_path(path=(EDGES, path[0], path[-1]))}, or at the "
+                "model level."
+            )
+    return hints
 
 
 def materialize_granular_transition_params(
@@ -208,6 +276,9 @@ def materialize_granular_transition_params(
     """
     result: dict[str, MappingProxyType[str, object]] = {}
     for regime_name, leaves in flat_params.items():
+        if regime_name == EDGES:
+            result[EDGES] = leaves
+            continue
         regime_expansions = expansions.get(regime_name, {})
         materialized: dict[str, object] = {}
         for param_qname, value in leaves.items():
@@ -248,24 +319,55 @@ def cast_params_to_canonical_dtypes(
     # identity and large array leaves are not copied per slot.
     memo: dict[int, Any] = {}
 
-    return cast(
-        "FlatParams",
-        MappingProxyType(
-            {
-                regime: MappingProxyType(
+    return MappingProxyType(
+        {
+            regime: (
+                MappingProxyType(
                     {
-                        param_qname: _cast_shared(
-                            value=value,
-                            name=f"{regime}{QNAME_DELIMITER}{param_qname}",
+                        source: _cast_flat_leaves(
+                            leaves=source_leaves,
+                            prefix=f"{EDGES}{QNAME_DELIMITER}{source}",
                             memo=memo,
                             array_writer=array_writer,
                         )
-                        for param_qname, value in leaves.items()
+                        for source, source_leaves in cast(
+                            "FlatEdgeParams", leaves
+                        ).items()
                     }
                 )
-                for regime, leaves in flat_params.items()
-            }
-        ),
+                if regime == EDGES
+                else _cast_flat_leaves(
+                    leaves=leaves,
+                    prefix=regime,
+                    memo=memo,
+                    array_writer=array_writer,
+                )
+            )
+            for regime, leaves in flat_params.items()
+        }
+    )
+
+
+def _cast_flat_leaves(
+    *,
+    # User values, cast here; unvalidated until then.
+    leaves: Mapping[str, object],
+    prefix: str,
+    # Shared with `_cast_shared`, whose memo holds the canonical leaves.
+    memo: dict[int, Any],
+    array_writer: CanonicalArrayWriter | None,
+) -> FlatRegimeParams:
+    """Cast one flat mapping's leaves, naming each by `prefix` and its key."""
+    return MappingProxyType(
+        {
+            param_qname: _cast_shared(
+                value=value,
+                name=f"{prefix}{QNAME_DELIMITER}{param_qname}",
+                memo=memo,
+                array_writer=array_writer,
+            )
+            for param_qname, value in leaves.items()
+        }
     )
 
 
@@ -392,7 +494,7 @@ def find_param_candidates(
     user wrote a value calls it — the params template and the process-law binder
     alike — so a spelling one accepts cannot be a spelling another refuses.
 
-    Resolution levels:
+    Resolution levels of a regime function's slot:
 
     1. Exact match: `regime__function__param`, or for per-target transition
        params `regime__target__function__param`
@@ -400,6 +502,16 @@ def find_param_candidates(
        `regime__function__param` — one value broadcasts over the targets
     3. Regime level: `regime__param`
     4. Model level: `param`
+
+    Resolution levels of an edge slot, `edges__source__<declaration path>__param`:
+
+    1. Exact match
+    2. Source level: `edges__source__param` — one value for every callable the
+       source's edges declare
+    3. Model level: `param`
+
+    A regime-level value never fills an edge slot, and the coarse function level
+    does not apply to one: its second segment is a source regime, not a target.
 
     Args:
         qname: Qualified name of the template slot to fill.
@@ -417,6 +529,14 @@ def find_param_candidates(
 
     if qname in params_flat:
         candidates.append(qname)
+
+    if tree_path[0] == EDGES:
+        source_level_qname = qname_from_tree_path((EDGES, tree_path[1], param_name))
+        if source_level_qname != qname and source_level_qname in params_flat:
+            candidates.append(source_level_qname)
+        if param_name in params_flat:
+            candidates.append(param_name)
+        return candidates
 
     if len(tree_path) == ParamsQnameDepth.REGIME__TARGETREGIME__FUNC__PARAM:
         coarse_qname = qname_from_tree_path((tree_path[0], *tree_path[2:]))
@@ -440,7 +560,10 @@ def create_params_template(
     """Create params_template from internal regimes and validate name uniqueness.
 
     This function validates that regime names, function names, and argument names
-    are disjoint sets to enable unambiguous parameter propagation.
+    are disjoint sets to enable unambiguous parameter propagation, and that none
+    of them is `edges`, the root of the edge namespace. The template holds one
+    branch per regime and, when any source's edges declare a parameter, an
+    `edges` branch keyed by source regime.
 
     Args:
         regimes: Immutable mapping of regime names to Regime
@@ -450,13 +573,14 @@ def create_params_template(
         The parameter template.
 
     Raises:
-        InvalidNameError: If names are not disjoint or contain the separator.
+        InvalidNameError: If names are not disjoint, contain the separator, or
+            name the edge namespace.
 
     """
     template: dict[str, Any] = {}
     regime_names: set[str] = set(regimes)
     function_names: set[str] = set()
-    arg_names: set[str] = set()
+    arg_names = _edge_arg_names(regimes)
 
     for name, regime in regimes.items():
         # A regime no required problem solves reads no parameter.
@@ -517,7 +641,42 @@ def create_params_template(
         arg_names=arg_names,
     )
 
-    return ensure_containers_are_immutable(template)
+    return cast(
+        "ParamsTemplate",
+        ensure_containers_are_immutable(template | _edges_branch(regimes)),
+    )
+
+
+def _edge_arg_names(regimes: Mapping[RegimeName, Regime]) -> set[ParameterName]:
+    """Return the argument names every source's edge slots read."""
+    return {
+        path[-1]
+        for regime in regimes.values()
+        for path in _leaf_paths(regime.edge_params_template)
+    }
+
+
+def _edges_branch(
+    regimes: Mapping[RegimeName, Regime],
+) -> dict[str, dict[RegimeName, EdgeParamsTemplate]]:
+    """Return the template's `edges` branch, or nothing when no source has a slot."""
+    sources = {
+        name: regime.edge_params_template
+        for name, regime in regimes.items()
+        if regime.edge_params_template
+    }
+    return {EDGES: sources} if sources else {}
+
+
+def _leaf_paths(
+    branch: Mapping[str, RegimeParamsTemplateNode],
+) -> list[tuple[str, ...]]:
+    """Return the key path of every leaf below a nested template branch."""
+    return [
+        (name, *path)
+        for name, value in branch.items()
+        for path in (_leaf_paths(value) if isinstance(value, Mapping) else [()])
+    ]
 
 
 def _validated_arg_names(
@@ -528,16 +687,14 @@ def _validated_arg_names(
 ) -> set[str]:
     """Return a function entry's argument names, validating each leaf.
 
-    Argument names must be separator-free and map to bare leaves — a nested
-    mapping at this depth means the user nested params one level too deep.
+    Argument names must be valid parameter-path segments and map to bare leaves
+    — a nested mapping at this depth means the user nested params one level too
+    deep.
     """
+    if errors := path_segment_name_errors(kind=f"{func_name!r} argument", names=params):
+        raise InvalidNameError(errors[0])
     arg_names: set[str] = set()
     for arg_name, leaf in params.items():
-        if QNAME_DELIMITER in arg_name:
-            raise InvalidNameError(
-                f"Argument name {arg_name!r} in function {func_name!r} "
-                f"cannot contain the separator '{QNAME_DELIMITER}'"
-            )
         if isinstance(leaf, Mapping):
             raise InvalidNameError(
                 f"Parameter {arg_name!r} in regime {regime_name!r} is "
@@ -553,27 +710,31 @@ def _fail_if_template_names_invalid(
     function_names: set[str],
     arg_names: set[str],
 ) -> None:
-    """Validate separator-freedom and disjointness of template name sets.
+    """Validate the form and disjointness of template name sets.
 
-    Regime and function names must not contain the qname separator, and
+    Regime and function names must be valid parameter-path segments, and
     regime names must be disjoint from both function and argument names so
     parameter propagation stays unambiguous. Function names CAN overlap with
     argument names across regimes — a function output in one regime may be a
     parameter in another (e.g. `labor_income` is a function in `working` but
     a param in `retired`).
     """
-    for name in regime_names:
-        if QNAME_DELIMITER in name:
+    for kind, names in (
+        ("Regime", regime_names),
+        ("Function", function_names),
+        ("Argument", arg_names),
+    ):
+        if EDGES in names:
             raise InvalidNameError(
-                f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
+                f"{kind} name {EDGES!r} is reserved: `params[{EDGES!r}]` holds the "
+                "parameters of the callables `Model(edges=...)` declares. Rename it."
             )
 
-    for name in function_names:
-        if QNAME_DELIMITER in name:
-            raise InvalidNameError(
-                f"Function name {name!r} cannot contain the separator "
-                f"'{QNAME_DELIMITER}'"
-            )
+    if errors := [
+        *path_segment_name_errors(kind="Regime", names=sorted(regime_names)),
+        *path_segment_name_errors(kind="Function", names=sorted(function_names)),
+    ]:
+        raise InvalidNameError(errors[0])
 
     regime_func_overlap = regime_names & function_names
     if regime_func_overlap:
@@ -590,7 +751,9 @@ def _fail_if_template_names_invalid(
         )
 
 
-def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
+def get_flat_param_names(
+    regime_params_template: Mapping[str, RegimeParamsTemplateNode],
+) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like `{"utility": {"risk_aversion": type}}`

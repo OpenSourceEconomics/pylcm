@@ -32,7 +32,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.slow
 
@@ -77,7 +76,6 @@ def _bonus_model(constraints: dict | None = None) -> Model:
     # it is the only one that qualifies for the off-grid read.
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config("mss"))
     alive = dcegm_retirement.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=50),
         solver=solver,
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
@@ -92,15 +90,15 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         constraints=constraints or {},
     )
     bequest_dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": LogSpacedGrid(start=0.25, stop=400.0, n_points=400)},
         functions={"utility": _bequest_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": alive, "dead": bequest_dead},
         ages=AgeGrid(start=40, inclusive_stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
+        edges={"retirement": {"dead": 40}},
     )
 
 

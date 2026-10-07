@@ -88,6 +88,7 @@ from _lcm.egm.validation import (
     fail_if_grid_withholds_its_points,
 )
 from _lcm.grids import ContinuousGrid
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import FunctionName, RegimeName, TransitionFunctionName
@@ -105,12 +106,14 @@ _MIN_CROSS_DIFFERENCE_POINTS = 2
 def validate_negm_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
 ) -> None:
     """Validate the NEGM contract for every regime with an `NEGM` solver.
 
     Args:
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
 
     Raises:
         ModelInitializationError: If any regime with `solver=NEGM(...)` violates
@@ -122,6 +125,7 @@ def validate_negm_regimes(
             validate_negm_regime(
                 regime_name=regime_name,
                 user_regime=user_regime,
+                law=laws[regime_name],
             )
 
 
@@ -129,6 +133,7 @@ def validate_negm_regime(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
 ) -> None:
     """Run all NEGM contract checks for a single regime, in order."""
     solver = cast("_BoundNEGM", user_regime.solver)
@@ -146,6 +151,7 @@ def validate_negm_regime(
     _fail_if_outer_margin_euler_coupled(
         regime_name=regime_name,
         user_regime=user_regime,
+        law=law,
         functions=functions,
         solver=solver,
     )
@@ -287,6 +293,7 @@ def _fail_if_outer_margin_euler_coupled(
     *,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: dict[FunctionName, UserFunction],
     solver: _BoundNEGM,
 ) -> None:
@@ -331,6 +338,7 @@ def _fail_if_outer_margin_euler_coupled(
     )
     for _role, label, func in _savings_stage_candidates(
         user_regime=user_regime,
+        law=law,
         solver=inner,
         exclude_states=frozenset({solver.outer_state}),
     ):

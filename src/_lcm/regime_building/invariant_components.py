@@ -41,6 +41,7 @@ from _lcm.regime_building.phases import (
     RegimePhaseSpec,
     normalize_regime_phases,
 )
+from _lcm.regime_law import RegimeLaws
 from _lcm.typing import RegimeName, StateName
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
@@ -119,6 +120,7 @@ class InvariantComponent:
 def analyze_invariant_components(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
     initial_nodes: frozenset[tuple[object, RegimeName]],
@@ -130,6 +132,7 @@ def analyze_invariant_components(
     Args:
         user_regimes: Mapping of regime names to the finalized regimes the
             engine was built from, after broadcast pruning.
+        laws: Each regime's law, by regime name.
         regimes: Mapping of regime names to the canonical engine regimes, the
             authority for value-read channels besides ordinary continuation.
         reachability: The model's static solve and simulate regime graphs.
@@ -143,7 +146,8 @@ def analyze_invariant_components(
 
     """
     specs = {
-        name: normalize_regime_phases(regime) for name, regime in user_regimes.items()
+        name: normalize_regime_phases(regime, law=laws[name])
+        for name, regime in user_regimes.items()
     }
     period_of_age: dict[object, int] = {
         age: period for period, age in enumerate(ages.exact_values)

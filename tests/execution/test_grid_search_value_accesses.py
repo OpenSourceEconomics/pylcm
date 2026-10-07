@@ -133,6 +133,7 @@ def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> Non
     context = object.__new__(SolverBuildContext)
     object.__setattr__(context, "regime_name", "single")
     object.__setattr__(context, "user_regimes", model.user_regimes)
+    object.__setattr__(context, "laws", model.graph.laws)
 
     assert (
         _edge_reference_regimes_for_targets(

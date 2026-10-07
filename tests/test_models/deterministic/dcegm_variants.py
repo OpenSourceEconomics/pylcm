@@ -9,8 +9,7 @@ The DC-EGM contract changes the model spec, not just a flag:
   functions.
 
 The builders here emit mathematically equivalent specs for both solvers so tests can
-compare value functions on the shared wealth grid. Importable only once `lcm.solvers`
-exists.
+compare value functions on the shared wealth grid.
 """
 
 import dataclasses
@@ -25,6 +24,7 @@ from lcm_examples.iskhakov_et_al_2017 import (
     WEALTH_GRID,
     LaborSupply,
     dead,
+    get_edges,
     inverse_marginal_utility,
     is_working,
     labor_income,
@@ -35,7 +35,6 @@ from lcm_examples.iskhakov_et_al_2017 import (
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
-from tests.test_models.graph import with_fixture_graph
 
 # Borrowing limit on end-of-period savings: `savings >= SAVINGS_FLOOR` encodes
 # the original `consumption <= wealth` constraint. This is the number the regime
@@ -74,7 +73,6 @@ LIQUID_MARGIN = LiquidMargin(
 
 
 dcegm_retirement = ConsumptionSavingsRegime(
-    regime_transitions=retirement_only.retirement_transitions(last_age=70),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth_from_savings},
@@ -89,7 +87,6 @@ dcegm_retirement = ConsumptionSavingsRegime(
 
 
 dcegm_working_life = ConsumptionSavingsRegime(
-    regime_transitions=base.working_life_transitions(last_age=70),
     actions={
         "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
@@ -108,21 +105,6 @@ dcegm_working_life = ConsumptionSavingsRegime(
 )
 
 
-dcegm_retirement_full = ConsumptionSavingsRegime(
-    regime_transitions=base.retirement_transitions(last_age=70),
-    actions={"consumption": CONSUMPTION_GRID},
-    states={"wealth": WEALTH_GRID},
-    state_transitions={"wealth": next_wealth_from_savings},
-    functions={
-        "utility": utility_retirement,
-        "savings": savings,
-        "inverse_marginal_utility": inverse_marginal_utility,
-    },
-    solver=DCEGM_SOLVER,
-    liquid=LIQUID_MARGIN,
-)
-
-
 @functools.cache
 def get_retirement_only_model(
     *, solver: Literal["brute_force", "dcegm"], n_periods: int
@@ -131,19 +113,15 @@ def get_retirement_only_model(
     if solver == "brute_force":
         return retirement_only.get_model(n_periods)
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "retirement": dcegm_retirement.replace(
-                regime_transitions=retirement_only.retirement_transitions(
-                    last_age=last_age
-                )
-            ),
+            "retirement": dcegm_retirement,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=retirement_only.retirement_edges(ages),
     )
 
 
@@ -163,43 +141,16 @@ def get_full_model(
     if solver == "brute_force":
         return base.get_model(n_periods)
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     dcegm_solver = (
         DCEGM_SOLVER
         if envelope is None
         else dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(envelope))
     )
     return Model(
-        edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        "working_life": tuple(ages.exact_values[:-2]),
-                        "retirement": tuple(ages.exact_values[:-2]),
-                    }
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {"retirement": tuple(ages.exact_values[:-2])}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-        },
+        edges=get_edges(ages=ages),
         regimes={
-            "working_life": dcegm_working_life.replace(
-                regime_transitions=base.working_life_transitions(last_age=last_age),
-                solver=dcegm_solver,
-            ),
-            "retirement": dcegm_retirement_full.replace(
-                regime_transitions=base.retirement_transitions(last_age=last_age),
-                solver=dcegm_solver,
-            ),
+            "working_life": dcegm_working_life.replace(solver=dcegm_solver),
+            "retirement": dcegm_retirement.replace(solver=dcegm_solver),
             "dead": dead,
         },
         ages=ages,
@@ -223,6 +174,27 @@ def get_retirement_only_params(
         discount_factor=discount_factor,
         interest_rate=interest_rate,
     )
+
+
+def get_graph_only_retirement_params(
+    *,
+    n_periods: int,
+    discount_factor: float = 0.98,
+    interest_rate: float = 0.0,
+) -> dict:
+    """Retirement-only params for a model whose `retirement` edges declare no law.
+
+    Such a model has no law reading `final_age_alive`, so the key is unknown there.
+    """
+    return {
+        name: value
+        for name, value in get_retirement_only_params(
+            n_periods=n_periods,
+            discount_factor=discount_factor,
+            interest_rate=interest_rate,
+        ).items()
+        if name != "final_age_alive"
+    }
 
 
 def get_full_params(

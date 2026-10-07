@@ -24,6 +24,7 @@ from _lcm.constraints.processed import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
@@ -57,7 +58,10 @@ type _PhaseJointTransitions = MappingProxyType[
 ]
 
 
-def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
+# keyword-only-exempt: primary-argument=user_regime
+def normalize_regime_phases(
+    user_regime: lcm.regime.Regime, *, law: RegimeLaw
+) -> PhasedRegimeSpec:
     """Expand a user regime's slots into per-phase specifications.
 
     Every phase-variant slot is split via one rule — `Phased` assigns each
@@ -67,6 +71,8 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 
     Args:
         user_regime: User-form `Regime` instance.
+        law: The regime's law, whose per-phase variants become each slice's
+            regime transition.
 
     Returns:
         The regime expanded into solution / simulation slices.
@@ -76,55 +82,25 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             grammar.
 
     """
-    solve_functions, simulate_functions, function_errors = _split_functions(
-        user_regime=user_regime
+    slots = _resolve_law_free_slots(user_regime=user_regime)
+    pools = slots.pools
+    solve_functions, simulate_functions = pools.solve, pools.simulate
+    solve_grid_states, simulate_grid_states = (
+        pools.solve_grid_states,
+        pools.simulate_grid_states,
     )
-    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
-        solve_functions
+    solve_state_transitions, simulate_state_transitions = (
+        slots.solve_state_transitions,
+        slots.simulate_state_transitions,
     )
-    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
-        simulate_functions
+    solve_joint_transitions, simulate_joint_transitions = (
+        slots.solve_joint_transitions,
+        slots.simulate_joint_transitions,
     )
-    solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
-        _split_states(user_regime=user_regime)
-    )
-
-    collision_errors = [
-        f"State '{name}' is carried: its solve-phase imputation is "
-        f"registered as a derived function under '{name}', colliding "
-        f"with the regime function of the same name. Rename one of "
-        f"the two."
-        for name in carried_imputations
-        # The engine-facing names, not the declared ones: a carried state
-        # spelled like a stakeholder's utility collides with the entry that
-        # utility is decomposed into, and the overlay below would win.
-        if name in user_regime.decomposed_functions
-    ]
-    solve_functions = {**solve_functions, **carried_imputations}
-
-    solve_state_transitions, simulate_state_transitions = _split_state_transitions(
-        user_regime=user_regime
-    )
-    solve_joint_transitions, simulate_joint_transitions, joint_transition_errors = (
-        _split_joint_transitions(user_regime=user_regime)
-    )
-
-    carried_only = frozenset(simulate_grid_states) - frozenset(solve_grid_states)
-    solve_state_transitions = {
-        name: law
-        for name, law in solve_state_transitions.items()
-        if name not in carried_only
-    }
-    carried_errors = [
-        message
-        for name in sorted(carried_only)
-        for message in _carried_law_errors(
-            name=name, law=simulate_state_transitions.get(name)
-        )
-    ]
+    carried_only = slots.carried_only
 
     solve_transition, simulate_transition, transition_errors = _split_regime_transition(
-        user_regime=user_regime
+        law=law
     )
     aggregator = user_regime.koopmans_aggregator
     aggregator_errors: list[str] = []
@@ -144,7 +120,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         ]
     else:
         solve_aggregator = simulate_aggregator = aggregator
-    terminal = user_regime.regime_transitions is None
+    terminal = law.terminal
     terminal_errors = (
         [
             (
@@ -157,11 +133,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     )
 
     errors = (
-        function_errors
-        + state_errors
-        + collision_errors
-        + carried_errors
-        + joint_transition_errors
+        list(slots.errors)
         + transition_errors
         + terminal_errors
         + ([] if terminal else aggregator_errors)
@@ -197,9 +169,89 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
     )
 
 
+def validate_law_free_phase_grammar(user_regime: lcm.regime.Regime) -> None:
+    """Validate the phase grammar of every slot that does not depend on the law.
+
+    `normalize_regime_phases` applies the same checks and adds those that need
+    the regime's law: the law's own variants, carried states in a terminal
+    regime, and an aggregator for each phase of a non-terminal one.
+
+    Raises:
+        RegimeInitializationError: If any law-free slot violates the phase
+            grammar.
+
+    """
+    errors = _resolve_law_free_slots(user_regime=user_regime).errors
+    if errors:
+        raise RegimeInitializationError(format_messages(list(errors)))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LawFreeSlots:
+    """The per-phase slots resolved without the law, with their grammar errors."""
+
+    pools: _PhaseFunctionPools
+    """Each phase's function pool and grid states."""
+
+    solve_state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
+    """Solve-phase state transitions, without carried-only states."""
+
+    simulate_state_transitions: MappingProxyType[StateName, _PhaseStateTransition]
+    """Simulate-phase state transitions."""
+
+    solve_joint_transitions: _PhaseJointTransitions
+    """Solve-phase joint transitions."""
+
+    simulate_joint_transitions: _PhaseJointTransitions
+    """Simulate-phase joint transitions."""
+
+    carried_only: frozenset[StateName]
+    """States on the simulate grid only."""
+
+    errors: tuple[str, ...]
+    """Function-pool, carried-law and joint-transition errors, in that order."""
+
+
+def _resolve_law_free_slots(*, user_regime: lcm.regime.Regime) -> _LawFreeSlots:
+    """Split every slot that does not depend on the law into its phases."""
+    pools = _phase_function_pools(user_regime=user_regime)
+    solve_state_transitions, simulate_state_transitions = _split_state_transitions(
+        user_regime=user_regime
+    )
+    solve_joint_transitions, simulate_joint_transitions, joint_transition_errors = (
+        _split_joint_transitions(user_regime=user_regime)
+    )
+    carried_only = frozenset(pools.simulate_grid_states) - frozenset(
+        pools.solve_grid_states
+    )
+    carried_errors = [
+        message
+        for name in sorted(carried_only)
+        for message in _carried_law_errors(
+            name=name, law=simulate_state_transitions.get(name)
+        )
+    ]
+    return _LawFreeSlots(
+        pools=pools,
+        solve_state_transitions=MappingProxyType(
+            {
+                name: law
+                for name, law in solve_state_transitions.items()
+                if name not in carried_only
+            }
+        ),
+        simulate_state_transitions=MappingProxyType(simulate_state_transitions),
+        solve_joint_transitions=solve_joint_transitions,
+        simulate_joint_transitions=simulate_joint_transitions,
+        carried_only=carried_only,
+        errors=(*pools.errors, *carried_errors, *joint_transition_errors),
+    )
+
+
 def normalize_all_regime_phases(
     *,
     user_regimes: Mapping[RegimeName, lcm.regime.Regime],
+    laws: RegimeLaws,
 ) -> MappingProxyType[RegimeName, PhasedRegimeSpec]:
     """Normalize every regime's `Phased` slots into per-phase specs.
 
@@ -210,6 +262,7 @@ def normalize_all_regime_phases(
 
     Args:
         user_regimes: Mapping of regime names to finalized user regimes.
+        laws: Each regime's law, by regime name.
 
     Returns:
         Immutable mapping of regime names to per-phase specs.
@@ -221,7 +274,7 @@ def normalize_all_regime_phases(
     """
     return MappingProxyType(
         {
-            regime_name: normalize_regime_phases(user_regime)
+            regime_name: normalize_regime_phases(user_regime, law=laws[regime_name])
             for regime_name, user_regime in user_regimes.items()
         }
     )
@@ -232,7 +285,7 @@ def _build_phase_spec(
     constraints: dict[str, ConstraintLike],
     functions: dict[FunctionName, UserFunction],
     grid_states: dict[StateName, Grid | AgeSpecializedGrid],
-    state_transitions: dict[StateName, _PhaseStateTransition],
+    state_transitions: Mapping[StateName, _PhaseStateTransition],
     joint_transitions: _PhaseJointTransitions,
     regime_transition: _PhaseRegimeTransition,
     koopmans_aggregator: UserFunction | None,
@@ -270,12 +323,70 @@ def _resolve_solve_functions(
     Keeping that projection at the phase-normalization seam prevents consumers
     from independently unwrapping only a subset of the public phase grammar.
     """
-    return dict(normalize_regime_phases(user_regime).solution.functions)
+    pools = _phase_function_pools(user_regime=user_regime)
+    if pools.errors:
+        raise RegimeInitializationError(format_messages(pools.errors))
+    return dict(pools.solve)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PhaseFunctionPools:
+    """Each phase's function pool and grid states, with their grammar errors."""
+
+    solve: dict[FunctionName, UserFunction]
+    """Solve-phase functions, augmented and with carried-state imputations."""
+
+    simulate: dict[FunctionName, UserFunction]
+    """Simulate-phase functions, augmented."""
+
+    solve_grid_states: dict[StateName, Grid | AgeSpecializedGrid]
+    """States on the solve-phase grid."""
+
+    simulate_grid_states: dict[StateName, Grid | AgeSpecializedGrid]
+    """States on the simulate-phase grid."""
+
+    errors: list[str]
+    """Function, state and carried-state collision errors, in that order."""
+
+
+def _phase_function_pools(*, user_regime: lcm.regime.Regime) -> _PhaseFunctionPools:
+    """Resolve each phase's function pool, which does not depend on the law."""
+    solve_functions, simulate_functions, function_errors = _split_functions(
+        user_regime=user_regime
+    )
+    solve_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        solve_functions
+    )
+    simulate_functions = user_regime._augment_phase_functions(  # noqa: SLF001
+        simulate_functions
+    )
+    solve_grid_states, simulate_grid_states, carried_imputations, state_errors = (
+        _split_states(user_regime=user_regime)
+    )
+    collision_errors = [
+        f"State '{name}' is carried: its solve-phase imputation is "
+        f"registered as a derived function under '{name}', colliding "
+        f"with the regime function of the same name. Rename one of "
+        f"the two."
+        for name in carried_imputations
+        # The engine-facing names, not the declared ones: a carried state
+        # spelled like a stakeholder's utility collides with the entry that
+        # utility is decomposed into, and the overlay below would win.
+        if name in user_regime.decomposed_functions
+    ]
+    return _PhaseFunctionPools(
+        solve={**solve_functions, **carried_imputations},
+        simulate=simulate_functions,
+        solve_grid_states=solve_grid_states,
+        simulate_grid_states=simulate_grid_states,
+        errors=function_errors + state_errors + collision_errors,
+    )
 
 
 def phase_variation_paths(
     *,
     user_regime: lcm.regime.Regime,
+    law: RegimeLaw,
 ) -> tuple[str, ...]:
     """Names of public phase-capable slots whose variants differ by identity.
 
@@ -309,9 +420,9 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    transition = user_regime.regime_transitions
+    transition = law.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
-        varied.append("regime_transitions")
+        varied.append("transition")
 
     aggregator = user_regime.koopmans_aggregator
     if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
@@ -327,7 +438,7 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
     so its declaration keeps the solve variant of every `Phased` slot:
 
     - a `Phased` function, stakeholder utility, state transition, joint
-      transition, regime transition or aggregator becomes its solve variant;
+      transition or aggregator becomes its solve variant;
     - a carried state becomes its solve-phase imputation, a function under the
       state's name, and its carried law of motion is dropped.
 
@@ -362,7 +473,6 @@ def project_onto_solve_phase(user_regime: lcm.regime.Regime) -> lcm.regime.Regim
             target: {name: _solve_variant(kernel) for name, kernel in kernels.items()}
             for target, kernels in user_regime.joint_transitions.items()
         },
-        regime_transitions=_solve_variant(user_regime.regime_transitions),
         koopmans_aggregator=_solve_variant(user_regime.koopmans_aggregator),
     )
 
@@ -396,15 +506,6 @@ class PhasedRegimeSpec:
 
     simulation: RegimePhaseSpec
     """The simulate-phase slice (forward simulation)."""
-
-    @property
-    def terminal(self) -> bool:
-        """Whether the regime is terminal (no regime transition in either phase).
-
-        Terminality is phase-invariant by the slot grammar (`Phased` variants
-        cannot be `None`), so the solution slice is representative.
-        """
-        return self.solution.regime_transition is None
 
     @property
     def carried_only_state_names(self) -> frozenset[StateName]:
@@ -763,14 +864,14 @@ def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[
 
 
 def _split_regime_transition(
-    *, user_regime: lcm.regime.Regime
+    *, law: RegimeLaw
 ) -> tuple[_PhaseRegimeTransition, _PhaseRegimeTransition, list[str]]:
-    """Split the regime `regime_transitions` into per-phase variants.
+    """Split a regime's law into per-phase variants.
 
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
     """
-    raw = user_regime.decomposed_transition
+    raw = law.decomposed_transition
     if not isinstance(raw, Phased):
         return (
             cast("_PhaseRegimeTransition", raw),
@@ -783,7 +884,7 @@ def _split_regime_transition(
         if side is None:
             errors.append(
                 "Regime transition variants cannot be `None` — terminality is "
-                "phase-invariant; use `regime_transitions=None` for a terminal regime."
+                "phase-invariant; a regime without outgoing edges is terminal."
             )
         elif not callable(side) and not isinstance(side, Mapping):
             errors.append(

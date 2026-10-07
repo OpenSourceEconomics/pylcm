@@ -11,9 +11,6 @@ import dataclasses
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ByAge,
@@ -25,6 +22,7 @@ from lcm import (
     Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -37,6 +35,7 @@ from lcm.exceptions import (
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import EULER_POINT_AXIS, SAVINGS_POINT_AXIS, FUESEnvelope, GridSearch
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -44,7 +43,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm_examples.iskhakov_et_al_2017 import working_life_transitions
+from lcm_examples.iskhakov_et_al_2017 import WORKING_LIFE_LAW
 from lcm_examples.mortality import (
     borrowing_constraint,
     dead,
@@ -57,25 +56,35 @@ from tests.test_models.deterministic import (
     retirement_only,
 )
 from tests.test_models.deterministic.dcegm_variants import LIQUID_MARGIN
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_PERIODS = 3
 LAST_AGE = 40 + (N_PERIODS - 1) * 10
+RETIREMENT_TARGETS = {"retirement": 40, "dead": (40, 50)}
+RETIREMENT_EDGES = {
+    "retirement": Transition(
+        targets=RETIREMENT_TARGETS,
+        law=retirement_only.RETIREMENT_LAW,
+    )
+}
 
 
 def _build_model(
     *,
     regime: UserRegime,
+    law: TransitionLaw | None = None,
     config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
+    """Build the retirement/dead model; `law` replaces the retirement law."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=config,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES
+        if law is None
+        else {"retirement": Transition(targets=RETIREMENT_TARGETS, law=law)},
     )
 
 
@@ -158,13 +167,14 @@ def _utility_reading_kind(*, consumption: ContinuousAction, kind: ScalarInt) -> 
 def _build_with_model_level_sharded_pruned() -> Model:
     """The DCEGM regime never reads the sharded state, so it is pruned there."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": VALID, "dead": dead},
         states={"kind": DiscreteGrid(category_class=_ShardedKind)},
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
@@ -178,20 +188,21 @@ def _build_with_model_level_sharded_used() -> Model:
             "kind": fixed_transition("kind"),
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"retirement": retirement, "dead": dead},
         states={"kind": DiscreteGrid(category_class=_ShardedKind)},
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
 def _build_with_regime_level_sharded_terminal() -> Model:
     """A distributed state is declared regime-level on the terminal target."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    return with_fixture_graph(
+    return Model(
         regimes={
             "retirement": VALID,
             "dead": dead.replace(
@@ -206,6 +217,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         execution_config=ExecutionConfig(sharded_states=("kind",)),
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges=RETIREMENT_EDGES,
     )
 
 
@@ -244,21 +256,18 @@ def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
 # These are semantic-contract tests, so they select a portable envelope explicitly
 # rather than making their outcome depend on a machine-local native library.
 VALID = dcegm_variants.dcegm_retirement.replace(
-    regime_transitions=retirement_only.retirement_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
     ),
 )
-PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
-    regime_transitions=base.retirement_transitions(last_age=LAST_AGE),
+PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement.replace(
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
     ),
 )
 PORTABLE_DCEGM_WORKING_LIFE = dcegm_variants.dcegm_working_life.replace(
-    regime_transitions=base.working_life_transitions(last_age=LAST_AGE),
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
@@ -355,21 +364,6 @@ CASES = {
         ),
         "not passive",
     ),
-    "regime_transition_cliff_in_wealth": (
-        lambda: VALID.replace(
-            regime_transitions=ByAge.until(
-                stop_age_exclusive=LAST_AGE,
-                law=_SupportedDeterministicTransition(
-                    func=_regime_transition_with_wealth_cliff,
-                    targets=("retirement", "dead"),
-                ),
-                then=_SupportedDeterministicTransition(
-                    func=_regime_transition_with_wealth_cliff, targets=("dead",)
-                ),
-            )
-        ),
-        "regime transition function.*discontinuous",
-    ),
     "stochastic_euler_state_transition": (
         lambda: VALID.replace(
             state_transitions={
@@ -431,6 +425,17 @@ def test_portable_contract_model_constructs_without_an_exact_kernel(monkeypatch)
     model = _build_model(regime=VALID)
 
     assert model.n_periods == N_PERIODS
+
+
+def test_regime_transition_cliff_in_wealth_raises():
+    """A regime law jumping in the Euler state fails fast at Model construction."""
+    with pytest.raises(
+        ModelInitializationError, match=r"regime transition function.*discontinuous"
+    ):
+        _build_model(
+            regime=VALID,
+            law=DeterministicTransition(func=_regime_transition_with_wealth_cliff),
+        )
 
 
 @pytest.mark.parametrize("case_name", CASES)
@@ -621,34 +626,25 @@ def _three_regime_model_with_brute_worker(
 ) -> Model:
     """Model with a brute-force worker regime next to a DC-EGM retirement regime."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
-    return with_fixture_graph(
+    stays = tuple(ages.exact_values[:-2])
+    dies = tuple(ages.exact_values[:-1])
+    return Model(
         edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **{
-                    target: tuple(ages.exact_values[:-2])
-                    for target in ("working_life", "retirement")
-                    if ages.exact_values[:-2]
+            "working_life": Transition(
+                targets={"dead": dies, "working_life": stays, "retirement": stays},
+                law=WORKING_LIFE_LAW,
+            ),
+            "retirement": Transition(
+                targets={
+                    target: dies if target == "dead" else stays
+                    for target in retirement_targets
                 },
-            },
-            "retirement": {
-                target: tuple(ages.exact_values[:-1])
-                if target == "dead"
-                else tuple(ages.exact_values[:-2])
-                for target in retirement_targets
-                if target == "dead" or ages.exact_values[:-2]
-            },
+                law=retirement_transition,
+            ),
         },
         regimes={
-            "working_life": base.working_life.replace(
-                regime_transitions=working_life_transitions(last_age=last_age)
-            ),
-            "retirement": PORTABLE_DCEGM_RETIREMENT_FULL.replace(
-                regime_transitions=until_exit(
-                    last_age, law=retirement_transition, exits=("dead",)
-                ),
-            ),
+            "working_life": base.working_life,
+            "retirement": PORTABLE_DCEGM_RETIREMENT_FULL,
             "dead": dead,
         },
         ages=ages,
@@ -658,20 +654,23 @@ def _three_regime_model_with_brute_worker(
 
 
 def test_granular_transition_excluding_brute_regime_passes():
-    """Declared reachability narrows the target-compatibility check.
+    """Declared edges narrow the target-compatibility check.
 
-    A granular regime transition declares its key set as the reachable
-    targets; regimes outside it are structurally unreachable. A DC-EGM
-    regime whose declared targets are itself and a terminal regime may
+    Regimes the graph gives no edge into are structurally unreachable. A
+    DC-EGM regime whose edges lead only to itself and a terminal regime may
     therefore coexist with a brute-force non-terminal regime it never
     transitions into (the brute regime targeting the DC-EGM regime is
     allowed in that direction).
     """
     model = _three_regime_model_with_brute_worker(
-        retirement_transition={
-            "retirement": StochasticTransition(func=_retirement_stay_prob),
-            "dead": StochasticTransition(func=_retirement_death_prob),
-        }
+        retirement_transition=ByAge.until(
+            stop_age_exclusive=LAST_AGE,
+            law={
+                "retirement": StochasticTransition(func=_retirement_stay_prob),
+                "dead": StochasticTransition(func=_retirement_death_prob),
+            },
+            then="dead",
+        )
     )
     assert model.n_periods == N_PERIODS
 
@@ -679,8 +678,8 @@ def test_granular_transition_excluding_brute_regime_passes():
 def test_coarse_transition_reaching_brute_regime_raises():
     """A declared brute-force non-terminal target fails target compatibility.
 
-    The same model fails the check once the DC-EGM regime's transition also
-    declares the brute-force `working_life` regime as a target.
+    The same model fails the check once the graph also gives the DC-EGM regime
+    an edge into the brute-force `working_life` regime.
     """
     with pytest.raises(ModelInitializationError, match="GridSearch"):
         _three_regime_model_with_brute_worker(
@@ -712,7 +711,6 @@ def test_non_dcegm_non_terminal_target_raises():
     """A DC-EGM regime may not target a brute-force non-terminal regime."""
     source = dcegm_variants.dcegm_retirement
     brute_target = UserRegime(
-        regime_transitions=base.retirement_transitions(last_age=60),
         solver=GridSearch(),
         states=source.states,
         actions=source.actions,
@@ -720,25 +718,28 @@ def test_non_dcegm_non_terminal_target_raises():
         constraints={"borrowing_constraint": borrowing_constraint},
         functions={"utility": utility_retirement},
     )
-    dcegm_source = PORTABLE_DCEGM_WORKING_LIFE.replace(
-        regime_transitions=base.working_life_transitions(last_age=60)
-    )
     ages = AgeGrid(start=40, inclusive_stop=60, step="10Y")
     with pytest.raises(
         ModelInitializationError,
         match="non-terminal target of a DCEGM regime must itself use the DCEGM",
     ):
-        with_fixture_graph(
+        Model(
             edges={
-                "working_life": {
-                    "working_life": (40,),
-                    "retirement": (40,),
-                    "dead": (40, 50),
-                },
-                "retirement": {"retirement": (40,), "dead": (40, 50)},
+                "working_life": Transition(
+                    targets={
+                        "working_life": (40,),
+                        "retirement": (40,),
+                        "dead": (40, 50),
+                    },
+                    law=base.WORKING_LIFE_LAW,
+                ),
+                "retirement": Transition(
+                    targets={"retirement": (40,), "dead": (40, 50)},
+                    law=base.RETIREMENT_LAW,
+                ),
             },
             regimes={
-                "working_life": dcegm_source,
+                "working_life": PORTABLE_DCEGM_WORKING_LIFE,
                 "retirement": brute_target,
                 "dead": dead,
             },
@@ -765,7 +766,6 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
             **dict(retirement_only.retirement.functions),
             "inverse_marginal_utility": _ordinary_inverse_marginal_utility,
         },
-        regime_transitions=retirement_only.retirement_transitions(last_age=60),
     )
     model = _build_model(regime=regime)
 
@@ -780,10 +780,7 @@ def test_brute_force_solver_explicit_equals_default():
     params = retirement_only.get_params(n_periods=N_PERIODS)
 
     default_model = retirement_only.get_model(N_PERIODS)
-    explicit = retirement_only.retirement.replace(
-        solver=GridSearch(),
-        regime_transitions=retirement_only.retirement_transitions(last_age=60),
-    )
+    explicit = retirement_only.retirement.replace(solver=GridSearch())
     explicit_model = _build_model(regime=explicit)
 
     got_default = default_model.solve(params=params, log_level="debug").values

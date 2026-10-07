@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
-    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
@@ -65,11 +64,6 @@ def next_wealth(savings: ContinuousState) -> ContinuousState:
     return savings
 
 
-def next_regime() -> ScalarInt:
-    """The examples contain one decision period followed by death."""
-    return RegimeId.dead
-
-
 ONE_MARGIN = LiquidMargin(
     state="wealth",
     action="consumption",
@@ -81,7 +75,6 @@ ONE_MARGIN = LiquidMargin(
 def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, one-margin model solved by plain EGM."""
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
@@ -96,7 +89,6 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
         solver=EGM(savings_grid=SAVINGS_GRID),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
     )
@@ -179,7 +171,6 @@ def build_kinked_tax_model(
     a budget would admit.
     """
     working = ConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"liquid": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"liquid": next_liquid},
@@ -200,7 +191,6 @@ def build_kinked_tax_model(
         solver=NBEGM(savings_grid=SAVINGS_GRID),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": WEALTH_GRID},
         functions={"utility": tax_terminal_utility},
     )
@@ -315,7 +305,6 @@ OUTER_MARGIN = OuterContinuousMargin(
 def build_nested_model(*, enable_jit: bool = True) -> Model:
     """Build a two-period, two-margin model solved by nested EGM."""
     working = NestedConsumptionSavingsRegime(
-        regime_transitions=DeterministicTransition(func=next_regime),
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         actions={
             "consumption": CONSUMPTION_GRID,
@@ -347,7 +336,6 @@ def build_nested_model(*, enable_jit: bool = True) -> Model:
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": nested_terminal_utility},
     )
@@ -408,7 +396,6 @@ __all__ = [
     "new_illiquid",
     "next_illiquid",
     "next_liquid",
-    "next_regime",
     "next_wealth",
     "next_wealth_from_liquid_savings",
     "resources",

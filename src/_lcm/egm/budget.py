@@ -13,12 +13,14 @@ constraint set, where it enters the feasibility array `F` exactly like a
 user-declared constraint.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
+from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.egm import _BoundEGM
 from _lcm.solution.negm import _BoundNEGM
@@ -102,7 +104,7 @@ def get_intrinsic_budget_constraint(
                 functions=functions, arg_name=action_name
             ),
             resources_name: ensure_annotations_are_strings(
-                get_annotations(functions[resources_name])
+                get_annotations(_representative(functions[resources_name]))
             )["return"],
         },
         return_annotation="BoolND",
@@ -143,6 +145,17 @@ class _IntrinsicBudgetConstraint:
             action_and_resources[self.action_name]
             <= action_and_resources[self.resources_name] - self.borrowing_limit
         )
+
+
+def _representative(func: object) -> Callable[..., Any]:
+    """Return an age-specialized function's first-active concrete callable.
+
+    Every concrete callable of an `AgeSpecializedFunction` exposes the same
+    parameters, so any one of them carries the annotations the DAG checks.
+    """
+    if isinstance(func, PeriodizedEconFunction):
+        return func.representative
+    return cast("Callable[..., Any]", func)
 
 
 def _find_annotation_of_arg(

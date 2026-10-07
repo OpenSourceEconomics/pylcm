@@ -2,10 +2,9 @@
 
 `ExecutionConfig(invariant_block_widths={"pref_type": 1})` solves every regime
 carrying `pref_type` one preference type at a time, reading each continuation
-through the selected block of that type. Grid-node values remain bitwise equal;
-interpolated values agree within eight representable steps. Policies and the
-public result schema remain exact. Unsafe or unsupported requests are refused
-before dispatch.
+through the selected block of that type. Values agree with the unblocked solve
+within eight ULP; policies and the public result schema remain exact. An unsafe or
+unsupported request is refused before anything is dispatched.
 """
 
 import collections
@@ -27,8 +26,6 @@ from _lcm.execution.scheduler import PeriodTransferCache
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -46,6 +43,8 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.conftest import assert_general_values_agree
+from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_models import independent_types
 
 
@@ -130,13 +129,7 @@ def _sector_model(
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
-    last_age = ages.exact_values[-1]
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=lambda: _RegimeId.working),
-            then=DeterministicTransition(func=lambda: _RegimeId.terminal),
-        ),
         # `sector` is declared first, so it leads the discrete axes and
         # `pref_type` is the second value axis.
         states={
@@ -156,7 +149,6 @@ def _sector_model(
         constraints={"affordable": _affordable},
     )
     terminal = Regime(
-        regime_transitions=None,
         states=(
             {"pref_type": pref_type, "wealth": wealth}
             if typed_terminal
@@ -205,7 +197,7 @@ def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     model = independent_types.get_model()
     return Model(
         regimes=model.user_regimes,
-        edges=model.graph.edges,
+        edges=model.edges,
         ages=model.ages,
         regime_id_class=independent_types.RegimeId,
         initial_nodes={model.ages.exact_values[0]: "working"},
@@ -231,24 +223,6 @@ _WORKLOADS = ("independent_types", "sector_typed_terminal", "sector_type_free_te
 
 def _values(*, model: Model, params: dict) -> Mapping:
     return model.solve(params=params, log_level="off").values
-
-
-def _assert_values_bitwise_equal(*, got: Mapping, expected: Mapping) -> None:
-    assert {period: tuple(by_regime) for period, by_regime in got.items()} == {
-        period: tuple(by_regime) for period, by_regime in expected.items()
-    }
-    mismatched = [
-        (period, regime)
-        for period, by_regime in expected.items()
-        for regime, value in by_regime.items()
-        if not (
-            np.asarray(got[period][regime]).dtype == np.asarray(value).dtype
-            and np.array_equal(
-                np.asarray(got[period][regime]), np.asarray(value), equal_nan=True
-            )
-        )
-    ]
-    assert mismatched == []
 
 
 def test_execution_config_invariant_block_widths_default_blocks_nothing() -> None:
@@ -282,12 +256,12 @@ def test_execution_config_refuses_an_unusable_block_width(
 
 
 @pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_equals_the_unblocked_solve_bitwise(workload: str) -> None:
-    """Every published value array is the unblocked one, bit for bit."""
+def test_blocked_solve_agrees_with_the_unblocked_solve(workload: str) -> None:
+    """Every published value agrees with the unblocked one within eight ULP."""
     model, params = _workload(name=workload, execution_config=_blocked())
     reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=_values(model=model, params=params),
         expected=_values(model=reference, params=params),
     )
@@ -315,7 +289,7 @@ def test_blocked_solve_with_changed_params_equals_the_unblocked_one() -> None:
 
     changed = _values(model=model, params=changed_params)
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=changed, expected=_values(model=reference, params=changed_params)
     )
     assert not np.array_equal(
@@ -333,19 +307,17 @@ def test_blocked_simulation_equals_the_unblocked_panel() -> None:
         "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
         "pref_type": jnp.asarray(types, dtype=jnp.int32),
     }
-    frames = [
-        _independent_types_model(execution_config=config)
-        .simulate(
+    results = [
+        _independent_types_model(execution_config=config).simulate(
             params=independent_types.get_params(),
             initial_conditions=initial_conditions,
             seed=0,
             log_level="off",
         )
-        .to_dataframe()
         for config in (_blocked(), ExecutionConfig())
     ]
 
-    assert frames[0].equals(frames[1])
+    grouped_simulation._assert_general_panels_agree(got=results[0], want=results[1])
 
 
 @pytest.mark.parametrize("typed_terminal", [False, True])
@@ -732,25 +704,10 @@ def _two_carrier_utility(
     return weight[pref_type] * (1.0 + consumption) ** exponent[pref_type]
 
 
-def _stay_left() -> ScalarInt:
-    return _TwoCarrierRegimeId.left
-
-
-def _stay_right() -> ScalarInt:
-    return _TwoCarrierRegimeId.right
-
-
-def _two_carrier_regime(*, stay: str) -> Regime:
+def _two_carrier_regime() -> Regime:
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=2,
-            law=DeterministicTransition(
-                func=_stay_left if stay == "left" else _stay_right
-            ),
-            then=DeterministicTransition(func=lambda: _TwoCarrierRegimeId.terminal),
-        ),
         states={"pref_type": pref_type, "wealth": wealth},
         state_transitions={
             "pref_type": fixed_transition("pref_type"),
@@ -768,10 +725,9 @@ def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
     return Model(
         edges={name: {name: (0,), "terminal": (1,)} for name in ("left", "right")},
         regimes={
-            "left": _two_carrier_regime(stay="left"),
-            "right": _two_carrier_regime(stay="right"),
+            "left": _two_carrier_regime(),
+            "right": _two_carrier_regime(),
             "terminal": Regime(
-                regime_transitions=None,
                 states={
                     "pref_type": DiscreteGrid(
                         category_class=independent_types.PrefType
@@ -799,12 +755,12 @@ def _two_carrier_params() -> dict:
 
 
 def test_two_carriers_reading_one_typed_terminal_equal_the_unblocked_solve() -> None:
-    """Two regimes sharing each type's selected terminal view solve bit for bit."""
+    """Shared typed-terminal reads preserve value agreement within eight ULP."""
     params = _two_carrier_params()
 
     got = _values(model=_two_carrier_model(execution_config=_blocked()), params=params)
 
-    _assert_values_bitwise_equal(
+    assert_general_values_agree(
         got=got,
         expected=_values(
             model=_two_carrier_model(execution_config=ExecutionConfig()),

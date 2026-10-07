@@ -14,19 +14,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ExecutionConfig,
     LogNormalIIDProcess,
+    Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -43,42 +39,27 @@ def _shock(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _one() -> ScalarFloat:
-    return jnp.float32(1)
-
-
-def _target_id() -> ScalarInt:
-    return RegimeId.target
-
-
 def _oracle() -> float:
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
     values = np.exp(math.sqrt(2.0) * raw_nodes)
     return float(np.dot(values, raw_weights / math.sqrt(math.pi)))
 
 
-@pytest.mark.parametrize("coarse", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit):
-    transition = (
-        _SupportedDeterministicTransition(func=_target_id, targets=("target",))
-        if coarse
-        else {"target": StochasticTransition(func=_one)}
-    )
+def test_target_only_lognormal_iid_uses_quadrature_weights(*, enable_jit):
     process = LogNormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
         mu=0.0,
         sigma=1.0,
     )
-    model = with_fixture_graph(
+    model = Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 functions={"utility": _zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": _shock},
             ),

@@ -9,17 +9,18 @@ action for all of them. Two further capabilities travel with it: feasibility tha
 values rather than only states, and a transition whose branch depends on values at the
 target regime.
 
-Six declarations express this, and each one goes inside a slot `Regime` already has, so
-a collective model has no extra constructor arguments to learn.
+Six declarations express this, and each one goes inside an argument `Regime` or `Model`
+already has — a regime slot, or a `Transition` in `Model(edges=...)` — so a collective
+model has no extra constructor arguments to learn.
 
-| Declaration                | Where it is declared                                                              | What it expresses                                   |
-| -------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `CollectiveUtility`        | `functions={"utility": ...}`                                                      | the regime's stakeholders and their flow utilities  |
-| `ParetoObjective`          | `CollectiveUtility(objective=...)`                                                | how stakeholder action values are scalarized        |
-| `ValueDependentConstraint` | `constraints={"name": ...}`                                                       | a feasibility predicate that may read values        |
-| `ValueDependentTransition` | `regime_transitions={"target": ...}`                                              | a transition into one target, gated on values there |
-| `StakeholderRoute`         | `ValueDependentTransition(routes=...)`                                            | where one source stakeholder goes on each branch    |
-| `ProjectedRegimeValue`     | a constraint's `references`, an edge's `gate_references`, or a route's `fallback` | another regime's current-period value, at a mapping |
+| Declaration                | Where it is declared                                                        | What it expresses                                   |
+| -------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------- |
+| `CollectiveUtility`        | `functions={"utility": ...}`                                                | the regime's stakeholders and their flow utilities  |
+| `ParetoObjective`          | `CollectiveUtility(objective=...)`                                          | how stakeholder action values are scalarized        |
+| `ValueDependentConstraint` | `constraints={"name": ...}`                                                 | a feasibility predicate that may read values        |
+| `Gate`                     | `Transition(gates=...)` in `Model(edges=...)`, keyed by target              | a transition into one target, gated on values there |
+| `StakeholderRoute`         | `Gate(routes=...)`                                                          | where one source stakeholder goes on each branch    |
+| `ProjectedRegimeValue`     | a constraint's `references`, a gate's `references`, or a route's `fallback` | another regime's current-period value, at a mapping |
 
 All six are frozen, keyword-only dataclasses defined in `src/lcm/collective.py` and
 exported from `lcm`. A type violation on any of them raises `RegimeInitializationError`.
@@ -170,11 +171,11 @@ required there and must be `None` for a singleton reference.
 Where the declaration sits fixes what its `projection` may read and which states it owes
 a coordinate function for:
 
-| Position                                   | Projects from               | May introduce free params | Owes one coordinate per                          |
-| ------------------------------------------ | --------------------------- | ------------------------- | ------------------------------------------------ |
-| `ValueDependentConstraint.references`      | the DECLARING regime's cell | no                        | state of the reference regime's value function   |
-| `ValueDependentTransition.gate_references` | the TARGET regime's grid    | yes, as edge params       | state of the reference regime's value function   |
-| `StakeholderRoute.fallback`                | the TARGET regime's grid    | yes, as edge params       | state the reference regime carries in simulation |
+| Position                              | Projects from               | May introduce free params | Owes one coordinate per                          |
+| ------------------------------------- | --------------------------- | ------------------------- | ------------------------------------------------ |
+| `ValueDependentConstraint.references` | the DECLARING regime's cell | no                        | state of the reference regime's value function   |
+| `Gate.references`                     | the TARGET regime's grid    | yes, as edge params       | state of the reference regime's value function   |
+| `StakeholderRoute.fallback`           | the TARGET regime's grid    | yes, as edge params       | state the reference regime carries in simulation |
 
 The fallback owes the larger set because a route does not only price the closed branch,
 it writes the routed row into the fallback regime, and forward simulation carries every
@@ -220,68 +221,78 @@ Three read-only properties resolve the declaration:
 | `simulate_fallback`  | the `ProjectedRegimeValue` a routed row's regime, role and states come from |
 | `fallback_is_phased` | whether the two branches were declared separately                           |
 
-(api-value-dependent-transition)=
+(api-gate)=
 
-## `ValueDependentTransition`
+## `Gate`
 
 ```python
-probability: UserFunction | StochasticTransition
-gate: UserFunction
+predicate: UserFunction
 routes: Mapping[str, StakeholderRoute]
-gate_references: Mapping[str, ProjectedRegimeValue] = field(
+references: Mapping[str, ProjectedRegimeValue] = field(
     default_factory=lambda: MappingProxyType({})
 )
 off_grid: Literal["pointwise", "reject"] = "pointwise"
 ```
 
-Declared inside `regime_transitions`, keyed by target regime name, so target selection
-and value-dependent routing are one declaration of one semantic transition.
+Declared in the source's `Transition` in `Model(edges=...)`, beside the law and keyed by
+the gated target:
 
-**The key is always the gate-open target** — the regime a row enters when the gate is
-true. A dissolution edge is therefore keyed by the *continuing* collective regime under
-`gate = ~D_target`, with each partner's own regime as that partner's route fallback.
-Keying it by one partner's regime would send both partners there whenever the couple
-stays together.
+```python
+edges = {
+    "couple": Transition(
+        law={"couple": StochasticTransition(func=probability_one)},
+        gates={"couple": Gate(predicate=no_dissolution, routes=...)},
+    ),
+}
+```
 
-`probability` accepts either a `StochasticTransition` or, as a convenience specific to
-`ValueDependentTransition`, a bare probability callable. The latter is wrapped in
-`StochasticTransition` in `decomposed_transition`, because that is the grammar the
-canonical per-target cell consumes. An ordinary per-target `regime_transitions` cell
-still requires an explicit `StochasticTransition`; a bare callable there is rejected as
-an unsupported deterministic per-target transition.
-
-`probability` and `gate` are two distinct operations: `probability` selects whether this
-target edge is attempted at all, while `gate` keeps that target or takes the route's
+The law supplies the probability of reaching the gated target, exactly as for any other
+destination; the gate decides, once there, whether a row stays or takes its route's
+fallback. The two are distinct operations: the law selects whether this target edge is
+attempted at all, the predicate keeps that target or takes the route's
 stakeholder-specific fallback.
+
+The `Transition`'s destinations include the gate-open target and every route's fallback
+regime. A law that names its targets derives them: each route fallback regime is reached
+wherever its gated target is. A gated source declares a `Transition` even where every
+age has a single outgoing edge, because the gate adds routing that the edge alone does
+not state.
+
+**The key is always the gate-open target** — the regime a row enters when the predicate
+is true. A dissolution edge is therefore keyed by the *continuing* collective regime
+under `predicate = ~D_target`, with each partner's own regime as that partner's route
+fallback. Keying it by one partner's regime would send both partners there whenever the
+couple stays together.
 
 `routes` holds one route per **source** stakeholder, keyed by stakeholder name. A
 singleton source declares exactly one route, under any key.
 
-A `ValueDependentTransition` may be repeated inside the two mappings of an outer
-`Phased(solve=..., simulate=...)` transition. A target is value-dependent in both phases
-or in neither. The two declarations must name the identical gate callable and equal
-routes, gate references, and `off_grid` contract; only `probability` may differ,
-allowing perceived and realized transition probabilities to diverge without changing the
-edge.
+One `Gate` per target holds at every age the target is reached and in both phases. A
+gate is never wrapped in `ByAge` or `Phased`; only a route's `fallback` may be `Phased`.
+With `Transition(law=Phased(solve=..., simulate=...), gates=...)` the law differs by
+phase and the gates do not, so perceived and realized transition probabilities can
+diverge without changing the edge. With `Phased` edges, a target reached in both phases
+carries the equal `Gate` in both or none. A gate on a target its `Transition` never
+reaches is refused.
 
-### Gate operands
+### Predicate operands
 
-`gate` is a Boolean predicate evaluated pointwise on the **target** regime's grid, in
-the target fold's context. It may read:
+`predicate` is a Boolean predicate evaluated pointwise on the **target** regime's grid,
+in the target fold's context. It may read:
 
 | Operand                                | Available when                                            |
 | -------------------------------------- | --------------------------------------------------------- |
 | `V_target`                             | the target regime is a singleton                          |
 | `V_target_<s>`                         | the target regime is collective, one per its stakeholders |
 | `D_target`                             | the target regime is collective — its dissolution flag    |
-| each `gate_references` key             | always, bound to that reference's interpolated value      |
+| each `references` key                  | always, bound to that reference's interpolated value      |
 | target states, params, `period`, `age` | always                                                    |
 
-Mutual consent is the strict, unanimous gate
+Mutual consent is the strict, unanimous predicate
 `(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution this period" is
 `~D_target`.
 
-The whole `V_target` vocabulary is reserved to the engine, so a `gate_references` key
+The whole `V_target` vocabulary is reserved to the engine, so a gate `references` key
 spelled `V_target`, `V_target_<s>` or `D_target` is rejected rather than silently
 preempted by the built-in operand.
 
@@ -289,7 +300,7 @@ At the end of each period's solve, the engine folds one gated continuation per d
 edge and source stakeholder $s$ on the target regime's grid,
 
 ```{math}
-\bar W^s(x) = \operatorname{where}\big(\text{gate}(x),\;
+\bar W^s(x) = \operatorname{where}\big(\text{predicate}(x),\;
 V^{\text{route}_s}_{\text{target}}(x),\;
 V^s_{\text{fallback}}(\pi_s(x))\big),
 ```
@@ -301,9 +312,9 @@ and the source's continuation reads $\bar W$ in place of the raw target value.
 What the edge promises about a landing point between the target's nodes.
 
 - `"pointwise"` (the default) reads every operand at the landing point and applies the
-  gate there, in both phases. The operands are interpolated, so the value carries the
-  ordinary interpolation error of any continuation — but it is a value one branch really
-  delivers, and the branch the solve priced is the branch simulation routes down.
+  predicate there, in both phases. The operands are interpolated, so the value carries
+  the ordinary interpolation error of any continuation — but it is a value one branch
+  really delivers, and the branch the solve priced is the branch simulation routes down.
 - `"reject"` demands that no such point exists: the model refuses to build unless the
   target regime's grid is reached exactly, i.e. it carries no continuous state. Declare
   it where a straddled gate would be an economic error rather than an approximation.
@@ -316,28 +327,28 @@ The enforcement point is not uniform, and the distinction is load-bearing: a rul
 checked at model build cannot be repaired by an argument to `solve`, while a rule
 checked at evaluation only fires once the model runs.
 
-| Rule                                                                                                | Enforced at                                                       | Exception                   |
-| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
-| `normalization` is `"pointwise"` or `"none"`                                                        | `ParetoObjective` construction                                    | `ValueError`                |
-| weight keys match the regime's stakeholders                                                         | `Regime` construction                                             | `RegimeInitializationError` |
-| a **constant** weight is finite and non-negative; the constants leave a positive total              | `Regime` construction                                             | `RegimeInitializationError` |
-| a `ValueDependentConstraint` on a singleton regime                                                  | `Regime` construction                                             | `RegimeInitializationError` |
-| a regime-level reference projection introduces no free parameter                                    | `Regime` construction                                             | `RegimeInitializationError` |
-| a gate is a plain callable, not a `StochasticTransition`                                            | `Regime` construction                                             | `RegimeInitializationError` |
-| `routes` covers the source's stakeholder structure                                                  | `Regime` construction                                             | `RegimeInitializationError` |
-| phased declarations make a target value-dependent in both phases and agree on the edge              | `Regime` construction                                             | `RegimeInitializationError` |
-| taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime | `Regime` construction                                             | `NotImplementedError`       |
-| the same three on the SOURCE regime of a `ValueDependentTransition`                                 | `Regime` construction                                             | `NotImplementedError`       |
-| a reference or fallback regime exists, and `stakeholder` matches its structure                      | model build                                                       | `ModelInitializationError`  |
-| a projection covers exactly the states its position owes                                            | model build                                                       | `ModelInitializationError`  |
-| the same-period reference graph is acyclic                                                          | model build                                                       | `ModelInitializationError`  |
-| a gate reads `D_target` on a **singleton** target                                                   | model build                                                       | `ModelInitializationError`  |
-| a gate or projection argument names a node of the target's own DAG                                  | model build                                                       | `ModelInitializationError`  |
-| a `gate_references` key aliases `V_target` / `V_target_<s>` / `D_target`                            | model build                                                       | `ModelInitializationError`  |
-| `off_grid="reject"` on a target carrying a continuous state                                         | model build                                                       | `ModelInitializationError`  |
-| an ungated transition between regimes of different stakeholder structure                            | model build                                                       | `NotImplementedError`       |
-| **the gate's realized return dtype is Boolean**                                                     | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
-| a **callable** weight is finite, non-negative and positively totalled on the grid                   | evaluation — every `solve()`                                      | `InvalidParamsError`        |
+| Rule                                                                                                                       | Enforced at                                                       | Exception                   |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
+| `normalization` is `"pointwise"` or `"none"`                                                                               | `ParetoObjective` construction                                    | `ValueError`                |
+| weight keys match the regime's stakeholders                                                                                | `Regime` construction                                             | `RegimeInitializationError` |
+| a **constant** weight is finite and non-negative; the constants leave a positive total                                     | `Regime` construction                                             | `RegimeInitializationError` |
+| a `ValueDependentConstraint` on a singleton regime                                                                         | `Regime` construction                                             | `RegimeInitializationError` |
+| a regime-level reference projection introduces no free parameter                                                           | `Regime` construction                                             | `RegimeInitializationError` |
+| a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                     | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| `routes` covers the source's stakeholder structure                                                                         | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none | model build                                                       | `ModelInitializationError`  |
+| taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime                        | `Regime` construction                                             | `NotImplementedError`       |
+| the same three on the SOURCE regime of a gated transition                                                                  | model build, binding the edge law to its source                   | `NotImplementedError`       |
+| a reference or fallback regime exists, and `stakeholder` matches its structure                                             | model build                                                       | `ModelInitializationError`  |
+| a projection covers exactly the states its position owes                                                                   | model build                                                       | `ModelInitializationError`  |
+| the same-period reference graph is acyclic                                                                                 | model build                                                       | `ModelInitializationError`  |
+| a predicate reads `D_target` on a **singleton** target                                                                     | model build                                                       | `ModelInitializationError`  |
+| a predicate or projection argument names a node of the target's own DAG                                                    | model build                                                       | `ModelInitializationError`  |
+| a gate `references` key aliases `V_target` / `V_target_<s>` / `D_target`                                                   | model build                                                       | `ModelInitializationError`  |
+| `off_grid="reject"` on a target carrying a continuous state                                                                | model build                                                       | `ModelInitializationError`  |
+| an ungated transition between regimes of different stakeholder structure                                                   | model build                                                       | `NotImplementedError`       |
+| **the predicate's realized return dtype is Boolean**                                                                       | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
+| a **callable** weight is finite, non-negative and positively totalled on the grid                                          | evaluation — every `solve()`                                      | `InvalidParamsError`        |
 
 The last two are the ones easily mistaken for build-time checks.
 
@@ -357,7 +368,7 @@ regime is active — not only the first time.
 
 ## Parameters
 
-Free arguments of these declarations reach `get_params_template()` in three places.
+Free arguments of these declarations reach `get_params_template()` in four places.
 
 **Per-stakeholder utilities** appear under `utility_<stakeholder>`, one entry per
 stakeholder, at the top level of the regime's template.
@@ -373,31 +384,33 @@ one parameter and appears once. A weight argument that names a state, `period` o
 is wired at call time and never surfaces. The key is present only when some weight is a
 callable with a free argument.
 
-**Every callable of a gated transition** nests under the **target** regime's name,
-beside that target's `next_regime` cell:
+**Every callable of a transition law and its gates** belongs to the edges, so its
+parameters sit at its declaration path under `params["edges"][source][target]`, not
+under the source regime:
 
-| Template entry                                    | Callable                                 |
-| ------------------------------------------------- | ---------------------------------------- |
-| `gate`                                            | the `gate` predicate                     |
-| `gate_ref_<reference key>_<state>`                | one `gate_references` projection         |
-| `leg_fallback_<fallback regime>_<state>`          | one route fallback projection (solve)    |
-| `simulate_leg_fallback_<fallback regime>_<state>` | the simulate side of a `Phased` fallback |
+| Template path below `params["edges"][source][target]`   | Callable                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `[arg]`                                                 | the law's `StochasticTransition` cell for the target, gated or not |
+| `["predicate"][arg]`                                    | the gate's `predicate`                                             |
+| `["references"][reference][state][arg]`                 | one gate `references` projection                                   |
+| `["routes"][route]["fallback"][state][arg]`             | one route fallback projection                                      |
+| `["routes"][route]["fallback"]["solve"][state][arg]`    | the solve side of a `Phased` fallback                              |
+| `["routes"][route]["fallback"]["simulate"][state][arg]` | the simulate side of a `Phased` fallback                           |
 
-A fallback entry is named by the regime it falls back to rather than by its `routes`
-key, because that is the identity both sides of the solve/simulate seam can spell. Two
-routes of one edge falling back to the same regime therefore share one entry, and their
-parameters are unioned there.
+A fallback is keyed by its `routes` key and each projection by the state it projects.
+Only callables that read a free argument appear. A value may also be supplied once for
+every edge callable of the source, at `params["edges"][source][arg]`, or at the model
+level; a value under the source regime never reaches a gate or projection. See
+[Edge parameter paths](transitions.md#api-edge-parameters).
 
-For a source regime with a gate parameter `marriage_bonus`, a parameterized gate
+For a source regime whose gate predicate takes `marriage_bonus`, with a parameterized
 reference, and a `Phased` fallback whose simulate side takes `settlement_share`:
 
 ```python
-template["source"]["target"] == {
-    "next_regime": {},
-    "gate": {"marriage_bonus": "float"},
-    "gate_ref_V_outside_x": {"ref_share": "float"},
-    "leg_fallback_fallback_x": {},
-    "simulate_leg_fallback_fallback_x": {"settlement_share": "float"},
+template["edges"]["source"]["target"] == {
+    "predicate": {"marriage_bonus": "float"},
+    "references": {"V_outside": {"x": {"ref_share": "float"}}},
+    "routes": {"f": {"fallback": {"simulate": {"x": {"settlement_share": "float"}}}}},
 }
 ```
 
@@ -479,10 +492,11 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
 - **Any solver other than `GridSearch`.** The household argmax and per-stakeholder value
   readout run over the full action product.
 
-The **source** regime of a `ValueDependentTransition` carries the same three
-restrictions, whether or not it is collective: it reads the folded continuation through
-the grid-search machinery, which a DC-EGM, taste-shock or certainty-equivalent source
-does not have.
+The **source** regime of a gated transition carries the same three restrictions, whether
+or not it is collective: it reads the folded continuation through the grid-search
+machinery, which a DC-EGM, taste-shock or certainty-equivalent source does not have. A
+source restriction raises at model build, when the edge law is bound to its source,
+since a `Regime` on its own declares no edge.
 
 A `fold=True` IID process is a further restriction, and a different one: a fold
 integrates the shock's node axis away immediately after the period's collective readout,
@@ -492,33 +506,35 @@ declarations, and at model build for a folded regime read as another regime's
 same-period endpoint.
 
 Finally, an ungated transition between regimes of different stakeholder structure stays
-rejected at model build. Mixed singleton/collective topologies go through
-`ValueDependentTransition`, which is what lets a row change household structure without
-mixing values across it.
+rejected at model build. Mixed singleton/collective topologies go through a `Gate`,
+which is what lets a row change household structure without mixing values across it.
 
 ## Derived engine views
 
 Each declaration above stays in the raw slot where the author wrote it. `Regime`
-construction derives stored, read-only fields from those declarations. The
-`decomposed_*` properties separately compute engine-facing views from the current raw
-slots whenever they are read. Neither kind of output is a declaration route: none can be
-passed to `Regime(...)` or to `Regime.replace`.
+construction derives stored, read-only fields from the declarations in `functions` and
+`constraints`. A `Gate` lives in a `Transition` in `Model(edges=...)`, so its derived
+fields belong to the law `Model` binds for the source, published as
+`model.graph.laws[source]`. The `decomposed_*` properties separately compute
+engine-facing views from the current raw declarations whenever they are read. Neither
+kind of output is a declaration route: none can be passed to `Regime(...)` or to
+`Regime.replace`.
 
 | Declaration                | Construction-derived fields                              | On-access engine view                                                                                          |
 | -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `CollectiveUtility`        | `stakeholders`, `pareto_objective`                       | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
 | `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference]` | `decomposed_constraints`: ordinary constraints only                                                            |
-| `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
+| `Gate`                     | `model.graph.laws[source].gated_edges[target]`           | `model.graph.laws[source].decomposed_transition[target]`: the law's cell for the target                        |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
-`constraints` and `regime_transitions`. The engine reads the decomposed views
-(`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
-the raw slots. Reading either a stored derived field or a decomposed view therefore
+`constraints` and the `Model(edges=...)` transition. The engine reads the decomposed
+views (`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather
+than the raw slots. Reading either a stored derived field or a decomposed view therefore
 reveals what a declaration produced without creating a second way to declare it.
 
 The derived edge type is `_lcm.gated_edge.GatedEdge`. It is engine-internal and not part
-of the public API: there is exactly one way to declare a gated edge, and it is
-`ValueDependentTransition`.
+of the public API: there is exactly one way to declare a gated edge, and it is a `Gate`
+in `Transition(gates=...)`.
 
 Model code reads these fields; model *authors* do not need them. Declare a household
 with the six objects above.
@@ -528,7 +544,7 @@ with the six objects above.
 - [Households and value-dependent choice](../user_guide/collective_regimes.md) — the
   guide, with a worked marriage market.
 - [Model and Regime](model_and_regime.md) — the slots these declarations sit in.
-- [Transitions and phase specialization](transitions.md) — what `probability` accepts,
-  and what `Phased` means elsewhere.
+- [Transitions and phase specialization](transitions.md) — what a `Transition` law
+  accepts, and what `Phased` means elsewhere.
 - [Runtime, results, and persistence](runtime_and_results.md) — `solve` and `simulate`
   arguments in general.

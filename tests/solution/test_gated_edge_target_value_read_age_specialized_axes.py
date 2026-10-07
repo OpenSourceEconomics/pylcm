@@ -26,19 +26,19 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     StochasticTransition,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT_FACTOR = 0.5
 
@@ -148,33 +148,32 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    saver = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
+    opening = StochasticTransition(func=_probability_of_opening_the_account)
+    saver_law = ByAge(
+        cases={
+            0: {
                 "saver": StochasticTransition(func=_probability_of_staying_put),
-                "account": ValueDependentTransition(
-                    probability=StochasticTransition(
-                        func=_probability_of_opening_the_account
-                    ),
-                    gate=_account_value_clears_the_floor,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity",
-                                projection={"principal": _principal_from_balance},
-                            )
-                        )
-                    },
-                ),
+                "account": opening,
             },
-            exits=("account",),
-        ),
+            1: {"account": opening},
+        }
+    )
+    account_gate = Gate(
+        predicate=_account_value_clears_the_floor,
+        routes={
+            "only": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="annuity",
+                    projection={"principal": _principal_from_balance},
+                )
+            )
+        },
+    )
+    saver = Regime(
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
     )
     account = Regime(
-        regime_transitions=None,
         states={
             "balance": AgeSpecializedGrid(
                 build=_balance_grid, signature=_contribution_cap
@@ -183,15 +182,21 @@ def _build_model() -> Model:
         functions={"utility": _account_utility},
     )
     annuity = Regime(
-        regime_transitions=None,
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saver": saver, "account": account, "annuity": annuity},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "saver"},
+        edges={
+            "saver": Transition(
+                targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
+                law=saver_law,
+                gates={"account": account_gate},
+            )
+        },
     )
 
 

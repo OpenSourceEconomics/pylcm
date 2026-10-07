@@ -44,19 +44,20 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -64,9 +65,8 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
-from tests.test_models.schedules import until_exit
 
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
@@ -123,27 +123,34 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
-def _make_regimes() -> dict[str, Regime]:
-    src = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "src": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_stay),
-                    gate=_repeat_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="src_fallback",
-                                projection={"wage": _identity_wage},
-                            ),
-                        )
-                    },
-                ),
-                "src_exit": StochasticTransition(func=_prob_exit_boundary),
-            },
-            exits=("src_exit",),
+def _src_transition() -> Transition:
+    """Return `src`'s transition: a gated self-loop until age 2, then `src_exit`."""
+    exit_cell = StochasticTransition(func=_prob_exit_boundary)
+    return Transition(
+        law=ByAge.until(
+            stop_age_exclusive=2,
+            law={"src": StochasticTransition(func=_prob_stay), "src_exit": exit_cell},
+            then={"src_exit": exit_cell},
         ),
+        gates={
+            "src": Gate(
+                predicate=_repeat_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="src_fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            )
+        },
+    )
+
+
+def _make_regimes() -> dict[str, Regime]:
+    """Return the regimes without their laws; `_src_transition` declares `src`'s."""
+    src = Regime(
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -162,45 +169,33 @@ def _make_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_repeat},
     )
-    src_exit = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        functions={"utility": _u_src_exit},
-    )
+    src_exit = Regime(states={"wage": _WAGE}, functions={"utility": _u_src_exit})
     src_fallback = Regime(
-        regime_transitions=None,
-        states={"wage": _WAGE},
-        functions={"utility": _u_src_fallback},
+        states={"wage": _WAGE}, functions={"utility": _u_src_fallback}
     )
     return {"src": src, "src_exit": src_exit, "src_fallback": src_fallback}
 
 
 def _solve_and_simulate():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    laws = bind_laws({"src": _src_transition(), "src_exit": None, "src_fallback": None})
     regimes_dict = _make_regimes()
     regime_names = list(regimes_dict)
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regime_names)}
     )
+    finalized = finalize_regimes(
+        user_regimes=regimes_dict,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=regimes_dict,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
+            user_regimes=finalized, laws=laws, ages=ages
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=regimes_dict,
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages,
-        ),
+        user_regimes=finalized,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,

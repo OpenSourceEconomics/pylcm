@@ -30,8 +30,6 @@ from lcm import (
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
@@ -74,10 +72,6 @@ def _n_axes() -> int:
     scale sends this one to zero.
     """
     return 3 if _active_dtype() == np.float32 else 4
-
-
-def _certain() -> FloatND:
-    return jnp.asarray(1.0, dtype=_active_dtype())
 
 
 def _zero_utility() -> FloatND:
@@ -189,15 +183,11 @@ def _build_model(
 ) -> Model:
     """A source entering the target's income process at several rare draws."""
     axis_names = tuple(f"draw_{index}" for index in range(_n_axes()))
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": 20}},
         certainty_equivalent=certainty_equivalent,
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"target": StochasticTransition(func=_certain)},
-                    exits=("target",),
-                ),
                 state_transitions={
                     "income": {"target": _make_entry(rare_entry)},
                     **{
@@ -208,7 +198,6 @@ def _build_model(
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
                     **{name: DiscreteGrid(category_class=Draw) for name in axis_names},

@@ -7,9 +7,6 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import CoreExecutionDisposition, core_program_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils import dispatchers
 from lcm import (
     AgeGrid,
@@ -33,8 +30,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import assert_agrees_to_ulp
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -65,10 +60,6 @@ def _feasible(first: ContinuousState) -> BoolND:
     return first > 1.0
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
-
-
 def _model(*, kind: str, width: int) -> Model:
     """Use two state axes and an unchanged action reducer of each supported kind."""
     utility = (
@@ -87,25 +78,19 @@ def _model(*, kind: str, width: int) -> Model:
         "constraints": {"feasible": _feasible} if kind == "collective" else {},
         "taste_shocks": ExtremeValueTasteShocks() if kind == "ev1" else None,
     }
-    return with_fixture_graph(
+    return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": width}),
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
 
@@ -185,10 +170,10 @@ def test_cell_width_preserves_exact_dissolution_flags(*, width: int) -> None:
 def _collision_utility(
     *,
     wealth: ContinuousState,
-    _lcm_cell_width: ContinuousAction,
-    _lcm_cell_width_1: ContinuousAction,
+    lcm_cell_width: ContinuousAction,
+    lcm_cell_width_1: ContinuousAction,
 ) -> FloatND:
-    return wealth + 10.0 * _lcm_cell_width + 100.0 * _lcm_cell_width_1
+    return wealth + 10.0 * lcm_cell_width + 100.0 * lcm_cell_width_1
 
 
 def _collision_model() -> Model:
@@ -196,40 +181,34 @@ def _collision_model() -> Model:
     common: dict[str, Any] = {
         "states": states,
         "actions": {
-            "_lcm_cell_width": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
-            "_lcm_cell_width_1": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+            "lcm_cell_width": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+            "lcm_cell_width_1": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
         },
         "functions": {"utility": _collision_utility},
     }
-    return with_fixture_graph(
+    return Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
 
 def test_cell_width_keyword_avoids_action_names() -> None:
-    """Both occupied spellings stay numerical inputs to the declared program."""
+    """Actions spelled like the cell width keyword leave it its reserved name."""
     model = _collision_model()
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]
     )["main"]
-    assert program.requirements.tiled_axes[0].width_keyword == "_lcm_cell_width_2"
+    assert program.requirements.tiled_axes[0].width_keyword == "_lcm_cell_width"
 
 
 def test_colliding_cell_names_keep_their_economic_values() -> None:
@@ -262,24 +241,18 @@ def test_trivial_state_product_does_not_declare_a_cell_axis(
             "utility": _single_state_utility if with_state else _constant_utility
         },
     }
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 state_transitions={name: fixed_transition(name) for name in states},
                 **common,
             ),
-            "done": Regime(regime_transitions=None, **common),
+            "done": Regime(**common),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]

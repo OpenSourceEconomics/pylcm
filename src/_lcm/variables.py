@@ -127,8 +127,7 @@ def _bind_forward_refs(*, regime_cls: type) -> None:
     at call time without depending on an ad-hoc assignment from outside
     the module.
     """
-    global UserRegime  # noqa: PLW0603
-    UserRegime = regime_cls  # ty: ignore[invalid-assignment]
+    globals()["UserRegime"] = regime_cls
 
 
 def _grid_states(user_regime: UserRegime) -> dict[StateName, Grid]:

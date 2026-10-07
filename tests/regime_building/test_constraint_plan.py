@@ -12,9 +12,6 @@ the route it could not be met on.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -39,7 +36,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _LIQUID = LiquidMargin(
     state="wealth",
@@ -79,10 +75,6 @@ def next_wealth(savings: FloatND) -> FloatND:
     return savings
 
 
-def next_regime(_age: float) -> ScalarInt:
-    return RegimeId.done
-
-
 def spends_within_reason(consumption: ContinuousAction) -> FloatND:
     """Reads the continuous action, which the inversion produces."""
     return consumption <= 3.0
@@ -103,22 +95,19 @@ def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) ->
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},
-        regime_transitions=_SupportedDeterministicTransition(
-            func=next_regime, targets=("done",)
-        ),
         functions={"utility": utility, "savings": savings},
         solver=solver,
         liquid=_LIQUID,
     )
     done_regime = Regime(
         actions={},
-        regime_transitions=None,
         states={"wealth": _WEALTH_GRID},
         functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"saving": saving_regime, "done": done_regime},
+        edges={"saving": {"done": 0}},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "saving"},

@@ -9,6 +9,7 @@ NaN diagnostics.
 """
 
 import dataclasses
+import functools
 import inspect
 import operator
 from collections.abc import Callable, Mapping, Sequence
@@ -25,10 +26,12 @@ from dags import (
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.probability import (
+    binades_above_smallest_normal,
     is_negative,
     is_represented_zero,
     normalized_scaled_weights,
     regime_mass_is_a_distribution,
+    scaled_down_by_power_of_two,
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import (
@@ -2246,6 +2249,17 @@ def _get_compute_CE(
         formed inside the node axes.
 
     """
+    # The plain expectation reduces each target on its own; every other
+    # certainty equivalent needs the whole joint lottery in one piece, because
+    # its transform has to be applied before any expectation is taken.
+    # `LinearExpectation.aggregate` states the same quantity over the flattened
+    # lottery, but reducing per target is materially cheaper.
+    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
+    # different quantity, and the per-target route would silently discard the
+    # override.
+    reduces_per_target = (
+        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    )
     continuations = {
         target_regime_name: _build_target_continuation(
             target_regime_name=target_regime_name,
@@ -2256,10 +2270,8 @@ def _get_compute_CE(
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
             gated_continuation=gated_continuations.get(target_regime_name),
-            restore_original_layout=(
-                certainty_equivalent is None
-                or type(certainty_equivalent) is LinearExpectation
-            ),
+            restore_original_layout=reduces_per_target,
+            nests_slice_draws=reduces_per_target,
         )
         for target_regime_name in period_targets
     }
@@ -2292,17 +2304,6 @@ def _get_compute_CE(
         for target_regime_name, reader in gated_scalar_readers.items()
     }
 
-    # The plain expectation reduces each target on its own; every other
-    # certainty equivalent needs the whole joint lottery in one piece, because
-    # its transform has to be applied before any expectation is taken.
-    # `LinearExpectation.aggregate` states the same quantity over the flattened
-    # lottery, but reducing per target is materially cheaper.
-    # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
-    # different quantity, and the per-target route would silently discard the
-    # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
-    )
     ce_flat_param_names = (
         MappingProxyType({})
         if certainty_equivalent is None
@@ -2423,13 +2424,25 @@ class _ComputeCE:
         # a nonlinear continuation is the one that would be lost. Each consumer
         # below takes the pairs and reduces them where the spread costs
         # nothing.
+        target_marginals = {
+            target_regime_name: self.continuations[target_regime_name].lottery_weights(
+                **states_actions_params
+            )
+            for target_regime_name in self.period_targets
+        }
+        # A draw that only selects a value slice is averaged inside the
+        # continuation reader, so its marginal goes there rather than into the
+        # joint weights over the node axes.
         target_lotteries = {
             target_regime_name: self.continuations[
                 target_regime_name
             ].joint_lottery_weights(
-                **self.continuations[target_regime_name].lottery_weights(
-                    **states_actions_params
-                )
+                **{
+                    name: weight
+                    for name, weight in target_marginals[target_regime_name].items()
+                    if name
+                    not in self.continuations[target_regime_name].slice_weight_names
+                }
             )
             for target_regime_name in self.period_targets
         }
@@ -2538,6 +2551,10 @@ class _ComputeCE:
                 **interpolator_coordinates,
                 next_V_arr=next_values,
                 **extra_kw,
+                **{
+                    name: target_marginals[target_regime_name][name]
+                    for name in continuation.reader_weight_names
+                },
             )
 
             # A node the target's own lottery gives zero probability is never
@@ -2578,13 +2595,18 @@ class _ComputeCE:
                         ),
                         dimension=axis,
                     )
-                next_V_expected_arr = _expected_continuation_over_nodes(
-                    values=next_V_at_stochastic_states_arr,
-                    weights=joint_next_stochastic_states_weights,
-                    shifts=target_node_shifts[target_regime_name],
-                    has_lottery_axes=continuation.has_lottery_axes,
-                    n_stakeholders=self.n_stakeholders,
-                )
+                if continuation.reader_weight_names:
+                    # The reader weights every term by its full joint
+                    # probability and returns the expectation itself.
+                    next_V_expected_arr = next_V_at_stochastic_states_arr
+                else:
+                    next_V_expected_arr = _expected_continuation_over_nodes(
+                        values=next_V_at_stochastic_states_arr,
+                        weights=joint_next_stochastic_states_weights,
+                        shifts=target_node_shifts[target_regime_name],
+                        has_lottery_axes=continuation.has_lottery_axes,
+                        n_stakeholders=self.n_stakeholders,
+                    )
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
                 # reduced ONCE by `_sum_regime_mixture`: form each target's
                 # zero-safe contribution on its native cell shape, put the
@@ -2692,11 +2714,26 @@ class _TargetContinuation:
     joint_lottery_weights: Callable[..., tuple[FloatND, IntND]]
     """Outer product of the lottery marginals, over the node axes."""
 
-    next_V: Callable[..., FloatND]
+    next_V: Callable[..., Any]
     """Target's value function, product-mapped over its lottery axes.
 
     A declared entry gets no axis: its one value is interpolated on the target's
     nodes inside the interpolator, so the surface carries genuine draws only.
+    Neither does a slice draw: it is summed inside the reader, which takes
+    every marginal named in `reader_weight_names` and returns the expectation
+    over every joint node rather than a value per coordinate node.
+    """
+
+    slice_weight_names: tuple[str, ...] = ()
+    """Marginal-weight names of the draws averaged inside `next_V`."""
+
+    reader_weight_names: tuple[str, ...] = field(
+        default=(), metadata={"fingerprint_omit_if_default": True}
+    )
+    """Marginal-weight names `next_V` reads when it contracts slice draws.
+
+    Every lottery marginal of the target — coordinate and slice draws alike —
+    because each slice term is weighted by its full joint probability.
     """
 
     extra_param_names: frozenset[str]
@@ -3065,6 +3102,7 @@ def _build_target_continuation(
     n_stakeholders: int | None,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
+    nests_slice_draws: bool = False,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -3092,11 +3130,21 @@ def _build_target_continuation(
         gated_continuation: How to turn this target's stacked operand channels
             into one value per leg at the landing point, or `None` when the
             target's leaf is an ordinary value function.
+        restore_original_layout: Whether a lottery declared on a restricted
+            support is read back in its original slot layout.
+        nests_slice_draws: Whether the continuation is aggregated by the plain
+            expectation, which lets the draws that only select a value slice
+            be averaged inside the expectation over the others.
 
     Returns:
         The target's continuation machinery.
 
     """
+    # A declared entry names one value on the target's node axis, so it is
+    # interpolated there rather than enumerated: only a genuine draw gets an axis
+    # of its own on the continuation surface. Enumerating a declared entry instead
+    # would make the surface Cartesian in the entered dimensions -- the product of
+    # their node counts at every state-action point -- to state a single number.
     lottery_variables = tuple(
         key for key in bundle if transition_plans[target_regime_name].is_lottery(key)
     )
@@ -3105,13 +3153,6 @@ def _build_target_continuation(
         for key in bundle
         if transition_plans[target_regime_name].has_interpolation_basis(key)
     )
-    # A declared entry names one value on the target's node axis, so it is
-    # interpolated there rather than enumerated: only a genuine draw gets an axis
-    # of its own on the continuation surface. Enumerating a declared entry instead
-    # would make the surface Cartesian in the entered dimensions -- the product of
-    # their node counts at every state-action point -- to state a single number.
-    node_variables = lottery_variables
-
     original_layouts = {
         name: layout
         for name in lottery_variables
@@ -3248,6 +3289,26 @@ def _build_target_continuation(
         )
         next_V_interpolator = draw_resolution.interpolator
 
+    slice_draws = (
+        _slice_draws(
+            lottery_variables=lottery_variables,
+            dependencies_by_law=dependencies_by_law,
+            transition_plans=transition_plans,
+            target_regime_name=target_regime_name,
+            v_interpolation_info=v_interpolation_info,
+            co_map_state_names=co_map_state_names,
+        )
+        if nests_slice_draws
+        and gated_continuation is None
+        and n_stakeholders is None
+        and not original_layouts
+        and not fixed_value_axes
+        else ()
+    )
+    coordinate_draws = tuple(
+        name for name in lottery_variables if name not in slice_draws
+    )
+
     # The stakeholder axis is put on last, after every coordinate question has
     # been settled, so the slicing wrapper sees the same interpolator a singleton
     # regime gets and the two cannot drift apart.
@@ -3277,6 +3338,25 @@ def _build_target_continuation(
             n_stakeholders=n_stakeholders,
         )
 
+    slice_weight_names = tuple(
+        f"weight_{target_regime_name}__{name}" for name in slice_draws
+    )
+    coordinate_weight_names = tuple(
+        f"weight_{target_regime_name}__{name}" for name in coordinate_draws
+    )
+    next_V: Callable[..., Any] = productmap(
+        func=mapped_interpolator,
+        variables=coordinate_draws,
+        batch_sizes=dict.fromkeys(coordinate_draws, 0),
+    )
+    if slice_draws:
+        next_V = _ExpectationOverSliceDraws(
+            interpolator=next_V,
+            slice_draws=slice_draws,
+            weight_names=slice_weight_names,
+            coordinate_weight_names=coordinate_weight_names,
+        )
+
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
             functions=functions,
@@ -3285,16 +3365,16 @@ def _build_target_continuation(
         ),
         lottery_weights=lottery_weights,
         joint_lottery_weights=_get_joint_weights_function(
-            regime_name=target_regime_name, variables=lottery_variables
+            regime_name=target_regime_name, variables=coordinate_draws
         ),
-        lottery_axis_names=lottery_variables,
+        lottery_axis_names=coordinate_draws,
         fixed_value_axes=fixed_value_axes,
         original_node_axes=original_axes if reader_does_arithmetic else (),
         original_value_axes=() if reader_does_arithmetic else original_axes,
-        next_V=productmap(
-            func=mapped_interpolator,
-            variables=node_variables,
-            batch_sizes=dict.fromkeys(node_variables, 0),
+        next_V=next_V,
+        slice_weight_names=slice_weight_names,
+        reader_weight_names=(
+            (*coordinate_weight_names, *slice_weight_names) if slice_draws else ()
         ),
         # Read off the MAPPED interpolator: a gated target's gate carries free
         # parameters of its own, and naming them here is how they reach the
@@ -3302,7 +3382,7 @@ def _build_target_continuation(
         extra_param_names=frozenset(
             get_union_of_args([mapped_interpolator]) - set(bundle) - {V_arr_name}
         ),
-        has_lottery_axes=bool(lottery_variables),
+        has_lottery_axes=bool(coordinate_draws),
         draw_dependent_names=frozenset(dependencies_by_law),
         co_mapped_landing_names=_co_mapped_landing_names(
             mapped_interpolator=mapped_interpolator,
@@ -3332,6 +3412,419 @@ def _co_mapped_landing_names(
         landing
         for name in co_map_state_names
         if (landing := f"next_{name}") in declared
+    )
+
+
+def _slice_draws(
+    *,
+    lottery_variables: tuple[TransitionFunctionName, ...],
+    dependencies_by_law: Mapping[
+        TransitionFunctionName, frozenset[TransitionFunctionName]
+    ],
+    transition_plans: TargetTransitionPlans,
+    target_regime_name: RegimeName,
+    v_interpolation_info: VInterpolationInfo,
+    co_map_state_names: tuple[StateName, ...],
+) -> tuple[TransitionFunctionName, ...]:
+    """Return the draws that only select which slice of the target's V is read.
+
+    A draw moves a coordinate when a law of the target reads it: the landing
+    point then depends on the node, so the value is interpolated once per node.
+    Every other draw of a genuine discrete axis only picks the slice the
+    interpolation reads. Its expectation can be taken inside the expectation
+    over the coordinate-moving draws because the joint weights are the product
+    of the marginals and no marginal reads a draw — a build-time rule enforced
+    by `_fail_if_a_draw_reads_a_sibling_draw`.
+
+    Excluded, and so kept on the joint node axes:
+
+    - a transition-local draw, which carries no axis of the target's V;
+    - a draw whose support is provided by another DAG node;
+    - a draw of a co-mapped state, whose axis the caller has sliced off.
+
+    When no draw moves a coordinate, there are none: the joint node array is
+    then the slice nodes alone, so the loop would avoid no larger array and
+    only serialize what the joint contraction reads in one vectorized step.
+
+    Args:
+        lottery_variables: The target's lottery `next_<state>` names.
+        dependencies_by_law: Per draw-dependent law, the draws it reads.
+        transition_plans: Immutable mapping of target regime names to their
+            transition laws.
+        target_regime_name: Regime the continuation leads into.
+        v_interpolation_info: The target's V-interpolation info.
+        co_map_state_names: Tuple of state names co-mapped with the continuation V.
+
+    Returns:
+        The slice draws, in `lottery_variables` order.
+
+    """
+    if not lottery_variables:
+        return ()
+    moves_a_coordinate = frozenset().union(*dependencies_by_law.values())
+    lotteries = transition_plans[target_regime_name].lotteries
+    slice_draws = tuple(
+        name
+        for name in lottery_variables
+        if name not in moves_a_coordinate
+        and (state_name := name.removeprefix("next_"))
+        in v_interpolation_info.discrete_states
+        and state_name not in co_map_state_names
+        and lotteries[name].lifetime is not LotteryLifetime.TRANSITION_LOCAL
+        and lotteries[name].support_provider_name is None
+    )
+    return slice_draws if len(slice_draws) < len(lottery_variables) else ()
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ExpectationOverSliceDraws:
+    """Expect a target's value over every joint node, looping over slice-node blocks.
+
+    The coordinate-moving draws stay on axes: the interpolator is product-mapped
+    over them, so a read at one joint node of the slice draws yields the value at
+    every coordinate node. One step of the loop reads a block of slice nodes at
+    once, vectorised along a leading block axis, and folds the block into the
+    running sums. A block holds `_slice_block_size` slice nodes, a quarter of
+    them rounded up, so every intermediate — the reads, their weights, and the
+    running sums — is one block, about a quarter of the slice nodes, wide and the
+    continuation never holds an array spanning all joint nodes.
+
+    Each read is weighted by its FULL joint probability before it is added into
+    the running sum: the coordinate marginals, broadcast along the coordinate
+    axis, times the slice node's marginals, formed per joint node by the same
+    scaled product as the joint route's node weights. Every term is the same
+    scaled, zero-safe term `zero_safe_average` forms for its node, so a node of
+    zero probability drops out even where its read is not finite. The running
+    numerator and mass keep the coordinate axis; both are summed over it once at
+    the end and divided, without any further weighting.
+
+    All terms are put on the common scale of every joint node, which
+    `_scale_of_the_largest_joint_node` reads off the marginals before the loop,
+    so the values are read in a single loop. The scale is fixed before any term
+    is formed, so each term is lowered onto it on its own and a term that lands
+    below the normal range rounds once, as the joint route's does; a loop
+    carrying a running scale would instead round partial sums whenever a later
+    block raised it. Where the largest node's probability is at least four
+    times the smallest normal number, both numerator and mass are held one
+    binade below that scale, which leaves their ratio unchanged and keeps the
+    largest node normal.
+
+    Finite-range invariant, over `n` joint nodes with unit roundoff `u` and
+    `n u < 1/3`, for weights that are probabilities:
+
+    - the accumulator cannot overflow. With the headroom binade each term is
+      `w_i v_i / 2` with `sum w_i <= 1 + n u`, so every partial sum, in any
+      order, is at most `(1 + u)**n (1 + n u) max|v| / 2 < max|v|`. Without
+      it the largest node lies below four times the smallest normal on the
+      common scale, so `sum w_i < 4 n tiny` and every partial sum is below
+      `16 n (1 + u)**n`, since `tiny` times the largest finite value is four;
+    - the published mean lies in the hull of the live reads. The quotient is
+      clamped to `[min v, max v]` over the nodes of nonzero weight, an interval
+      that contains the exact mean, so the clamp only moves the quotient
+      towards it. A quotient that rounds past the largest finite value at an
+      expectation within roundings of it is thereby returned as the largest
+      live read instead of an infinity.
+
+    A finite set of live reads therefore yields a finite mean no larger in
+    magnitude than the largest of them, and the regime probability applied
+    afterwards scales a finite number. A live infinite read widens the hull to
+    it and is published; opposite infinities and a live NaN stay NaN; a node of
+    zero weight leaves both the sums and the hull untouched.
+    """
+
+    interpolator: Callable[..., FloatND]
+    """The target's value reader, product-mapped over the coordinate draws."""
+    slice_draws: tuple[TransitionFunctionName, ...]
+    """The `next_<state>` names of the slice draws."""
+    weight_names: tuple[str, ...]
+    """The slice marginal-weight argument names, one per slice draw."""
+    coordinate_weight_names: tuple[str, ...]
+    """The coordinate marginal-weight argument names, in node-axis order."""
+    block_size: int | None = None
+    """Slice nodes contracted per loop step; `None` applies `_slice_block_size`."""
+    interpolator_args: frozenset[str] = field(init=False)
+    """Every argument the interpolator reads."""
+
+    def __post_init__(self) -> None:
+        interpolator_args = tuple(get_union_of_args([self.interpolator]))
+        object.__setattr__(self, "interpolator_args", frozenset(interpolator_args))
+        _publish_signature(
+            target=self,
+            arg_names=tuple(
+                dict.fromkeys(
+                    (
+                        *interpolator_args,
+                        *self.weight_names,
+                        *self.coordinate_weight_names,
+                    )
+                )
+            ),
+            return_annotation=inspect.Signature.empty,
+            name="expect_over_slice_draws",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        # Flattened in the order the product-mapped read lays out its axes; a
+        # coordinate given as a single value is one node, as `productmap`
+        # treats it.
+        coordinate_factors = tuple(
+            jnp.ravel(grid)
+            for grid in jnp.meshgrid(
+                *(
+                    jnp.atleast_1d(kwargs[name])
+                    for name in self.coordinate_weight_names
+                ),
+                indexing="ij",
+            )
+        )
+        slice_nodes = tuple(
+            tuple(jnp.ravel(grid) for grid in jnp.meshgrid(*arrays, indexing="ij"))
+            for arrays in (
+                tuple(jnp.asarray(kwargs[name]) for name in self.slice_draws),
+                tuple(jnp.asarray(kwargs[name]) for name in self.weight_names),
+            )
+        )
+        fixed = {
+            name: kwargs[name]
+            for name in self.interpolator_args
+            if name not in self.slice_draws
+        }
+        n_slice_nodes = slice_nodes[0][0].shape[0]
+        blocks, remainder = _blocks_of_slice_nodes(
+            nodes=slice_nodes,
+            block_size=min(
+                self.block_size or _slice_block_size(n_slice_nodes=n_slice_nodes),
+                n_slice_nodes,
+            ),
+        )
+        first = jax.tree_util.tree_map(operator.itemgetter(0), blocks)
+        common_shift, largest_probability = _scale_of_the_largest_joint_node(
+            factors=(*coordinate_factors, *slice_nodes[1])
+        )
+        smallest_normal = jnp.finfo(largest_probability.dtype).tiny
+        headroom = (largest_probability >= 4 * smallest_normal).astype(jnp.int32)
+        add_block = functools.partial(
+            _fold_slice_block,
+            at_node=functools.partial(
+                _terms_at_slice_node,
+                interpolator=self.interpolator,
+                fixed=fixed,
+                slice_draws=self.slice_draws,
+                coordinate_factors=coordinate_factors,
+                common_shift=common_shift - headroom,
+            ),
+            folds=_SUM_FOLDS,
+        )
+        # The running values start at the identities of their reductions,
+        # shaped like one step's own, so they carry the type every step has —
+        # including how it varies across a mapped device axis. Only that step's
+        # type is read; its values are discarded.
+        (numerator, mass, lowest, highest), _ = add_block(None, first)
+        sums, _ = jax.lax.scan(
+            add_block,
+            (
+                jnp.zeros_like(numerator),
+                jnp.zeros_like(mass),
+                jnp.full_like(lowest, jnp.inf),
+                jnp.full_like(highest, -jnp.inf),
+            ),
+            blocks,
+        )
+        if remainder is not None:
+            sums, _ = add_block(sums, remainder)
+        numerator, mass, lowest, highest = sums
+        return jnp.clip(
+            jnp.sum(numerator) / jnp.sum(mass), jnp.min(lowest), jnp.max(highest)
+        )
+
+
+#: Per slice node, the code of every slice draw and its marginal weight.
+type _SliceNodes = tuple[tuple[IntND, ...], tuple[FloatND, ...]]
+
+#: Most loop steps one pass over the slice nodes takes.
+_MAX_SLICE_BLOCKS = 4
+
+
+def _slice_block_size(*, n_slice_nodes: int) -> int:
+    """Return how many slice nodes one loop step contracts.
+
+    A quarter of the slice nodes, rounded up. The block's reads are the largest
+    intermediate of the nested route, so it stays at about a quarter of the
+    joint route's, whose reads span every slice node at once, while each pass
+    over the slice nodes takes at most `_MAX_SLICE_BLOCKS` loop steps, which
+    keeps the per-step overhead and the loss of parallelism across slice nodes
+    small. The count is a static shape, so the block size is fixed at trace
+    time.
+    """
+    return -(-n_slice_nodes // _MAX_SLICE_BLOCKS)
+
+
+def _blocks_of_slice_nodes(
+    *, nodes: _SliceNodes, block_size: int
+) -> tuple[_SliceNodes, _SliceNodes | None]:
+    """Split the slice nodes into whole blocks and a shorter remainder block.
+
+    The whole blocks are stacked along a new leading axis for the loop; the
+    remainder, if any, is folded in after it. No placeholder node is added to
+    fill a block: a node of zero weight still has a scale, which is that of a
+    plain number, so a placeholder could lower the common scale of nodes that
+    all lie below the normal range.
+    """
+    n_nodes = nodes[0][0].shape[0]
+    n_blocks = n_nodes // block_size
+    split = n_blocks * block_size
+    blocks = jax.tree_util.tree_map(
+        lambda leaf: leaf[:split].reshape(n_blocks, block_size), nodes
+    )
+    if split == n_nodes:
+        return blocks, None
+    return blocks, jax.tree_util.tree_map(lambda leaf: leaf[split:], nodes)
+
+
+def _scale_of_the_largest_joint_node(
+    *, factors: tuple[FloatND, ...]
+) -> tuple[IntND, FloatND]:
+    """Return the common scale of every joint node, read off the marginals.
+
+    Alongside it, the largest probability of a joint node held without
+    scaling, which is zero where every node is scaled. Both equal the smallest
+    per-node scale and the largest unscaled per-node probability over all
+    joint nodes, for marginals that are probabilities:
+
+    - every joint node combines one entry of each marginal, so the node of
+      largest probability combines each marginal's largest entry;
+    - a node whose factors are all positive and finite is scaled by the
+      binades its product lies below the normal range, which shrinks as the
+      product grows, so that node carries the smallest such scale and, held
+      without scaling, the largest such probability;
+    - a node with a zero factor is held without scaling at probability zero,
+      so where any marginal has a zero entry the common scale is zero and the
+      largest unscaled probability is unchanged;
+    - a non-finite factor makes the published mean NaN on any scale.
+
+    Args:
+        factors: Every marginal's entries, one array per draw.
+
+    Returns:
+        Tuple of the common scale and the largest unscaled probability.
+
+    """
+    coefficient, shift = scaled_joint_weight(
+        jnp.stack([jnp.max(factor) for factor in factors])
+    )
+    has_a_zero = jnp.any(
+        jnp.stack([jnp.any(is_represented_zero(factor)) for factor in factors])
+    )
+    return (
+        jnp.where(has_a_zero, jnp.zeros_like(shift), shift),
+        jnp.where(shift == 0, coefficient, jnp.zeros_like(coefficient)),
+    )
+
+
+#: How each running value of the values loop is reduced over a block and joined
+#: with the running value: numerator, mass, and the smallest and largest read at
+#: a node of nonzero weight.
+_SUM_FOLDS = (
+    (jnp.sum, jnp.add),
+    (jnp.sum, jnp.add),
+    (jnp.min, jnp.minimum),
+    (jnp.max, jnp.maximum),
+)
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _fold_slice_block(
+    running: tuple[Any, ...] | None,
+    block: _SliceNodes,
+    *,
+    at_node: Callable[..., tuple[Any, ...]],
+    folds: tuple[tuple[Callable[..., Any], Callable[..., Any]], ...],
+) -> tuple[tuple[Any, ...], None]:
+    """Fold one block of slice nodes into the running reductions.
+
+    Every node of the block is evaluated at once along a leading block axis, and
+    each of its results is reduced over that axis before it joins the running
+    value. A `None` running value starts at the block's own.
+    """
+    per_node = jax.vmap(lambda node: at_node(node=node))(block)
+    reduced = tuple(
+        reduce(result, axis=0)
+        for (reduce, _), result in zip(folds, per_node, strict=True)
+    )
+    if running is None:
+        return reduced, None
+    return tuple(
+        join(old, new)
+        for (_, join), old, new in zip(folds, running, reduced, strict=True)
+    ), None
+
+
+def _joint_weights_at_slice_node(
+    *, coordinate_factors: tuple[FloatND, ...], slice_factors: tuple[FloatND, ...]
+) -> tuple[FloatND, IntND]:
+    """Return every coordinate node's joint weight with one slice node's.
+
+    Each joint node gets its own scaled product of all its marginals, as the
+    joint route's node weights do, laid out along the flattened coordinate axis.
+    """
+    n_coordinate_nodes = coordinate_factors[0].shape[0] if coordinate_factors else 1
+    factors = jnp.stack(
+        [
+            *coordinate_factors,
+            *(
+                jnp.broadcast_to(factor, (n_coordinate_nodes,))
+                for factor in slice_factors
+            ),
+        ]
+    )
+    return jax.vmap(scaled_joint_weight, in_axes=1)(factors)
+
+
+def _terms_at_slice_node(
+    *,
+    node: _SliceNodes,
+    interpolator: Callable[..., FloatND],
+    fixed: Mapping[str, Any],
+    slice_draws: tuple[TransitionFunctionName, ...],
+    coordinate_factors: tuple[FloatND, ...],
+    common_shift: IntND,
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Return one slice node's weighted reads and masses on the common scale.
+
+    Alongside the terms and the masses it returns each read at a node of
+    nonzero weight, as the bound of the smallest and of the largest read. All
+    four keep the flattened coordinate axis.
+    """
+    codes, slice_factors = node
+    coefficients, shifts = _joint_weights_at_slice_node(
+        coordinate_factors=coordinate_factors, slice_factors=slice_factors
+    )
+    scale = (common_shift - shifts).astype(jnp.int32)
+    # The same split of each node's scale between its weight and its term as
+    # `scaled_weighted_terms`: the weight takes what it can while staying
+    # normal, the product takes the rest.
+    on_the_weight = jnp.maximum(scale, -binades_above_smallest_normal(coefficients))
+    value = jnp.ravel(
+        interpolator(**fixed, **dict(zip(slice_draws, codes, strict=True)))
+    )
+    term = scaled_down_by_power_of_two(
+        values=zero_safe_weighted_term(
+            weight=scaled_down_by_power_of_two(
+                values=coefficients, shift=on_the_weight
+            ),
+            value=value,
+            subnormal_is_accounted_for=False,
+        ),
+        shift=scale - on_the_weight,
+    )
+    mass = scaled_down_by_power_of_two(values=coefficients, shift=scale)
+    live = ~is_represented_zero(coefficients)
+    return (
+        term,
+        mass,
+        jnp.where(live, value, jnp.inf),
+        jnp.where(live, value, -jnp.inf),
     )
 
 
@@ -3630,6 +4123,12 @@ class _OuterJointWeights:
         # probability, and it comes back with its own scale rather than as a
         # plain float, because a product below the normal range is not
         # something a float can carry through a fused region here.
+        if not kwargs:
+            # The empty product is the certain event. Building it from an
+            # empty factor array would close a zero-size array into the
+            # program, and the CPU compiler crashes on a zero-size operand of
+            # the `shard_map` that splits subjects over devices.
+            return jnp.ones(()), jnp.zeros((), dtype=jnp.int32)
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
 

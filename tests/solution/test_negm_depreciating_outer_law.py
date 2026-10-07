@@ -24,33 +24,34 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    Transition,
     outer_unchanged,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy as toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
-_ALIVE_TRANSITIONS = until_exit(
-    20 + (toy.N_PERIODS - 1) * 5,
-    law=_SupportedDeterministicTransition(
-        func=toy.next_regime, targets=("alive", "dead")
-    ),
-    exits=("dead",),
-)
+_FINAL_AGE = 20 + (toy.N_PERIODS - 1) * 5
+_EDGES = {
+    "alive": Transition(
+        targets={
+            "alive": AgeRange(exclusive_stop=_FINAL_AGE - 5),
+            "dead": AgeRange(exclusive_stop=_FINAL_AGE),
+        },
+        law=DeterministicTransition(func=toy.next_regime),
+    )
+}
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
@@ -91,7 +92,6 @@ def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
             "consumption": toy.CONSUMPTION_GRID,
             "illiquid_investment": toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "new_durable": toy.new_durable,
@@ -134,7 +134,6 @@ def _build_brute_model(alpha: float) -> Model:
             "consumption": toy.CONSUMPTION_GRID_BRUTE,
             "new_durable": toy.OUTER_GRID,
         },
-        regime_transitions=_ALIVE_TRANSITIONS,
         functions={
             "utility": toy.utility,
             "serviced_durable": toy.serviced_durable_brute,
@@ -145,10 +144,11 @@ def _build_brute_model(alpha: float) -> Model:
 
 
 def _model(alive: Regime) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": toy._build_dead_regime()},
+        edges=_EDGES,
         regime_id_class=toy.RegimeId,
-        ages=AgeGrid(start=20, inclusive_stop=20 + (toy.N_PERIODS - 1) * 5, step="5Y"),
+        ages=AgeGrid(start=20, inclusive_stop=_FINAL_AGE, step="5Y"),
         fixed_params={"final_age_alive": toy.FINAL_AGE_ALIVE},
         initial_nodes={20: "alive"},
     )

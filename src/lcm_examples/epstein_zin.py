@@ -38,7 +38,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -46,6 +45,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -165,12 +165,8 @@ def get_model(
         stop=CONSUMPTION_GRID.stop,
         n_points=n_consumption_points,
     )
+    alive_law = StochasticTransition(func=next_regime)
     alive = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=StochasticTransition(func=next_regime),
-            then=StochasticTransition(func=next_regime),
-        ),
         states={
             "wealth": wealth_grid,
             "health": DiscreteGrid(category_class=HealthStatus),
@@ -186,21 +182,19 @@ def get_model(
         certainty_equivalent=certainty_equivalent,
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": dead_wealth_grid},
         functions={"utility": utility_dead},
     )
+    alive_targets = {
+        "dead": tuple(range(25, last_age)),
+        **(
+            {"alive": tuple(range(25, last_age - 1))}
+            if tuple(range(25, last_age - 1))
+            else {}
+        ),
+    }
     return Model(
-        edges={
-            "alive": {
-                "dead": tuple(range(25, last_age)),
-                **(
-                    {"alive": tuple(range(25, last_age - 1))}
-                    if tuple(range(25, last_age - 1))
-                    else {}
-                ),
-            },
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=last_age, step="Y"),
         regime_id_class=EZRegimeId,
@@ -247,9 +241,9 @@ def get_params(
                 ),
             },
             "next_wealth": {"income": income, "health_cost": health_cost},
-            "next_regime": {"survival_probs": jnp.array(survival_probs)},
         },
         "dead": {"utility": {"bequest_scale": bequest_scale}},
+        "edges": {"alive": {"survival_probs": jnp.array(survival_probs)}},
     }
     if risk_aversion is not None:
         params["alive"]["certainty_equivalent"] = {"risk_aversion": risk_aversion}

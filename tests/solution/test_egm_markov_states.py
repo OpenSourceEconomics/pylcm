@@ -23,17 +23,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     RouwenhorstAR1Process,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -49,8 +49,6 @@ from lcm.typing import (
 )
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -209,13 +207,6 @@ def _same_grid_markov_model(solver: str) -> Model:
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -241,9 +232,15 @@ def _same_grid_markov_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=MarkovRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -338,14 +335,6 @@ def _cross_grid_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     early = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "late": StochasticTransition(func=to_live_prob),
-                "dead": StochasticTransition(func=to_dead_prob),
-            },
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
         state_transitions={
@@ -379,14 +368,6 @@ def _cross_grid_markov_model(solver: str) -> Model:
         ),
     )
     late = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law={
-                "late": StochasticTransition(func=to_live_prob),
-                "dead": StochasticTransition(func=to_dead_prob),
-            },
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -412,9 +393,35 @@ def _cross_grid_markov_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"early": early, "late": late, "dead": dead},
         ages=_ages(),
+        edges={
+            "early": Transition(
+                targets={"late": (40, 50), "dead": (40, 50, 60)},
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "late": StochasticTransition(func=to_live_prob),
+                            "dead": StochasticTransition(func=to_dead_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=to_dead_prob)},
+                    }
+                ),
+            ),
+            "late": Transition(
+                targets={"late": (40, 50), "dead": (40, 50, 60)},
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "late": StochasticTransition(func=to_live_prob),
+                            "dead": StochasticTransition(func=to_dead_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=to_dead_prob)},
+                    }
+                ),
+            ),
+        },
         regime_id_class=CrossGridRegimeId,
         initial_nodes={40: "early"},
     )
@@ -503,13 +510,6 @@ def _joint_process_markov_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": WEALTH_GRID,
@@ -546,9 +546,15 @@ def _joint_process_markov_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=MarkovRegimeId,
         initial_nodes={40: "working_life"},
     )
@@ -641,13 +647,6 @@ def _point_mass_floor_model(solver: str) -> Model:
     is_dcegm = solver == "dcegm"
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
     working = regime_type(
-        regime_transitions=until_exit(
-            40 + (N_PERIODS - 1) * 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
@@ -674,9 +673,15 @@ def _point_mass_floor_model(solver: str) -> Model:
             else {}
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working, "dead": dead},
         ages=_ages(),
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (40, 50), "dead": (40, 50, 60)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         regime_id_class=MarkovRegimeId,
         initial_nodes={40: "working_life"},
     )

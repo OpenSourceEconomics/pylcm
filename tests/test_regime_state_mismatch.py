@@ -4,17 +4,16 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.processing import _merge_ordered_categories
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    AgeRange,
     ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Phased,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -22,6 +21,7 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -29,8 +29,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -92,6 +90,36 @@ def hm_next_regime_retired(age: float) -> ScalarInt:
     return jnp.where(age >= 3, RegimeId.dead, RegimeId.retirement)
 
 
+_WORKING_RETIRED_EDGES = {
+    "working_life": Transition(
+        targets={
+            "dead": (0, 1, 2),
+            "retirement": (0, 1, 2),
+            "working_life": (0, 1),
+        },
+        law=DeterministicTransition(func=hm_next_regime_working),
+    ),
+    "retirement": Transition(
+        targets={"dead": (0, 1, 2, 3), "retirement": (0, 1, 2)},
+        law=DeterministicTransition(func=hm_next_regime_retired),
+    ),
+}
+
+
+def _a_to_b_edges(
+    *, law_a: TransitionLaw, law_b: TransitionLaw
+) -> dict[str, Transition]:
+    return {
+        "regime_a": Transition(
+            targets={"dead": (0, 1, 2), "regime_b": (0, 1, 2), "regime_a": (0, 1)},
+            law=law_a,
+        ),
+        "regime_b": Transition(
+            targets={"dead": (0, 1, 2, 3), "regime_b": (0, 1, 2)}, law=law_b
+        ),
+    }
+
+
 def test_discrete_state_different_categories_across_regimes():
     """Single transition for a state with different categories across regimes.
 
@@ -112,14 +140,6 @@ def test_discrete_state_different_categories_across_regimes():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_working,
-                targets=("dead", "retirement", "working_life"),
-            ),
-            exits=("dead", "retirement"),
-        ),
     )
 
     retired = UserRegime(
@@ -131,20 +151,14 @@ def test_discrete_state_different_categories_across_regimes():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_retired, targets=("dead", "retirement")
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     with pytest.raises(ModelInitializationError, match="health"):
-        with_fixture_graph(
+        Model(
             regimes={"working_life": working, "retirement": retired, "dead": dead},
+            edges=_WORKING_RETIRED_EDGES,
             ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
             regime_id_class=RegimeId,
             initial_nodes={0: "working_life"},
@@ -185,17 +199,9 @@ def test_deterministic_target_only_state() -> None:
                 ),
             },
         },
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth, heir_present: wealth * heir_present},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -203,8 +209,14 @@ def test_deterministic_target_only_state() -> None:
         },
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
@@ -286,17 +298,9 @@ def test_stochastic_target_only_state() -> None:
                 "dead": StochasticTransition(func=heir_present_probs),
             },
         },
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
 
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -304,8 +308,14 @@ def test_stochastic_target_only_state() -> None:
         },
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "alive"},
@@ -361,14 +371,6 @@ def test_per_target_dict_transitions():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_working,
-                targets=("dead", "retirement", "working_life"),
-            ),
-            exits=("dead", "retirement"),
-        ),
     )
 
     retired = UserRegime(
@@ -380,19 +382,13 @@ def test_per_target_dict_transitions():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_retired, targets=("dead", "retirement")
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"working_life": working, "retirement": retired, "dead": dead},
+        edges=_WORKING_RETIRED_EDGES,
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working_life"},
@@ -456,32 +452,18 @@ def test_outer_phased_per_target_dict_spans_grids():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_working,
-                targets=("dead", "retirement", "working_life"),
-            ),
-            exits=("dead", "retirement"),
-        ),
     )
     retired = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthRetirement)},
         state_transitions={"health": fixed_transition("health")},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=hm_next_regime_retired, targets=("dead", "retirement")
-            ),
-            exits=("dead",),
-        ),
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"working_life": working, "retirement": retired, "dead": dead},
+        edges=_WORKING_RETIRED_EDGES,
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "working_life"},
@@ -508,13 +490,6 @@ def test_discrete_state_same_count_different_names():
         retire: ScalarInt
         dead: ScalarInt
 
-    def next_regime(age: float) -> ScalarInt:
-        return jnp.where(
-            age >= 2,
-            _RegimeId.dead,
-            jnp.where(age >= 1, _RegimeId.retire, _RegimeId.work),
-        )
-
     work = UserRegime(
         states={"status": DiscreteGrid(category_class=StatusA)},
         state_transitions={"status": lambda status: status},
@@ -522,13 +497,6 @@ def test_discrete_state_same_count_different_names():
         functions={
             "utility": lambda consumption, status: jnp.log(consumption) + status
         },
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=2): _SupportedDeterministicTransition(
-                    func=next_regime, targets=("dead",)
-                )
-            }
-        ),
     )
 
     retire = UserRegime(
@@ -538,21 +506,24 @@ def test_discrete_state_same_count_different_names():
         functions={
             "utility": lambda consumption, status: jnp.log(consumption) + status
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
-                targets=("dead", "retire"),
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     with pytest.raises(ModelInitializationError, match="status"):
-        with_fixture_graph(
+        Model(
             regimes={"work": work, "retire": retire, "dead": dead},
+            edges={
+                "work": {"dead": (0, 1)},
+                "retire": Transition(
+                    targets={"dead": (0, 1, 2), "retire": (0, 1)},
+                    law=DeterministicTransition(
+                        func=lambda age: jnp.where(
+                            age >= 2, _RegimeId.dead, _RegimeId.retire
+                        )
+                    ),
+                ),
+            },
             ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "work"},
@@ -582,19 +553,18 @@ def test_mixed_ordered_flags_raises():
         states={"health": DiscreteGrid(category_class=HealthOrdered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions="dead",
     )
     b = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthUnordered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions="dead",
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     with pytest.raises(ModelInitializationError, match="inconsistent ordered flags"):
-        with_fixture_graph(
+        Model(
             regimes={"a": a, "b": b, "dead": dead},
+            edges={"a": {"dead": (0, 1)}, "b": {"dead": (0, 1)}},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "a"},
@@ -624,19 +594,18 @@ def test_both_ordered_same_categories_passes():
         states={"health": DiscreteGrid(category_class=HealthA)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions="dead",
     )
     b = UserRegime(
         states={"health": DiscreteGrid(category_class=HealthB)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
-        regime_transitions="dead",
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     # Should not raise
-    with_fixture_graph(
+    Model(
         regimes={"a": a, "b": b, "dead": dead},
+        edges={"a": {"dead": (0, 1)}, "b": {"dead": (0, 1)}},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "a"},
@@ -748,6 +717,9 @@ def test_incomplete_per_target_reachable_target():
             ),
         )
 
+    def next_regime_b(age: float) -> ScalarInt:
+        return jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b)
+
     # A only lists A and dead — NOT B (but A can reach B).
     regime_a = UserRegime(
         states={
@@ -766,13 +738,6 @@ def test_incomplete_per_target_reachable_target():
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_a, targets=("dead", "regime_b", "regime_a")
-            ),
-            exits=("dead", "regime_b"),
-        ),
     )
 
     regime_b = UserRegime(
@@ -789,26 +754,20 @@ def test_incomplete_per_target_reachable_target():
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 3, _RegimeId.dead, _RegimeId.regime_b
-                ),
-                targets=("dead", "regime_b"),
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
     with pytest.raises(
         ModelInitializationError,
         match=r"does not cover reachable target",
     ):
-        with_fixture_graph(
+        Model(
             regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+            edges=_a_to_b_edges(
+                law_a=DeterministicTransition(func=next_regime_a),
+                law_b=DeterministicTransition(func=next_regime_b),
+            ),
             ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
             regime_id_class=_RegimeId,
             initial_nodes={0: "regime_a"},
@@ -839,6 +798,9 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
             ),
         )
 
+    def next_regime_b(age: float) -> ScalarInt:
+        return jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b)
+
     regime_a = UserRegime(
         states={
             "health": DiscreteGrid(category_class=HealthWorkingLife),
@@ -857,13 +819,6 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_a, targets=("dead", "regime_b", "regime_a")
-            ),
-            exits=("dead", "regime_b"),
-        ),
     )
 
     regime_b = UserRegime(
@@ -880,22 +835,16 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 3, _RegimeId.dead, _RegimeId.regime_b
-                ),
-                targets=("dead", "regime_b"),
-            ),
-            exits=("dead",),
-        ),
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        edges=_a_to_b_edges(
+            law_a=DeterministicTransition(func=next_regime_a),
+            law_b=DeterministicTransition(func=next_regime_b),
+        ),
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "regime_a"},
@@ -907,7 +856,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
     """Per-target dict omits a target the source declares unreachable.
 
     Regime A lists transitions to A and B only and declares exactly those
-    (plus dead) as targets via the per-target regime transition. C is
+    (plus dead) as its edges in `Model(edges=...)`. C is
     reachable from B but structurally unreachable from A, so A owes no law
     toward C. Solve must handle this gracefully.
     """
@@ -938,21 +887,22 @@ def test_incomplete_per_target_unreachable_target() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
-        regime_transitions=until_exit(
-            3,
-            law={
+    )
+    a_to_b = StochasticTransition(
+        func=lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
+    )
+    a_to_dead = StochasticTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0))
+    law_a = ByAge(
+        cases={
+            (0, 1): {
                 "regime_a": StochasticTransition(
                     func=lambda age: jnp.where(age < 1, 1.0, 0.0)
                 ),
-                "regime_b": StochasticTransition(
-                    func=lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
-                ),
-                "dead": StochasticTransition(
-                    func=lambda age: jnp.where(age >= 2, 1.0, 0.0)
-                ),
+                "regime_b": a_to_b,
+                "dead": a_to_dead,
             },
-            exits=("regime_b", "dead"),
-        ),
+            2: {"regime_b": a_to_b, "dead": a_to_dead},
+        }
     )
 
     regime_b = UserRegime(
@@ -973,21 +923,21 @@ def test_incomplete_per_target_unreachable_target() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        regime_transitions=until_exit(
-            4,
-            law={
+    )
+    b_to_dead = StochasticTransition(func=lambda age: jnp.where(age >= 3, 1.0, 0.0))
+    law_b = ByAge(
+        cases={
+            (0, 1, 2): {
                 "regime_b": StochasticTransition(
                     func=lambda age: jnp.where(age < 2, 1.0, 0.0)
                 ),
                 "regime_c": StochasticTransition(
                     func=lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
                 ),
-                "dead": StochasticTransition(
-                    func=lambda age: jnp.where(age >= 3, 1.0, 0.0)
-                ),
+                "dead": b_to_dead,
             },
-            exits=("dead",),
-        ),
+            3: {"dead": b_to_dead},
+        }
     )
 
     regime_c = UserRegime(
@@ -1004,28 +954,36 @@ def test_incomplete_per_target_unreachable_target() -> None:
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 3,
-                    _RegimeId.dead,
-                    _RegimeId.regime_c,
-                ),
-                targets=("dead", "regime_c"),
-            ),
-            exits=("dead",),
-        ),
+    )
+    law_c = DeterministicTransition(
+        func=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_c)
     )
 
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
+    dead = UserRegime(functions={"utility": lambda: 0.0})
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "regime_a": regime_a,
             "regime_b": regime_b,
             "regime_c": regime_c,
             "dead": dead,
+        },
+        edges={
+            "regime_a": Transition(
+                targets={"regime_a": (0, 1), "regime_b": (0, 1, 2), "dead": (0, 1, 2)},
+                law=law_a,
+            ),
+            "regime_b": Transition(
+                targets={
+                    "regime_b": (0, 1, 2),
+                    "regime_c": (0, 1, 2),
+                    "dead": (0, 1, 2, 3),
+                },
+                law=law_b,
+            ),
+            "regime_c": Transition(
+                targets={"dead": (0, 1, 2, 3), "regime_c": (0, 1, 2)}, law=law_c
+            ),
         },
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_RegimeId,

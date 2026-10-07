@@ -108,11 +108,11 @@ from lcm.certainty_equivalent import (  # noqa: E402
 )
 from lcm.collective import (  # noqa: E402
     CollectiveUtility,
+    Gate,
     ParetoObjective,
     ProjectedRegimeValue,
     StakeholderRoute,
     ValueDependentConstraint,
-    ValueDependentTransition,
 )
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
@@ -124,7 +124,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
-from lcm.execution import ExecutionConfig  # noqa: E402
+from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -141,6 +141,7 @@ from lcm.grids import (  # noqa: E402
     categorical,
 )
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
+from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
@@ -175,10 +176,13 @@ from lcm.transition import (  # noqa: E402
     DeterministicTransition,
     JointTransition,
     StochasticTransition,
+    Transition,
     deterministic_transition,
     fixed_transition,
     stochastic_transition,
 )
+from lcm.transition import AgeSelector as _AgeSelector  # noqa: E402
+from lcm.typing import _bind_forward_refs as _bind_typing_forward_refs  # noqa: E402
 from lcm.version import __version__  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
@@ -186,7 +190,13 @@ from lcm.version import __version__  # noqa: E402
 # rewritten string annotations resolve at call time.
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
-del _bind_persistence_forward_refs, _bind_variables_forward_refs
+_bind_typing_forward_refs(age_selector=_AgeSelector)
+del (
+    _AgeSelector,
+    _bind_persistence_forward_refs,
+    _bind_typing_forward_refs,
+    _bind_variables_forward_refs,
+)
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.
@@ -211,7 +221,9 @@ __all__ = [
     "DiscreteGrid",
     "ExecutionConfig",
     "ExtremeValueTasteShocks",
+    "Gate",
     "GridBreakpoint",
+    "InvariantBlockSchedule",
     "IrregSpacedGrid",
     "JointTransition",
     "LinSpacedGrid",
@@ -220,6 +232,7 @@ __all__ = [
     "LiquidMargin",
     "LogNormalIIDProcess",
     "LogSpacedGrid",
+    "LoweredPeriodCandidate",
     "Model",
     "NestedConsumptionSavingsRegime",
     "NetOfAdjustmentCost",
@@ -227,6 +240,7 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "ParetoObjective",
+    "PeriodCandidate",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
@@ -244,9 +258,9 @@ __all__ = [
     "StochasticTransition",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
+    "Transition",
     "UniformIIDProcess",
     "ValueDependentConstraint",
-    "ValueDependentTransition",
     "__version__",
     "affine_breakpoint",
     "case_boundary",

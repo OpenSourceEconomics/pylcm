@@ -2,7 +2,9 @@
 
 A regime that is valued but never visited demands only its solve law; the
 realized (simulate) side of a `Phased` law at such an age is dormant and must
-not contribute arguments, parameters or annotation conflicts.
+not contribute arguments of the regime's own branch or annotation conflicts.
+The declared law's parameters sit at `params["edges"][source]` whether or not
+the regime is visited.
 """
 
 from collections.abc import Mapping
@@ -12,23 +14,21 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     ByAge,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, IntND, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -56,11 +56,10 @@ def _int_choice(*, realized_rate: int) -> IntND:
     return jnp.where(realized_rate >= 1, DemandId.end, DemandId.other_end)
 
 
-def _wealth_regime(*, law: Any, utility: UserFunction = _wealth) -> Regime:
+def _wealth_regime(*, terminal: bool, utility: UserFunction = _wealth) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": utility},
     )
 
@@ -81,35 +80,37 @@ def _demand_model(
     if reverse_cases:
         choices = choices[::-1]
     perceived = ByAge(
-        cases={
-            age: Phased(
-                solve="end",
-                simulate=_SupportedDeterministicTransition(
-                    func=choice, targets=("end", "other_end")
-                ),
-            )
-            for age, choice in choices
-        }
+        cases={age: DeterministicTransition(func=choice) for age, choice in choices}
     )
     roots: dict[object, str] = {(0, 1): "source"}
     if promote:
         roots[promote] = "perceived"
-    return with_fixture_graph(
+    return Model(
+        edges=Phased(
+            solve={
+                "source": {"perceived": (0, 1)},
+                "perceived": {"end": (1, 2)},
+                "realized": {"end": (1, 2)},
+            },
+            simulate={
+                "source": {"realized": (0, 1)},
+                "perceived": Transition(
+                    targets={"end": (1, 2), "other_end": (1, 2)}, law=perceived
+                ),
+                "realized": {"end": (1, 2)},
+            },
+        ),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DemandId,
         initial_nodes=roots,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
-            "source": _wealth_regime(
-                law=ByAge(
-                    cases={(0, 1): Phased(solve="perceived", simulate="realized")}
-                )
-            ),
-            "perceived": _wealth_regime(law=perceived, utility=_bonus),
-            "realized": _wealth_regime(law=ByAge(cases={(1, 2): "end"})),
-            "end": _wealth_regime(law=None),
-            "other_end": _wealth_regime(law=None),
+            "source": _wealth_regime(terminal=False),
+            "perceived": _wealth_regime(terminal=False, utility=_bonus),
+            "realized": _wealth_regime(terminal=False),
+            "end": _wealth_regime(terminal=True),
+            "other_end": _wealth_regime(terminal=True),
         },
     )
 
@@ -124,11 +125,16 @@ def _leaves(*, tree: object) -> set[str]:
     }
 
 
+def _edge_leaves(*, model: Model) -> set[str]:
+    return _leaves(tree=model.get_params_template().get("edges", {}).get("perceived"))
+
+
 def _params(*, promote: tuple[int, ...]) -> dict[str, Any]:
-    params: dict[str, Any] = {"discount_factor": 0.5, "backward_bonus": 1.0}
-    if promote:
-        params["realized_rate"] = 1 if promote == (2,) else 1.0
-    return params
+    return {
+        "discount_factor": 0.5,
+        "backward_bonus": 1.0,
+        "realized_rate": 1 if promote == (2,) else 1.0,
+    }
 
 
 def test_dormant_realized_annotations_do_not_reject_a_backward_problem() -> None:
@@ -142,15 +148,15 @@ def test_dormant_realized_annotations_do_not_reject_a_backward_problem() -> None
 
 @pytest.mark.parametrize("reverse_cases", [False, True])
 @pytest.mark.parametrize("promote", [(), (1,), (2,)])
-def test_promoted_ages_add_exactly_their_realized_parameter(
+def test_realized_parameter_is_an_edge_parameter_at_every_promotion(
     *, promote: tuple[int, ...], reverse_cases: bool
 ) -> None:
-    """Visiting one perceived age requires that age's realized schema alone."""
+    """`perceived` owes its backward parameters; its edge holds `realized_rate`."""
     model = _demand_model(promote=promote, reverse_cases=reverse_cases)
-    expected = {"discount_factor", "backward_bonus"} | (
-        {"realized_rate"} if promote else set()
-    )
-    assert _leaves(tree=model.get_params_template()["perceived"]) == expected
+    assert (
+        _leaves(tree=model.get_params_template()["perceived"]),
+        _edge_leaves(model=model),
+    ) == ({"discount_factor", "backward_bonus"}, {"realized_rate"})
 
 
 @pytest.mark.parametrize("promote", [(), (1,), (2,)])
@@ -199,4 +205,4 @@ def test_promoting_both_conflicting_schemas_raises(*, reverse_cases: bool) -> No
 def test_promoting_both_compatible_schemas_is_valid() -> None:
     """Two demanded realized laws with one annotation share the parameter."""
     model = _demand_model(promote=(1, 2), compatible=True)
-    assert "realized_rate" in _leaves(tree=model.get_params_template()["perceived"])
+    assert _edge_leaves(model=model) == {"realized_rate"}

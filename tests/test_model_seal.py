@@ -9,15 +9,16 @@ or simulation refuses to run when one of those bindings has since been rebound
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
+from lcm import (
+    AgeGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+    categorical,
 )
-from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelSealError
 from lcm.regime import Regime
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _UTILITY_SCALE = jnp.asarray(1.0)
 
@@ -40,33 +41,23 @@ def _feasible(*, wealth: FloatND, consumption: FloatND) -> FloatND:
     return consumption <= wealth
 
 
-def _next_regime(age: float) -> ScalarInt:
-    return jnp.where(age >= 18, _RegimeId.dead, _RegimeId.working)
-
-
 def _build_model(*, enable_jit: bool) -> Model:
     working = Regime(
-        regime_transitions=until_exit(
-            19,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": _utility},
         constraints={"feasible": _feasible},
     )
-    dead = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return with_fixture_graph(
+    dead = Regime(functions={"utility": lambda: 0.0})
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
         regime_id_class=_RegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={18: "working"},
+        edges={"working": {"dead": 18}},
     )
 
 

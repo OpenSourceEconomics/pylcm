@@ -113,7 +113,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -185,7 +185,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-${{ runner.os }}-general-${{ matrix.shard }}
           path: |
@@ -194,7 +194,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-general-${{ matrix.shard }}
           path: reports/coverage-general-${{ matrix.shard }}.xml
@@ -245,7 +245,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -306,7 +306,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp32-general-${{ matrix.shard }}
           path: |
@@ -358,7 +358,7 @@ jobs:
       PYLCM_CI_RECEIPT: reports/ci-receipts
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -415,17 +415,52 @@ jobs:
             --cov=./ --cov-report="xml:reports/coverage-source-contract.xml" \
             -n 2 --dist load \
           && check_population reports/junit-cpu-fp64-source-contract.xml
+      - name: Verify the standalone candidate certificate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . \
+            > reports/candidate-certificate/verify.json \
+            2> reports/candidate-certificate/verify.stderr.log
+          status=$?
+          printf '%s\n' "$status" > reports/candidate-certificate/verify.exit-code.txt
+          exit "$status"
+      - name: Run standalone candidate certificate mutation controls
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p reports/candidate-certificate
+          set +e
+          pixi run --frozen -e tests-cpu python tests/candidate_certificate/verify.py \
+            --repo-root . --self-test \
+            > reports/candidate-certificate/self-test.json \
+            2> reports/candidate-certificate/self-test.stderr.log
+          status=$?
+          printf '%s\n' "$status" > \
+            reports/candidate-certificate/self-test.exit-code.txt
+          exit "$status"
+      - name: Upload standalone candidate certificate receipts
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: candidate-certificate-standalone
+          path: reports/candidate-certificate/
+          if-no-files-found: warn
       - name: Upload JUnit reports and receipts
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-source-contract
           path: |
             reports/junit-*.xml
             reports/ci-receipts/*.json
+            reports/certificate-*.json
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         # Not sent to Codecov here. The `coverage` job below is the single
@@ -433,7 +468,7 @@ jobs:
         # lanes against the manifest before any upload, so an incomplete run
         # cannot publish a partial coverage picture that looks like a drop.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-source-contract
           path: reports/coverage-source-contract.xml
@@ -460,7 +495,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-rest-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -531,7 +566,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-rest-slow
           path: |
@@ -540,7 +575,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-rest-slow
           path: reports/coverage-rest-slow.xml
@@ -578,7 +613,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-certified
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -655,7 +690,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-certified
           path: |
@@ -668,7 +703,7 @@ jobs:
         # lanes against the manifest before any upload, so an incomplete run
         # cannot publish a partial coverage picture that looks like a drop.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-certified
           path: reports/coverage-certified.xml
@@ -734,7 +769,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -800,7 +835,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-${{ runner.os }}-timing
           path: |
@@ -810,7 +845,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && runner.os == 'Linux' && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-timing
           path: reports/coverage-timing.xml
@@ -860,7 +895,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-four-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -1500,7 +1535,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-topology-four-device
           path: |
@@ -1509,7 +1544,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-topology-four-device
           path: reports/coverage-topology-four-device.xml
@@ -1556,7 +1591,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-eight-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -1948,6 +1983,50 @@ jobs:
             --junitxml="$pylcm_junit" \
             ${coverage_args[@]+"${coverage_args[@]}"}
           check_population "$pylcm_junit" no-skips
+      - name: Run tests/solution/test_materialization_admission.py
+        # Unchained: its own step, its own fresh pytest process, its own JUnit
+        # report and population guard. Never merged with a sibling -- equal
+        # device count is not evidence of cache, environment or serial-group
+        # compatibility. `always()` so one lane's failure does not hide the
+        # rest; the job still fails if any step did.
+        if: always()
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+            if [ "${2:-}" = "no-skips" ] && [ "$skipped" -ne 0 ]; then
+              echo "NATIVE CASES SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          coverage_args=()
+          if test "$PYLCM_CI_PRECISION" = "64"; then
+            coverage_args=(--cov=./ --cov-append --cov-report=)
+          fi
+          pylcm_junit=reports/junit-cpu-fp$PYLCM_CI_PRECISION-materialization-admission.xml
+          JAX_NUM_CPU_DEVICES=8 JAX_PLATFORMS=cpu \
+          XLA_FLAGS="${XLA_FLAGS:+$XLA_FLAGS }--xla_force_host_platform_device_count=8"\
+            pixi run -e tests-cpu pytest \
+            tests/solution/test_materialization_admission.py \
+            --precision="$PYLCM_CI_PRECISION" -p no:randomly \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml="$pylcm_junit" \
+            ${coverage_args[@]+"${coverage_args[@]}"}
+          check_population "$pylcm_junit" no-skips
       - name: Write this lane family's coverage XML
         if: always() && matrix.precision == 64
         shell: bash
@@ -1960,7 +2039,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-topology-eight-device
           path: |
@@ -1969,7 +2048,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-topology-eight-device
           path: reports/coverage-topology-eight-device.xml
@@ -2017,7 +2096,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2076,7 +2155,7 @@ jobs:
         # with the suite's would put a failure and extra arms per precision into
         # the counts a healthy run reports.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: exact-kernel-matrix-${{ runner.os }}
           path: |
@@ -2158,7 +2237,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-sol-fp${{ matrix.precision }}-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2227,7 +2306,7 @@ jobs:
             -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit report and shard manifest
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: >-
             junit-cpu-fp${{ matrix.precision }}-solution-${{ matrix.shard }}
@@ -2238,7 +2317,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-solution-${{ matrix.shard }}
           path: reports/coverage-solution-${{ matrix.shard }}.xml
@@ -2280,13 +2359,14 @@ jobs:
       - tests-topology-four-device
       - tests-topology-eight-device
       - tests-slow-solution
+      - tests-benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2294,7 +2374,7 @@ jobs:
           activate-environment: true
           frozen: true
       - name: Download every lane's coverage data
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           pattern: coverage-*
           path: coverage-data
@@ -2312,11 +2392,6 @@ jobs:
           directory: coverage-data
           disable_search: false
           fail_ci_if_error: true
-  # One context for the whole matrix, so branch protection names `cpu` rather
-  # than every lane -- adding a platform or a shard would otherwise silently
-  # drop out of the required set until someone remembered to add it there too.
-  # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
-  # is not a success.
   # The harness tests under `benchmarks/` (ASV wiring, GPU-memory measurement
   # plumbing, PR-comment and publish tooling). They fake every device and model
   # they touch, so they run on CPU. `tests/conftest.py` does not load for
@@ -2331,7 +2406,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2380,15 +2455,29 @@ jobs:
             --timeout=600 --timeout-method=thread -v -n 0 \
             --durations=25 \
             --junitxml=reports/junit-cpu-benchmarks.xml \
+            --cov=./ --cov-report="xml:reports/coverage-benchmarks.xml" \
           && check_population reports/junit-cpu-benchmarks.xml
       - name: Upload the JUnit report
         # `always()` so a failing run still publishes its report.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-benchmarks
           path: reports/junit-*.xml
           if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Sent to Codecov only by the `coverage` combine stage.
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-benchmarks
+          path: reports/coverage-benchmarks.xml
+          if-no-files-found: error
+  # One context for the whole matrix, so branch protection names `cpu` rather
+  # than every lane -- adding a platform or a shard would otherwise silently
+  # drop out of the required set until someone remembered to add it there too.
+  # Fail-closed: every lane must have succeeded, and a skipped or cancelled lane
+  # is not a success.
   cpu:
     name: cpu
     needs:

@@ -21,7 +21,12 @@ from pandas.testing import assert_frame_equal
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+)
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.persistence import load_solution
 from lcm.typing import FloatND, UserInitialConditions, UserParams
@@ -30,11 +35,9 @@ from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _DTYPES = [np.float32, np.float64]
 
@@ -149,12 +152,9 @@ def _rank_model(reference: np.ndarray) -> Model:
     """Two-period GridSearch model whose terminal payoff depends on the closure rank."""
     final_age_alive = START_AGE
     grid = LinSpacedGrid(start=1, stop=3, n_points=3)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": grid},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -168,11 +168,12 @@ def _rank_model(reference: np.ndarray) -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
+        edges={"working_life": {"dead": START_AGE}},
     )
 
 
 def _rank_model_inputs() -> tuple[UserParams, UserInitialConditions]:
-    params = get_params(n_periods=2)
+    params = get_graph_only_params(n_periods=2)
     initial_conditions: UserInitialConditions = {
         "wealth": jnp.asarray([2.0]),
         "age": jnp.asarray([18.0]),

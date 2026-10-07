@@ -1,9 +1,10 @@
 """Lower age-indexed regime declarations into demand, support and engine laws.
 
-A regime's `regime_transitions` declares where a local problem is available and
-where it may go. This module is the single place that reads it for that purpose:
+A regime's law (bound from `Model(edges=...)` and kept on the model graph)
+declares where a local problem is available and where it may go.
+This module is the single place that reads it for that purpose:
 
-- `regime_transitions=None` is terminal and available at every age;
+- `None` (no outgoing edges) is terminal and available at every age;
 - a plain nonterminal law — a regime name, a `DeterministicTransition`, a vector
   `StochasticTransition` with `targets`, or a per-target mapping — is available at
   every non-final age;
@@ -42,25 +43,24 @@ from typing import Any, Literal, cast, no_type_check
 
 import jax.numpy as jnp
 
+from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
-from lcm.collective import ValueDependentTransition
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
-    AgeSelector,
     ByAge,
     DeterministicTransition,
     StochasticTransition,
     _fail_if_invalid_age_selector,
     _select_periods,
 )
-from lcm.typing import Period
+from lcm.typing import Period, UserFunction
 
 type PhaseKey = str
 type Side = Literal["solve", "simulate"]
@@ -69,6 +69,24 @@ type Side = Literal["solve", "simulate"]
 type NonterminalLaw = (
     str | DeterministicTransition | StochasticTransition | Mapping[str, Any] | Phased
 )
+
+# One per-target probability cell, as declared or bound.
+type ProbabilityCell = StochasticTransition | UserFunction | Phased
+# One phase's law at one source age: a regime name, a function or
+# `DeterministicTransition` returning a regime code, a vector
+# `StochasticTransition`, or a per-target mapping of probability cells.
+type PhaseLaw = (
+    RegimeName
+    | DeterministicTransition
+    | StochasticTransition
+    | UserFunction
+    | Mapping[RegimeName, ProbabilityCell]
+)
+# A law at one source age: one law for both phases, or a `Phased` pair.
+type CaseLaw = PhaseLaw | Phased[PhaseLaw, PhaseLaw]
+# A source's whole regime-transition law: a case law, an age schedule of case
+# laws, or `None` for a terminal regime.
+type RegimeTransitionLaw = CaseLaw | ByAge | None
 
 
 _PHASES: tuple[PhaseKey, PhaseKey] = ("solution", "simulation")
@@ -111,6 +129,26 @@ class RegimeSchedules:
         RegimeName, MappingProxyType[int, NonterminalLaw]
     ] = MappingProxyType({})
     """Per nonterminal regime, the declared law at each available period."""
+
+    gated_edges_by_regime: MappingProxyType[
+        RegimeName, Mapping[RegimeName, GatedEdge]
+    ] = MappingProxyType({})
+    """Per source regime, its gated edges by gated target."""
+
+    @property
+    def targets_by_regime(self) -> MappingProxyType[RegimeName, frozenset[RegimeName]]:
+        """Per source regime, every target its support names in either phase."""
+        return MappingProxyType(
+            {
+                name: frozenset(
+                    target
+                    for by_regime in self.support_by_phase.values()
+                    for targets in by_regime.get(name, {}).values()
+                    for target in targets
+                )
+                for name in self.coverage_by_regime
+            }
+        )
 
     @property
     def visited_periods_by_regime(
@@ -160,7 +198,9 @@ def declaration_view(transition: object) -> object:
 
 def resolve_regime_schedules(
     *,
-    user_regimes: Mapping[RegimeName, Any],
+    # `RegimeLaw` values; `_lcm.regime_law` imports this module, so it cannot be
+    # imported here.
+    laws: Mapping[RegimeName, Any],
     ages: AgeGrid,
     source_ages_by_phase: Mapping[str, Mapping[str, Mapping[str, frozenset[object]]]]
     | None = None,
@@ -168,9 +208,8 @@ def resolve_regime_schedules(
     """Resolve every regime's available periods, support and value reads.
 
     Nothing is lowered here: `lower_demanded_transitions` lowers only the laws
-    demand selects.
+    demand selects. `laws` maps each regime to its graph-bound `RegimeLaw`.
     """
-    _fail_if_support_is_undeclared(user_regimes=user_regimes)
     all_periods = tuple(range(ages.n_periods))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
     support: dict[
@@ -180,9 +219,11 @@ def resolve_regime_schedules(
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
     ] = {phase: {} for phase in _PHASES}
     landings: dict[RegimeName, MappingProxyType[int, tuple[str, ...]]] = {}
-    laws: dict[RegimeName, MappingProxyType[int, NonterminalLaw]] = {}
-    for name, regime in user_regimes.items():
-        transition = regime.regime_transitions
+    law_by_period_by_regime: dict[
+        RegimeName, MappingProxyType[int, NonterminalLaw]
+    ] = {}
+    for name, regime_law in laws.items():
+        transition = regime_law.transition
         if transition is None:
             coverage[name] = all_periods
             continue
@@ -194,9 +235,19 @@ def resolve_regime_schedules(
             }
         else:
             law_by_period = dict.fromkeys(all_periods[:-1], transition)
-        law_by_period = _resolve_target_age_support(
-            law_by_period=law_by_period, ages=ages, regime_name=name
-        )
+        if source_ages_by_phase is not None:
+            # A source supplies a local problem only at ages with an edge.
+            edge_ages = {
+                age
+                for by_source in source_ages_by_phase.values()
+                for selected in by_source.get(name, {}).values()
+                for age in selected
+            }
+            law_by_period = {
+                period: law
+                for period, law in law_by_period.items()
+                if ages.exact_values[period] in edge_ages
+            }
         coverage[name] = tuple(law_by_period)
         side_by_phase = {
             phase: {
@@ -213,7 +264,7 @@ def resolve_regime_schedules(
                         source=name,
                         period=period,
                         ages=ages,
-                        regime_names=tuple(user_regimes),
+                        regime_names=tuple(laws),
                         source_ages=None
                         if source_ages_by_phase is None
                         else source_ages_by_phase[phase],
@@ -221,37 +272,34 @@ def resolve_regime_schedules(
                     for period, law in side_by_period.items()
                 }
             )
-        solve_side, simulate_side = side_by_phase.values()
+        gated = regime_law.gated_edges
+        solution_support = support["solution"][name]
+        simulation_support = support["simulation"][name]
         value_reads["solution"][name] = MappingProxyType(
             {
                 period: (
-                    (*_gate_references(law), *_fallbacks(law=law, side="solve"))
-                    if support["solution"][name][period]
-                    else ()
+                    *_gate_references(gated_edges=gated, targets=targets),
+                    *_fallbacks(gated_edges=gated, targets=targets, side="solve"),
                 )
-                for period, law in solve_side.items()
+                for period, targets in solution_support.items()
             }
         )
         value_reads["simulation"][name] = MappingProxyType(
             {
-                period: _gate_references(law)
-                if support["simulation"][name][period]
-                else ()
-                for period, law in simulate_side.items()
+                period: _gate_references(gated_edges=gated, targets=targets)
+                for period, targets in simulation_support.items()
             }
         )
         landings[name] = MappingProxyType(
             {
-                period: (
-                    _fallbacks(law=law, side="simulate")
-                    if support["simulation"][name][period]
-                    else ()
-                )
-                for period, law in simulate_side.items()
+                period: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
+                for period, targets in simulation_support.items()
             }
         )
         # The support check above rejected every other form.
-        laws[name] = MappingProxyType(cast("dict[int, NonterminalLaw]", law_by_period))
+        law_by_period_by_regime[name] = MappingProxyType(
+            cast("dict[int, NonterminalLaw]", law_by_period)
+        )
 
     return RegimeSchedules(
         coverage_by_regime=MappingProxyType(coverage),
@@ -265,111 +313,11 @@ def resolve_regime_schedules(
             }
         ),
         landings_by_regime=MappingProxyType(landings),
-        law_by_period_by_regime=MappingProxyType(laws),
+        law_by_period_by_regime=MappingProxyType(law_by_period_by_regime),
+        gated_edges_by_regime=MappingProxyType(
+            {name: regime_law.gated_edges for name, regime_law in laws.items()}
+        ),
     )
-
-
-def _resolve_target_age_support(
-    *,
-    law_by_period: Mapping[int, object],
-    ages: AgeGrid,
-    regime_name: RegimeName,
-) -> dict[int, object]:
-    """Resolve destination-to-source-age restrictions without changing outputs."""
-    period_by_age: dict[object, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
-    periods_by_target_by_law: dict[int, dict[str, frozenset[int]]] = {}
-    resolved_by_support: dict[tuple[int, tuple[str, ...]], object] = {}
-    for law in _distinct(law_by_period.values()):
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        for side in sides:
-            if not isinstance(
-                side, _SupportedDeterministicTransition | _SupportedStochasticTransition
-            ) or not isinstance(side.targets, Mapping):
-                continue
-            periods_by_target_by_law[id(side)] = _target_periods(
-                targets=side.targets,
-                ages=ages,
-                regime_name=regime_name,
-                period_by_age=period_by_age,
-            )
-
-    resolved: dict[int, object] = {}
-    for period, law in law_by_period.items():
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        selected_sides = [
-            _restrict_target_support(
-                side=side,
-                period=period,
-                by_target=periods_by_target_by_law.get(id(side)),
-                resolved_by_support=resolved_by_support,
-            )
-            for side in sides
-        ]
-        if isinstance(law, Phased):
-            solve, simulate = selected_sides
-            if (solve is None) != (simulate is None):
-                raise ModelInitializationError(
-                    f"Regime '{regime_name}' has different solve and simulate "
-                    f"source-age availability at age {ages.exact_values[period]}. "
-                    "Both phases must declare a local problem at the same ages; "
-                    "their target names may differ."
-                )
-            if solve is not None:
-                resolved[period] = Phased(solve=solve, simulate=simulate)
-        elif selected_sides[0] is not None:
-            resolved[period] = selected_sides[0]
-    return resolved
-
-
-def _restrict_target_support(
-    *,
-    side: object,
-    period: int,
-    by_target: Mapping[str, frozenset[int]] | None,
-    resolved_by_support: dict[tuple[int, tuple[str, ...]], object],
-) -> object | None:
-    """Reuse a transition with the support declared at one source period."""
-    if by_target is None:
-        return side
-    targets = tuple(
-        target for target, periods in by_target.items() if period in periods
-    )
-    if not targets:
-        return None
-    key = (id(side), targets)
-    if key not in resolved_by_support:
-        resolved_by_support[key] = dataclasses.replace(
-            cast(
-                "_SupportedDeterministicTransition | _SupportedStochasticTransition",
-                side,
-            ),
-            targets=targets,
-        )
-    return resolved_by_support[key]
-
-
-def _target_periods(
-    *,
-    targets: Mapping[str, AgeSelector],
-    ages: AgeGrid,
-    regime_name: RegimeName,
-    period_by_age: dict[object, int],
-) -> dict[str, frozenset[int]]:
-    """Validate and resolve one transition's destination age selectors."""
-    selected: dict[str, frozenset[int]] = {}
-    for target, selector in targets.items():
-        periods = _select_periods(
-            selector=selector, ages=ages, period_by_age=period_by_age
-        )
-        if not periods:
-            raise ModelInitializationError(
-                f"The source-age selector {selector!r} for target '{target}' "
-                f"of regime '{regime_name}' selects no model age."
-            )
-        selected[target] = frozenset(periods)
-    return selected
 
 
 def lower_demanded_transitions(
@@ -383,12 +331,14 @@ def lower_demanded_transitions(
     The solve side is lowered over the regime's valued periods and the
     simulate side over its visited periods. A regime that is valued but never
     visited lowers to its solve side alone, so its realized routing requires
-    no argument or parameter. A case selected only at
-    undemanded ages contributes no cell, no argument and no parameter. A
-    regime without demanded periods keeps one declared law unchanged — its
-    first available one, or its first declared one if none is available — so
-    it stays inspectable without a period-dispatched union; it is never
-    executed, gets no transition program and no parameters.
+    no runtime argument. A case selected only at undemanded ages contributes no
+    cell and no runtime argument. A regime without demanded periods keeps one
+    declared law unchanged — its first available one, or its first declared one
+    if none is available — so it stays inspectable without a period-dispatched
+    union; it is never executed and gets no transition program. The free
+    parameters of every declared case keep their slots regardless, since the
+    `edges` parameter template is read off the declarations, not off the
+    lowered laws.
     """
     lowered: dict[RegimeName, object] = {}
     visited_periods = schedules.visited_periods_by_regime
@@ -452,8 +402,6 @@ def _law_functions(law: object) -> tuple[Callable[..., Any], ...]:
         return (*_law_functions(law.solve), *_law_functions(law.simulate))
     if isinstance(law, Mapping):
         return tuple(func for cell in law.values() for func in _law_functions(cell))
-    if isinstance(law, ValueDependentTransition):
-        return _law_functions(law.probability)
     if isinstance(law, DeterministicTransition | StochasticTransition):
         return (law.func,)
     return ()
@@ -587,20 +535,22 @@ def resolve_demand(
                 )
                 for reference in same_period_refs_by_regime.get(name, ())
             )
-        law = _phase_side(
-            law=schedules.law_by_period_by_regime.get(name, {}).get(period),
-            side="simulate" if physical else "solve",
+        targets = (
+            support["simulation" if physical else "solution"]
+            .get(name, {})
+            .get(period, ())
         )
         pair = f"({ages.exact_values[period]}, '{name}')"
         kinds = {
             **dict.fromkeys(reads, f"a fallback of {pair}"),
-            **dict.fromkeys(_gate_references(law), f"a gate reference of {pair}"),
             **dict.fromkeys(
-                support["simulation" if physical else "solution"]
-                .get(name, {})
-                .get(period, ()),
-                here,
+                _gate_references(
+                    gated_edges=schedules.gated_edges_by_regime.get(name, {}),
+                    targets=targets,
+                ),
+                f"a gate reference of {pair}",
             ),
+            **dict.fromkeys(targets, here),
         }
         work.extend((False, period + 1, target, kinds[target]) for target in reads)
 
@@ -630,25 +580,20 @@ def gated_source_periods(
 ) -> MappingProxyType[tuple[RegimeName, RegimeName], tuple[int, ...]]:
     """Per `(source, target)` edge, the demanded source periods that use a gate.
 
-    Solve gates count at valued nodes and simulation gates at visited nodes,
-    provided the selected phase graph contains the primary edge. A gated edge
-    folds and reads its references only after those periods.
+    A gate holds wherever its target is reached: solve gates count at valued
+    nodes and simulation gates at visited nodes, provided the selected phase
+    graph contains the gated edge. A gated edge folds and reads its references
+    only after those periods.
     """
     periods: dict[tuple[RegimeName, RegimeName], set[int]] = {}
-    for source, law_by_period in schedules.law_by_period_by_regime.items():
+    for source, gated in schedules.gated_edges_by_regime.items():
         for period in schedules.coverage_by_regime[source]:
-            law = law_by_period[period]
-            for side, phase in (("solve", "solution"), ("simulate", "simulation")):
-                cells = _phase_side(law=law, side=side)
-                if not isinstance(cells, Mapping):
-                    continue
+            for phase in ("solution", "simulation"):
                 selected = (
                     schedules.support_by_phase[phase].get(source, {}).get(period, ())
                 )
-                for target, cell in cells.items():
-                    if target in selected and isinstance(
-                        cell, ValueDependentTransition
-                    ):
+                for target in gated:
+                    if target in selected:
                         periods.setdefault((source, target), set()).add(period)
     return MappingProxyType(
         {edge: tuple(sorted(by_edge)) for edge, by_edge in periods.items()}
@@ -689,27 +634,30 @@ def _unavailable_message(
     return f"{requester} requires '{name}' at age {age}, {reason}."
 
 
-def _gate_references(law: object) -> tuple[str, ...]:
-    """The regimes whose value the gates of a per-target mapping read."""
-    if not isinstance(law, Mapping):
-        return ()
+def _gate_references(
+    *, gated_edges: Mapping[RegimeName, GatedEdge], targets: tuple[RegimeName, ...]
+) -> tuple[RegimeName, ...]:
+    """The regimes whose value the gates of the reached `targets` read."""
     return tuple(
         reference.regime
-        for cell in law.values()
-        if isinstance(cell, ValueDependentTransition)
-        for reference in cell.gate_references.values()
+        for target, edge in gated_edges.items()
+        if target in targets
+        for reference in edge.gate_refs.values()
     )
 
 
-def _fallbacks(*, law: object, side: Side) -> tuple[str, ...]:
-    """The gate-closed regimes of a per-target mapping, for one phase side."""
-    if not isinstance(law, Mapping):
-        return ()
+def _fallbacks(
+    *,
+    gated_edges: Mapping[RegimeName, GatedEdge],
+    targets: tuple[RegimeName, ...],
+    side: Side,
+) -> tuple[RegimeName, ...]:
+    """The gate-closed regimes of the reached gated `targets`, for one phase side."""
     return tuple(
         (route.solve_fallback if side == "solve" else route.simulate_fallback).regime
-        for cell in law.values()
-        if isinstance(cell, ValueDependentTransition)
-        for route in cell.routes.values()
+        for target, edge in gated_edges.items()
+        if target in targets
+        for route in edge.legs.values()
     )
 
 
@@ -1256,15 +1204,6 @@ def _mapping_union(
     for target, entries in cells_by_target.items():
         distinct_cells = _distinct(cell for _, cell in entries)
         if len(distinct_cells) > 1:
-            if any(
-                isinstance(cell, ValueDependentTransition) for cell in distinct_cells
-            ):
-                raise ModelInitializationError(
-                    f"The transition into {target!r} is value-dependent in one "
-                    "schedule case and declared differently in another. A gated "
-                    "target keeps one `ValueDependentTransition` across every "
-                    "case that names it."
-                )
             if mask is None:
                 merged[target] = distinct_cells[0]
                 continue
@@ -1336,18 +1275,7 @@ class _PeriodSum:
 
 
 def _masked_cell(*, cell: object, periods: tuple[int, ...]) -> object:
-    """Zero a cell outside `periods`; a gated cell keeps its gate and routes."""
-    if isinstance(cell, ValueDependentTransition):
-        probability = cell.probability
-        func = (
-            probability.func
-            if isinstance(probability, StochasticTransition)
-            else probability
-        )
-        return dataclasses.replace(
-            cell,
-            probability=StochasticTransition(func=_masked(cell=func, periods=periods)),
-        )
+    """Zero a cell outside `periods`."""
     return StochasticTransition(func=_masked(cell=cell, periods=periods))
 
 
@@ -1376,9 +1304,8 @@ def _law_cells(
         }
     raise ModelInitializationError(
         f"A schedule case {law!r} is not a nonterminal regime law. Use a regime "
-        "name, `DeterministicTransition(func=func, targets=...)`, "
-        "`StochasticTransition(func=func, targets=...)` "
-        "or a per-target mapping."
+        "name, a `DeterministicTransition` or a per-target mapping, and declare "
+        "its destinations in `Model(edges=...)`."
     )
 
 
@@ -1404,47 +1331,3 @@ def _code(*, name: str, code_by_name: Mapping[str, int]) -> int:
 def _distinct[T](values: Iterable[T]) -> tuple[T, ...]:
     """Distinct objects by identity, in first-seen order."""
     return tuple({id(value): value for value in values}.values())
-
-
-def _fail_if_support_is_undeclared(*, user_regimes: Mapping[RegimeName, Any]) -> None:
-    """Every nonterminal law names the regimes it may select."""
-    errors = []
-    for name, regime in user_regimes.items():
-        transition = regime.regime_transitions
-        if transition is None:
-            continue
-        laws = transition.laws if isinstance(transition, ByAge) else (transition,)
-
-        for law in laws:
-            for side in (
-                (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-            ):
-                if isinstance(
-                    side, DeterministicTransition | StochasticTransition
-                ) and not isinstance(
-                    side,
-                    _SupportedDeterministicTransition | _SupportedStochasticTransition,
-                ):
-                    errors.append(
-                        f"Regime '{name}' declares a `{type(side).__name__}` "
-                        "without `targets`. Name its support: "
-                        "`StochasticTransition(func=func, targets=('a', 'b'))`."
-                    )
-                elif isinstance(
-                    side,
-                    _SupportedDeterministicTransition | _SupportedStochasticTransition,
-                ):
-                    _fail_if_unknown_targets(
-                        targets=tuple(side.targets or ()),
-                        regime_names=tuple(user_regimes),
-                    )
-                elif callable(side) and not isinstance(
-                    side, DeterministicTransition | StochasticTransition | Mapping
-                ):
-                    errors.append(
-                        f"Regime '{name}' declares a bare deterministic "
-                        "transition. Name its support: "
-                        "`DeterministicTransition(func=func, targets=('a', 'b'))`."
-                    )
-    if errors:
-        raise ModelInitializationError("\n".join(errors))

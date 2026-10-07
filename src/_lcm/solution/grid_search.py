@@ -27,6 +27,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import jax.numpy as jnp
 from beartype import beartype
 
@@ -37,7 +38,12 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationLayout
-from _lcm.engine import StateActionSpace
+from _lcm.engine import (
+    StateActionSpace,
+    _build_regime_sharding,
+    _RegimeSharding,
+    placed_devices_for_ids,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -59,6 +65,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -82,6 +89,7 @@ from _lcm.typing import (
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
@@ -239,6 +247,7 @@ class GridSearch(Solver):
         independently constructed test oracle rather than a second production path.
         """
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+            get_action_partitioned_max_Q_over_a,
             get_max_Q_over_a,
             get_streaming_max_Q_over_a,
         )
@@ -272,6 +281,9 @@ class GridSearch(Solver):
                 fold_conditioning[name] = process.state_conditioned.on
         action_streaming = _classify_action_streaming(context=context)
         stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
+        action_partition_mesh = _action_partition_mesh(
+            context=context, action_streaming=action_streaming
+        )
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
@@ -333,14 +345,28 @@ class GridSearch(Solver):
                     "fold_weights": MappingProxyType(fold_weights),
                     "fold_conditioning": MappingProxyType(fold_conditioning),
                 }
-                program_functions[q_id] = (
-                    get_streaming_max_Q_over_a(
-                        **common_kwargs,
+                if action_partition_mesh is not None:
+                    program_functions[q_id] = get_action_partitioned_max_Q_over_a(
+                        Q_and_F=Q_and_F,
+                        batch_sizes=common_kwargs["batch_sizes"],
+                        action_names=action_names,
+                        state_names=context.state_action_space.state_names,
+                        n_partitions=context.action_partitions,
+                        mesh=action_partition_mesh,
                         action_width_keyword=action_width_keyword,
+                        cell_width_keyword=cell_width_keyword,
+                        untiled_state_names=untiled_state_names,
+                        broadcast_state_names=broadcast_state_names,
                     )
-                    if stream_actions
-                    else get_max_Q_over_a(**common_kwargs)
-                )
+                else:
+                    program_functions[q_id] = (
+                        get_streaming_max_Q_over_a(
+                            **common_kwargs,
+                            action_width_keyword=action_width_keyword,
+                        )
+                        if stream_actions
+                        else get_max_Q_over_a(**common_kwargs)
+                    )
             target_regimes = (
                 ()
                 if period == context.solution_reachability.n_periods - 1
@@ -464,6 +490,47 @@ def _bound_programs(
     return MappingProxyType(programs)
 
 
+def _action_partition_mesh(
+    *,
+    context: SolverBuildContext,
+    action_streaming: _ActionStreamingDisposition,
+) -> jax.sharding.Mesh | None:
+    """Return the regime's mesh when its action product is shared, else `None`.
+
+    Model construction admits a partition request only on the ordinary
+    streamed singleton route without folded processes or co-mapped states;
+    reaching here with anything else is an internal planning error.
+    """
+    if context.action_partitions == 1:
+        return None
+    unserved = [
+        reason
+        for failed, reason in (
+            (
+                action_streaming is not _ActionStreamingDisposition.STREAMED,
+                f"its actions are not streamed ({action_streaming.value})",
+            ),
+            (bool(context.fold_state_names), "it folds a process"),
+            (bool(context.co_map_state_names), "it co-maps a sharded state"),
+        )
+        if failed
+    ]
+    if unserved:
+        msg = (
+            f"Regime {context.regime_name!r} cannot share its actions over "
+            f"{context.action_partitions} devices: " + "; ".join(unserved) + ". "
+            "Remove the regime from ExecutionConfig.action_partitions."
+        )
+        raise ExecutionPlanningError(msg)
+    plan = _build_regime_sharding(
+        grids=context.grids,
+        sharded_state_names=context.sharded_state_names,
+        devices=placed_devices_for_ids(submesh_device_ids=context.submesh_device_ids),
+        action_partitions=context.action_partitions,
+    )
+    return cast("_RegimeSharding", plan).mesh
+
+
 def _continuation_unread_state_names(
     *, Q_and_F: QAndFFunction, inner_state_names: tuple[StateName, ...]
 ) -> tuple[StateName, ...]:
@@ -530,14 +597,12 @@ def _edge_reference_regimes_for_targets(
     target_regimes: tuple[RegimeName, ...],
 ) -> tuple[RegimeName, ...]:
     """Return only edge references read by targets reachable this period."""
-    source = context.user_regimes[context.regime_name]
+    law = context.laws[context.regime_name]
     references: list[RegimeName] = []
     for target in target_regimes:
-        edge = source.gated_edges.get(target)
-        if edge is None:
-            continue
-        references.extend(ref.regime for ref in edge.gate_refs.values())
-        references.extend(route.solve_fallback.regime for route in edge.legs.values())
+        edge = law.gated_edges.get(target)
+        if edge is not None:
+            references.extend(edge.reference_regimes(phases=("solve",)))
     return tuple(dict.fromkeys(references))
 
 
@@ -657,7 +722,7 @@ class _GridSearchArgumentBuilder:
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
-            **dict(flat_params[self.regime_name]),
+            **dict(regime_kernel_params(flat_params, regime_name=self.regime_name)),
             "period": jnp.int32(context.period),
             "age": ages.values[context.period],
         }
@@ -728,7 +793,10 @@ class _GridSearchArgumentBuilder:
                 }
             ),
             "edge_reference_regime_to_params": MappingProxyType(
-                {name: flat_params[name] for name in self.edge_reference_regimes}
+                {
+                    name: regime_kernel_params(flat_params, regime_name=name)
+                    for name in self.edge_reference_regimes
+                }
             ),
         }
 
@@ -737,7 +805,10 @@ class _GridSearchArgumentBuilder:
     ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
         """Return each same-period reference regime's own flat parameters."""
         return MappingProxyType(
-            {name: flat_params[name] for name in self.same_period_ref_regimes}
+            {
+                name: regime_kernel_params(flat_params, regime_name=name)
+                for name in self.same_period_ref_regimes
+            }
         )
 
 
@@ -780,9 +851,8 @@ class _GridSearchPeriodKernel:
         program = next(iter(self._core_programs.values()))
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
         regime_fixed = dict(
-            fixed_flat_params.get(
-                argument_builder.regime_name,
-                MappingProxyType({}),
+            regime_kernel_params(
+                fixed_flat_params, regime_name=argument_builder.regime_name
             )
         )
         if not regime_fixed:
@@ -820,7 +890,7 @@ class _GridSearchPeriodKernel:
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
         regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
-        a regime declaring `gated_edges` (substituted into
+        a regime with gated edges (substituted into
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
 

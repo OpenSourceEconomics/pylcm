@@ -1,12 +1,15 @@
 """Models built from dated regime declarations: coverage, support and values."""
 
+from collections.abc import Mapping
 from fractions import Fraction
-from typing import Any
+from inspect import get_annotations
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.model_graph import _bind_law
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
@@ -18,9 +21,11 @@ from lcm import (
     ByAge,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -28,23 +33,26 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
+    RegimeInitializationError,
 )
+from lcm.phased import Phased
 from lcm.regime import Regime
+from lcm.transition import TransitionLaw
 from lcm.typing import BoolND, DiscreteState, FloatND, Period, ScalarInt
-from tests.test_models.graph import with_fixture_graph
+from tests.regime_building.test_gate_output_dtype import _boolean_gate
+from tests.regime_building.test_gate_output_dtype import _make_model as _gated_model
 
 AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 ROOTS: dict[object, str] = {25: "working"}
-
-
-def _choose_age_restricted_target(period: Period) -> ScalarInt:
-    return jnp.where(period < 3, RegimeId.working, RegimeId.retirement)
-
-
-def _age_restricted_probabilities(period: Period) -> FloatND:
-    return jnp.asarray(
-        [jnp.where(period < 3, 1.0, 0.0), jnp.where(period == 3, 1.0, 0.0), 0.0]
-    )
+DATED_TARGETS = {"working": (25, 35, 45), "dead": (25, 35, 45), "retirement": 55}
+CHOICE_TARGETS = {"working": (25, 35, 45), "retirement": 55, "dead": 55}
+# Working may die at every age and retires at 55: two outgoing edges at each age.
+TWO_EDGE_TARGETS = {
+    "working": (25, 35, 45),
+    "dead": (25, 35, 45, 55),
+    "retirement": 55,
+}
+RETIREMENT_EDGES = {"dead": 65}
 
 
 @categorical(ordered=True)
@@ -72,9 +80,8 @@ def _utility(*, wealth: FloatND, health: DiscreteState) -> FloatND:
     return wealth + health
 
 
-def _regime(*, regime_transitions: Any, **kwargs: Any) -> Regime:
+def _regime() -> Regime:
     return Regime(
-        regime_transitions=regime_transitions,
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -84,45 +91,53 @@ def _regime(*, regime_transitions: Any, **kwargs: Any) -> Regime:
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": _utility},
-        **kwargs,
     )
 
 
-DEAD = Regime(regime_transitions=None, functions={"utility": lambda: 0.0})
+DEAD = Regime(functions={"utility": lambda: 0.0})
 
 
-def _dated_model(*, edges: object | None = None, **overrides: Regime) -> Model:
-    regimes = {
-        "working": _regime(
-            regime_transitions=ByAge.until(
-                stop_age_exclusive=65,
-                law={
-                    "working": StochasticTransition(func=_stay),
-                    "dead": StochasticTransition(func=_die),
-                },
-                then="retirement",
-            )
+def _working_law() -> ByAge:
+    """Survive or die before 65, retiring on the grid predecessor of 65."""
+    return ByAge.until(
+        stop_age_exclusive=65,
+        law={
+            "working": StochasticTransition(func=_stay),
+            "dead": StochasticTransition(func=_die),
+        },
+        then="retirement",
+    )
+
+
+def _dated_edges(
+    *, working_law: TransitionLaw | None = None
+) -> dict[str, Transition | dict[str, int]]:
+    """Working dies or survives until it retires at 55; retirement dies at 65."""
+    return {
+        "working": Transition(
+            targets=DATED_TARGETS,
+            law=_working_law() if working_law is None else working_law,
         ),
-        "retirement": _regime(
-            regime_transitions=ByAge(
-                cases={AgeRange(start=65, exclusive_stop=75): "dead"}
-            )
-        ),
-        "dead": DEAD,
+        "retirement": RETIREMENT_EDGES,
     }
-    if edges is not None:
-        return Model(
-            regimes=regimes | overrides,
-            ages=AGES,
-            regime_id_class=RegimeId,
-            initial_nodes=((25, "working"),),
-            edges=edges,
-        )
-    return with_fixture_graph(
+
+
+def _choice_edges(*, working_law: TransitionLaw) -> dict[str, object]:
+    """Working stays until 55, where `working_law` picks retirement or death."""
+    return {
+        "working": Transition(targets=CHOICE_TARGETS, law=working_law),
+        "retirement": RETIREMENT_EDGES,
+    }
+
+
+def _dated_model(*, edges: object = None, **overrides: Regime) -> Model:
+    regimes = {"working": _regime(), "retirement": _regime(), "dead": DEAD}
+    return Model(
         regimes=regimes | overrides,
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes=ROOTS,
+        edges=_dated_edges() if edges is None else edges,
     )
 
 
@@ -136,10 +151,15 @@ def _hand_masked_model() -> Model:
     def retire(period: Period) -> FloatND:
         return jnp.where(period == 3, 1.0, 0.0)
 
-    return with_fixture_graph(
-        regimes={
-            "working": _regime(
-                regime_transitions=ByAge.until(
+    return Model(
+        regimes={"working": _regime(), "retirement": _regime(), "dead": DEAD},
+        ages=AGES,
+        regime_id_class=RegimeId,
+        initial_nodes=ROOTS,
+        edges={
+            "working": Transition(
+                targets=TWO_EDGE_TARGETS,
+                law=ByAge.until(
                     stop_age_exclusive=65,
                     law={
                         "working": StochasticTransition(func=stay),
@@ -151,22 +171,8 @@ def _hand_masked_model() -> Model:
                     },
                 ),
             ),
-            "retirement": _regime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(
-                            start=65, exclusive_stop=75
-                        ): _SupportedDeterministicTransition(
-                            func=lambda: RegimeId.dead, targets=("dead",)
-                        )
-                    }
-                ),
-            ),
-            "dead": DEAD,
+            "retirement": RETIREMENT_EDGES,
         },
-        ages=AGES,
-        regime_id_class=RegimeId,
-        initial_nodes=ROOTS,
     )
 
 
@@ -225,20 +231,12 @@ def test_dated_model_edges_are_the_declared_support_at_each_period(
     assert targets["working"] == expected
 
 
-@pytest.mark.parametrize(
-    ("wrapper", "func"),
-    [
-        (DeterministicTransition, _choose_age_restricted_target),
-        (StochasticTransition, _age_restricted_probabilities),
-    ],
-)
-def test_target_age_mapping_declares_edges_at_source_age(*, wrapper, func) -> None:
+def test_target_age_mapping_declares_edges_at_source_age() -> None:
     """A destination's selector restricts source ages and next-age value reads."""
     model = _dated_model(
-        working=_regime(regime_transitions=wrapper(func=func)),
         edges={
             "working": {"working": AgeRange(exclusive_stop=55), "retirement": 55},
-            "retirement": {"dead": 65},
+            "retirement": RETIREMENT_EDGES,
         },
     )
     targets = model.reachability.solution.targets_by_period
@@ -266,10 +264,16 @@ def test_target_age_mapping_rejects_mass_outside_current_support(
 ) -> None:
     """A target allowed at another age cannot receive mass at the current age."""
     model = _dated_model(
-        working=_regime(regime_transitions=wrapper(func=func)),
         edges={
-            "working": {"working": AgeRange(exclusive_stop=55), "retirement": 55},
-            "retirement": {"dead": 65},
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=55),
+                    "retirement": 55,
+                    "dead": 55,
+                },
+                law=wrapper(func=func),
+            ),
+            "retirement": RETIREMENT_EDGES,
         },
     )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
@@ -290,46 +294,31 @@ def test_dated_model_accepts_targetless_kernels_with_explicit_graph(
     """Numerical kernels get their structural support solely from Model.edges."""
     model = _dated_model(
         edges={
-            "working": {
-                "working": (25, 35, 45),
-                "dead": (25, 35, 45),
-                "retirement": 55,
-            },
-            "retirement": {"dead": 65},
+            "working": Transition(targets=TWO_EDGE_TARGETS, law=transition),
+            "retirement": RETIREMENT_EDGES,
         },
-        retirement=_regime(regime_transitions=transition),
     )
-    assert model.reachability.solution.targets_by_period[4]["retirement"] == ("dead",)
+    assert model.reachability.solution.targets_by_period[3]["working"] == (
+        "dead",
+        "retirement",
+    )
 
 
 def test_dated_model_rejects_a_target_not_covered_at_the_next_age() -> None:
     """Declared support must be solved at the next age; nothing is dropped."""
     with pytest.raises(ModelInitializationError, match="retirement"):
         _dated_model(
-            retirement=_regime(
-                regime_transitions=ByAge(
-                    cases={AgeRange(start=55, exclusive_stop=65): "dead"}
-                )
-            )
+            edges={
+                "working": _dated_edges()["working"],
+                "retirement": {"dead": 55},
+            },
         )
 
 
-@pytest.mark.parametrize(
-    ("wrapper", "func"),
-    [
-        (DeterministicTransition, lambda: RegimeId.dead),
-        (StochasticTransition, lambda: jnp.array([0.0, 0.0, 1.0])),
-    ],
-)
-def test_target_age_mapping_rejects_unknown_target_only_named_at_final_age(
-    *, wrapper: Any, func: Any
-) -> None:
+def test_target_age_mapping_rejects_unknown_target_only_named_at_final_age() -> None:
     """Validate every destination name even when its age has no outgoing edge."""
     with pytest.raises(ModelInitializationError, match="typo"):
-        _dated_model(
-            working=_regime(regime_transitions=wrapper(func=func)),
-            edges={"working": {"dead": 25, "typo": 75}},
-        )
+        _dated_model(edges={"working": {"dead": 25, "typo": 75}})
 
 
 def test_choose_routes_to_the_returned_regime_code() -> None:
@@ -339,44 +328,26 @@ def test_choose_routes_to_the_returned_regime_code() -> None:
         return jnp.where(health == Health.good, RegimeId.retirement, RegimeId.dead)
 
     model = _dated_model(
-        working=_regime(
-            regime_transitions=ByAge(
+        edges=_choice_edges(
+            working_law=ByAge(
                 cases={
                     AgeRange(exclusive_stop=55): "working",
-                    55: _SupportedDeterministicTransition(
-                        func=retire_if_healthy, targets=("retirement", "dead")
-                    ),
+                    55: DeterministicTransition(func=retire_if_healthy),
                 }
             )
-        )
+        ),
     )
     targets = model.reachability.solution.targets_by_period[3]
     assert targets["working"] == ("dead", "retirement")
 
 
 def _model_with_entries(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
-        regimes={
-            "working": _regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=65,
-                    law={
-                        "working": StochasticTransition(func=_stay),
-                        "dead": StochasticTransition(func=_die),
-                    },
-                    then="retirement",
-                )
-            ),
-            "retirement": _regime(
-                regime_transitions=ByAge(
-                    cases={AgeRange(start=65, exclusive_stop=75): "dead"}
-                )
-            ),
-            "dead": DEAD,
-        },
+    return Model(
+        regimes={"working": _regime(), "retirement": _regime(), "dead": DEAD},
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes=initial_nodes,
+        edges=_dated_edges(),
     )
 
 
@@ -500,12 +471,8 @@ def _short_mass(health: DiscreteState) -> FloatND:
 @pytest.mark.parametrize(
     "transition",
     [
-        _SupportedDeterministicTransition(
-            func=_choose_working, targets=("retirement", "dead")
-        ),
-        _SupportedStochasticTransition(
-            func=_leaky_vector, targets=("retirement", "dead")
-        ),
+        DeterministicTransition(func=_choose_working),
+        StochasticTransition(func=_leaky_vector),
         {
             "retirement": StochasticTransition(func=_short_mass),
             "dead": StochasticTransition(func=_die),
@@ -519,34 +486,23 @@ def test_invalid_regime_selection_raises_at_every_log_level(
 ) -> None:
     """Regime-selection validity does not depend on verbosity in a dated model."""
     model = _dated_model(
-        working=_regime(
-            regime_transitions=ByAge(
+        edges=_choice_edges(
+            working_law=ByAge(
                 cases={AgeRange(exclusive_stop=55): "working", 55: transition},
             )
-        )
+        ),
     )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 0.95}, log_level=log_level)
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def test_shared_state_law_may_name_targets_outside_the_declared_support() -> None:
-    """Support comes from the transition; extra per-target state laws go unused."""
+    """Support comes from the graph; extra per-target state laws go unused."""
     shared_wealth_law = {
         "working": lambda wealth: wealth,
         "retirement": lambda wealth: wealth,
     }
     retirement = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=65, exclusive_stop=75): {
-                    "dead": StochasticTransition(func=_certain)
-                }
-            }
-        ),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -576,14 +532,6 @@ def _die_if_frail(is_healthy: BoolND) -> FloatND:
 def test_scheduled_cells_keep_the_annotations_of_the_laws_they_wrap() -> None:
     """A period-masked cell reading an annotated DAG output builds and solves."""
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=65,
-            law={
-                "working": StochasticTransition(func=_stay_if_healthy),
-                "dead": StochasticTransition(func=_die_if_frail),
-            },
-            then="retirement",
-        ),
         states={
             "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -595,18 +543,163 @@ def test_scheduled_cells_keep_the_annotations_of_the_laws_they_wrap() -> None:
         functions={"utility": _utility, "is_healthy": _is_healthy},
     )
     params = {"discount_factor": 0.95}
-    values = _dated_model(working=working).solve(params=params, log_level="off")
+    edges = _dated_edges(
+        working_law=ByAge.until(
+            stop_age_exclusive=65,
+            law={
+                "working": StochasticTransition(func=_stay_if_healthy),
+                "dead": StochasticTransition(func=_die_if_frail),
+            },
+            then="retirement",
+        )
+    )
+    values = _dated_model(working=working, edges=edges).solve(
+        params=params, log_level="off"
+    )
     expected = _dated_model().solve(params=params, log_level="off")
     np.testing.assert_array_equal(
         values.values[0]["working"], expected.values[0]["working"]
     )
 
 
-def test_user_regimes_keep_the_dated_declaration() -> None:
-    """A model publishes each regime's transition exactly as declared."""
-    declared = ByAge(cases={AgeRange(start=65, exclusive_stop=75): "dead"})
-    model = _dated_model(retirement=_regime(regime_transitions=declared))
-    assert model.user_regimes["retirement"].regime_transitions is declared
+def test_model_edges_keep_the_dated_declaration() -> None:
+    """A model publishes each regime's transition law exactly as declared."""
+    declared = _working_law()
+    model = _dated_model(edges=_dated_edges(working_law=declared))
+    edges = cast("Mapping[str, Transition]", model.edges)
+    assert edges["working"].law is declared
+
+
+def _declared_transition_ids(model: Model) -> dict[str, dict[str, int]]:
+    """The identity of each declared `Transition`, by phase and source."""
+    return {
+        phase: {source: id(transition) for source, transition in transitions.items()}
+        for phase, transitions in model.declared_transitions.items()
+    }
+
+
+def _go_dead() -> ScalarInt:
+    return RegimeId.dead
+
+
+def test_declared_transitions_hold_the_same_transition_in_both_phases() -> None:
+    """Edges declared for both phases give each phase the same `Transition`."""
+    edges = _dated_edges()
+    model = _dated_model(edges=edges)
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(edges["working"])},
+        "simulate": {"working": id(edges["working"])},
+    }
+
+
+def test_declared_transitions_hold_each_phase_transition_of_phased_edges() -> None:
+    """Under `Phased` edges each phase holds the `Transition` that phase declares."""
+    solve_edges, simulate_edges = _dated_edges(), _dated_edges()
+    model = _dated_model(edges=Phased(solve=solve_edges, simulate=simulate_edges))
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(solve_edges["working"])},
+        "simulate": {"working": id(simulate_edges["working"])},
+    }
+
+
+def test_declared_transitions_omit_a_source_from_a_phase_without_one() -> None:
+    """A source with a `Transition` in one phase only is absent from the other."""
+    retirement = Transition(
+        targets=RETIREMENT_EDGES, law=DeterministicTransition(func=_go_dead)
+    )
+    solve_edges = _dated_edges()
+    simulate_edges = solve_edges | {"retirement": retirement}
+    model = _dated_model(edges=Phased(solve=solve_edges, simulate=simulate_edges))
+    assert _declared_transition_ids(model) == {
+        "solve": {"working": id(solve_edges["working"])},
+        "simulate": {
+            "working": id(solve_edges["working"]),
+            "retirement": id(retirement),
+        },
+    }
+
+
+def test_declared_transitions_carry_the_targets_a_law_names() -> None:
+    """A `Transition` declared without targets reads back with the derived ones."""
+    model = _dated_model(
+        edges={
+            "working": Transition(law=_working_law()),
+            "retirement": RETIREMENT_EDGES,
+        }
+    )
+    targets = model.declared_transitions["simulate"]["working"].targets
+    assert targets == {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": (55,),
+    }
+
+
+def test_a_bare_name_case_beside_per_target_cases_derives_its_edge() -> None:
+    """A `ByAge` mixing per-target cases with a bare-name case derives an edge
+    to the named regime at that case's age."""
+    law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=55): {
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            },
+            55: "retirement",
+        }
+    )
+    model = _dated_model(
+        edges={"working": Transition(law=law), "retirement": RETIREMENT_EDGES}
+    )
+    targets = model.declared_transitions["solve"]["working"].targets
+    assert targets == {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": (55,),
+    }
+
+
+def test_declared_transitions_read_the_declared_law_typed() -> None:
+    """A declared `Transition`'s law reads back as declared, typed `TransitionLaw`."""
+    declared = _working_law()
+    model = _dated_model(edges=_dated_edges(working_law=declared))
+    law: TransitionLaw = model.declared_transitions["solve"]["working"].law
+    assert law is declared
+
+
+def test_declared_transitions_read_a_declared_gate_typed() -> None:
+    """A `Gate` declared on a `Transition` reads back typed from the built model."""
+    model = _gated_model(gate=_boolean_gate)
+    gate: Gate = model.declared_transitions["solve"]["source"].gates["target"]
+    assert gate.predicate is _boolean_gate
+
+
+def test_declared_transitions_read_a_gate_route_fallback_regime_typed() -> None:
+    """A declared gate route's fallback regime reads back as a regime name."""
+    model = _gated_model(gate=_boolean_gate)
+    gate = model.declared_transitions["simulate"]["source"].gates["target"]
+    regime: str = gate.routes["only"].simulate_fallback.regime
+    assert regime == "fallback"
+
+
+def test_declared_transitions_reject_replacing_a_phase() -> None:
+    """The declared transitions of a built model cannot be replaced per phase."""
+    model = _dated_model()
+    with pytest.raises(TypeError):
+        model.declared_transitions["solve"] = {}  # ty: ignore[invalid-assignment]
+
+
+def test_declared_transitions_reject_replacing_a_source_transition() -> None:
+    """The declared transitions of a built model cannot be replaced per source."""
+    model = _dated_model()
+    with pytest.raises(TypeError):
+        model.declared_transitions["solve"]["working"] = "dead"  # ty: ignore[invalid-assignment]
+
+
+def test_declared_transitions_cannot_be_rebound() -> None:
+    """The declared transitions cannot be rebound on a built model."""
+    model = _dated_model()
+    with pytest.raises(AttributeError):
+        model.declared_transitions = {}  # ty: ignore[invalid-assignment]
 
 
 _EARLY_STAGES = (AgeRange(start=25, exclusive_stop=55),)
@@ -619,8 +712,8 @@ def _stay_by_stage(health: DiscreteState) -> FloatND:
 
 def test_laws_may_read_age_ranges_from_module_constants() -> None:
     """An `AgeRange` held in a module constant is part of the model identity."""
-    working = _regime(
-        regime_transitions=ByAge.until(
+    edges = _dated_edges(
+        working_law=ByAge.until(
             stop_age_exclusive=65,
             law={
                 "working": StochasticTransition(func=_stay_by_stage),
@@ -629,7 +722,7 @@ def test_laws_may_read_age_ranges_from_module_constants() -> None:
             then="retirement",
         )
     )
-    assert _dated_model(working=working).reachability.nodes == (
+    assert _dated_model(edges=edges).reachability.nodes == (
         _dated_model().reachability.nodes
     )
 
@@ -656,21 +749,20 @@ def test_a_vector_law_shorter_than_the_regime_ids_is_refused() -> None:
     other regimes; reading them anyway would repeat the last entry and double the
     mass, so the solve refuses the law and names both lengths.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
-            "alive": Regime(
-                regime_transitions=_SupportedStochasticTransition(
-                    func=_support_only_vector, targets=("done",)
-                ),
-                functions={"utility": _zero_utility},
-            ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _zero_utility}
-            ),
+            "alive": Regime(functions={"utility": _zero_utility}),
+            "done": Regime(functions={"utility": _zero_utility}),
         },
         regime_id_class=_VectorRegimeId,
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "done": (0, 1)},
+                law=StochasticTransition(func=_support_only_vector),
+            )
+        },
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError, match=r"1 entries.*2 regime"
@@ -687,13 +779,12 @@ class _MonthlyRegimeId:
 
 
 def _monthly_model(initial_nodes: dict) -> Model:
-    return with_fixture_graph(
+    return Model(
         ages=MONTHLY_AGES,
+        edges={},
         regime_id_class=_MonthlyRegimeId,
         initial_nodes=initial_nodes,
-        regimes={
-            "end": Regime(regime_transitions=None, functions={"utility": _zero_utility})
-        },
+        regimes={"end": Regime(functions={"utility": _zero_utility})},
     )
 
 
@@ -753,3 +844,81 @@ def test_off_grid_monthly_start_raises_at_every_log_level(
             log_level=log_level,
             initial_nodes={0: "end", Fraction(1, 12): "end"},
         )
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [_SupportedDeterministicTransition, _SupportedStochasticTransition],
+    ids=lambda w: w.__name__,
+)
+def test_the_graph_supplies_the_destinations_of_a_target_tagged_law(
+    *, wrapper: Any
+) -> None:
+    """A law tagged with its own destinations is bound to the graph's edges."""
+    bound: Any = _bind_law(
+        law=wrapper(func=lambda: RegimeId.dead, targets=("dead",)),
+        targets=("working", "dead", "retirement"),
+        fallbacks=(),
+        source="working",
+        age=25,
+        side="solve",
+        regime_names=("working", "retirement", "dead"),
+    )
+    assert bound.targets == ("working", "dead", "retirement")
+
+
+def test_a_phased_pair_of_transitions_names_the_supported_form() -> None:
+    """A source mapped to `Phased(Transition, Transition)` is told the supported form.
+
+    The law is phased inside one `Transition` whose targets both phases share.
+    """
+    law = DeterministicTransition(func=lambda: RegimeId.dead)
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"'working'.*inside one `Transition`.*"
+            r"Transition\(targets=\{\.\.\.\}, law=Phased\(solve=\.\.\., "
+            r"simulate=\.\.\.\)\)"
+        ),
+    ):
+        _dated_model(
+            edges={
+                "working": Phased(
+                    solve=Transition(targets=TWO_EDGE_TARGETS, law=law),
+                    simulate=Transition(targets=TWO_EDGE_TARGETS, law=law),
+                ),
+                "retirement": RETIREMENT_EDGES,
+            },
+        )
+
+
+def test_a_regime_without_outgoing_edges_is_told_why_it_is_terminal() -> None:
+    """A regime with state transitions and no edge out is told both ways out."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=(
+            r"no outgoing edge in `Model\(edges=\.\.\.\)`.*\['health', 'wealth'\].*"
+            r"Declare an edge from it.*or drop its `state_transitions`"
+        ),
+    ):
+        _dated_model(
+            edges={
+                "working": Transition(targets=DATED_TARGETS, law=_working_law()),
+            },
+        )
+
+
+def test_model_edges_is_typed_as_the_edges_declaration() -> None:
+    """`Model.edges` returns the `ModelEdges` declaration type."""
+    annotation = get_annotations(vars(Model)["edges"].fget)["return"]
+    assert (annotation.__module__, annotation.__name__) == (
+        "lcm.transition",
+        "ModelEdges",
+    )
+
+
+def test_model_edges_is_read_only() -> None:
+    """The declared edges cannot be rebound on a built model."""
+    model = _dated_model()
+    with pytest.raises(AttributeError):
+        model.edges = {}  # ty: ignore[invalid-assignment]

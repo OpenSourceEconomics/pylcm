@@ -21,7 +21,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,

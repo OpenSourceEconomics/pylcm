@@ -14,27 +14,24 @@ import pytest
 
 import _lcm.simulation.runtime as simulation_runtime
 import _lcm.simulation.simulate as simulation
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import chunk_admission
 from _lcm.simulation.random import _generate_windowed_simulation_keys
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.typing import ScalarInt
 from tests.test_models import n_nbegm_toy as toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -51,19 +48,9 @@ class _RegimeId:
 
 
 def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": Regime(
-                regime_transitions=until_exit(
-                    2,
-                    law=_SupportedDeterministicTransition(
-                        func=lambda age: jnp.where(
-                            age < 1, _RegimeId.working, _RegimeId.retired
-                        ),
-                        targets=("working", "retired"),
-                    ),
-                    exits=("retired",),
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 functions={
@@ -76,7 +63,6 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
                 },
             ),
             "retired": Regime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
             ),
@@ -92,6 +78,16 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
             device_memory_bytes=2**30,
         ),
         initial_nodes={0: "working"},
+        edges={
+            "working": Transition(
+                targets={"working": 0, "retired": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age < 1, _RegimeId.working, _RegimeId.retired
+                    )
+                ),
+            )
+        },
     )
 
 

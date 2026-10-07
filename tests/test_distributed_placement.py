@@ -61,9 +61,6 @@ from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
 from _lcm.regime_building import processing
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.simulation.process_grids import SimulationProcessGrids
@@ -77,20 +74,22 @@ from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.solution.v_topology import _get_regime_V_shapes_and_shardings
 from _lcm.typing import RegimeName
 from _lcm.utils.logging import LogLevel
-from lcm import AgeRange, ByAge, fixed_transition
+from lcm import DeterministicTransition, Transition, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import ExecutionConfig
 from lcm.model import Model
+from lcm.persistence import PeriodCapture
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
 from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
-from tests.simulation._profile_comparison import assert_values_agree
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
+from tests.simulation._profile_comparison import (
+    assert_same_bytes,
+    assert_values_agree,
+)
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -152,6 +151,58 @@ def test_eager_internal_input_preserves_its_ordered_producer_layout(
 
 
 _PARAMS = {"discount_factor": 0.95}
+
+
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+@_skip_pytest_parallel
+def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persistent_compilation_cache: bool,
+) -> None:
+    """Restoring a capture never stages its value arrays on an excluded device."""
+    assert persistent_compilation_cache is False
+    model = _make_three_type_model(distributed=False, devices=(1,))
+    fresh = _make_three_type_model(distributed=False, devices=(1,))
+    identity = {"model": "three-type-device-placement"}
+    result = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        period_capture=PeriodCapture(
+            directory=tmp_path,
+            periods=(("working", 0),),
+            source_identity=identity,
+        ),
+    )
+    original_put = jax.device_put
+    uploaded_devices: list[set[jax.Device]] = []
+
+    # keyword-only-exempt: library-callback=jax.device_put
+    def record_put(value: object, device: object = None, **kwargs: Any) -> object:
+        uploaded = original_put(value, device, **kwargs)
+        # Each persisted value has three types and twelve wealth points. Grid
+        # construction has smaller leaves; retain the real transfer in every case.
+        if isinstance(value, np.ndarray) and value.size == 36:
+            assert isinstance(uploaded, jax.Array)
+            uploaded_devices.append(uploaded.devices())
+        return uploaded
+
+    with monkeypatch.context() as probe:
+        probe.setattr(jax, "device_put", record_put)
+        replay = fresh.replay_period(
+            directory=tmp_path / "working@0",
+            params=_PARAMS,
+            source_identity=identity,
+        )
+    assert uploaded_devices
+    assert all(devices == {jax.devices()[1]} for devices in uploaded_devices)
+    assert replay.reference_matches is True
+    assert replay.optimized_hlo_matches is True
+    np.testing.assert_array_equal(
+        np.asarray(replay.value).view(np.uint8),
+        np.asarray(result.values[0]["working"]).view(np.uint8),
+    )
 
 
 def _ordered_eager_sharding(*, explicit: bool = False) -> jax.NamedSharding:
@@ -479,19 +530,8 @@ def _make_three_type_model(
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
-                ),
-                targets=("working", "retired"),
-            ),
-            exits=("retired",),
-        ),
     )
     retired = UserRegime(
-        regime_transitions=None,
         functions={
             "utility": (
                 _constant_retired_value
@@ -501,7 +541,7 @@ def _make_three_type_model(
         },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "retired": retired},
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_ThreeTypeRegimeId,
@@ -516,6 +556,16 @@ def _make_three_type_model(
             devices=devices,
         ),
         initial_nodes={0: "working"},
+        edges={
+            "working": Transition(
+                targets={"working": (0, 1, 2), "retired": (0, 1, 2, 3)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
+                    )
+                ),
+            )
+        },
     )
 
 
@@ -646,7 +696,17 @@ def _assert_only_planning_descriptors[Key: Hashable](
 def test_eager_solve_respects_planned_regime_layouts(
     *, devices: tuple[int, ...] | None, constant_retired: bool
 ) -> None:
-    """Eager computations, including constant bodies, obey actual regime placement."""
+    """Eager computations, including constant bodies, obey actual regime placement.
+
+    Layouts are checked against the compiled solve of the same placement. Values
+    are checked against the eager solve on the other device set: placement never
+    changes eager arithmetic, so the two publish the same bytes. The compiled
+    solve is no value reference here, because XLA contracts multiply-adds into
+    fused ones that eager dispatch rounds twice, and this fixture amplifies that
+    rounding: consumption above wealth reads the continuation value by linear
+    extrapolation far below the wealth grid, and at the lowest wealth node the
+    utility and the continuation cancel to near zero.
+    """
     eager = _make_three_type_model(
         distributed=True,
         enable_jit=False,
@@ -655,6 +715,12 @@ def test_eager_solve_respects_planned_regime_layouts(
     ).solve(params=_PARAMS, log_level="off")
     compiled = _make_three_type_model(
         distributed=True, devices=devices, constant_retired=constant_retired
+    ).solve(params=_PARAMS, log_level="off")
+    other_placement = _make_three_type_model(
+        distributed=True,
+        enable_jit=False,
+        devices=(1, 2, 3) if devices is None else None,
+        constant_retired=constant_retired,
     ).solve(params=_PARAMS, log_level="off")
 
     assert tuple(eager.values) == tuple(compiled.values)
@@ -675,7 +741,11 @@ def test_eager_solve_respects_planned_regime_layouts(
             if devices is not None:
                 assert value.devices() <= {jax.devices()[index] for index in devices}
                 assert jax.devices()[0] not in value.devices()
-            assert_values_agree(got=value, expected=expected, n_ulp=8)
+            assert_same_bytes(
+                got=np.asarray(value),
+                expected=np.asarray(other_placement.values[period][regime]),
+                err_msg=f"regime {regime!r}, period {period}",
+            )
 
 
 @_skip_pytest_parallel
@@ -1005,20 +1075,13 @@ def _make_two_mesh_model() -> Model:
                 "wealth": lambda wealth, consumption: wealth - consumption
             },
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
-            regime_transitions=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 0, _TwoMeshRegimeId.retired, _TwoMeshRegimeId.alpha
-                ),
-                targets=("retired",),
-            ),
         )
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                regime_transitions=None,
                 functions={"utility": lambda wealth: wealth * 0.5},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
@@ -1029,6 +1092,7 @@ def _make_two_mesh_model() -> Model:
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
         initial_nodes={0: ("alpha", "beta")},
+        edges={"alpha": {"retired": (0, 1, 2)}, "beta": {"retired": (0, 1, 2)}},
     )
 
 
@@ -1168,48 +1232,21 @@ def _make_two_block_model(*, distributed: bool) -> Model:
     def _next_wealth(*, wealth: Any, consumption: Any) -> Any:
         return wealth - consumption
 
-    def _next_from_first(age: Any) -> Any:
-        return jnp.where(age >= 1, _TwoBlockRegimeId.second, _TwoBlockRegimeId.first)
-
-    def _worker(*, regime_transitions: ByAge) -> UserRegime:
+    def _worker() -> UserRegime:
         return UserRegime(
             functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             state_transitions={"wealth": _next_wealth},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-            regime_transitions=regime_transitions,
         )
 
-    first = _worker(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): _SupportedDeterministicTransition(
-                    func=_next_from_first, targets=("first",)
-                ),
-                AgeRange(start=1, exclusive_stop=3): _SupportedDeterministicTransition(
-                    func=_next_from_first, targets=("second",)
-                ),
-            }
-        ),
-    )
-    second = _worker(
-        regime_transitions=until_exit(
-            4,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
-                ),
-                targets=("second", "dead"),
-            ),
-            exits=("dead",),
-        ),
-    )
+    first = _worker()
+    second = _worker()
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"first": first, "second": second, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_TwoBlockRegimeId,
@@ -1219,6 +1256,17 @@ def _make_two_block_model(*, distributed: bool) -> Model:
             sharded_states=("type1",) if distributed else ()
         ),
         initial_nodes={0: "first"},
+        edges={
+            "first": {"first": 0, "second": (1, 2)},
+            "second": Transition(
+                targets={"second": (0, 1, 2), "dead": (0, 1, 2, 3)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
+                    )
+                ),
+            ),
+        },
     )
 
 
@@ -1811,27 +1859,19 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
     assert terminal.V_arr.devices() == {jax.devices()[device] for device in selected}
 
 
-def _uniform_placement_transition() -> ScalarInt:
-    return _UniformPlacementRegimeId.done
-
-
 def _uniform_placement_model(
     *, selected: tuple[int, ...], sharded: bool, stateless_terminal: bool = False
 ) -> Model:
     from lcm import UniformIIDProcess  # noqa: PLC0415
 
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": UserRegime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_uniform_placement_transition, targets=("done",)
-                ),
                 states={"income": UniformIIDProcess(n_points=5)},
                 actions={"saving": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _uniform_placement_utility},
             ),
             "done": UserRegime(
-                regime_transitions=None,
                 functions={
                     "utility": _stateless_placement_terminal
                     if stateless_terminal
@@ -1849,4 +1889,62 @@ def _uniform_placement_model(
             sharded_states=("kind",) if sharded else (),
         ),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(("execution_device", "admitted"), [(0, (0,)), (1, (0, 1))])
+def test_solve_admission_covers_code_owners_held_off_the_execution_device(
+    *,
+    execution_device: int,
+    admitted: tuple[int, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codes a law keeps on device 0 are admitted when the solve runs elsewhere.
+
+    The model is built under device 0, so the two-code int32 array its stochastic
+    law keeps for validation lives there. A budgeted solve on device 1 still
+    decides every candidate on device 0 as well, charging at least those 8 bytes.
+    """
+    from tests.test_transition_checks import (  # noqa: PLC0415
+        _health_probs_reading_effort,
+        _model_with_function_reading_health_probs,
+    )
+
+    with jax.default_device(jax.devices()[0]):
+        model = _model_with_function_reading_health_probs(
+            next_health_func=_health_probs_reading_effort,
+            execution_config=ExecutionConfig(
+                devices=(execution_device,), device_memory_bytes=2**28
+            ),
+        )
+    codes = tuple(
+        code
+        for regime in model._regimes.values()
+        for code in regime.derived_categorical_code_arrays
+    )
+    assert [(code.nbytes, code.devices()) for code in codes] == [
+        (8, {jax.devices()[0]})
+    ]
+    captured: list[Mapping[Any, ResidentInventory]] = []
+    original = backward_induction._resident_inventory_by_triple
+
+    def record(**kwargs: Any) -> Mapping[Any, ResidentInventory]:
+        inventories = original(**kwargs)
+        captured.append(inventories)
+        return inventories
+
+    monkeypatch.setattr(backward_induction, "_resident_inventory_by_triple", record)
+    model.solve(params={"discount_factor": 0.95}, log_level="off")
+
+    inventories = [inventory for mapping in captured for inventory in mapping.values()]
+    assert inventories
+    assert {
+        (
+            inventory.admission_device_ids,
+            inventory.fixed_bytes.get(0, 0) >= 8,
+            inventory.resident_bytes(consumes=()) >= inventory.fixed_bytes[0],
+        )
+        for inventory in inventories
+    } == {(admitted, True, True)}

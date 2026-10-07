@@ -16,12 +16,10 @@ from lcm import (
     Model,
     NormalIIDProcess,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 _ENTRY = 1.5
 _DEPENDENT = 2.0 * _ENTRY
@@ -35,10 +33,6 @@ class RegimeId:
 
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
-
-
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _enter_shock() -> ScalarFloat:
@@ -57,19 +51,16 @@ PARAMS = {
     "source": {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
-        "target": {"next_regime": {}, "next_shock": {}, "next_wealth": {}},
+        "target": {"next_shock": {}, "next_wealth": {}},
     },
     "target": {"utility": {}},
 }
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={
                     "shock": {"target": _enter_shock},
                     "wealth": {"target": _double_the_entry},
@@ -77,7 +68,6 @@ def _build_model() -> Model:
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -92,6 +82,7 @@ def _build_model() -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 

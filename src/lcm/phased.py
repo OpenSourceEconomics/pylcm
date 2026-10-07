@@ -6,6 +6,8 @@ A thin leaf module — the class definition only, with no dependency on
 import it without an import cycle.
 """
 
+from typing import Final
+
 from lcm.exceptions import RegimeInitializationError
 
 
@@ -68,8 +70,10 @@ class Phased[S, T]:
                 "dimension, so each variant must be a plain slot value."
             )
             raise RegimeInitializationError(msg)
-        self.solve = solve
-        self.simulate = simulate
+        # `Final` keeps both variants read-only, which makes `Phased` covariant:
+        # a `Phased` of narrower values is a `Phased` of wider ones.
+        self.solve: Final[S] = solve
+        self.simulate: Final[T] = simulate
 
     def __repr__(self) -> str:
         return f"Phased(solve={self.solve!r}, simulate={self.simulate!r})"

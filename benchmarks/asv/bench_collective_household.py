@@ -24,8 +24,6 @@ import gc
 import statistics
 import time
 
-from lcm import AgeRange, ByAge
-
 from . import _gpu_mem
 
 # Timed warm calls behind every `track_execution_time` here, which reports their
@@ -65,14 +63,6 @@ def _make_model():
         **_gpu_mem.default_budget_execution_kwargs(),
     )
     return model, collective_household.get_params()
-
-
-def _make_initial_conditions(*, model, n_subjects):
-    from lcm_examples import collective_household
-
-    return collective_household.get_initial_conditions(
-        n_subjects=n_subjects, model=model
-    )
 
 
 def _clear_gpu_memory():
@@ -211,12 +201,14 @@ class CollectiveHouseholdSimulate:
     param_names = ["n_subjects"]
 
     def _build(self, n_subjects):
+        from lcm_examples import collective_household
+
         self.model, self.model_params = _make_model()
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off"
         )
-        self.initial_conditions = _make_initial_conditions(
-            model=self.model, n_subjects=n_subjects
+        self.initial_conditions = collective_household.get_initial_conditions(
+            n_subjects=n_subjects, model=self.model
         )
 
     def setup(self, n_subjects):
@@ -377,9 +369,7 @@ def _make_reference_chain(*, depth):
         zip(link_names, terminal_names, strict=True)
     ):
         reference_regime = link_names[index - 1] if index else None
-        regimes[name] = _chain_link(
-            terminal_name=terminal_name, reference_regime=reference_regime
-        )
+        regimes[name] = _chain_link(reference_regime=reference_regime)
         regimes[terminal_name] = _chain_link_terminal()
         params[name] = {"koopmans_aggregator": {"discount_factor": 0.95}}
         if reference_regime is not None:
@@ -403,20 +393,12 @@ def _make_reference_chain(*, depth):
     )
 
 
-def _chain_link(*, terminal_name, reference_regime):
+def _chain_link(*, reference_regime):
     """Build one collective link of the reference chain."""
     from lcm import CollectiveUtility, Regime
-    from lcm.transition import StochasticTransition
 
-    kernels = _chain_kernels()
+    kernels = _CHAIN_KERNELS
     return Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    terminal_name: StochasticTransition(func=kernels["to_terminal"])
-                }
-            }
-        ),
         states={"wealth": _chain_wealth_grid()},
         state_transitions={"wealth": kernels["next_wealth"]},
         actions={"consumption": _chain_consumption_grid()},
@@ -433,9 +415,8 @@ def _chain_link_terminal():
     """Build one link's terminal regime."""
     from lcm import CollectiveUtility, Regime
 
-    kernels = _chain_kernels()
+    kernels = _CHAIN_KERNELS
     return Regime(
-        regime_transitions=None,
         states={"wealth": _chain_wealth_grid()},
         actions={"consumption": _chain_consumption_grid()},
         functions={
@@ -451,7 +432,7 @@ def _chain_constraints(*, reference_regime):
     """Build one link's constraints, with or without a reference to the previous."""
     from lcm import ProjectedRegimeValue, ValueDependentConstraint
 
-    kernels = _chain_kernels()
+    kernels = _CHAIN_KERNELS
     constraints = {"affordable": kernels["affordable"]}
     if reference_regime is None:
         return constraints
@@ -483,20 +464,6 @@ def _chain_consumption_grid():
     return LinSpacedGrid(start=1.0, stop=20.0, n_points=_CONSUMPTION_N_POINTS)
 
 
-def _chain_kernels():
-    """Return the model functions every link of the chain shares.
-
-    One dict of module-level closures, so two links built separately hold the
-    SAME leaf callables and differ only in their references and their terminal
-    target. That keeps the model definition honest about what varies with
-    depth; it does not make the links share a compiled program. The solve-side
-    dedup unit is a per-regime core built inside each regime's own
-    `build_period_kernels` call, so each of the `2 * depth` links lowers and
-    compiles its own regardless.
-    """
-    return _CHAIN_KERNELS
-
-
 def _build_chain_kernels():
     import jax.numpy as jnp
 
@@ -512,10 +479,6 @@ def _build_chain_kernels():
     def identity(wealth):
         return wealth
 
-    def to_terminal(age):
-        """A link is active for one period only, so it always hands over."""
-        return jnp.ones_like(age, dtype=float)
-
     def participation_f(*, Q_f, reference_f, slack):
         return Q_f >= reference_f - slack
 
@@ -527,10 +490,16 @@ def _build_chain_kernels():
         "affordable": affordable,
         "next_wealth": next_wealth,
         "identity": identity,
-        "to_terminal": to_terminal,
         "participation_f": participation_f,
         "participation_m": participation_m,
     }
 
 
+# The model functions every link of the chain shares: one dict of module-level
+# closures, so two links built separately hold the SAME leaf callables and differ
+# only in their references and their terminal target. That keeps the model
+# definition honest about what varies with depth; it does not make the links share
+# a compiled program. The solve-side dedup unit is a per-regime core built inside
+# each regime's own `build_period_kernels` call, so each of the `2 * depth` links
+# lowers and compiles its own regardless.
 _CHAIN_KERNELS = _build_chain_kernels()

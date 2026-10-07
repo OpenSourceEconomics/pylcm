@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.additional_targets import (
     _compute_targets,
     _filter_targets_for_regime,
@@ -48,7 +49,7 @@ def _create_flat_dataframe(
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
             publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
-            regime_params=flat_params[name],
+            regime_params=regime_kernel_params(flat_params, regime_name=name),
             stakeholders=metadata.regime_to_stakeholders.get(name),
             publishes_role=bool(metadata.stakeholder_names_to_ids),
             additional_targets=additional_targets,

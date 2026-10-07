@@ -239,7 +239,7 @@ def log_period_timing(
     logger.info("  finished in %s", format_duration(seconds=elapsed))
 
 
-def log_regime_transitions(
+def log_regime_transition_counts(
     *,
     logger: logging.Logger,
     prev_regime_ids: Int1D,
@@ -250,9 +250,7 @@ def log_regime_transitions(
     """Log regime transition counts at debug level.
 
     Builds the full `(n_regimes, n_regimes)` transition count matrix in a
-    single fused JAX kernel, then host-transfers the matrix once. Replaces
-    a previous per-pair `jnp.sum(...).item()` loop that emitted
-    `O(n_regimes^2)` host transfers per period.
+    single fused JAX kernel, then host-transfers the matrix once per period.
 
     Args:
         logger: Logger instance.

@@ -7,24 +7,23 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
-from tests.test_models.graph import with_fixture_graph
+from tests.test_models.regime_markov import EDGES as MARKOV_EDGES
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
 from tests.test_models.regime_markov import alive as markov_alive
 from tests.test_models.regime_markov import dead as markov_dead
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -56,6 +55,14 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
+_EDGES = {
+    "alive": Transition(
+        targets={"alive": 0, "dead": (0, 1)},
+        law=DeterministicTransition(func=_next_regime),
+    )
+}
+
+
 def _make_model(*, n_periods=3, extra_fixed_params=None):
     """Create a simple 2-regime model for testing."""
     alive = UserRegime(
@@ -68,27 +75,28 @@ def _make_model(*, n_periods=3, extra_fixed_params=None):
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            n_periods - 1,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
     fixed_params = extra_fixed_params or {}
 
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=n_periods - 2),
+                    "dead": AgeRange(exclusive_stop=n_periods - 1),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
     )
 
 
@@ -249,12 +257,13 @@ _MARKOV_INITIAL_CONDITIONS = {
 
 def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
     """Create regime_markov model with optional fixed_params."""
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": markov_alive, "dead": markov_dead},
         ages=AgeGrid(start=60, inclusive_stop=62, step="Y"),
         regime_id_class=MarkovRegimeId,
         fixed_params=fixed_params or {},
         initial_nodes={60: "alive"},
+        edges=MARKOV_EDGES,
     )
 
 
@@ -357,27 +366,20 @@ def test_series_fixed_param_with_derived_categoricals():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         derived_categoricals={
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"group_bonus": group_bonus},
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
     result = model.simulate(
         params={"discount_factor": 0.95},
@@ -400,19 +402,11 @@ def test_model_broadcast_merges_into_regimes():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
@@ -420,6 +414,7 @@ def test_model_broadcast_merges_into_regimes():
             "wealth_group": DiscreteGrid(category_class=_WealthGroup)
         },
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
     assert isinstance(
         model.user_regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
@@ -440,26 +435,19 @@ def test_model_broadcast_same_name_at_both_levels_raises():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         derived_categoricals={"wealth_group": wg_grid},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     with pytest.raises(Exception, match="Ambiguous"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=RegimeId,
             derived_categoricals={"wealth_group": wg_grid},
             initial_nodes={0: "alive"},
+            edges=_EDGES,
         )
 
 
@@ -478,21 +466,13 @@ def test_model_broadcast_conflicting_grids_raise():
         state_transitions={"wealth": lambda wealth: wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     with pytest.raises(Exception, match="Ambiguous"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=RegimeId,
@@ -500,6 +480,7 @@ def test_model_broadcast_conflicting_grids_raise():
                 "wealth_group": DiscreteGrid(category_class=_WealthGroup)
             },
             initial_nodes={0: "alive"},
+            edges=_EDGES,
         )
 
 
@@ -523,26 +504,19 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
 
     alive = UserRegime(
         functions={"utility": lambda: 0.0},
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
         derived_categoricals={"group_b": DiscreteGrid(category_class=_GroupB)},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         derived_categoricals={"shared": DiscreteGrid(category_class=_Shared)},
         initial_nodes={0: "alive"},
+        edges=_EDGES,
     )
     assert "group_a" in model.user_regimes["alive"].derived_categoricals
     assert "shared" in model.user_regimes["alive"].derived_categoricals

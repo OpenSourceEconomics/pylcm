@@ -23,7 +23,6 @@ and its keys are the regime's stakeholders in the order written:
 
 ```python
 couple = Regime(
-    regime_transitions=DeterministicTransition(func=to_couple_terminal),
     states={"wage": LinSpacedGrid(start=8.0, stop=40.0, n_points=2)},
     state_transitions={"wage": next_wage},
     actions={"work": DiscreteGrid(category_class=Work)},
@@ -35,7 +34,8 @@ couple = Regime(
 )
 ```
 
-No `objective` is declared, so the stakeholders carry equal weight.
+No `objective` is declared, so the stakeholders carry equal weight. The couple's only
+outgoing edge, `edges={"couple": {"couple_terminal": 0}}`, is its whole transition law.
 
 ```python
 from lcm_examples.collective_regimes import get_params, get_shared_decision_model
@@ -112,28 +112,44 @@ dissolution_flags[1]["married_with_participation"]
 The solve logs `Inf in V_arr for regime 'married_with_participation'` at that age, which
 is the sentinel doing its job rather than a defect.
 
-`married` reaches age 1 through a `ValueDependentTransition` keyed by
+`married` reaches age 1 through a gated transition whose `Gate` is keyed by
 `married_with_participation` — the branch where the gate is **open** and the couple
-keeps going — with the gate reading the target's dissolution flag. Each stakeholder's
-route names the role they take inside the surviving couple and the singleton value they
-fall back to when the gate shuts:
+keeps going — with the predicate reading the target's dissolution flag. Each
+stakeholder's route names the role they take inside the surviving couple and the
+singleton value they fall back to when the gate shuts. The law and the gate sit on
+`married`'s edges. The law reaches `married_with_participation` from age 0 only, and the
+`Transition` derives its destinations from it: that target and both fallback regimes, at
+age 0.
 
 ```python
-transition = {
-    "married_with_participation": ValueDependentTransition(
-        probability=StochasticTransition(func=probability_one),
-        gate=lambda D_target: ~D_target,
-        routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
-                fallback=ProjectedRegimeValue(
-                    regime="single_f",
-                    projection={"wage": identity_wage},
-                ),
-            ),
-            # ... and the mirror image for m into single_m
+edges = {
+    "married": Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_with_participation": StochasticTransition(
+                        func=probability_one
+                    )
+                }
+            }
+        ),
+        gates={
+            "married_with_participation": Gate(
+                predicate=lambda D_target: ~D_target,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wage": identity_wage},
+                        ),
+                    ),
+                    # ... and the mirror image for m into single_m
+                },
+            )
         },
-    )
+    ),
+    "married_with_participation": {"married_terminal": 1},
 }
 ```
 

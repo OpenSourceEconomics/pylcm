@@ -206,6 +206,7 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     materializes a program or resolves its candidates.
     """
     compile_tree = _function_tree(backward_induction._compile_all_functions)
+    prepare_tree = _function_tree(backward_induction._prepare_solve_programs)
     collect_tree = _function_tree(
         backward_induction._resolve_output_layouts_and_lowering_keys
     )
@@ -213,13 +214,15 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     replay_tree = _function_tree(period_replay._compile_cores_for_one_period)
 
     compile_calls = _direct_call_lines(compile_tree)
+    prepare_calls = _direct_call_lines(prepare_tree)
     collect_calls = _direct_call_lines(collect_tree)
     build_calls = _direct_call_lines(build_tree)
     replay_calls = _direct_call_lines(replay_tree)
     module_calls = _direct_call_lines(ast.parse(inspect.getsource(backward_induction)))
 
-    assert len(compile_calls["_select_period_programs"]) == 1
-    assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
+    assert len(compile_calls["_prepare_solve_programs"]) == 1
+    assert len(prepare_calls["_select_period_programs"]) == 1
+    assert len(prepare_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
     assert len(collect_calls["_build_structural_blueprint"]) == 1
     assert len(collect_calls["_bind_structural_blueprint"]) == 1
     assert "materialize_core_program" not in collect_calls
@@ -241,10 +244,10 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
         for node in ast.walk(compile_tree)
         if isinstance(node, ast.If) and _is_not_enable_jit(node.test)
     )
+    assert compile_calls["_prepare_solve_programs"][0] < eager_branch.lineno
     assert (
-        compile_calls["_select_period_programs"][0]
-        < compile_calls["_resolve_output_layouts_and_lowering_keys"][0]
-        < eager_branch.lineno
+        prepare_calls["_select_period_programs"][0]
+        < prepare_calls["_resolve_output_layouts_and_lowering_keys"][0]
     )
 
 

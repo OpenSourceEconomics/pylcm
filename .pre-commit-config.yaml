@@ -5,7 +5,7 @@ repos:
       - id: check-hooks-apply
       - id: check-useless-excludes
   - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.29.3
+    rev: v2.30.1
     hooks:
       - id: pyproject-fmt
   - repo: https://github.com/lyz-code/yamlfix
@@ -50,11 +50,11 @@ repos:
     hooks:
       - id: yamllint
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.38.0
+    rev: 0.38.2
     hooks:
       - id: check-github-workflows
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.6
+    rev: v0.16.10
     hooks:
       - id: ruff-check
         args:
@@ -69,14 +69,14 @@ repos:
           - pyi
           - python
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.79
+    rev: v0.0.85
     hooks:
       - id: ty
         # Run ty directly so import resolution uses `[tool.ty] environment.python`.
         # Keep this dependency pin aligned with the hook revision above.
         entry: ty check
         additional_dependencies:
-          - ty==0.0.79
+          - ty==0.0.85
   - repo: https://github.com/kynan/nbstripout
     rev: 0.9.1
     hooks:

@@ -1,32 +1,21 @@
 """What the engine reads when a regime is written in the declaration vocabulary.
 
-A regime's `functions`, `constraints` and `transition` are what the author
-wrote — declarations included. The three decomposed views are what the engine
-runs: one utility per stakeholder, the ordinary constraints alone, and a
-per-target probability cell for every target. The transformations are tested on
-raw mappings, because that is the input they exist to handle.
+A regime's `functions` and `constraints` are what the author wrote —
+declarations included. The two decomposed views are what the engine runs: one
+utility per stakeholder, and the ordinary constraints alone. The
+transformations are tested on raw mappings, because that is the input they
+exist to handle.
 """
 
-from collections.abc import Mapping
-from typing import cast
-
 import jax.numpy as jnp
-import pytest
 
 from lcm import (
     CollectiveUtility,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     ValueDependentConstraint,
-    ValueDependentTransition,
 )
-from lcm.regime import (
-    decompose_constraints,
-    decompose_functions,
-    decompose_transition,
-)
-from lcm.transition import StochasticTransition
+from lcm.regime import decompose_constraints, decompose_functions
 from lcm.typing import ContinuousState, FloatND
 
 
@@ -60,36 +49,9 @@ def _identity_wealth(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _prob_one() -> FloatND:
-    """A degenerate selection probability."""
-    return jnp.asarray(1.0)
-
-
-def _gate(V_target_f: FloatND) -> FloatND:
-    """A gate that is always open."""
-    return V_target_f > -jnp.inf
-
-
-_ROUTE_F = StakeholderRoute(
-    target_stakeholder="f",
-    fallback=ProjectedRegimeValue(
-        regime="single_f", projection={"wealth": _identity_wealth}
-    ),
-)
-
 _REFERENCE = ProjectedRegimeValue(
     regime="single_f", projection={"wealth": _identity_wealth}
 )
-
-
-def _cells(transition: object) -> Mapping[str, StochasticTransition]:
-    """The per-target cells a decomposed per-target transition holds."""
-    return cast("Mapping[str, StochasticTransition]", decompose_transition(transition))
-
-
-def _phases(transition: object) -> Phased:
-    """The two phases a decomposed `Phased` transition holds."""
-    return cast("Phased", decompose_transition(transition))
 
 
 def test_a_collective_utility_becomes_one_entry_per_stakeholder():
@@ -172,104 +134,3 @@ def test_decomposing_constraints_twice_changes_nothing():
     once = decompose_constraints(raw)
 
     assert dict(decompose_constraints(once)) == dict(once)
-
-
-def test_a_value_dependent_transition_leaves_its_selection_probability():
-    """The cell the canonical pipeline reads is the declared probability."""
-    probability = StochasticTransition(func=_prob_one)
-    raw = {
-        "couple": ValueDependentTransition(
-            probability=probability, gate=_gate, routes={"f": _ROUTE_F}
-        )
-    }
-
-    assert _cells(raw)["couple"] is probability
-
-
-def test_a_bare_probability_is_wrapped_into_the_cell_grammar():
-    """A per-target cell takes a `StochasticTransition`, so a callable is wrapped."""
-    raw = {
-        "couple": ValueDependentTransition(
-            probability=_prob_one, gate=_gate, routes={"f": _ROUTE_F}
-        )
-    }
-
-    assert _cells(raw)["couple"].func is _prob_one
-
-
-def test_an_ordinary_target_cell_passes_through_untouched():
-    """Only the value-dependent cells are rewritten."""
-    cell = StochasticTransition(func=_prob_one)
-
-    assert _cells({"couple": cell})["couple"] is cell
-
-
-def test_a_terminal_transition_stays_terminal():
-    """`None` is not a mapping and means the regime ends."""
-    assert decompose_transition(None) is None
-
-
-def test_a_coarse_transition_passes_through_untouched():
-    """A callable naming no target has no cell to rewrite."""
-    assert decompose_transition(_prob_one) is _prob_one
-
-
-def test_each_phase_of_a_phased_transition_is_decomposed_on_its_own():
-    """A value-dependent transition may be declared inside `Phased`."""
-    solve_probability = StochasticTransition(func=_prob_one)
-    simulate_probability = StochasticTransition(func=_prob_one)
-    raw = Phased(
-        solve={
-            "couple": ValueDependentTransition(
-                probability=solve_probability, gate=_gate, routes={"f": _ROUTE_F}
-            )
-        },
-        simulate={
-            "couple": ValueDependentTransition(
-                probability=simulate_probability, gate=_gate, routes={"f": _ROUTE_F}
-            )
-        },
-    )
-    decomposed = _phases(raw)
-
-    assert (decomposed.solve["couple"], decomposed.simulate["couple"]) == (
-        solve_probability,
-        simulate_probability,
-    )
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        {"couple": StochasticTransition(func=_prob_one)},
-        None,
-        _prob_one,
-    ],
-)
-def test_decomposing_a_transition_twice_changes_nothing(raw):
-    """The transformation is idempotent on every form the slot takes."""
-    once = decompose_transition(raw)
-
-    assert decompose_transition(once) == once
-
-
-def test_a_transition_with_nothing_to_decompose_is_the_very_same_object():
-    """Identity survives, so a phase-variation scan can still compare by `is`.
-
-    A regime declares one phase variance by writing one object into both
-    phases. A view that rebuilt the mapping on every read would make every
-    per-target transition look phase-varying, so the view returns its input
-    untouched when there is no declaration in it.
-    """
-    raw = {"couple": StochasticTransition(func=_prob_one)}
-
-    assert decompose_transition(raw) is raw
-
-
-def test_one_object_written_into_both_phases_still_reads_as_one():
-    """The two phases of an undecomposed `Phased` stay identical objects."""
-    shared = {"couple": StochasticTransition(func=_prob_one)}
-    raw = Phased(solve=shared, simulate=shared)
-    decomposed = _phases(raw)
-
-    assert decomposed.solve is decomposed.simulate

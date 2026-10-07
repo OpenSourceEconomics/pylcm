@@ -86,12 +86,13 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -124,13 +125,13 @@ _SOURCE_POINTS = (0.0, 10.0)
 #     coordinate 0.06 -> V = 1.12 < 2.0 -> gate CLOSED (misroute).
 _GATE_THRESHOLD = 2.0
 
-# The name the gate's own parameter carries in `flat_params["src"]`: an edge
-# callable's parameters are qualified by the edge's target regime and by the
-# callable within it (`<target>__<entry>__<param>`). The source's `x__points`
-# below is a runtime-grid helper of the source ITSELF, not an edge entry, so it
-# keeps its bare name — which is what leaves it collidable with the target's, the
-# collision this fixture is built on.
-_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+# The name the gate's own parameter carries in `flat_params["edges"]["src"]`:
+# its declaration path below `params["edges"]["src"]` (target, `predicate`,
+# parameter). The source's `x__points` below is a runtime-grid helper of the
+# source ITSELF, not an edge entry, so it keeps its bare name in
+# `flat_params["src"]` — which is what leaves it collidable with the target's,
+# the collision this fixture is built on.
+_GATE_THRESHOLD_QNAME = "target__predicate__gate_threshold"
 
 
 @categorical(ordered=True)
@@ -175,30 +176,12 @@ def _make_f2_regimes() -> dict[str, Regime]:
     """Source and target BOTH declare a continuous state named `x` on a
     runtime-points `IrregSpacedGrid`, with DIFFERENT points."""
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_threshold_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"x": IrregSpacedGrid(n_points=2)},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
-        regime_transitions=None,
         states={"x": IrregSpacedGrid(n_points=2)},
         functions={"utility": _u_target},
     )
@@ -206,24 +189,54 @@ def _make_f2_regimes() -> dict[str, Regime]:
     # SOURCE's params, so a runtime-points fallback grid would confound this
     # repro with a second (solve-side) namespace question.
     fallback = Regime(
-        regime_transitions=None,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         functions={"utility": _u_fallback},
     )
     return {"src": src, "target": target, "fallback": fallback}
 
 
+def _make_f2_laws() -> dict[str, object]:
+    """`src` routes into `target` through a gated edge falling back to `fallback`."""
+    return {
+        "src": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_threshold_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
+        ),
+        "target": None,
+        "fallback": None,
+    }
+
+
 def _solve_f2_fixture():
     regimes_dict = _make_f2_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_make_f2_laws(),
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
                 {
                     "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _GATE_THRESHOLD_QNAME: jnp.asarray(_GATE_THRESHOLD),
                     # The collision: the SOURCE's own `x` grid points, named
                     # exactly like the target's.
                     "x__points": jnp.asarray(_SOURCE_POINTS),
@@ -231,6 +244,13 @@ def _solve_f2_fixture():
             ),
             "target": MappingProxyType({"x__points": jnp.asarray(_TARGET_POINTS)}),
             "fallback": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {
+                    "src": MappingProxyType(
+                        {_GATE_THRESHOLD_QNAME: jnp.asarray(_GATE_THRESHOLD)}
+                    )
+                }
+            ),
         }
     )
     _bi_result = solve(
@@ -464,7 +484,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -501,34 +521,15 @@ def _stateless_gate(V_target: FloatND) -> BoolND:
 def _make_f3_regimes() -> dict[str, Regime]:
     """A 3-regime model whose gated target is STATELESS (terminal scrap value)."""
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "stateless_target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_stateless_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="stateless_fallback", projection={}
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     stateless_target = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_target},
     )
     stateless_fallback = Regime(
-        regime_transitions=None,
         functions={"utility": _u_stateless_fallback},
     )
     return {
@@ -538,10 +539,42 @@ def _make_f3_regimes() -> dict[str, Regime]:
     }
 
 
+def _make_f3_laws() -> dict[str, object]:
+    """`src` routes into the stateless target, falling back to a stateless regime."""
+    return {
+        "src": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "stateless_target": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "stateless_target": Gate(
+                    predicate=_stateless_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="stateless_fallback", projection={}
+                            )
+                        )
+                    },
+                )
+            },
+        ),
+        "stateless_target": None,
+        "stateless_fallback": None,
+    }
+
+
 def _solve_f3_fixture():
     regimes_dict = _make_f3_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=_make_f3_laws(),
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -603,7 +636,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
             "stateless_fallback": MappingProxyType({}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

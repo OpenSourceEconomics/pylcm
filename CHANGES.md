@@ -5,6 +5,58 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Gates are declared beside the transition law; derived `Transition.targets`
+
+- Breaking API: `ValueDependentTransition` is removed. A value-dependent destination is
+  declared as `Transition(law=..., gates={target: Gate(...)})`. The law supplies the
+  gated target's probability like any other per-target cell, and `Gate` carries the
+  rest: `predicate` (formerly `gate`), `routes`, `references` (formerly
+  `gate_references`) and `off_grid`. A law cell
+  `tgt: ValueDependentTransition(probability=p, gate=g, routes=r, gate_references=refs)`
+  becomes the law cell `tgt: p` plus `gates={tgt: Gate(predicate=g, routes=r,
+  references=refs)}`.
+- One `Gate` per target holds at every age the target is reached and in both phases; a
+  gate is never wrapped in `ByAge` or `Phased`, and only a route's `fallback` may be
+  `Phased`. With `Phased` edges, a target reached in both phases carries the equal
+  `Gate` in both or none. A gate on a target its `Transition` never reaches is refused.
+- Breaking API: the parameter paths of a gated target follow the declaration.
+  `params["edges"][source][target]["probability"][arg]` becomes
+  `params["edges"][source][target][arg]`, `["gate"][arg]` becomes
+  `["predicate"][arg]`, and `["gate_references"][reference][state][arg]` becomes
+  `["references"][reference][state][arg]`; route fallback paths are unchanged.
+- `Transition.targets` is optional when the law names its targets — a per-target
+  mapping, a regime name, or a `ByAge` / `Phased` of those. The destinations are
+  derived from the law: each key at the non-final source ages its case covers, and each
+  gate's route fallback regimes at the ages of the gated target. Supplied anyway,
+  `targets` must equal the derived mapping exactly, or `Model(...)` raises a
+  `ModelInitializationError` listing both. A law over all targets — a function, a
+  `DeterministicTransition` or a full-vector `StochasticTransition` — still requires
+  `targets`. See
+  [the migration guide](docs/user_guide/migrating_dated_regimes.md#migrating-gates).
+- Breaking API: `lcm.collective` does not re-export `StochasticTransition`; import it
+  from `lcm`.
+
+### Public production period capture
+
+- `Model.solve(period_capture=PeriodCapture(...))` atomically records selected
+  ordinary GridSearch entry inputs and appends completed references. A fresh
+  `Model.replay_period` binds model/grid/parameter/source identities and validates
+  recorded layout, widths, optimized HLO and admission before dispatch. Entry-only
+  captures remain inspectable and cannot claim reference parity. See
+  [period capture](docs/reference/runtime_and_results.md#api-period-capture).
+
+### Opt-in action-partitioned GridSearch
+
+- `ExecutionConfig(action_partitions={"<regime>": n})` shares a `GridSearch` regime's
+  action product over `n` devices. Each device reduces its own contiguous run of action
+  blocks with the exact hard maximum, and the devices exchange and merge one compact
+  accumulator per state cell instead of any value over actions. Ties, infinities, NaNs
+  and signed zeros keep the ordinary route's conventions; at the same action width the
+  tested workloads publish values bitwise equal to the ordinary route, alone, with a
+  sharded continuous state and with type-local blocks. The default `{}` and a count of
+  one leave the solve unchanged. Unsupported requests are refused at model
+  construction. See [Share a large action product over
+  devices](docs/user_guide/tuning.md).
 ### A shock read only through its next-period draw stays in the regime
 
 - A law may read the draw `next_<process>` of a process state, for instance costs
@@ -45,6 +97,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   publish values, policies and simulated panels bitwise equal to the unblocked solve's;
   the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
   [Solve one invariant code at a time](docs/user_guide/tuning.md).
+- When the simulate phase also keeps the state fixed, `simulate` groups subjects by their
+  starting code and reads each typed value through one code's block. Every subject keeps
+  its original random draws and output row, so the panel is unchanged; otherwise
+  simulation stays ungrouped.
+- `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)` solves
+  each code through all of its periods before the next code, simulates its subjects
+  while its values are still on the device, then copies them to the host and deletes the
+  device buffers, so the device holds one code's values at a time. Every code runs the
+  programs the first compiled. The result is complete: each value is assembled from the
+  retained codes when read, on the layout the period-major schedule publishes, saves
+  from the host, and simulates one code at a time; `values.materialize()` is refused
+  when every value cannot fit the device budget. Values and panels equal the default
+  period-major schedule's byte for byte. Unsupported requests (no blocked state, a
+  regime without it, budgeted or ungrouped simulation, `log_path`) are refused. See
+  [Solve, simulate and release one code at a time](docs/user_guide/tuning.md).
 
 ### Phase-specific model graphs and transition declarations
 
@@ -61,6 +128,41 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   source to destinations and their source-age selectors, optionally through `Phased`.
   `model.graph` provides immutable declared edges, effective reachability and
   fixed-zero pruning reasons.
+- `Model(edges=...)` is the only place regime transitions are declared, structure
+  and law alike. Breaking API: `Regime` has no `regime_transitions` field.
+  - A source with exactly one outgoing edge at every source age can be declared as
+    a plain `{target: source_ages}` mapping, with no law: the graph is the law.
+    Deterministic schedules such as `"dead"` or
+    `ByAge.until(law="working", then="retired")` are expressed by the edges alone.
+  - A source with a law is declared as
+    `Transition(targets={target: source_ages, ...}, law=...)`; one where some
+    source age has several outgoing edges needs one. The law is any form
+    `regime_transitions` took: a per-target probability mapping, a selector
+    function returning a regime code (a discrete choice), a full-vector
+    `StochasticTransition`, a regime name, `ByAge` or `Phased`.
+  - A supplied `Transition` law is evaluated at every source age with outgoing
+    edges, also where one edge leaves the source; there it must put unit mass on
+    that edge. Only an age a `ByAge` law leaves unselected uses its one edge
+    instead; a `ByAge` law must select every age with several edges.
+  - A regime with no outgoing edges is terminal.
+  - A law that differs between the phases is phased inside one `Transition`:
+    `Transition(targets=..., law=Phased(solve=..., simulate=...))`. Destinations that
+    differ between the phases go in `Model(edges=Phased(solve={...}, simulate={...}))`,
+    each phase's mapping with its own `Transition`.
+  - `DeterministicTransition` and `StochasticTransition` have no `targets` field.
+  - `Regime` carries no law, so `Regime.terminal`, `Regime.gated_edges` and
+    `Regime.decomposed_transition` are gone. `model.graph.laws[name]` holds each
+    regime's law as the model binds it, with `terminal` (no outgoing edges),
+    `gated_edges` and `decomposed_transition`.
+  - Parameters of edge-declared callables (the regime-transition law, gates, gate
+    references, route fallbacks) live at their declaration path under
+    `params["edges"][source]`, and resolve from that path,
+    `params["edges"][source][arg]` or the model level. A regime-level value never
+    reaches them; `next_regime` and `gate` keys under a regime raise an error naming the
+    new path. Per-target state laws keep their paths under the source regime. See
+    [the migration guide](docs/user_guide/migrating_dated_regimes.md#migrating-edge-parameters).
+  - Names that become parameter-path segments contain no `__` and do not start or end
+    with `_`; `edges` is reserved as a regime, function and argument name.
 - Probability mass validation is shared by the solver consumers. Compiled validation
   now reliably rejects negative subnormal probabilities at both precisions.
 
@@ -77,7 +179,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Solved problems are derived from the roots — physical successors plus declared value
   reads — rather than from transition schedules. `ByAge` selects laws only;
   `ByAge(cases=..., default=law)` fills every unmatched age, including the last.
-- Terminality is exactly `regime_transitions is None`.
+- A regime is terminal exactly when it has no outgoing edges in `Model(edges=...)`.
+- `Model.declared_transitions[phase][source]` is the `Transition` a source declared,
+  exactly as declared, with `phase` one of `lcm.typing.Phase` (`"solve"`,
+  `"simulate"`). Its `law` is typed `lcm.transition.TransitionLaw`, its `gates` map each
+  gated target to its `Gate`, and its `targets` are the declared or derived
+  destinations; `model.graph.laws` holds the law as bound to the graph.
 - `ByAge`, `ByAge.until`, `AgeRange`, `DeterministicTransition` and `StochasticTransition` take keyword
   arguments only. `ByAge.until(*, stop_age_exclusive, law, then, start_age_inclusive)`
   uses `then` at the last source age below `stop_age_exclusive`. See
@@ -260,8 +367,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Gated edges simulate across subject devices
 
-- A model whose regime declares a gated edge — a `ValueDependentTransition` carrying a
-  `gate`, such as the dissolution edge of a collective regime — may be simulated with
+- A model whose regime declares a gated edge — a `Gate` on its transition, such as the
+  dissolution edge of a collective regime — may be simulated with
   `ExecutionConfig(simulation_sharding="subjects")` on more than one device. The gate
   fold reads and writes regime-level grids and declares no subject axis, so it is
   replicated and the continuations it publishes stay shared operands; the gate route

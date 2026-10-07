@@ -28,11 +28,6 @@ import os
 import subprocess
 from pathlib import Path
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
-from tests.test_models.graph import with_fixture_graph
-
 os.environ.setdefault("JAX_ENABLE_X64", "1")
 
 import jax
@@ -41,9 +36,12 @@ import jax.numpy as jnp
 import lcm
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -53,7 +51,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.schedules import until_exit
 
 N_X = 12
 N_Z = 12
@@ -145,13 +142,6 @@ def build_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            final_age_alive + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={
             "liquid_floor": liquid_floor,
             "illiquid_floor": illiquid_floor,
@@ -160,15 +150,23 @@ def build_model() -> Model:
         functions={"utility": utility, "liquid_savings": liquid_savings},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=final_age_alive),
+                    "dead": AgeRange(exclusive_stop=final_age_alive + 5),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 

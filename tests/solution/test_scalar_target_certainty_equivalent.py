@@ -18,16 +18,16 @@ import numpy as np
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
+    Model,
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _LOW_PAYOFF = 1.0
 _HIGH_PAYOFF = 9.0
@@ -49,15 +49,11 @@ def _no_flow_payoff(wealth):
 
 def _solve_with_geometric_certainty_equivalent():
     """Solve a model whose only continuation is an even stateless lottery."""
+    alive_law = {
+        "low": StochasticTransition(func=lambda: jnp.array(0.5)),
+        "high": StochasticTransition(func=lambda: jnp.array(0.5)),
+    }
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "low": StochasticTransition(func=lambda: jnp.array(0.5)),
-                "high": StochasticTransition(func=lambda: jnp.array(0.5)),
-            },
-            exits=("low", "high"),
-        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         # No flow payoff and no discounting, so the regime's value *is* the
         # certainty equivalent of the continuation lottery. Utility reads
@@ -66,14 +62,11 @@ def _solve_with_geometric_certainty_equivalent():
         state_transitions={"wealth": fixed_transition("wealth")},
         certainty_equivalent=PowerMean(),
     )
-    low = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(_LOW_PAYOFF)}
-    )
-    high = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)}
-    )
-    model = with_fixture_graph(
+    low = Regime(functions={"utility": lambda: jnp.array(_LOW_PAYOFF)})
+    high = Regime(functions={"utility": lambda: jnp.array(_HIGH_PAYOFF)})
+    model = Model(
         regimes={"alive": alive, "low": low, "high": high},
+        edges={"alive": Transition(targets={"low": 20, "high": 20}, law=alive_law)},
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -82,7 +75,6 @@ def _solve_with_geometric_certainty_equivalent():
         "alive": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "next_regime": {"low": {}, "high": {}},
             "certainty_equivalent": {"risk_aversion": 1.0},
         },
         "low": {"utility": {}},

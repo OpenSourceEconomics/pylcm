@@ -46,8 +46,6 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -58,7 +56,6 @@ from lcm import (
 )
 from lcm.execution import ExecutionConfig
 from lcm.typing import FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -165,10 +162,6 @@ _RETIRED_UTILITY = {
 }
 
 
-def _retire() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _enter_b(*, wealth: FloatND) -> FloatND:
     """Probabilities over `_B`, richer entrants arriving in higher categories."""
     high = jnp.clip(wealth / 100.0, 0.0, 1.0)
@@ -206,20 +199,12 @@ def build_model(
 
     """
     working = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "retired": StochasticTransition(func=_retire)
-                }
-            }
-        ),
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _WORKING_UTILITY[tuple(working_reads)]},
         state_transitions={"wealth": _next_wealth},
     )
     retired = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _RETIRED_UTILITY[tuple(retired_reads)]},
     )
@@ -237,7 +222,7 @@ def build_model(
         if states_lead_with_b
         else {"a": grids["a"], "b": grids["b"]}
     )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         states=states,
         state_transitions={
@@ -247,6 +232,7 @@ def build_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
         execution_config=ExecutionConfig(
             devices=devices, sharded_states=sharded, **config
         ),
@@ -559,6 +545,7 @@ def _endpoint_bytes(*, inventory: Any, device: int, scratch_bytes: int) -> int:
     restricted = dataclasses.replace(
         inventory,
         device_ids=(device,) if device in inventory.device_ids else (),
+        fixed_bytes={device: inventory.fixed_bytes.get(device, 0)},
         transfer_scratch_bytes={device: scratch_bytes},
     )
     return restricted.resident_bytes(consumes=(), consumed_copies=frozenset())

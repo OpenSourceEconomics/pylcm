@@ -12,12 +12,12 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -104,20 +104,7 @@ def borrowing_constraint(
     return consumption <= wealth + labor_income
 
 
-_DEFAULT_RETIREMENT_AGE = 24
-
-
-def working_life_transitions(*, retirement_age: int) -> ByAge:
-    """Work until the age before `retirement_age`, then retire."""
-    return ByAge.until(
-        stop_age_exclusive=retirement_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
-
 working_life = Regime(
-    regime_transitions=working_life_transitions(retirement_age=_DEFAULT_RETIREMENT_AGE),
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -149,7 +136,6 @@ working_life = Regime(
 
 
 retirement = Regime(
-    regime_transitions=None,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -168,26 +154,25 @@ def get_model(retirement_age: int = 24) -> Model:
         A configured Model instance.
 
     """
-    wl = working_life.replace(
-        regime_transitions=working_life_transitions(retirement_age=retirement_age),
-    )
-
+    working_targets = {
+        "retirement": tuple(range(18, retirement_age)),
+        **(
+            {"working_life": tuple(range(18, retirement_age - 1))}
+            if tuple(range(18, retirement_age - 1))
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "retirement": tuple(range(18, retirement_age)),
-                **(
-                    {"working_life": tuple(range(18, retirement_age - 1))}
-                    if tuple(range(18, retirement_age - 1))
-                    else {}
-                ),
-            },
+            "working_life": Transition(
+                targets=working_targets, law=DeterministicTransition(func=next_regime)
+            )
         },
         regimes={
-            "working_life": wl,
+            "working_life": working_life,
             "retirement": retirement,
         },
-        ages=AgeGrid(start=18, inclusive_stop=retirement_age, step="Y"),
+        ages=_ages(retirement_age),
         regime_id_class=RegimeId,
         initial_nodes={18: "working_life"},
     )
@@ -203,13 +188,17 @@ def get_params(retirement_age: int = 24) -> dict:
         Parameter dict ready for model.solve().
 
     """
-    model = get_model(retirement_age=retirement_age)
     return {
         "discount_factor": 0.95,
         "working_life": {
             "utility": {"disutility_of_work": 0.05},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"n_periods": model.n_periods},
         },
         "retirement": {},
+        "edges": {"working_life": {"n_periods": _ages(retirement_age).n_periods}},
     }
+
+
+def _ages(retirement_age: int) -> AgeGrid:
+    """Return the yearly age grid from 18 to the retirement age."""
+    return AgeGrid(start=18, inclusive_stop=retirement_age, step="Y")

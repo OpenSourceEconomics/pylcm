@@ -26,7 +26,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.reachability import EdgeStatus, PhaseReachability
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
@@ -61,6 +61,8 @@ class MockSolutionPhase:
     """
     sharded_state_names: frozenset[StateOrActionName] = frozenset()
     """These dense fixture state axes have no declared device sharding."""
+    action_partitions: int = 1
+    """No regime's actions are shared over devices."""
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     artifact_authorities: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
@@ -113,10 +115,6 @@ def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
         candidate_targets_by_source=MappingProxyType({"default": ("default",)}),
         targets_by_period=tuple(
             MappingProxyType({"default": ("default",)})
-            for _period in range(n_periods - 1)
-        ),
-        edge_status_by_period=tuple(
-            MappingProxyType({("default", "default"): EdgeStatus.CONDITIONAL})
             for _period in range(n_periods - 1)
         ),
     )

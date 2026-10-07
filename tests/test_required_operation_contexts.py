@@ -1,8 +1,9 @@
 """Required operations decide parameters and the domain of probability checks.
 
 - A regime that is only valued (S) and never visited (H) owes the parameters of
-  its backward problem, not those of its realized routing; promoting it to a
-  physical visit adds them.
+  its backward problem; promoting it to a physical visit adds the parameters of
+  its simulate-side slots. The parameters of its declared regime law sit at
+  `params["edges"][source]` whether or not it is visited.
 - The regime-selection check evaluates each required law on the rows its
   operation evaluates: the period's own grid, the true carried-state axes of a
   realized law, and only the economically feasible action rows.
@@ -15,9 +16,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
@@ -25,11 +23,13 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     CollectiveUtility,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -43,7 +43,6 @@ from lcm.typing import (
     ScalarInt,
     UserFunction,
 )
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -67,25 +66,30 @@ def _realized_choice(*, realized_rate: float) -> IntND:
     return jnp.where(realized_rate >= 0.5, _DemandId.end, _DemandId.other_end)
 
 
-def _wealth_regime(*, law: Any, utility: Any = _wealth_utility) -> Regime:
+def _wealth_regime(*, terminal: bool = False, utility: Any = _wealth_utility) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": utility},
     )
 
 
-def _perceived_law(*, choice: Any = _realized_choice) -> ByAge:
-    return ByAge(
-        cases={
-            1: Phased(
-                solve="end",
-                simulate=_SupportedDeterministicTransition(
-                    func=choice, targets=("end", "other_end")
-                ),
-            )
-        }
+def _demand_edges(*, choice: Any = _realized_choice) -> Phased:
+    """`perceived` solves into `end` and simulates by `choice` into either end."""
+    return Phased(
+        solve={
+            "source": {"perceived": 0},
+            "perceived": {"end": 1},
+            "realized": {"end": 1},
+        },
+        simulate={
+            "source": {"realized": 0},
+            "perceived": Transition(
+                targets={"end": 1, "other_end": 1},
+                law=DeterministicTransition(func=choice),
+            ),
+            "realized": {"end": 1},
+        },
     )
 
 
@@ -95,33 +99,33 @@ def _demand_model(
     redundant_root: bool = False,
     enable_jit: bool = True,
     perceived: Regime | None = None,
+    choice: Any = _realized_choice,
 ) -> Model:
     """Source perceives `perceived` at age 1 but physically enters `realized`.
 
-    Only `perceived`'s realized route reads `realized_rate`; its backward
-    utility reads `backward_bonus`.
+    Only `perceived`'s realized route, `choice`, reads `realized_rate`; its
+    backward utility reads `backward_bonus`.
     """
     if perceived is None:
-        perceived = _wealth_regime(law=_perceived_law(), utility=_backward_utility)
+        perceived = _wealth_regime(utility=_backward_utility)
     roots: dict[object, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
     if redundant_root:
         roots[2] = "end"
-    return with_fixture_graph(
+    return Model(
+        edges=_demand_edges(choice=choice),
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_DemandId,
         initial_nodes=roots,
         regimes={
-            "source": _wealth_regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
-            ),
+            "source": _wealth_regime(),
             "perceived": perceived,
-            "realized": _wealth_regime(law=ByAge(cases={1: "end"})),
-            "end": _wealth_regime(law=None),
-            "other_end": _wealth_regime(law=None),
+            "realized": _wealth_regime(),
+            "end": _wealth_regime(terminal=True),
+            "other_end": _wealth_regime(terminal=True),
         },
     )
 
@@ -133,6 +137,15 @@ def _leaf_names(*, tree: Any) -> set[str]:
         name
         for key, value in tree.items()
         for name in (_leaf_names(tree=value) if isinstance(value, Mapping) else {key})
+    }
+
+
+def _branches(*, model: Model) -> dict[str, set[str]]:
+    """The leaf names of `perceived`'s own branch and of its edge branch."""
+    template = model.get_params_template()
+    return {
+        "perceived": _leaf_names(tree=template["perceived"]),
+        "edges": _leaf_names(tree=template.get("edges", {}).get("perceived", {})),
     }
 
 
@@ -186,27 +199,32 @@ def test_value_only_regime_has_no_realized_route_parameter(
 
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("redundant_root", [False, True])
-def test_promoting_a_value_only_regime_adds_its_realized_route_parameter(
-    *, redundant_root: bool, enable_jit: bool
+@pytest.mark.parametrize("promote", [False, True])
+def test_realized_route_parameter_sits_on_the_edge_whether_or_not_visited(
+    *, promote: bool, redundant_root: bool, enable_jit: bool
 ) -> None:
-    """The same declared law owes `realized_rate` once its regime is visited."""
+    """The declared law's `realized_rate` is an edge parameter of `perceived`."""
     model = _demand_model(
-        promote=True, redundant_root=redundant_root, enable_jit=enable_jit
+        promote=promote, redundant_root=redundant_root, enable_jit=enable_jit
     )
-    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
-        "discount_factor",
-        "backward_bonus",
-        "realized_rate",
+    assert _branches(model=model) == {
+        "perceived": {"discount_factor", "backward_bonus"},
+        "edges": {"realized_rate"},
     }
 
 
-def test_value_only_regime_solves_without_its_realized_route_parameter() -> None:
+def test_value_only_regime_value_ignores_its_realized_route() -> None:
     """`V_perceived(w) = 1 + 1.5 w`, so `V_source(w) = 0.5 + 1.75 w` on w in {0, 1}."""
     model = _demand_model(promote=False)
-    values = model.solve(
-        params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
-    ).values
+    values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
     np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+
+
+_VALUE_ONLY_PARAMS = {
+    "discount_factor": 0.5,
+    "backward_bonus": 1.0,
+    "realized_rate": 1.0,
+}
 
 
 def _simulate_utility(*, wealth: ContinuousState, simulate_bonus: float) -> FloatND:
@@ -254,9 +272,6 @@ def _perceived_with_simulate_slot(*, slot: str, calls: list[float]) -> Regime:
     }[slot]
     carried = slot == "carried"
     return Regime(
-        regime_transitions=_perceived_law(
-            choice=_shared_choice if carried else _realized_choice
-        ),
         states={"wealth": wealth}
         | ({"share": Phased(solve=_half, simulate=wealth)} if carried else {}),
         state_transitions={"wealth": fixed_transition("wealth")}
@@ -265,6 +280,11 @@ def _perceived_with_simulate_slot(*, slot: str, calls: list[float]) -> Regime:
             "utility": Phased(solve=_backward_utility, simulate=simulate_utility)
         },
     )
+
+
+def _slot_choice(slot: str) -> Any:
+    """The realized route of `_perceived_with_simulate_slot(slot=slot, ...)`."""
+    return _shared_choice if slot == "carried" else _realized_choice
 
 
 _SIMULATE_SLOT_PARAMETER = {
@@ -278,7 +298,9 @@ _SIMULATE_SLOT_PARAMETER = {
 def test_value_only_regime_owes_no_simulate_side_parameter(*, slot: str) -> None:
     """A never visited regime's simulate-side slots contribute no parameter."""
     model = _demand_model(
-        promote=False, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+        promote=False,
+        perceived=_perceived_with_simulate_slot(slot=slot, calls=[]),
+        choice=_slot_choice(slot),
     )
     assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
         "discount_factor",
@@ -290,12 +312,13 @@ def test_value_only_regime_owes_no_simulate_side_parameter(*, slot: str) -> None
 def test_promoted_regime_owes_its_simulate_side_parameter(*, slot: str) -> None:
     """Once visited, the same regime owes its simulate-side slot's parameter."""
     model = _demand_model(
-        promote=True, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+        promote=True,
+        perceived=_perceived_with_simulate_slot(slot=slot, calls=[]),
+        choice=_slot_choice(slot),
     )
     assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
         "discount_factor",
         "backward_bonus",
-        "realized_rate",
         _SIMULATE_SLOT_PARAMETER[slot],
     }
 
@@ -304,11 +327,11 @@ def test_promoted_regime_owes_its_simulate_side_parameter(*, slot: str) -> None:
 def test_value_only_regime_with_simulate_slots_keeps_its_value(*, slot: str) -> None:
     """The backward value is the plain one: `V_source(w) = 0.5 + 1.75 w`."""
     model = _demand_model(
-        promote=False, perceived=_perceived_with_simulate_slot(slot=slot, calls=[])
+        promote=False,
+        perceived=_perceived_with_simulate_slot(slot=slot, calls=[]),
+        choice=_slot_choice(slot),
     )
-    values = model.solve(
-        params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off"
-    ).values
+    values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
     np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
 
 
@@ -337,17 +360,6 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
     the age-2 one `late_rate`.
     """
     perceived = Regime(
-        regime_transitions=ByAge(
-            cases={
-                age: Phased(
-                    solve="end",
-                    simulate=_SupportedDeterministicTransition(
-                        func=choice, targets=("end", "other_end")
-                    ),
-                )
-                for age, choice in ((1, _realized_choice), (2, _late_choice))
-            }
-        ),
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={
@@ -359,30 +371,50 @@ def _mixed_age_model(*, calls: list[float]) -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
+        edges=Phased(
+            solve={
+                "source": {"perceived": 0},
+                "perceived": {"end": (1, 2)},
+                "realized": {"perceived": 1},
+            },
+            simulate={
+                "source": {"realized": 0},
+                "perceived": Transition(
+                    targets={"end": (1, 2), "other_end": (1, 2)},
+                    law=ByAge(
+                        cases={
+                            1: DeterministicTransition(func=_realized_choice),
+                            2: DeterministicTransition(func=_late_choice),
+                        }
+                    ),
+                ),
+                "realized": {"perceived": 1},
+            },
+        ),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_DemandId,
         initial_nodes={0: "source"},
         regimes={
-            "source": _wealth_regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")})
-            ),
+            "source": _wealth_regime(),
             "perceived": perceived,
-            "realized": _wealth_regime(law=ByAge(cases={1: "perceived"})),
-            "end": _wealth_regime(law=None),
-            "other_end": _wealth_regime(law=None),
+            "realized": _wealth_regime(),
+            "end": _wealth_regime(terminal=True),
+            "other_end": _wealth_regime(terminal=True),
         },
     )
 
 
-def test_mixed_age_regime_owes_the_realized_route_of_its_visited_age_only() -> None:
-    """Visited at age 2 only, `perceived` owes `late_rate`, not `realized_rate`."""
+def test_mixed_age_regime_declares_both_age_routes_on_its_edge() -> None:
+    """Visited at age 2 only, `perceived` owes its simulate slot's parameter.
+
+    Both ages' realized routes are declared in its law, so both rates are edge
+    parameters.
+    """
     model = _mixed_age_model(calls=[])
-    assert _leaf_names(tree=model.get_params_template()["perceived"]) == {
-        "discount_factor",
-        "backward_bonus",
-        "simulate_bonus",
-        "late_rate",
+    assert _branches(model=model) == {
+        "perceived": {"discount_factor", "backward_bonus", "simulate_bonus"},
+        "edges": {"realized_rate", "late_rate"},
     }
 
 
@@ -393,11 +425,10 @@ def test_mixed_age_simulate_factory_runs_at_the_visited_age_only() -> None:
     assert set(calls) == {2.0}
 
 
-def _collective_regime(*, law: Any, utility: Any) -> Regime:
+def _collective_regime(*, utility: Any, terminal: bool = False) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={
             "utility": CollectiveUtility(utilities={"f": utility, "m": utility})
         },
@@ -413,24 +444,19 @@ def _collective_demand_model(*, promote: bool) -> Model:
     roots: dict[object, str] = {0: "source"}
     if promote:
         roots[1] = "perceived"
-    return with_fixture_graph(
+    return Model(
+        edges=_demand_edges(),
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_DemandId,
         initial_nodes=roots,
         regimes={
-            "source": _collective_regime(
-                law=ByAge(cases={0: Phased(solve="perceived", simulate="realized")}),
-                utility=_wealth_utility,
-            ),
+            "source": _collective_regime(utility=_wealth_utility),
             "perceived": _collective_regime(
-                law=_perceived_law(),
                 utility=Phased(solve=_backward_utility, simulate=_simulate_utility),
             ),
-            "realized": _collective_regime(
-                law=ByAge(cases={1: "end"}), utility=_wealth_utility
-            ),
-            "end": _collective_regime(law=None, utility=_wealth_utility),
-            "other_end": _collective_regime(law=None, utility=_wealth_utility),
+            "realized": _collective_regime(utility=_wealth_utility),
+            "end": _collective_regime(utility=_wealth_utility, terminal=True),
+            "other_end": _collective_regime(utility=_wealth_utility, terminal=True),
         },
     )
 
@@ -439,10 +465,7 @@ def _collective_demand_model(*, promote: bool) -> Model:
     ("promote", "expected"),
     [
         (False, {"discount_factor", "backward_bonus"}),
-        (
-            True,
-            {"discount_factor", "backward_bonus", "realized_rate", "simulate_bonus"},
-        ),
+        (True, {"discount_factor", "backward_bonus", "simulate_bonus"}),
     ],
 )
 def test_collective_regime_owes_stakeholder_simulate_parameters_only_when_visited(
@@ -457,7 +480,7 @@ def test_value_only_collective_regime_keeps_each_stakeholders_value() -> None:
     """Each stakeholder's source value is the plain `0.5 + 1.75 w`."""
     values = (
         _collective_demand_model(promote=False)
-        .solve(params={"discount_factor": 0.5, "backward_bonus": 1.0}, log_level="off")
+        .solve(params=_VALUE_ONLY_PARAMS, log_level="off")
         .values
     )
     np.testing.assert_array_equal(
@@ -523,15 +546,11 @@ def _age_grid_model(
         else (_left_from_wealth, _right_from_wealth)
     )
     roots: dict[object, str] = {(0, 1): "working"} if earlier_root else {1: "working"}
-    return with_fixture_graph(
-        enable_jit=enable_jit,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_ProbabilityId,
-        initial_nodes=roots,
-        regimes={
-            "working": Regime(
-                regime_transitions=ByAge(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"left": (0, 1), "right": 1},
+                law=ByAge(
                     cases={
                         0: "left",
                         1: {
@@ -540,6 +559,15 @@ def _age_grid_model(
                         },
                     }
                 ),
+            )
+        },
+        enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=_ProbabilityId,
+        initial_nodes=roots,
+        regimes={
+            "working": Regime(
                 states={
                     "wealth": AgeSpecializedGrid(
                         build=_moving_grid, signature=_age_signature
@@ -548,8 +576,8 @@ def _age_grid_model(
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _zero_flow},
             ),
-            "left": Regime(regime_transitions=None, functions={"utility": _ten}),
-            "right": Regime(regime_transitions=None, functions={"utility": _zero}),
+            "left": Regime(functions={"utility": _ten}),
+            "right": Regime(functions={"utility": _zero}),
         },
     )
 
@@ -598,15 +626,11 @@ def _stray_carried_right(*, carried_share: ContinuousState) -> FloatND:
 
 def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
     """The solve law is (1/2, 1/2); the realized law reads the carried share."""
-    return with_fixture_graph(
-        enable_jit=enable_jit,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_ProbabilityId,
-        initial_nodes={0: "working"},
-        regimes={
-            "working": Regime(
-                regime_transitions=Phased(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"left": 0, "right": 0},
+                law=Phased(
                     solve={
                         "left": StochasticTransition(func=_half),
                         "right": StochasticTransition(func=_half),
@@ -620,6 +644,15 @@ def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
                         ),
                     },
                 ),
+            )
+        },
+        enable_jit=enable_jit,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_ProbabilityId,
+        initial_nodes={0: "working"},
+        regimes={
+            "working": Regime(
                 states={
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "carried_share": Phased(
@@ -633,8 +666,8 @@ def _carried_model(*, enable_jit: bool = True, stray: bool = False) -> Model:
                 },
                 functions={"utility": _zero_flow},
             ),
-            "left": Regime(regime_transitions=None, functions={"utility": _ten}),
-            "right": Regime(regime_transitions=None, functions={"utility": _zero}),
+            "left": Regime(functions={"utility": _ten}),
+            "right": Regime(functions={"utility": _zero}),
         },
     )
 
@@ -724,7 +757,16 @@ def _feasibility_model(
     left = _bad_on_feasible_left if bad_feasible else _feasible_left
     right = _bad_on_feasible_right if bad_feasible else _feasible_right
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"left": 0, "right": 0},
+                law={
+                    "left": StochasticTransition(func=left),
+                    "right": StochasticTransition(func=right),
+                },
+            )
+        },
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -732,18 +774,14 @@ def _feasibility_model(
         initial_nodes={0: "working"},
         regimes={
             "working": Regime(
-                regime_transitions={
-                    "left": StochasticTransition(func=left),
-                    "right": StochasticTransition(func=right),
-                },
                 states={"wealth": grid},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 actions={"consumption": grid},
                 constraints={"feasible_consumption": _feasible},
                 functions={"utility": _consumption_utility},
             ),
-            "left": Regime(regime_transitions=None, functions={"utility": _ten}),
-            "right": Regime(regime_transitions=None, functions={"utility": _zero}),
+            "left": Regime(functions={"utility": _ten}),
+            "right": Regime(functions={"utility": _zero}),
         },
     )
 
@@ -826,6 +864,7 @@ def test_mixed_age_regime_simulates_its_visited_age() -> None:
         "discount_factor": 0.5,
         "backward_bonus": 1.0,
         "simulate_bonus": 0.0,
+        "realized_rate": 1.0,
         "late_rate": 1.0,
     }
     panel = model.simulate(

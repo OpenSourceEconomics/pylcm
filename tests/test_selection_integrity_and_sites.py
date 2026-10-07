@@ -18,16 +18,14 @@ import numpy as np
 import pytest
 
 import _lcm.model_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-    _SupportedStochasticTransition,
-)
 from _lcm.simulation.random import site_simulation_key
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
+    DeterministicTransition,
+    Gate,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -35,7 +33,7 @@ from lcm import (
     Regime,
     StakeholderRoute,
     StochasticTransition,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -55,7 +53,6 @@ from tests.regime_building.test_same_period_ref_period_axes import (
 )
 from tests.test_admission_and_random_sites import _model as _admission_model
 from tests.test_demand_worklists import _phased_model
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -74,9 +71,8 @@ def _utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _nonterminal(transition: Any) -> Regime:
+def _nonterminal() -> Regime:
     return Regime(
-        regime_transitions=transition,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
@@ -85,7 +81,6 @@ def _nonterminal(transition: Any) -> Regime:
 
 def _terminal() -> Regime:
     return Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
     )
@@ -109,20 +104,30 @@ _EARLY = {
 }
 
 
-def _life_model(*, law_at_55: Any, initial_nodes: Any, early: Any = None) -> Model:
-    return with_fixture_graph(
-        regimes={
-            "working": _nonterminal(
-                ByAge(
+def _life_model(
+    *,
+    law_at_55: Any,
+    initial_nodes: Any,
+    early: Any = None,
+    retires_at_55: bool = True,
+) -> Model:
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"working": (25, 35, 45), "dead": (25, 35, 45, 55)}
+                | ({"retirement": 55} if retires_at_55 else {}),
+                law=ByAge(
                     cases={
                         AgeRange(start=25, exclusive_stop=55): early or _EARLY,
                         55: law_at_55,
                     }
-                )
+                ),
             ),
-            "retirement": _nonterminal(
-                ByAge(cases={AgeRange(start=65, exclusive_stop=75): "dead"})
-            ),
+            "retirement": {"dead": 65},
+        },
+        regimes={
+            "working": _nonterminal(),
+            "retirement": _nonterminal(),
             "dead": _terminal(),
         },
         ages=_AGES,
@@ -145,12 +150,9 @@ def test_stray_mass_into_a_pair_another_start_solves_fails(
 ) -> None:
     """A law declaring only `dead` may not send mass to the solved retirement."""
     model = _life_model(
-        law_at_55=_SupportedStochasticTransition(
-            func=_all_to_retirement, targets=("dead",)
-        ),
-        early=_SupportedStochasticTransition(
-            func=_stay_vector, targets=("working", "dead")
-        ),
+        law_at_55=StochasticTransition(func=_all_to_retirement),
+        early=StochasticTransition(func=_stay_vector),
+        retires_at_55=False,
         initial_nodes={25: "working", 65: "retirement"},
     )
     with pytest.raises(
@@ -204,9 +206,7 @@ def _code_seven() -> ScalarInt:
 def test_a_deterministic_code_outside_the_targets_fails_with_logging_off() -> None:
     """A selector returning the unregistered code 7 leaves a zero-mass row."""
     model = _life_model(
-        law_at_55=_SupportedDeterministicTransition(
-            func=_code_seven, targets=("retirement", "dead")
-        ),
+        law_at_55=DeterministicTransition(func=_code_seven),
         initial_nodes={25: "working"},
     )
     with pytest.raises(
@@ -250,34 +250,34 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 
 def _numeric_gate_model() -> Model:
-    return with_fixture_graph(
-        regimes={
-            "source": _nonterminal(
-                ByAge(
-                    cases={
-                        40: {
-                            "target": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_numeric_gate,
-                                routes={
-                                    "only": StakeholderRoute(
-                                        fallback=ProjectedRegimeValue(
-                                            regime="fallback",
-                                            projection={"wealth": _identity},
-                                        )
-                                    )
-                                },
-                                gate_references={
-                                    "V_reference": ProjectedRegimeValue(
-                                        regime="reference",
-                                        projection={"wealth": _identity},
-                                    )
-                                },
+    return Model(
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
+                gates={
+                    "target": Gate(
+                        predicate=_numeric_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"wealth": _identity},
+                                )
                             )
-                        }
-                    }
-                )
-            ),
+                        },
+                        references={
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference",
+                                projection={"wealth": _identity},
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        regimes={
+            "source": _nonterminal(),
             "target": _terminal(),
             "reference": _terminal(),
             "fallback": _terminal(),
@@ -372,17 +372,31 @@ _SHARED_HALF = {
     "unemployed_after_switch": StochasticTransition(func=_half),
     "employed": StochasticTransition(func=_half),
 }
+_REMAIN_TARGETS = (
+    "unemployed_before_switch",
+    "unemployed_after_switch",
+    "employed",
+)
 
 
-def _job_model(first_law: Any) -> Model:
+# keyword-only-exempt: primary-argument=first_law
+def _job_model(
+    first_law: Any, *, targets_at_25: tuple[str, ...] = _REMAIN_TARGETS
+) -> Model:
     """Every destination is a known regime with a law at 35 and a wealth handoff."""
-    return with_fixture_graph(
-        regimes={
-            "unemployed_before_switch": _nonterminal(
-                ByAge(cases={25: first_law, 35: "dead"})
+    return Model(
+        edges={
+            "unemployed_before_switch": Transition(
+                targets=dict.fromkeys(targets_at_25, 25) | {"dead": 35},
+                law=ByAge(cases={25: first_law, 35: "dead"}),
             ),
-            "unemployed_after_switch": _nonterminal(ByAge(cases={35: "dead"})),
-            "employed": _nonterminal(ByAge(cases={35: "dead"})),
+            "unemployed_after_switch": {"dead": 35},
+            "employed": {"dead": 35},
+        },
+        regimes={
+            "unemployed_before_switch": _nonterminal(),
+            "unemployed_after_switch": _nonterminal(),
+            "employed": _nonterminal(),
             "dead": _terminal(),
         },
         ages=AgeGrid(start=25, inclusive_stop=45, step="10Y"),
@@ -443,7 +457,11 @@ def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
     precision: 501 / 499 under x64, 487 / 513 under float32.
     """
     panel = _job_simulate(
-        model=_job_model(_SHARED_HALF), log_level="warning", n_subjects=_N_SUBJECTS
+        model=_job_model(
+            _SHARED_HALF, targets_at_25=("unemployed_after_switch", "employed")
+        ),
+        log_level="warning",
+        n_subjects=_N_SUBJECTS,
     ).to_dataframe()
     after_switch = 501 if jax.config.jax_enable_x64 else 487
     assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
@@ -483,9 +501,18 @@ def _later_age_invalid_model() -> Model:
         "working": StochasticTransition(func=_excess),
         "dead": StochasticTransition(func=_half),
     }
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={
+                    "working": AgeRange(exclusive_stop=65),
+                    "dead": AgeRange(exclusive_stop=75),
+                },
+                law=_phased_by_age(valid=valid, invalid=invalid),
+            )
+        },
         regimes={
-            "working": _nonterminal(_phased_by_age(valid=valid, invalid=invalid)),
+            "working": _nonterminal(),
             "retirement": _terminal(),
             "dead": _terminal(),
         },
@@ -521,15 +548,19 @@ def _off_grid_model() -> Model:
         "working": StochasticTransition(func=_nonfinite_between_nodes),
         "dead": StochasticTransition(func=_complement_between_nodes),
     }
-    return with_fixture_graph(
-        regimes={
-            "working": _nonterminal(
-                ByAge.until(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"working": 25, "dead": (25, 35)},
+                law=ByAge.until(
                     stop_age_exclusive=45,
                     law=Phased(solve=_EARLY, simulate=law),
                     then="dead",
-                )
-            ),
+                ),
+            )
+        },
+        regimes={
+            "working": _nonterminal(),
             "retirement": _terminal(),
             "dead": _terminal(),
         },
@@ -799,16 +830,17 @@ def _shock_utility(*, wealth: ContinuousState, income: ContinuousState) -> Float
 
 
 def _shock_model(exit_law: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "working": Transition(
+                targets={"retirement": 25},
+                law=ByAge(cases={25: exit_law}),
+            ),
+            "retirement": {"retirement": (35, 45, 55), "dead": 65},
+        },
         regimes={
-            "working": _nonterminal(ByAge(cases={25: exit_law})),
+            "working": _nonterminal(),
             "retirement": Regime(
-                regime_transitions=ByAge.until(
-                    start_age_inclusive=35,
-                    stop_age_exclusive=75,
-                    law="retirement",
-                    then="dead",
-                ),
                 states={
                     "wealth": _WEALTH,
                     "income": NormalIIDProcess(
@@ -844,9 +876,7 @@ def _shock_panel(exit_law: Any) -> Any:
 _EXIT_FORMS = pytest.mark.parametrize(
     "exit_law",
     [
-        _SupportedDeterministicTransition(
-            func=_choose_retirement, targets=("retirement",)
-        ),
+        DeterministicTransition(func=_choose_retirement),
         {"retirement": StochasticTransition(func=_certain)},
     ],
     ids=["choose", "singleton-markov"],

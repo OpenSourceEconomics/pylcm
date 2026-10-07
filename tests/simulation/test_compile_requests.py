@@ -13,7 +13,7 @@ The bar applies to both the forward-simulation loop and the whole
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 import jax
@@ -209,7 +209,7 @@ def test_cold_simulate_call_compiles() -> None:
     """A simulate call on a freshly built model issues backend compilations."""
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         regime_id_class=MultiRegimeId,
         ages=base.ages,
@@ -436,7 +436,7 @@ def test_simulate_host_time_at_progress_is_within_the_bar_of_off(
 
 
 @contextlib.contextmanager
-def _preflight_validation_stubbed() -> Iterator[list[str]]:
+def _preflight_validation_stubbed() -> Generator[list[str]]:
     """Hold out the complete preflight coordinator before the period loop.
 
     Its logger policy is the variable being timed, so a recording no-op at the
@@ -462,7 +462,7 @@ def _preflight_validation_stubbed() -> Iterator[list[str]]:
 
 
 @contextlib.contextmanager
-def _lcm_log_output_held_fixed() -> Iterator[None]:
+def _lcm_log_output_held_fixed() -> Generator[None]:
     """Send every `lcm` record to a null handler for the duration of the block.
 
     A host-time ratio across two log levels is a statement about runtime

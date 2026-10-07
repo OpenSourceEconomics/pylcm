@@ -156,7 +156,6 @@ def build_params(
     subsidy_high: float = 3.0,
     subsidy_low: float = 0.5,
     cliff: float = 8.0,
-    final_age_alive: float = 3.0,
     non_additive: bool = False,
     non_additive_above_cliff: bool = False,
     coh_slope: float = 0.8,
@@ -197,7 +196,6 @@ def build_params(
             ),
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

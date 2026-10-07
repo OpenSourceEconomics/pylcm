@@ -103,11 +103,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -122,10 +123,10 @@ _BETA = 0.95
 _X2 = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)  # nodes {0.0, 1.0}
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
-# The name the curved fixture's gate parameter carries in `flat_params["src"]`:
-# an edge callable's parameters are qualified by the edge's target regime and by
-# the callable within it (`<target>__<entry>__<param>`).
-_GATE_THRESHOLD_QNAME = "target__gate__gate_threshold"
+# The name the curved fixture's gate parameter carries in
+# `flat_params["edges"]["src"]`: its declaration path below
+# `params["edges"]["src"]` (target, `predicate`, parameter).
+_GATE_THRESHOLD_QNAME = "target__predicate__gate_threshold"
 
 
 @categorical(ordered=True)
@@ -168,57 +169,63 @@ def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
     return V_target > V_ref
 
 
-def _make_regimes() -> dict[str, Regime]:
+def _make_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+    """The fixture regimes and their laws, `None` for a terminal regime."""
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_value_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "V_ref": ProjectedRegimeValue(
-                                regime="ref", projection={"x": _identity_x}
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
+    src_law = Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_value_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+                references={
+                    "V_ref": ProjectedRegimeValue(
+                        regime="ref", projection={"x": _identity_x}
+                    )
+                },
+            )
+        },
+    )
     target = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_target},
     )
     ref = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_ref},
     )
     fallback = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_fallback},
     )
-    return {"src": src, "target": target, "ref": ref, "fallback": fallback}
+    laws = {"src": src_law, "target": None, "ref": None, "fallback": None}
+    return {"src": src, "target": target, "ref": ref, "fallback": fallback}, laws
 
 
 def _solve_fixture():
-    regimes_dict = _make_regimes()
+    regimes_dict, laws = _make_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=laws,
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
@@ -321,7 +328,7 @@ def test_route_open_gate_is_recomputed_from_operands_not_from_interpolated_boole
     new_subject_regime_ids = jnp.array([target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -382,59 +389,70 @@ def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
     return V_target > gate_threshold
 
 
-def _make_curved_regimes() -> dict[str, Regime]:
+def _make_curved_regimes() -> tuple[dict[str, Regime], dict[str, object]]:
+    """The curved-target regimes and their laws, `None` for a terminal regime."""
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_threshold_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
+    src_law = Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_threshold_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback", projection={"x": _identity_x}
+                        )
+                    )
+                },
+            )
+        },
+    )
     target = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
     )
     fallback = Regime(
-        regime_transitions=None,
         states={"x": _X2},
         functions={"utility": _u_fallback},
     )
-    return {"src": src, "target": target, "fallback": fallback}
+    laws = {"src": src_law, "target": None, "fallback": None}
+    return {"src": src, "target": target, "fallback": fallback}, laws
 
 
 def _solve_curved_fixture(*, gate_threshold: float):
-    regimes_dict = _make_curved_regimes()
+    regimes_dict, laws = _make_curved_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
-        regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
+        regimes_dict=regimes_dict,
+        laws=laws,
+        ages=_AGES,
+        regime_names=list(regimes_dict),
     )
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _GATE_THRESHOLD_QNAME: jnp.asarray(gate_threshold),
-                }
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {
+                    "src": MappingProxyType(
+                        {_GATE_THRESHOLD_QNAME: jnp.asarray(gate_threshold)}
+                    )
+                }
+            ),
         }
     )
     _bi_result = solve(
@@ -613,7 +631,7 @@ def test_offgrid_residual_flips_routing_of_the_real_router():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

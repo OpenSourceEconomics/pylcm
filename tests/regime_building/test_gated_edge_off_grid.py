@@ -13,6 +13,7 @@ The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
 """
 
+from collections.abc import Callable
 from typing import Literal
 
 import jax.numpy as jnp
@@ -21,17 +22,20 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -42,8 +46,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Nodes 0, 1, 2. The gate opens strictly above 1.0, so the cell [1, 2] straddles
 # it and is where gating on the nodes and gating at the landing point differ.
@@ -103,40 +105,19 @@ def _make_model(
     saving_grid=_SAVING,
     off_grid: Literal["pointwise", "reject"] = "pointwise",
 ) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_certain_target),
-                            gate=_gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={"x": _identity_x},
-                                    )
-                                )
-                            },
-                            off_grid=off_grid,
-                        )
-                    },
-                    exits=("target",),
-                ),
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": saving_grid},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_target},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_fallback},
             ),
@@ -144,6 +125,28 @@ def _make_model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _identity_x},
+                                )
+                            )
+                        },
+                        off_grid=off_grid,
+                    )
+                },
+            )
+        },
     )
 
 
@@ -167,6 +170,124 @@ def test_source_value_is_a_value_one_branch_actually_pays() -> None:
         np.full(3, 8.5),
         decimal=DECIMAL_PRECISION,
     )
+
+
+@categorical(ordered=False)
+class FallbackCategory:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _project_category(category: DiscreteState) -> DiscreteState:
+    return jnp.asarray(category, dtype=jnp.int32)
+
+
+def _project_zero_shock(x: ContinuousState) -> FloatND:
+    return 0.0 * x
+
+
+def _utility_categorical_fallback(
+    *, category: DiscreteState, shock: FloatND
+) -> FloatND:
+    return 12.0 * category + shock
+
+
+def _make_categorical_process_fallback_model(
+    category_projection: Callable[[DiscreteState], DiscreteState],
+) -> Model:
+    categories = DiscreteGrid(category_class=FallbackCategory)
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"category": categories, "x": _X},
+                state_transitions={"category": _project_category, "x": _next_x},
+                actions={"saving": IrregSpacedGrid(points=(1.0, 1.5))},
+                functions={"utility": _utility_source},
+            ),
+            "target": Regime(
+                states={"category": categories, "x": _X},
+                functions={"utility": _utility_target},
+            ),
+            "fallback": Regime(
+                states={
+                    "category": categories,
+                    "shock": NormalIIDProcess(
+                        n_points=3,
+                        gauss_hermite=False,
+                        mu=0.0,
+                        sigma=1.0,
+                        n_std=1.0,
+                        fold=False,
+                    ),
+                },
+                functions={"utility": _utility_categorical_fallback},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={
+                                        "category": category_projection,
+                                        "shock": _project_zero_shock,
+                                    },
+                                )
+                            )
+                        },
+                        off_grid="pointwise",
+                    )
+                },
+            )
+        },
+    )
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
+def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
+    """Categorical fallback values change which gated action is optimal.
+
+    Saving 1 closes the gate and pays 12 * category - 2 at shock zero.
+    Saving 1.5 opens it and pays 11.5 - 3 = 8.5. Thus category zero
+    chooses the open branch (8.5), while category one chooses the closed
+    branch (10). These values do not depend on the source's x coordinate.
+    """
+    model = _make_categorical_process_fallback_model(
+        category_projection=_project_category
+    )
+    solution = model.solve(params=_params(), log_level="debug")
+
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution.values[0]["source"]),
+        np.array([[8.5, 8.5, 8.5], [10.0, 10.0, 10.0]]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _project_unknown_category(category: DiscreteState) -> DiscreteState:
+    return category + jnp.int32(2)
+
+
+@pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
+def test_solve_rejects_unknown_categories_in_a_process_fallback() -> None:
+    """Codes outside the categorical domain cannot publish a finite value."""
+    model = _make_categorical_process_fallback_model(
+        category_projection=_project_unknown_category
+    )
+
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        model.solve(params=_params(), log_level="debug")
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
@@ -275,39 +396,18 @@ def _healthy_gate(health: DiscreteState) -> BoolND:
 
 def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> Model:
     health = DiscreteGrid(category_class=Health)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_certain_target),
-                            gate=_healthy_gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={"health": _keep_health},
-                                    )
-                                )
-                            },
-                            off_grid=off_grid,
-                        )
-                    },
-                    exits=("target",),
-                ),
                 states={"health": health},
                 state_transitions={"health": _keep_health},
                 functions={"utility": _utility_zero},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"health": health},
                 functions={"utility": _utility_healthy_target},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"health": health},
                 functions={"utility": _fallback_utility},
             ),
@@ -315,6 +415,28 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_healthy_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"health": _keep_health},
+                                )
+                            )
+                        },
+                        off_grid=off_grid,
+                    )
+                },
+            )
+        },
     )
 
 
@@ -379,49 +501,23 @@ def _witness_params() -> dict[str, dict[str, dict[str, float]]]:
 
 
 def _witness_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_certain_target),
-                            gate=_witness_gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={"x": _identity_x},
-                                    )
-                                )
-                            },
-                            gate_references={
-                                "V_reference": ProjectedRegimeValue(
-                                    regime="reference", projection={"x": _identity_x}
-                                )
-                            },
-                        )
-                    },
-                    exits=("target",),
-                ),
                 states={"x": _WITNESS_X},
                 state_transitions={"x": _witness_next_x},
                 actions={"risk": DiscreteGrid(category_class=Risk)},
                 functions={"utility": _witness_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_target},
             ),
             "reference": Regime(
-                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_reference},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"x": _WITNESS_X},
                 functions={"utility": _witness_fallback},
             ),
@@ -429,6 +525,32 @@ def _witness_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=WitnessRegimeId,
         initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                targets={"target": 0, "fallback": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_witness_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"x": _identity_x},
+                                )
+                            )
+                        },
+                        references={
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference", projection={"x": _identity_x}
+                            )
+                        },
+                    )
+                },
+            )
+        },
     )
 
 

@@ -24,11 +24,15 @@ semantic boundary and is not re-proved here. The proof is strict by design: a ne
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
 
-The nine corridors are:
+The ten corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
   optional unchanged fold quadrature -> compiled VALUE core;
+* singleton action-partitioned solve -> admitted GridSearch request -> one
+  contiguous run of whole C-order blocks per device of the action axis, unowned
+  and padded slots infeasible -> exact hard-max accumulator -> gather over the
+  action axis -> ascending-order exact hard-max merge -> compiled VALUE core;
 * singleton simulate -> published dense argmax or streamed C-order hard max ->
   subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
@@ -335,43 +339,43 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "c1d3b52330549d38d55bdc43e03acc775075b6eb39c9aa61629b56f4a7b398af",
-    SUPPORT_DIAGNOSTICS_SOURCE: "68466cd0adf4a6712b4a8239c8f6b8c0cd403ff6847c1d30c55a3d1c8dc5d9e3",
-    SUPPORT_PRECONDITIONS_SOURCE: "e477defaba8fefd93a2d58e139cc2bc9fe24832b60282715cd6d522668215c79",
-    SUPPORT_AUTHORITY_SOURCE: "c45fcfbb415543ca238c37ac37ffe368074b0420615768f97d7b66498c123a8a",
-    SUPPORT_FINGERPRINT_SOURCE: "98693d1ab429237ef098a37ca895dad701143333f58569bd9066701a54946114",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "450d4825875be507f24ed0e18b75e336d0a2f6e35fcaaddeb858704d2f1191a5",
+    SUPPORT_DIAGNOSTICS_SOURCE: "10b757375053135f314208b5ffe8a079d99c2926bf0446d1d7a12d448ba565af",
+    SUPPORT_PRECONDITIONS_SOURCE: "dc04c759d9048082af18ee6de5a79f71e8de7b27673e724520d33261bc824467",
+    SUPPORT_AUTHORITY_SOURCE: "92b2351832c333457699b3f53e1e86845504f78a59e447efab07c61fed6e5e28",
+    SUPPORT_FINGERPRINT_SOURCE: "0736975de4e3d83dd4e1c70f7fd8623952dfbca7ab6d9249865541fb6c2b5208",
     UNIFORM_PROCESS_GRID_SOURCE: "03d7ac9a101a1c39c19b44df40d7bbc59203d361ca313b8b8812b1db392dcf96",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
-    NATIVE_ARCHIVE_SOURCE: "6abc7475b96ecc69763648c56522889df88726fb34fdaf4e33f496683baf307a",
+    NATIVE_ARCHIVE_SOURCE: "25cde4c549c1a97b8465e282dceef49dbdcbb0d75ba32d037d5fac7c07ea4d41",
     STRUCTURAL_BLUEPRINTS_SOURCE: "76143787bc63bdadf2ae3020383eed15be2a4124b8f47a7ac4510d8ebda12e78",
     SOLVE_PENDING_WORK_SOURCE: "f2b6dd1e053b7fa372c19696bd3e8f934467b49048a8eedf15aff199a0841efb",
     POLICY_DIAGNOSTICS_SOURCE: "ed41f7f7e0378b0d86e153c53b399bd01350ea24a58a9b80cc88224158a0c0d3",
     EAGER_CORE_SOURCE: "7744426281b262014e974e461b966dba3ca0f063ec01d7606caf67676d67aba6",
     RUNTIME_SHARDING_SOURCE: "0e7f276d6abad69469ba42707a4dcfc78e9eefd3fb78ed9aad7942559553df9a",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1b4f12b892e8928c42049cb54eb4a20e45f6f0f4f4fb35f905f9178b18b60224",
-    COMBINED_ASSEMBLY_SOURCE: "eae7d7e3bdaf96d75671331b3cf5a49ba178316cc1848511615ec9a2f90c6fdb",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "9ffe18a412f2d136c2b9893ea4d93a88739325d9ba70bd6ec0e888d353a330aa",
+    COMBINED_ASSEMBLY_SOURCE: "328add97902ef3ae5a196aa4237ef47d99c4240900f374d4b259e698eef573a4",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "3694f320e4fb0da9c9ec53954d05e7137c252bc31575ef9fd95e7bacf9c59aac",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "ebb5e00669a33d9486c3e3f7a6d5752937bf2751ec95ac360903274b6d81304d",
-    COMBINED_CHUNK_OPERATIONS_SOURCE: "82057a91e6cf149f750f90b71c9258cf33b310e0675044bf219d466e836614d1",
+    COMBINED_CHUNK_OPERATIONS_SOURCE: "26f38e5c52d99e3670dc353e16daf070561061ca04760af423c02812da44c4ce",
     COMBINED_CHUNK_PLANNING_SOURCE: "7b8ff3abda0b6f57bc6bf3901287bb8cbc6fe6ba741cdbec902d45fb4fabb047",
     COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: "f3b6b4e013eeedeed51455fd342332974077759dc8538c98c5f91eedcbe6eb35",
-    COMBINED_CHUNK_PROFILES_SOURCE: "bbcb25d034fbf15344f6b8f5a332e1e0b52953251af2daf8d3841e7c6785467f",
+    COMBINED_CHUNK_PROFILES_SOURCE: "40c1ad5c24cdfb92455063d586692482283c92389faa633549887690cba125c7",
     COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: "c4ff704885e02b11a131fa55980955d502d75cab85779d387d5102aac1e1faab",
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "23934b73014746e61ac5a9f43675dc1300b25179179ea128fa7569e8601cc124",
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: "b89ec690ba5b5bb14787a8f1e387abce550f700078dde8946ec7a26aa8c46ab4",
     COMBINED_POPULATION_OPERATIONS_SOURCE: "a9fdd59887462abc4e2f4321730bcfb397f69ba5f44f3db08001288773082ab8",
     COMBINED_PROGRAM_ARGUMENTS_SOURCE: "0d9da227a909d35e4acc267493532c64c78c61f1d0d66cbbc4a04b488835a7b5",
     COMBINED_SOLUTION_COPIES_SOURCE: "fbe188d3954a523522624823c769fda4c5831e138d2cb8421fc0f1453946886d",
-    COMBINED_RESULT_SNAPSHOT_SOURCE: "e70c908f3550e1a38ce5064d4ddd676f9929e711b17b72baf36f3569d6e673b5",
+    COMBINED_RESULT_SNAPSHOT_SOURCE: "30b511096b5cde2f8dfbc091c3a52a0fdd58579e5fe7f6a66f32e5a910094c9b",
     COMBINED_VALIDATE_V_SOURCE: "1d2c6813216af2e75111f12f730adec3337d03d47c883e50d07717e13e28d029",
-    COMBINED_LOGGING_SOURCE: "711d131b788a26a5d5fa20fcdff64d8ef1fdd51096690e20e60f61e5641e64ea",
+    COMBINED_LOGGING_SOURCE: "e14897b5b880d757f391ba3fee48b68de994a063523d695d793332a8ba25a188",
     COMBINED_AUTHORITY_SOURCE: "4617c67cce5405f9715787e7a471b40b756404fdb063cd0c960ca31c57d86ba2",
-    COMBINED_ENTRIES_SOURCE: "d2ef73668ed09ed6601aa57112a632c18c68e54ae31cb9b1b33670acf6b8cc78",
-    COMBINED_STORES_SOURCE: "c893eaa5122d7b020adb86fd7999d0fa44b87f340b725de6c300d4bf1645828c",
+    COMBINED_ENTRIES_SOURCE: "b39a6bf81199588f8d323c0b9c8cba0707f0baac126cb1faba515386d45d3afa",
+    COMBINED_STORES_SOURCE: "a84eace5a09d63ef646573a93d0c61dd37b318c0ac77424bf7d1eab0e2dddbce",
     SIMULATION_POLICY_PROGRAMS_SOURCE: "849038cd47c7d02c827263e498f960de8e91e912d0c836acd8f7299954c67a2f",
     PUBLISHED_POLICY_SOURCE: "2ca9d45b68e762ab612b99c7d096454dccc4785c2f853c4c5a6b8da1db6396d0",
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "a0832b09f6eee730722564fc2ad5c337f7a2bc09510a5e03b4945653067bd0e6",
-    NBEGM_SOURCE: "c403aabd46e928e31018c3b3a3e26eeefc81f7ccd81b1496b107cf257163e703",
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "e1c178d00701633caaa37f61a66de70f145d29571335e1f0e33655aa95c44b16",
+    NBEGM_SOURCE: "c9d77550299347bfe838cdf679c5e72285d0ec5a7b79a5bf6c49141b1b0991d9",
     CONTINUATION_ARGUMENTS_SOURCE: "d887f440d55f5e6da077b7fb2c682695924694744790fa8b10b74c8882081c7c",
     SIMULATION_TASTE_STREAM_SOURCE: "022512bc75e5a30d22ee5e7ace2ab6a422658e7c192ad6b8a092a17049eddfc7",
     SIMULATION_MEMBERSHIP_SOURCE: "c0c92de4e55be3e7b814a67761caa75e8affe835e1887359d432341f1d85a18d",
@@ -382,58 +386,58 @@ _SOURCE_SEALS = {
     SIMULATION_MEMORY_SOURCE: "5d425bd115783f2184855b6bdf074f37c35db76fb1a0e80bd1ea4f97fe92b6b1",
     SIMULATION_PERIOD_INPUTS_SOURCE: "e29c50dd464cd01f5f48a2c6574e13d454c577afb979e51195fa8394d1099c7f",
     SIMULATION_REPLAY_INPUTS_SOURCE: "6a8f9e1eafbebb264b11d7b6be5535c1e9cdf90e2ec1e17f2343eddc222b01b9",
-    SIMULATION_VALUE_READS_SOURCE: "57ba782f6538e3d9e9f57f904b940d5812e529570c36336a143a042a30086f7b",
+    SIMULATION_VALUE_READS_SOURCE: "4ed63570347beab876c3ff87854dae6d84e9e9f2aa8755a261d65897ea0eba32",
     SIMULATION_VALUE_PLACEMENT_SOURCE: "afd58b343d0385934c3add5552d7926dc3f9ba2700e5a40b26a65a62a75b1e68",
-    SIMULATION_CHUNK_INPUTS_SOURCE: "b67570d4e325d87130188105219e6d7964c6b88f027d88df253cb8827f519ff1",
+    SIMULATION_CHUNK_INPUTS_SOURCE: "fb8bb99776dfa1f321ad7a2547fc9c382e7a735f258926f51f55ffa63a607ee5",
     SIMULATION_ENTRY_INPUTS_SOURCE: "546ff0670f64c41fcfd3c3f629e783e30697b9de6164411150d8d69f40ec6e24",
     SIMULATION_RESIDENCY_SOURCE: "922eb2b78189f0c9714b24dd865cb1b2c7eeff3ec5b861bb257efb9f079f78dc",
-    SIMULATION_GATED_ROUTING_SOURCE: "59e0484eb64674ca11f10af14420c3cdc550488884b6683784538c0469eef3ce",
-    VALUE_TOPOLOGY_SOURCE: "8780957256ab3b11d16325892c38af020bee56db332a176c98d779e8b9ea6343",
-    RETAINED_BUFFERS_SOURCE: "8556ec2e2ba4265349acb6517523f70bf65528abd3e1d631c55072e847e5f870",
+    SIMULATION_GATED_ROUTING_SOURCE: "a19d14c98700fe6fed74ee4c9c9042be0bd0dada05a2c8ecc971f4c0cbcac534",
+    VALUE_TOPOLOGY_SOURCE: "5809eef9ae77ef90075d57674db13a7ea89fb9c55bf4005daffee3b83991019d",
+    RETAINED_BUFFERS_SOURCE: "2d7f264b78fc834bb920eab3029174375a24d6300ca05576ee1f580b32a94a0e",
     SCHEDULER_SOURCE: "10dffccdd836331e1ea3ef8beab0d1c0d130ff847bb3d8ed7c118e8fd8decdb8",
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd",
-    SIMULATION_PROGRAMS_SOURCE: "c49704c2625286285a217db6da7988e66fc0b138cc1413e0cd121b434cc98f59",
-    SIMULATION_PROGRAM_TYPES_SOURCE: "222cb4d5053a26f333b0c2f97393badc50182b0ae8d90f2fccc6b8faa4eb6169",
-    SIMULATION_RUNTIME_SOURCE: "e28c9df32a0c7f242d65b414988df330d491dce4de7585ad2773c740492fa27a",
+    SIMULATION_PROGRAMS_SOURCE: "7c5308f075fe001b7d46d56755f748968d4d21e9d3af7944cf7d0105f39d9f3b",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "13d279a7740c003d0524acd1c1f5753989b1b36a134722d148cf96b60353aa27",
+    SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "1292cc6030c26e5aeec7610683cef1f322ebaa992eca4ecdfee0bfc01c3a352a",
-    PROCESSING_SOURCE: "9e7eaea0cf772c19ffdbc7c5515466c9715f1c7d152e8a2ffc26635b569fa2e2",
-    GRID_SEARCH_SOURCE: "884746b95253f15d1eda38d41ee7a6bd1cee73db2b019670a9b5afb7ee687778",
+    MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
+    PROCESSING_SOURCE: "c167333e7e8671b0f89f83a7e2acc0586edfd915331e27fefdf566e0d5eba035",
+    GRID_SEARCH_SOURCE: "bc9822bf8d3421edc26186fa94977d2476a92629d41586de4988dc39e045611c",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
     VALUE_TRANSFER_SOURCE: "0e430c21631914f1478bf811e66b3cb5cf6fa0fef0927a40caff866401d8ea8a",
-    FOOTPRINT_SOURCE: "7b3a8006359cfd1a1edc8241e2017e4a9007a3793119289b3273e9c43c231d30",
+    FOOTPRINT_SOURCE: "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
-    ACTION_STREAMING_SOURCE: "b13962dbc446a0962bf397ea3f4ecca3be3eea158bc270547251b7f92b160dc8",
+    ACTION_STREAMING_SOURCE: "2457ee9f24c02ba28ab88310f354186c82cb829df7a731724c464de70046cddd",
     ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
-    DISPATCHERS_SOURCE: "ff67b59bdb189b24c1a8c4baf8197a7ec83efcbaafc4c50c52efabdf8bad25d1",
+    DISPATCHERS_SOURCE: "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
     ZERO_SAFE_SOURCE: "99fc6b5647425c11e2c15abc9ff49c84d1b1ff3bace3f8e51e593ff8f98ec4ad",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "4e1617d0968cdd5d74a1c9136a475e713e08ff0a9eba27b03458923fa2a105a0",
-    ENGINE_SOURCE: "a0fcc4136674db9f254cbc3e50c4a3dcf4864f8a7b2390bbeac85f75ebe583e6",
+    ENGINE_SOURCE: "bd5b99eaa87603acf9d26d95ca3739d58c2c88ab8dc84e1682694bd2209ac7a6",
     STATE_ACTION_SPACE_SOURCE: "bc1d4b798ae1beeef6ce6f655ba61cd3bbf064dbd1910b14aa5cf8ce28954e95",
-    SIMULATION_SOURCE: "396ebb67694c96b6d2e6bcddc03f61a0e00e0b4de2ea12b3c53fb1365062f6dd",
-    SIMULATION_TRANSITIONS_SOURCE: "40e7cdafd5705640e90db5deb08cfa208d809bb50c20260befe12c849bd7891e",
+    SIMULATION_SOURCE: "e4817cfc29f7125b9a0ddfb50a5228f293880f86de63d4b3db9a27a64a798282",
+    SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "c5c84fd01b1ef300ce22549fd4f5f4f588e41ba1757845df98acf13af59597d5",
+    MODEL_SOURCE: "64ee75d3d53493955b3c4633a4c73b832fea4398267531215e226ef00e09d250",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
-    BACKWARD_INDUCTION_SOURCE: "aec3cbeae3caca573be2dac2eae2ea2b518105bd0ade6512556d39709c044504",
-    PERIOD_REPLAY_SOURCE: "9c122461add8261453cd4f12108f8f7fd361ba5e2414be4ef984bb68802a76e7",
-    INITIAL_CONDITIONS_SOURCE: "be11461bbb32345d2bed4eb3b070d0f6bac83f2633f849fd9f31ca4d430f2f90",
-    RESULT_SOURCE: "1369ebf17e8d9ff5d09f9ad111bed15557a94103c2afead3db6a0fc34fceda31",
-    RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
+    BACKWARD_INDUCTION_SOURCE: "8a3d59d953a707276ed65bad005b85ab8738b38017197967afee2448a5bf4667",
+    PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
+    INITIAL_CONDITIONS_SOURCE: "a273caf098333a1b8882a7c6a7902159e458364f9e3f21df3b59585d29372048",
+    RESULT_SOURCE: "b913f0e0f57b1f36a0334faf5cff2b74f081744dc30c27a5a8afdb8da5595937",
+    RESULT_DATAFRAME_SOURCE: "a3a8094f661d8472581674059ae6907967a99a446c3f365be2adefd52b1749f8",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
-    SIMULATION_RANDOM_SOURCE: "996469acb62c086b619f2696b8d81599e5bd198f537d3e2fc2d05648c6dd3472",
+    SIMULATION_RANDOM_SOURCE: "f755c4a35a8ef395d2990d08e725f999a2deb4aff803df5940edbf3e1c4ccd2e",
     FOLD_ZERO_SAFE_SOURCE: "301fcd3bec1211b60872159fe585e55e9742be62a975dd76b33f6f5cb45971e5",
-    SOLUTION_CONTRACT_SOURCE: "912db6bfa135d57eb99ee73914c1a52d936a04ff9112fe5032241352f5f239d9",
+    SOLUTION_CONTRACT_SOURCE: "bc2005dbcf8bcdb25bec1b46c7161cfa686e428617c6285d17279c1a762d61f5",
     GRIDS_INIT_SOURCE: "3c720bc2240dd1cfd45855ce501f03f8a05abda5de1142b9d00208e517b9ddce",
     GRID_BASE_SOURCE: "045d3d462aa80c6f3444030003547f76864bb1f038b8ccb1bd15a00e29e0c2a7",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -444,27 +448,1463 @@ _SOURCE_SEALS = {
     PROCESS_BASE_SOURCE: "1c7ecfed16c3a696f0a3b337dbc1832c72fed513a4cf85ef21b91c956a4548be",
     PROCESS_IID_SOURCE: "2023a7010fc720877c176bffa70f846e8eae260c649af8bb994c484a52b4e8c1",
     PROCESS_AR1_SOURCE: "ea9235cfde4494f962f015fcbf443328b1802f6b97e9afab807c1bf160f59171",
-    VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "290e9744e3a93f553b07b15a965d9b95d1f847288db566d4c838e1e017ecd095",
-    PARAMS_PROCESSING_SOURCE: "2b2c6c15e99cc7f19be7e94d39921b8e7940f96bfe108b3dbd0bc91b3c1f0afa",
+    VARIABLES_SOURCE: "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "a943cefab4ab1e84e0307102cf8666da40d6f83577d08d49b47d2cf93ff4a452",
+    PARAMS_PROCESSING_SOURCE: "365fcc4bf215b1c5d69aa5b77f04fd7ae6f80add2974f8235374da4f39f634db",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "b0e29ba6fc4fa947168f2e1498ecb84e773858b1609d6be6f1cb5623efd89d58",
-    MODEL_PROCESSING_SOURCE: "45bb899e97d35827c9529a9e892fcef4fcd3d6d85cba2ae44f96bb971896d35e",
+    PANDAS_UTILS_SOURCE: "56a4e3f78305412342e0e2e63a091c7e0c135edd01c1cd6fec91c939b13b2a0d",
+    MODEL_PROCESSING_SOURCE: "8d26adbb0c957134c3af0b94d97e1909ca3e21a9c9606beed52e3b1b8a19b3f2",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
     "5c619c972a01ce46fe1b596952b1264750ae35895e0a4a6798388f173a8e6377"
 )
-EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 52
+EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 54
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
-    "26baebd7501163422b6af272bf76f3f5d176deaf1bddaefb02f0c608303dbbd1"
+    "1d95a163810d9ffecb7bc2f2324065c0a3d6168d9dd01002cd00ff30c5802da5"
 )
 EXPECTED_UNIFORM_PROCESS_MUTATION_COUNT = 37
 EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
     "63206e56f35b0b5d4581354c33f127416231b365384a78f2adee314ca93566b5"
 )
+
+
+# Every reviewed corridor pin stands here once, keyed by the certified source it
+# describes: the module transport surface (`None` where no family checks one) and
+# the docstring-free AST digest of each pinned callable. Each certificate family
+# below selects its subset by name through `_contracts`, `_callable_pins` or
+# `_surface_pin`, so one reviewed fact is never written twice, and a stored pin
+# that no family selects is a verifier error rather than a silent no-op.
+_CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
+    PANDAS_UTILS_SOURCE: (
+        "4fe65dd8956e074519e020cbb2c3f896cb51ac45e0ac54cd2417a58413c636f3",
+        {
+            "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
+            "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
+            "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
+            "convert_series_in_params": "e968d842e7fd34eb845e8b1dba73ee5a11fcd2c0d637464d24ff724a3003696a",
+            "_convert_param_value": "d3dbe841331053864f44d94edbd8dbe85eb3224ab8e6a2de6854dfa37434fb59",
+            "array_from_series": "0d2d919f86566ac63eb3a66884b2100332a951cbf8f25500653a9c6d6de42dfa",
+            "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
+        },
+    ),
+    DTYPES_SOURCE: (
+        "661c05486d0b4cc02d475d8f74bfc9f845a3a4d1e7c2d3fdd03b90b8a2b82c24",
+        {
+            "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
+            "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
+            "safe_to_int_dtype": "86a320656f3eeda21585f62873741bcff8d92b336364b48c920261c503a0d152",
+            "safe_to_float_dtype": "9ccfddda18e625106d7d9cd4be5fda4319583cb9e665efc24b16bdd2dc169a07",
+        },
+    ),
+    PARAMS_PROCESSING_SOURCE: (
+        "7e3bbeb30fd79ba000f10ab7319cde4c6d3d2cddec4999afae2de123c06b5f21",
+        {
+            "cast_params_to_canonical_dtypes": "6cc7c2c9fb562b4339009d82c2ba9cc03c88c66becab0fa9c718acdb053af204",
+            "_cast_shared": "8d132f4bfc4c96b597e62f6bd48c2326624bb5ea88dc13b0fb62e3b8b2b51e80",
+            "_cast_leaves_to_canonical_dtype": "0d326605061f3956372a589edc5244a2297ed1966a41a5f5a80a6ba1eefa04e1",
+        },
+    ),
+    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
+        "07b3a4ff1d865fe2d1c8073c9ff1b29ef09de4d9d5700429b605da5ba60b4e8f",
+        {
+            "SimulationEntryAllocations.snapshot": "3d6f0df5cbf4a49bbcb305a4db03698b5d6190b148c2f9eade3944db0f9d3367",
+            "SimulationEntryAllocations.solve_input_roots": "f07a0bebb0c5ae4103acff0f791c0529072096bd043f67af6db801b34f765369",
+            "SimulationEntryAllocations.__call__": "d16c9d254801ebbff8ef1ce18125a3a9fe68073d83672bf8855eabf923da6624",
+            "SimulationEntryAllocations.publish": "a8e437cc229448ceb3f4338fc580081b830cc530dd2fc837b1073fbe546e2ae8",
+            "SimulationEntryAllocations.pad": "cfe078114a6c07cfa9ad0ecb0bf0411b8985742aee92a5359d8bae8315d4f0c5",
+            "SimulationEntryAllocations.update_solution": "c0b444df24bb2bc44e0d3db1253353b129ca4c881063066a59fcb7c6a37d7972",
+            "SimulationEntryAllocations.close": "b662848316cdc45090e3e37b26aa4f1f6a3bbd7afbc3fddde351f8bb8c20ef08",
+            "_pad_initial_leaf": "b5ce0e61085c360e97280d593948a3e8e775e10424620a905c038f34142dd7a0",
+            "SimulationEntryAllocations.place_solve_parameters": "bfc4301a9721fd7274dcf6cd47a3ea32304e96b18dc591ae35397cbf343a1adc",
+            "SimulationEntryAllocations.copy_solution_leaf": "e4a19117088da19af2513976ccb2673f23fb21799ef5893dd6559ae091628de0",
+            "SimulationEntryAllocations.release_foreign_copies": "096914c39bdc6f0f1668cbbad08d7d4b389d79448df16888ef471573b827e06f",
+            "SimulationEntryAllocations.__post_init__": "ffa19e8bc72ec7fc9d0382c3cc4f6c7a501059dec278e6e3b7a1c5cc1fb27e18",
+            "_EntryFootprint.__call__": "6a64901028e6ed4c92615e2b97beec064da8ad89c81003a9b66e46c2358c0a4e",
+        },
+    ),
+    INITIAL_CONDITIONS_SOURCE: (
+        "6d368a29598ee692accb1850cdbff0971bc090550f770c90d1985777030d82e1",
+        {
+            "validate_simulation_inputs": "fbac5c256018854a1b4dcd5b765ed2cb0c6798251301c8025b298522499e318d",
+            "_preflight_memory": "78a00d9ff5c8aeb2afc75c3f195bf64acac09e30efeb2525c5ee5324def314ba",
+            "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
+            "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
+            "_read_initial_cohorts": "feb4db88b882a240bbe40cb179495e6d7cfe4d62f95e90d7df3792ef320337a9",
+            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
+            "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
+            "_age_specialized_feasibility_message": "e76cdd6831a2e28f939e86741ca651c38391774bd7297255fa28f3e6a1933163",
+            "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
+            "_regime_feasibility_mask": "003fcee3a807c53e043e67f83750faf45a5fc3643e838c3c72175cad7cc10dd6",
+            "_run_profiled_feasibility": "d7aef56bf157b320a635adfeda328f9a76c1e6311f9a04bd87964a171e5e2aa4",
+            "_batched_feasibility_check": "455041410a3c2ecb1b8795c834e0dbc9624bab239e2a19d1dee2c2ae02d70e8d",
+            "_evaluate_constant_feasibility": "12c654a6e1a02d4267156e8e501fe98a7a295eb46da3e736840b85eab506e012",
+            "_admits_any_action": "546746b14fcca4269a3e438d2ec0c5c214259c3199169f5e727839c4d9fb0463",
+            "_per_constraint_feasibility": "e74cb94395615def30c4f11cea311c64c42f0711a22fe91b417dbd3197c554df",
+            "_format_infeasibility_message": "cbacb8c81970497c4fd808f428a896685f752a1be534788d7581417e8604d046",
+            "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
+            "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
+            "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
+            "canonicalize_initial_conditions": "c11e1f052794f712ecff808acc643787e6347c4f2234d4612d3e5ae2c4fecca0",
+            "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
+            "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
+            "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
+            "_fill_carrier": "0045c72197d9e16fd510a8530d9c0866327182129a2383e902a9619030be4844",
+            "_initial_own_stakeholder": "ed1ce36c6c2b26aa9f4787bd8133a1646138d2ad8e01a85f4809140a9e729278",
+            "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
+            "trim_pad_from_raw_results": "cbd171f98bdfb340441ebf055920a21b0ba2b88d1740ca7eff9448002f7e2e2e",
+            "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
+        },
+    ),
+    SIMULATION_TASTE_STREAM_SOURCE: (
+        "947474b7e88fd4664df411678ada61eaf7c026cf7bed0abb6fb348057809bc93",
+        {
+            "create_taste_shock_key": "d0b1e91beb7a9d482b7cc520dc00543112c082ff285f37e17c8ea1a283685d32",
+            "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
+            "generate_taste_shock_keys": "66f0dddec645c123e66957e33ea5da7f932c83c23822dd9a49c308034339a038",
+            "advance_simulation_taste_key": "49eecd1a5724049acc7108921c86640236140477924fbf3b561156c7a449381b",
+            "build_taste_stream_addresses": "b880a2eb4e2eed50de19654b6385ab4a46e68530fbd017643cf1fd599a47947d",
+            "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
+            "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
+            "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
+            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
+            "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
+            "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
+        },
+    ),
+    COMPILER_INPUTS_SOURCE: (
+        "ab4df3a33f7b46329e2eb3a4ac7c6a96c75560172f7528e2874e06bed37dae4d",
+        {
+            "compiler_input_paths": "2e9389aca0e3ee57a2a79fe4ef17ba9f09f1fe8eca8711ccfb3e4f5f837d2413",
+            "_is_none": "70af7d997029f74d8784c981b5512e4e6e622af65c8d1ba75d0f55eebafc1a4e",
+        },
+    ),
+    SIMULATION_MEMBERSHIP_SOURCE: (
+        "a57a98eed95f797a3fe7a1a4337db52ecdf78785af4985be4118ae5a4b76a556",
+        {
+            "initialize_subject_membership": "3d9e4107e20e56414489ba06572036dc00f3f950581dcc239e9f1f43b4d3be6b",
+            "activate_subject_membership": "277a6e91b924ca50b5e4bdfc3b5e1d58a2131ddeab82c80838702f7183c2a960",
+            "_empty_subject_membership": "9176841676cd38a179ffecbfdd0b78aa8df87a385b4503dc199cfd7776389a1d",
+            "_activate_subject_membership": "f75db18f16aa2f67a76a5e88cc0b9ab683638e364e97f80685b3ef154f54cc71",
+        },
+    ),
+    FOOTPRINT_SOURCE: (
+        "4dd2b67234f6ef9bb384b35e338d4bcb67bd3d4ccc8c2e8444a39940e6ea5f58",
+        {
+            "ArtifactFootprint.__post_init__": "508bd37bbb30d5e0511ddb2de9d98f6c1c2318ab928635b73b413c942d72a4a7",
+            "ScheduledUnit.__post_init__": "2c144891456c3626aaf1b62591a35e6c004e5d182b1ceb12dab4ce10d0b4d7d5",
+            "ResidentInventory.__post_init__": "75124f4adb54bfbfc0347d29218b4a83835ac800fe30a53f4008ab55f13df35d",
+            "ResidentInventory.resident_bytes": "f3aeaf93e4e584e9cbe96b3cce8f6e0b49daf95e202bbba0dce89e7ae0a98aa7",
+            "concrete_device_bytes": "14a88daf386078b838eacdf48a33e3c9894b3e958894e6973be7f823b6ffaab0",
+            "plan_resident_bytes": "e9c46841e6663fe1e7b33a952b2bd7c08335e87e70ca813cd0e3314068ab985f",
+            "plan_resident_inventory": "ad8c2a316cade31c67c6ee4ccfcb13d93334971bcac34a9bddb65b39473ece8a",
+            "per_device_footprint": "35c8fc0f90d8a9342d58a87f2286cf08426043a03b3dc5577f4e13adab75cfcd",
+            "layout_footprint": "6d4954af608d5c781e8ae3093a435d745e989333cfa9f3d62570ca366c6a33e6",
+            "sharding_device_ids": "c66e89e2760e52cbdda063cccb1e45e26f78a66be5f9bebb97b28a076261e049",
+            "_walk_wave": "00277db02d7a09bb58776c3b9da6cbab067c49e0079c97c6b563299f1fcea3d3",
+            "_walk_period_folds": "b24a1e035b26b6aada8169115aa7d2319f769e5e7ae7a4530c333b56eaf9c8b1",
+            "_register_outputs": "53c8b7518505e12ff7e2c670a90db42e7d61cf7dcda3591d0a9fb33ab3f2093e",
+            "_resident_inventory": "8f2d1cb122164804dfaeaa79821253732f556dcc65d1b0b82ad4b13a60556f9d",
+            "_device_bytes": "9a13b9a28cbd04171b79b314b94c4ca52c82b4cea75a508477aa59f2b1651a1e",
+            "_group_bytes": "d3921a94db53838b762ad28d47dbd821ccdd061c9b8a3111a531edd6dc5ace3c",
+            "_group_is_present": "0ca9e11967bb6f3677c2ae4f18b306a39d35ff58a15d96ff75d8bcb48d507ab0",
+            "_group_is_consumed": "be4f8158fb0972735e2a5609c453744a62bb5bbb8084de5ea2032f0723cc6539",
+            "_release_after_dispatch": "7c60f35772266db8d9a97c0793b5fb8f15aafa41570f8c24a9c7d12bb4180005",
+            "_fail_if_footprint_is_unplanned": "7e40a8e62d5394d451086773fd4bd9ac08ecde2f5b3ed244c2ad5a8c8826e511",
+            "_fail_if_period_disagrees": "238a0dde28594bfb1a48ac4eccba31453144c123bebe3c61d733ed1528a11c81",
+            "_fail_if_negative": "aee2b71bd25be15a27a70981c5c9f27b78f67a3b53622169be9512db47b300c1",
+            "_fail_if_not_a_device_set": "9d500f39fd8e6e8486888d403cc0c4a80c9c292f35a33644268656270b93d9b1",
+        },
+    ),
+    SIMULATION_OPERANDS_SOURCE: (
+        "eff2fc136a1fc5392c9557bfea039312e5a329c63f83280057b0fda74fe66b8a",
+        {
+            "SubjectArgumentNames.subject_arg_names": "46cc9cd2b5af3c1a622819cf136f77ca33152cb4dbe6a00b2a111d50848d1f4e",
+            "place_simulation_arguments": "6dcd4aab726fbd0a230d73fb73159c2a6fa428473581fd8be31ac6a55759b191",
+            "_require_operand_headroom": "b5c9e594752891c3fe1c8a5356cf9232dbc3cc8611cd8435985c5e4813099c31",
+            "_required_operand_bytes": "95093050111d5a89b4019b87b132eb2261f0746dff27c5ae13b30e1aaec042a6",
+            "_operand_leaves": "16b5429e78fa8a8bd71b2f7b232fe2e276c567c40415c40623301b02c4137d06",
+            "_paths_below": "b12d8a06f78558f8c618e6c5e3209bb42e0011190230e7a68e660589ad961d52",
+            "_place_operand_tree": "4e5754d22e67058a3acf38d11f9e24a54dd7bd2e4a77b51692ca9dac9ca84fa4",
+            "_place_operand_leaf": "2e245da8cd56498ca70f0f58c7f21d10964c820335842509cc426c65adc05dc2",
+            "subject_operand_sharding": "7f408b68a50569861eac3e980e9426df3140e27fa65791e98a1cd4e8385de7bb",
+        },
+    ),
+    SIMULATION_UNIT_SOURCE: (
+        "0203411c718c44bfe546af4187ab0ddf4d0c22e0a466537d3ebe0f2c397ca995",
+        {
+            "SimulationUnitExecutor._live": "efff4a14869f95ae6371a201bf42c1bfb3ee5b4b682af149d4979a02655714f4",
+            "SimulationUnitExecutor.dispatch": "fcf7c7d15381964d3c22aba55b7576644588e31a0c53787dcef62cd78713a90d",
+            "SimulationUnitExecutor.close": "2baec2cefe68783c238e3f553ed3471b6520bb66f40aa7648a9961c3f760faca",
+        },
+    ),
+    SIMULATION_HOST_SOURCE: (
+        "d85de4188726b7df432800108ea0385915f5debb8316ad3e5b613bcb01a82ce8",
+        {
+            "ProfiledSimulationOperations.dispatch": "5a4f3e867890b13629af9ebff9c3ab11a116ecd0abf4df681735e2d23e108d4f",
+            "ProfiledSimulationOperations.compile_candidate": "a75feff396db3e29ea711ce2ecbea1097a978c6a39aad65f93c80a9361f697c4",
+            "ProfiledSimulationOperations.lower_abstract": "e2dfd3fb4ec53b874195e907f7cf7a26253c6194404a002f1005590f3f9f0ffd",
+            "ProfiledSimulationOperations._publish": "51d44b3974028c72140f3d2ca7ebab375c93c51707e296d1bb648a7a817d97bb",
+            "_abstract_operation": "e7304c5158b9b3e99ea73731806eea0ada68a578ee6b19d8e27f8ff06fb064b6",
+            "_lower_operation": "7d5cf87507d3984ed12b895429eea4a671cb0ed7464e0cef5fe0acdfec8c7e08",
+            "_OperationCompiler.__call__": "4f2d9bccfcd9524fef520a64eef658fe2f88484ff7443700e0b987f62f0e9913",
+            "_abstract_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
+            "_static_identity": "23489d8dc1669d265b3206adce1b77cf1cd2d2162444a2431ec141f3b0ce317a",
+            "_operation_memory": "0754b599ab28c5933dc5e22c38d09eec65b32d22dee37c1e8b8b314027abdce5",
+            "_ProfiledOperation.peak_bytes": "39cfc33459a34e6157f26e7de46841b13d60fb4a866854dbf9c7c89bf94f31d7",
+            "_ProfiledOperation.reservation_bytes": "ad8fe8e77b995ab9398031a06d9492d3d9080b408f68124ea048f81449bb73e5",
+            "ProfiledSimulationOperations.prepare_abstract": "7891d4c34afab39e08c15c8cd68310bd1b15027702e9f254d7c3d8b8a5c012eb",
+            "_abstract_operation_tree": "932535e222497f01d8a3325ea8e5f7a9f670458ce46923f9871f33aeea7a9053",
+            "_operation_key": "7cf6f99451f06127a8a0d656eaf5a38c7f4d72b709c14dea94e5632b09414c16",
+            "_validated_static_arguments": "3e1c7db1bf89ff4a9c95db1c5ac18260c69ecaf248de6f0a3e9a86c3189aed39",
+            "_validated_operation_function": "c3b594419ef7a01caff34d521b7d2e9ae096c3eff969ef9ad6af80684f8771a1",
+        },
+    ),
+    SIMULATION_MEMORY_SOURCE: (
+        "27424e6673ee4950f5684a78211ad1ce5d014634a045ceeca0c8553800674793",
+        {
+            "SimulationMemory.__setattr__": "95103b656f23b858719e2ac691d71b21d08facd6b137716247e064af19a3cdff",
+            "SimulationMemory._period_snapshot": "5c2d15995d981f85cea04e2d0c6b608dbd33916c604115b122a17efd69a7b774",
+            "SimulationMemory.snapshot": "437a32114af3c92abf2bdcf7a046d424c24ee63402b151afbabebc2e4b542d16",
+            "SimulationMemory.budget_snapshot": "1ceeed0f0ac95eaf2031103282b27eb2d1b768cd68ddd6313634510beaec70bd",
+            "SimulationMemory.set_chunk_inputs": "1132e41412c470c63b70847dbaac4a22bb081fcbda2be1b7406b1857703270f7",
+            "SimulationMemory.publish": "d8b7ef7cca100a9635d7f9b601a7c22c00a17fe5ed7e8033c2a358582a88423d",
+            "SimulationMemory.replace_outputs": "4c7488bc6cc184501c1009a48c0f3b4d73b836f0ad56ae5af1d311712f8ec4d8",
+            "SimulationMemory.set_derived": "10e766ae18a8838bf4d202f2ecb594c76377ee9594759b5f945604815e1479bb",
+            "SimulationMemory.hold": "a11353f3ca26fa3c13594e4a1e0c7e530b3c377dccb67746d708bf2f6fa3de53",
+            "SimulationMemory.before_transfer": "8f90ea91ccd52885cef10e97c47c0789e4f7be21b0c69b846f8c82ba3c97b764",
+            "SimulationMemory.check_resident": "f5eafe87346b680fc08d2617bb10f395585346ec569bb887a8eac725485daea5",
+            "SimulationMemory.run": "9f463a9e63a74ae5ee77edf2bd3cf2d6238193eb6a0af84f80b79a477702d0a1",
+            "SimulationMemory.close_unit": "ad93e305391d4eea94af93d4561ff2ff0a699c691f24084f5f1bcb63ae589838",
+            "run_simulation_operation": "2c0982ac9b27ad92642cfc81da98c9cb4678c20cad7e130d281a0e43f2fdc1d3",
+            "SimulationMemory.__post_init__": "a656f81bb6d4cdce0c048d723beb03eef9514f690049921c668d3a98348b7a24",
+        },
+    ),
+    SIMULATION_PERIOD_INPUTS_SOURCE: (
+        "3baeebebf1d4693045a911202220c4effdb83c630b7f2ec0ed0c6938dd7e7994",
+        {
+            "decision_reads": "e29ce56bda572aff34dde4e8018d11d3d90b5cb620786143efca424674725329",
+            "unit_value_reads": "071faa9504977ee219d69928bc77f2386532a7a921ae038955b4bf24091f8d6b",
+            "gate_reads": "9e57467e4a7147bb1de88c0010c73960fd3b966ac76b3e5e575bde8791edd261",
+            "acquire_gate_inputs": "a49be6fadbf76e8f8b2fe9b289049711ec3a6fe48851caa0fe31467ecc249abc",
+            "acquire_decision_inputs": "752a3aa7e4de32488ec11d44725744c2eb31fdde30ba4ba87c71a217bcfc4ec3",
+        },
+    ),
+    SIMULATION_REPLAY_INPUTS_SOURCE: (
+        "b941a23abc378d6908b6f270e429ba226c569a65697b252e410867bd9d8b5053",
+        {
+            "replay_payload_reads": "e1b545e6577d7b1056e5d0d3884bab82dcd804af33135b3e78dbf3244f96eff4",
+            "place_replay_payload": "acccbca62b49189e11f8e84426f8c37b39e8bc9e5648bb8eaa9ecbd61e2e7ee1",
+            "_payload_read": "e21661556db28a965ccb171eb9ee1f109992bd81a7c25fdc82066c550022e4a3",
+            "_consumer_step": "2d11c2e3653d69682cc29d7f29d95525f81749f3911869baf8ae68d178c23ef1",
+            "PreparedReplayReader.reads": "3a9de61be4467a66b9cd87633adaa6be14787697bcb60816796972ad066d0dc5",
+            "PreparedReplayReader.build": "81f1567656c679ca538b5fca9230befbd96bd189db9f2a07d4cf12823353ea6b",
+        },
+    ),
+    SIMULATION_VALUE_READS_SOURCE: (
+        "d3536779348279cc4ec16c7ba70f66a4e64ab53c9778833874f904997d86f198",
+        {
+            "BeforeValueTransfer.__call__": "82a3f70c8e1a601fc8a5e52ec2b029488fee92b0f4f6a103c21513943f3688aa",
+            "PeriodSimulationReads.__init__": "6e5fcd55510c97460912d23c87929113019c4c6555b845f22572a160535821ba",
+            "PeriodSimulationReads.read": "8dca34e2aab9b6064d8db129c16ee36abf7f730b14868a7e62e11dd017bc8088",
+            "PeriodSimulationReads.commit": "4676b7c7ec1e4e01f1495b48dbe495ce17a15fadb6ea209eb8a955408633d39a",
+            "PeriodSimulationReads.live_values": "14324293d4a4ed4e3853ee801aa47bdba89b38fbb91559daf7aeaac2779a5c32",
+            "PeriodSimulationReads.finish": "77a88f1d96ad536556eeb486540dbf17ebef640ab772d26683f74712a7a9a6b9",
+            "PeriodSimulationReads._read_host": "a352dd98f9cdfabbac6852b32932e6ea9a98531c278d126ae09fa23035680717",
+            "PeriodSimulationReads._check_open_unit": "057505de76b8bc662e1d69a1ba83e5021cca56afb01ab67423c659cff4a3f640",
+            "_host_replay_sharding": "aa665562686325f36892f458794d1efa178492c4611e72e11817e52e2a60c739",
+        },
+    ),
+    SIMULATION_VALUE_PLACEMENT_SOURCE: (
+        "9dfbadd65ed8404b9d058ca7e2541f179c1fdccd126c1fac1f40d69a0abb1eeb",
+        {
+            "simulation_value_sharding": "529cb86cb0e1cfe3c72cfd2e5e8cbb3e235d717649b971085aff5a5da893eca2",
+        },
+    ),
+    SIMULATION_CHUNK_INPUTS_SOURCE: (
+        "832ff488b6f401ab250852d1bfbe3eb6d13f40771274244362f997beeda4b910",
+        {
+            "prepare_simulation_chunk_inputs": "f5c1bc4db0116338fe110cd0e5a1a7cf3a2e717ec58738d8e082135f161f62cd",
+            "SimulationCallInputs.array_roots": "ce42e9ab0be027b04c573d054e594c08fed81740441a8bf51dc414f090ccb3ba",
+            "prepare_simulation_call_inputs": "df8559c0f9eabcfa82f7a3a0b8955d1a9bf80e918583abc45a6a0ffd96d6b8fe",
+        },
+    ),
+    SIMULATION_ENTRY_INPUTS_SOURCE: (
+        "39ce39b1b492106b807d61567b78df58eb9091776d2421a97dc6c21269cdf263",
+        {
+            "SimulationEntryInputs.footprint": "54cdab53cc743f08e647b64c58fb17500e927aabddedaed36a2cb38d8be543b9",
+            "capture_simulation_entry_inputs": "1f9530b0127480aac7b8257fb03510dad8682c81c8bec6f86dfa280f41f158bf",
+            "_caller_arrays": "b5816c3bf9689817cf2cff29df7bba818657ddf0baaa182036946fb3f9d1324d",
+        },
+    ),
+    SIMULATION_RESIDENCY_SOURCE: (
+        "7ccd2ba0f7c047da4de89e36306c46eee350ddee9684ba49694e88d0d62b6bfe",
+        {
+            "OwnerLedger.bind": "afdc24c3218a517f12d74f84fccfa7e5c7055bbb0b3f0ee659f375bab0119949",
+            "OwnerLedger.measure": "689177e5451cc06fe4503e63e29951ed95df9ac37305830f92e9467a518c9f9f",
+            "OwnerLedger.release": "77cebd7c193e2c14e76d9aaa981186b831626477111f14c27a999477296ac280",
+            "OwnerLedger.release_prefix": "fe266006cae3b79cb1031bdabf42ed650d01ecb15163217c319a9c8dc3e9d8bf",
+            "OwnerLedger.clear": "50605dc06e8805dc6e41bee2cc6db6e1959af9255cc79d63a88d4d2853f0e481",
+            "OwnerLedger.bump": "8997d8a8f18dcd560f6ffd669ee0c2611ae836262925d4644aa2836e48617323",
+            "OwnerLedger.union": "d77839f108e8fdcd189ead2af075daaae002dfb5ab61136484cde3c2f9bc9e28",
+            "OwnerLedger._extend": "da833202cf9271e36a3bb69e39ffa5b2bd284854b9ad586d3916e830cf01cc0d",
+            "OwnerLedger._invalidate": "bccac5f4bf4af8cca6bb493816b1c6bbb126121848f9895f8dc4a3ede25aa087",
+            "DeviceBufferFootprint.__post_init__": "6b91013dac5e169e65e44c92701ce26bbc790d4e51e49b73b96725b8c02b9cef",
+            "measure_buffer_footprint": "99ba8ec6f6b1496b580ecf82d4d979f76441aabedcb1872af22f200678262c61",
+            "union_buffer_footprints": "5928dea9a80ee77082d80a749b8ef86fdf1e1d8fddfb1441ac9112f1352a1296",
+            "resolve_budget_devices": "cb3ce34525277ff3e667132fdf3f0a0504fdff44dfd554cf2ef21c2f71a24d30",
+            "resident_bytes_by_device": "7f98f5a753acace9389784c2200b2b94375c26cb7523092c10f09e890dee2ffa",
+            "require_transfer_headroom": "74b69061e32088c8ab67c18fe47aa512d4aca140f27bfb8d16e5085216d46cef",
+            "_merge_spans": "3cdde57f56837f60963871f3ae1f04ca2f92f45a7ddc4d1c35bd3b52f2ead33f",
+            "_uncovered_bytes": "ec6738bad93d29c3c742d696b5cabce48748755ac79ce71fcde583a94442df52",
+        },
+    ),
+    SIMULATION_GATED_ROUTING_SOURCE: (
+        "ac0c5bb05863a3055d45c8214b1d9b533e81d7197c3cf4fbc395a09d9af76900",
+        {
+            "simulation_gate_fold": "7f0c357a3c4309eec53c9b93edb62d5d0b20445ec5b55e69b7b7f966041e1b58",
+            "simulation_gate_route": "00c7937e1617b84de3d78b14d878a96d08f495907c68f4e4c26b50b4048c4055",
+            "gated_route_candidates": "2142157fc928b46717dd5c1c1e9cf1cab754eb82831e803ea108d2d8cb2605b1",
+            "simulation_gate_route_delta": "7cb4396e3454dd0259fbfe412556553d5ac3caa9e1a86fc87d71b4f43f71380c",
+            "commit_gated_route_delta": "301e32d9fc57ba1a46561fc1cbfbc7033e87f0d2f302736f2232dcff4d680b04",
+            "substitute_gated_edge_continuations": "753a6d56e4bbca96ba2ab789142eeb9ccc1a26201bdef14cd0a7e756f30e1f4b",
+            "route_gated_edges": "e20968321b7cf54a18de9c0f9bb66c0451a5bdadb81a04376c0ec722b1b90645",
+            "_per_row_leg_outcomes": "adfd58415412e5f4ec1e734d52514531a9f21e758fd65ef58a0f4f40ca7dd668",
+            "bind_provenance_params": "11a531bec15493be279c3d34554f9ae4cdd272dfc4f6faa732bf988b997d92af",
+            "_call_vmapped_with_accepted_kwargs": "588c69856a40d54155f942a0350ae3f7de6b3b20bdbb79fa3cf8bc2ab79aaf09",
+            "split_population_call_args": "b779611293e15e0e7ddb15ce213f7e158ebe7edadcc9c62a84524d0bd66e9dfc",
+            "install_population_call": "3a1b448190acfcc503c43fb29f4ba572d7847f4496191fbd7461a97afc4d7431",
+            "_accepted_arg_names": "5edc187eeed7499d363dbbe554d978d04cbf1c63a951bf07d1b49e58146c23f9",
+            "_role_code": "439c955f56094cfce8195a6516abbed95c0a5990b6ac8cc8e8b85ca177b7e6bd",
+            "population_call": "accb1be72cccdd41796bd022bbb39960d9aabb7fbc66467df75b2e3d007ac6c8",
+            "_map_subject_tiles": "5250a4cb34ab8c1590e4e301fd1f462164b5c506c4d5dfa1448c74b4a2bd898d",
+            "_call_one_subject_with_shared": "07dd83c191465a3332813ef6a7cb0290e45732262893ded7a76b51d50df8db1f",
+            "_call_one_subject": "31a86a138a27481b19a238ea0bc680382ccddcd02d5cce3ee3b4e2e7db850ece",
+        },
+    ),
+    VALUE_TOPOLOGY_SOURCE: (
+        "f52f525cc74235088527229c0db000aefcc467cbb88cdba3743a4d40d57807e1",
+        {
+            "expected_V_rank": "3fb0dac3bed9027261436cff2316bd122cff31e99dd1b825977272d09e6212f7",
+            "placed_V_sharding": "2232aa6bbc1e01337e19bd39637a254e34d14e9e6296407c2aceb6b2467333c2",
+            "_get_regime_V_shapes_and_shardings": "c712d242ed26f7d444d84b9ae61add8b59037222ebe6c533b387a86fad4c5b4b",
+            "_build_zero_V_arr": "83c861c7149e4ee341e409c56e8c08fe2a8a01d859bb8d6e80b7ff62e04a632f",
+        },
+    ),
+    RETAINED_BUFFERS_SOURCE: (
+        "ce79b7df172a647f8aba2b355f7b030464a1c2f36242f72983b745b46130ee95",
+        {
+            "retained_solution_buffers": "75b31cd7df576899d18b203e4963dd06acd47b900bf1b6c13c678c62e9d12d58",
+            "_RetainedBuffers.collect": "3388eed966975167c9162aa814f2870da5d61cb6dcd2a6d217ecd7215065481e",
+            "_RetainedBuffers.collect_lazy": "e0390ecdd855167c8261898538e6d28ae62b33ce7170c9ec1c96d2d824edb634",
+            "_RetainedBuffers.collect_authority": "402406b70f1437e1d6427b96af3bea127d3ec5906a9a97eb9b19de07c8c0b081",
+            "_RetainedBuffers.collect_reader": "ab65de29bcfc68b9a694f47a926115124c4ee19dfd455b1c2f4a9b58317b7d99",
+            "_unsupported": "5eb49f472abdea16b95d9f0c9a4f6e56297f0cf65466d18cd87cb4ff530dd21b",
+        },
+    ),
+    SCHEDULER_SOURCE: (
+        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
+        {
+            "buffer_identity": "773d4a78840d9f58d52a23420af0b9942d22ce1e7d84af0d6e84fb3f0207716d",
+            "shard_identities": "5dcf1a2c1f363f904cd238cebc7607d4a23350cd2ea7e7673c93a4df12334559",
+            "shares_a_buffer": "d08dc057ffb25ffe0583d85004270348f45209039cddbd99762d9eac9166dc31",
+            "BufferRegistry.__init__": "929753ce0b5f18af3d68aa592eb75102496f6a9c5307d27e068f9779b548d913",
+            "BufferRegistry.declare_not_produced": "84f91c8e3740a64ca028ccd0ea11be158e6355972a07be943a6aa74a55962896",
+            "BufferRegistry.declare_passed_through": "4e02f1db9ca9d2fd707600a6ab91d9d7239b9b651705a17dc4da6ee184136f7c",
+            "BufferRegistry.declared_shards": "b1b775cd19d0837f801d0cb95e97d49aaeda1df9d0a291c831a3d0f65f82a33a",
+            "BufferRegistry.is_not_produced": "cea14b09a1cf43447b882ceff465849c21c3bbec5d9a7432d21b39a53e427c4b",
+            "BufferRegistry.register": "09edd35bee4350c467c8e224d6fa9a17cc62a8c55c9d870961c03a2e777275e8",
+            "BufferRegistry.artifacts_sharing": "477157e8be682555c1c2c9010c0d530a2303b3b49f2486144e4863ba4add7078",
+            "BufferRegistry.forget": "9ef1e2b80e6713c961ae890a09e95af5c1ff6b1ee4b4a55747279bac9497a8b5",
+            "BufferRegistry.forget_identity": "de10a1a351d0d573c380eb0db602cc2ea3f297be95df5bc18c5dbf5e1c63c9b8",
+            "BufferRegistry._prune_dead_declarations": "bc21c180ad19b29c98a38972521639dd454636f572602ffd68529e7689b2e4ab",
+            "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
+            "_one_delete_per_shared_buffer": "c6824683620084bbb6acbd667b2657a3ba1afdcf425268d7f1d384ee4b308f71",
+            "plan_period_waves": "0f2995c211c6472a1f378a69861a15181f6f2e0856db85191883176788017999",
+            "replace_leaf_by_identity": "12231a2d73d86bda8fd3611d877f8b2d23bb2006a4abd0134d480c88e7426d50",
+            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
+            "PeriodTransferCache.get": "2b12aac3bfbcef4e7d2f0da22f5b8ecd429656fa07f72ceceb51d76cc1fb9956",
+            "PeriodTransferCache.put": "292575c03a3509d986086e6428e908b6303e852eb4ada1a3f095cceb226a83d8",
+            "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
+            "PeriodTransferCache.__len__": "9fb60f4b369c44a05b578b7d992aab8b3f956ffa5c5b465715beceba5fe2728d",
+            "_add_declaring_array": "8cc69ee60ad06411506f95155fbef57acea86a11ca7246182e25c62336ade59c",
+            "_keep_live_declaring_arrays": "120348a883a1615abc6106151a8da9b6212cc82b0c5574806f4e08ae609f3a1e",
+        },
+    ),
+    LIVENESS_SOURCE: (
+        "ef675175e370550bf000b240702edb45f755588b88ff9308634756a7898f97f3",
+        {
+            "PlannedInputLiveness.__init__": "77663425c9c46d7ceeb6befac1ab122018b8a05f12680906322c7e048823577f",
+            "PlannedInputLiveness.pending_dispatches": "a24e02872f9504560a6fc23550115d0f1b45c67ad2436659fe400612ef328849",
+            "PlannedInputLiveness.remaining_counts": "989f7890f975e8ec088e58629a075db4223a4ab2c838ee8af82e52f919a93b09",
+            "PlannedInputLiveness.retained_artifacts": "3bf4021d7ae1455fcfdac1c60f13ec0997a34f69dd451c646e13761616e6f494",
+            "PlannedInputLiveness.aliases": "0655f5d6cdbc718cd5e57d930cc6c4b3bdb2a745ff19dc95437f68a6422003ff",
+            "PlannedInputLiveness.accesses_of": "d5e07768777e51024a01c99334a0ceab92e753793731a60414993a6d65ba3244",
+            "PlannedInputLiveness.is_known": "4c69d8e584489542b5218b9529f2d3174ae437cc0ef98c99f9c6bd752b69a4fd",
+            "PlannedInputLiveness.remaining_consumers": "7e75def83a9e80f11905dc1cf82e8c02e120fb416b75790765a973c7844b8603",
+            "PlannedInputLiveness.is_retained": "79ca0cab60f8eff2fc116fddad02f607b34828776e0c05b8e06b2295414cb1a5",
+            "PlannedInputLiveness.is_pinned": "9d1e5778b7cd96774f7a2e6bd8fc12bc5dc229da4ff36c2392d684831ab58494",
+            "PlannedInputLiveness.alias_group": "2ac8d40b07484895fcbfca4642591bc95858bee3c9e6a4d0933212de96162954",
+            "PlannedInputLiveness.is_release_eligible": "5298fbe687db08df9aa19e21c94a68eff972a24f5f6ce292fbbec905e4b3e29f",
+            "PlannedInputLiveness.has_sole_remaining_consumer": "4771a23cd10dfe196c037f8edc7091e0ba1283971c09c4a6521002a974da3358",
+            "PlannedInputLiveness.commit_successful_dispatch": "6da443074fa5b51958107cae5c3d5e531d59950e8da3232263d815bb2631db40",
+            "PlannedInputLiveness.assert_solve_complete": "bbb245e8d65e21dff94ea290736edf7c468e5ac370085c36936dc6e42e1cad1f",
+            "PlannedInputLiveness._require_known": "cab398b6ef7677851b2f0128407c00f65ea48a489a1c9c877f514f6047abd2a3",
+            "_snapshot_unique_hashable": "20a12fc2e97ef6aaa152b2b84b649e7c9ce61d3c22694d2a32461281428e56eb",
+            "_require_hashable": "49ad3c682a341c27cd2e2c500d9bda7d0280a9f67f8eabac8e86b40325124e71",
+        },
+    ),
+    CONTINUATION_READS_SOURCE: (
+        "357c576e3811082a90f274f382c4854640a573e04f02053d545db13089cdeb38",
+        {
+            "continuation_leaf_reads": "804b3329232b18650ef3da054384f0307554e742b5dba1bd53b14cd1463ac3dc",
+            "published_continuation_template": "a858c1f8320edf22d4fb2be451d6d426838f0363e4fe6c360df93879869a89e0",
+            "published_continuation_templates": "984dd8ca446a1c657f2532a0ef21f8297f6945526ab9c94b014b00ef598b7998",
+            "rekeyed_value_reads": "604602c93cb9636a59d4650e3a756d017d4cfc5c5881a957ac88d6218050d438",
+            "with_continuation_leaf_reads": "612f637430a21eb0490a390045dc5ff5354ac066c7f5b69d71be49c0f1fed013",
+        },
+    ),
+    WORKSPACE_PLANNING_SOURCE: (
+        "64a83df3a4e293fed731c897c7a04a0006794dcf87eee52ea027d8bf8baed2d2",
+        {
+            "_MemoryAnalyzable.memory_analysis": "28c38165b967325e04356285a49a7f1abab248c1d61cf92c8dffa33408d9637f",
+            "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
+            "workspace_width_candidates": "6aa7f1ab2054fabf4f9232447e62b0ee672ef45210639a2be5465873e9326603",
+            "plan_workspace": "510107572ee1896d4d68a8861e9812ed048f25e8727bd5ddf7cc5c61e72bbb19",
+            "plan_axis_free_workspace": "b5cca5b8ba998f4e4db88e282856e4a360f8f1728e830c24ea3791d8da49d39c",
+            "_resident_exhausts_budget_message": "c4d70c808081a036a2b167eada3441348817e49ea0561a1100305d6a44a015a1",
+            "_no_candidate_fits_message": "ee996eb12950a8af3c1b54b384e567077d8c33e1906ce85fcbabc1391dba0d25",
+            "_validate_axes": "0df42ff02f11f7f4e5460fe7c518c300621718ae27f95408ad0aa1696d7ccb5e",
+            "_validate_axis": "05e956236b961d3872faf3ab84245b3651f169a912890465a02e43784db1cf6d",
+            "_validate_coordinates": "5453bf694d34197a0496b8af31085a2c6cf57bd46e866f0981ec932b8dfe9e53",
+            "_validate_fixed_widths": "c9f5045001afe5636961826303f1af8535504c4850cc5d27f0171eddd72e9539",
+            "_validate_budget": "975e144760477b3a3fe439a47e6b4bbd029d27c33c8301b9a83c8fc146086128",
+            "_validate_resident_bytes": "ece252f4071f0b708b42074e53d06b225400297efd225702b1ca9ae20f135c5c",
+            "bootstrap_width": "7b74ba3484d72f9525e5e3fb978ad813ca6b684e34e5078a6424342e5977983f",
+            "_tiled_bootstrap_cap": "d7e16de916ee80f4fb298ec36e65111eca2e971060759897e5e7d401a5cd3907",
+            "bootstrap_widths": "b29de7d4573e8f085e3fe83015c2d3ae7f4a111d7cd7bba588fdaf889be5c05a",
+            "_workspace_width_candidates": "fe684819ead8427ad60004be741a697acf76a54b8395ee5c71d28a367262ec53",
+            "_candidate_rank": "fb310dfffa04b1180e391907a03e7137950ecb0ff60919efe3e2db626e540e9d",
+            "_axis_frontier": "a49f8021fc84bcc1572acba3b8c95276decd31e3dd09eeb99915f7e0add84318",
+            "_fixed_width": "ca34e5f5a2c461f15be91a1c7f41ee91de833b37b174ebd3bbdff3b21d4ec8cd",
+            "_admissible_width": "e38d2036f99bc8edc1633bd783a6f8a7226fd11634826f853976d9af21f5623c",
+            "_smallest_admissible_width": "6f80c9145d0d2b9d2d674b0a3ba8fbcde84f3cacad677d099317f4c077117193",
+            "_width_mapping": "237667842db07b3505f6c2d66395e802071b8bee98047aa4794956f793826c27",
+            "_memory_for_candidate": "95e7e8b701c9098afb3320d6024503baf0d74b30a9ff6acea9a8459274677734",
+            "compiler_peak_bytes": "20c6570dec9b66a87be17f771e7de5b63836bba4b61e37c39c18cdec13153596",
+            "_peak_from_analysis": "20e1716c5e7566e14bbba657c83b000d7c25ae803513f67228b43f6e06b90dab",
+            "_peak_from_device_record": "464f6137698a234195e54180be8d525c402f80ecd35b27ba1e15c224e7b159fe",
+            "_peak_field": "05c48f60a52e95836191e153adfb1afa3efbdf6617dd7ade2f50f801cbb9e341",
+            "_normalize_peak_field": "017c42bd9ac7a4d410032ff677952d73a2999657554295c1dce234b45d92502d",
+            "_non_negative_bytes": "6a68d448313aee7f5b1a85c7f65405bffd1be6b1a546e1ed5d6379ed8f9b9707",
+            "_resident_bytes_for_candidate": "365e0864a5ae864c0594a64c5d6877623f6dfc9a50b5c696b50ffe904ff593c3",
+            "CompilerMemoryRecord.__post_init__": "ce6b673f2e4078e9fbd5cb66c194074fbce0b9f1b3555eb403d7d15ec0e77ec8",
+            "CompilerMemoryRecord.allocation_bytes": "5555d63d219382decf78853463017ba5df55d7e567714110f64226f7a691ee7e",
+            "CompilerMemoryRecord.reservation_bytes": "3bab6af91a467633cbcad7d4853eff1a27741d1b7a888c24eff51c89ffb8a0e5",
+            "CompilerMemoryReservation.__post_init__": "a9f6a5d3a7afa2a595904bb54fb7f0978eb8d53364294f494ef22d5c58c7ed1e",
+            "CompilerMemoryReservation.peak_bytes": "86e8e6c586154b1c40ef2f9938a1a8eb27c6f4911d016eab73d46fedda418bb7",
+            "CompilerMemoryReservation.reservation_bytes": "dcaa109c5f2be124f904fbf9f9311650d9443d234f3442b22bcd0347ada332a4",
+            "compiler_memory_reservation": "8dd28b8aa933a259c323de0ff67da2fafdf6a0d171da2799b3ddec8823aed3d1",
+            "_compiler_memory_analysis": "a17e65641f9cb14f1107abc2dc733839a4d9310b125e4327d14d45aecfb6d34c",
+            "_allocation_records": "9856b69e2ce973cb857a6146bb7be5f5ec537207133a5e66b02a0a5839b26305",
+            "_allocation_record": "0ff0ac3d21c198e596f104c2d5c86773040240a0200d57048f5befcce2793593",
+            "_fail_if_host_allocations": "83cbc5f652a502ae8cdea81ae129fd8a89aedb4955e3ca4f251636b5931363a6",
+        },
+    ),
+    COMBINED_CHUNK_ADMISSION_SOURCE: (
+        "056cb80a4ae17e6338acb152f5ec02db4df9b194f3ed7a660101c282539a4920",
+        {
+            "_ChunkProfiler.profile_widths": "f20bd368bc6d1b96869937448eeccad1e6329b1685862aae0ca150573bef0edb",
+            "_simulation_chunk_profile_key": "8f2f4e7ff782790c5946065d71e2b1d04313f6268b84aa16d34b5ba2f2b63cf2",
+            "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
+            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
+            "_plan_independent_chunks": "030a717fb2310c2c85cf9daa0a75ec918dc8e33dab682ba642fcbba27f723015",
+            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
+            "prepare_simulation_chunks": "78c2751c529d5f315d6f7c168faf94c8c8bd6d713aea92fdda78cb1b769d3acd",
+            "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
+            "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
+            "PreparedSimulationChunks.require_chunk": "ab595a25771d41f7f5a98f4d95927d79813f70d306d856c2d53483a8da5bd88b",
+        },
+    ),
+    COMBINED_CHUNK_PROFILES_SOURCE: (
+        "b19b743a3d7dd67790bf45780eb48ec119ea63c7bba8281d21faf4848202f04d",
+        {
+            "profile_simulation_chunk": "02fd24bad66d55800be589fc3a4e4aa7e3c28ce83bbd7ae8e6a5d426bd0a4bd9",
+            "_period_copy_reservation": "e7aec22af15282053a02dd8db2229d473a897efa5160a6586ed084f42750e2c1",
+            "_policy_read_sources": "97ed74090101e2acb6689e8c10d074d8677a6a407c1d72d20dd120efd79a73b7",
+            "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
+            "_profile_next_subjects": "3c6c79dbfb525f06e1e8e464a678db29376ac636b68a7c8f6153ac38bd766ff1",
+            "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
+            "_profile_outer_storage": "1989c0e2e5f2e54f77bd38e0dbb6e05f07ea93567e0e0e3baaec574939598813",
+            "_record_core": "942d7b15dcf03da3a04ff12b14485b2e2aec2ca3c2f0f554faa9a78d1cbf6e67",
+            "_profile_initial_carrier": "1ef1aa933990fbe5e52659aed6d1f949d76b44ae0d840c0307c2d8764efce7cb",
+            "_profile_keys": "5d56469de097f6ec27b7ac72ebf82561cff40c280c6f6737ea2148d440e4b5ab",
+            "_profile_taste": "ce976aa42f4ef30bed63fc9fedcf72652b611f2c1a5262b8085a29da83b7e622",
+            "_profile_entry_key": "306ad82a059557d575d50c24ed8c51a0d172ed97b6de476a99945bc8ca10599a",
+        },
+    ),
+    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
+        "b7bf39cc5e5c92fc50244abe095659fe046a04a308db13ff5ee37a01312e8844",
+        {
+            "profile_forward_programs": "0042e1ed6be07d88227b38c54d5bf403b972cb87ba2b9106e969c4f67b908493",
+            "profile_forward_unit": "0db8b703c32394f9a3c48f68006e7f443a6c7cb19617c1105f81ed30d7464737",
+            "_profile_finite_decision": "ca41f442e379c8da38fcd7b60bdfd6d7673db7f450c51c026ecd20aa1c12146e",
+            "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
+            "AbstractSimulationProfile.__post_init__": "363e5274bc77382335a7ac5d5200ed644324ff361f578889d29dfac63bf3aa31",
+            "_profile_program": "e75b009cff4976b32b660eb336a9ee18e174bb485f560a15e48a1804d2543f83",
+            "_prepare_program": "39f9785f6748f4420ff9f537b15df3efe2a1d3d1364689e4126b232c0f6545bf",
+            "_concrete_widths": "d8085e4c2d9d3f24d6c5b34f26239fea9eec9fff79d8e52e23a2d539c7192eab",
+            "_stochastic_keys": "dee659c1811c43e460e7e3d77191d61166c7df35b322128400244b3cbe07aa36",
+            "_shared_tree": "67d8626b76815a32f4f0e0478843460d44a1ca1d14cf2454a44fd1f67045c0e3",
+            "_shared_leaf": "2e5f342e34b2d04d048fe77fd2a9069dd23e02501cebc2df80c3b1ca54c41602",
+            "_placed_abstract": "7e7f6ef3a1b6d02436a1eebde1869d131f4f11680fff287a44763acc2040723c",
+        },
+    ),
+    COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
+        "a8bb499ac2b0807c2414a5ed679484c54f1cfcca60b5b5c021aa616ad280e9f5",
+        {
+            "policy_prepare_arguments": "bb1845d1744ab4ca4c8b2fc918d9510fb4996c3eda27dc64643464a7124e9e82",
+            "policy_rank_arguments": "e7fa8d1483b70c729b25fc0ce5f195c2fdb8f368e7d349849db17a8c8f12750c",
+            "gate_fold_arguments": "cda7fa80993965acf43e733416c9c0cc7c7ef15440c52de4494f1957ce8184e3",
+            "gate_route_arguments": "0db5a702211c12376db2c58ed6de2e7c551fc60cce761be6463032dd96251313",
+            "decision_arguments": "e02a1ad8f729a34ca2f06c1df8701483397a2b86e1fd4b17b75e4fae318d2f18",
+            "transition_arguments": "566d397d28efd843dd13235b3897e953736319140ebc99b2432b4d2b03705d48",
+        },
+    ),
+    SIMULATION_SOURCE: (
+        "56bdec4e5ccb048e3ed6b8bddabbe9c0dda3cf85be70a344cec0902e62f619a0",
+        {
+            "simulate": "ccdbe760563635e3d5a1e765608900f955808640e2adf608fd4d20a1df4841b8",
+            "_simulate_regime_in_period": "a271e74e1859c0cc99604380678702d74456ecfce1eb3c52ef678784846b4d50",
+            "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
+            "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
+            "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
+            "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
+            "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
+            "_validate_period_values": "ef665fe0964c3f4354973ab54b2f38c51a6c88c17922b000ce2419a8a18cea8d",
+            "_validate_simulated_value": "f67171b240995b23a980791e4218f373eaee7fad34d32106777fea5b099cb9d3",
+            "_simulate_subject_chunk": "c5f9105726b8900e1972b7f172e0e76332ccc7588dcc2ad752d0fe270048993b",
+            "_bind_unit_executor": "b6bd770b2af202adb765511eaff29ed05bf2c2823a34c22226b36dd792533064",
+            "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
+            "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
+            "_replay_nnbegm_candidates": "5733c0a4a29a916da35662961a0b6ab2628bdb7668bbda923c4cffb999f93a36",
+            "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
+            "_rank_nnbegm_candidate_bank": "fe9d4341209042a24be1359ee77089f1f43cbd4a0a4ca1da63ee308b5c547f64",
+            "_initialize_chunk_state": "0597964759cc394aea8126642ecf7a6d0902c080cf9ceff9cd704e805a4c149d",
+        },
+    ),
+    POLICY_DIAGNOSTICS_SOURCE: (
+        "6ab53d88f11165b91371920ebecef50bf288c3ab3e4cec258e4d8787d8f84238",
+        {
+            "dropped_candidate_counts": "b82dee7807b85e869b9962f3b3b4f5fd0ee65a3ad51eeb54c074c814030b2afa",
+        },
+    ),
+    MODEL_SOURCE: (
+        "99cae4949af89cadf5bb7701a69dd240868408f3804fa00ec7f6544d19874fbe",
+        {
+            "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
+            "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
+            "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
+            "Model.__init__": "f5c844da5f2c3510b245e3ec1f6c4d99d724bb66701f792fcf500a74c41b984d",
+            "Model.simulate": "6580c40839e8a95af5941f206811213dd51a91c094f4d9c3db76b6f419d1d04b",
+            "Model._open_entry_allocations": "a1290ef470627e4d6179bc1c11924964cd812a59d2056a8335c1c53f21ef4c32",
+            "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
+            "Model._consume_foreign_solution": "33e8f8379ca9ec254e599e219dc1e9c3037b82f5b77d82daa5ff9c59868c764e",
+            "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
+            "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
+            "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
+            "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
+            "Model._model_fingerprint": "80a3ed7e40a071ab0033b626db1aef986afccf1ad1be28569b9065a862e08cb1",
+            "Model.solve": "998f87cbdc5227767edcb22c70fb696287e8b7596b82ed812bfb3520ec27de82",
+            "Model._solve_from_flat_params": "27c6b45a516ae79ad5b12c7423e67d2122b2ed1a356319516908b220570020e0",
+            "Model._solve_compiled": "d8884c7367c4c310e1f6d81954f37f3f7258a9cc7ead2e401061698c8e3cab44",
+            "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
+            "Model._build_external_replay_readers": "71a4af94673edb9c6c04a98d3076612a265420e637c8a8eff5785a5d383ddedd",
+            "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
+            "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
+            "Model._process_params": "8d6314dc6a867bfbeee6f8150b4cbaf9749739707dcff23eb2bdae0f6f5f5610",
+            "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
+        },
+    ),
+    OUTPUT_LAYOUT_SOURCE: (
+        "bf24629f0671e78981873d3d6b9e295ad33cbdae8c61e1a98c9f27f32aca8be6",
+        {
+            "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
+            "PlannedCore.__call__": "08bfb7b759bc903ff3a4225f57edd4d2298c2e5e8c38832c5ef6b81a878828da",
+            "resolve_output_layout": "b22b19e7669e657b6b0e37190f52c4b8a4f8e39cb4101a3d7b2fc5c522c25fee",
+            "_validate_output_roles": "7cbf07ffbcb4becaabdb34d86ea44caca2bb8561b14f6768970ebccea79e4b08",
+            "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
+            "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
+            "PlannedCore.__post_init__": "92f25766a12bbd9fe2e9be8a5b8a4034c537633499adcd7acc832b460becb73c",
+            "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
+            "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
+            "_state_axes_leading_sharding": "275366296965e4160350df8a1ca9482d4985be24f394afd4a441bbf0fbd8404e",
+            "_state_axis_spec": "49e002ddc32f703b089ecc147a6bb5296157f2c4f6313335c308e82f06ddd18d",
+            "StateAxesLeading.__post_init__": "0bd0d18d5a0caff060ce3a860622a537a26aa061a164e9bdab4423b2ea4d2698",
+        },
+    ),
+    VALUE_TRANSFER_SOURCE: (
+        "01d90eb4f4e000170e36ab8c6a23ba129ce4d0660880dec9853c02f2a6efd75b",
+        {
+            "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
+            "MaterializedTransferObserver.__call__": "3e06bf2091d6a3291e5674060c34313e03f0e7419af22b033de98b2fb2845ca4",
+            "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
+            "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
+            "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
+            "_transferred_leaf": "b2b9022815cc8459d04c18fd9dda22ecd1fb8dfe969540e5112d279ef0403af1",
+            "_replace_dataclass_field": "fb6a7641a0cdf063cf1933917f50a88dbad7591ac560b55bcfd49a1c68e51147",
+            "ValueArtifactAddress.__post_init__": "cafe101592a7a7d2019ac1f2bc57e2e64295da6093a399dbb948bf8c38765e0e",
+            "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
+            "ResolvedValueTransfer.__post_init__": "60d77078407d8b253b0654dd03dca371c32a06cf1efb05470ff453c815a7092b",
+            "resolve_value_transfer": "1fb20659b43515507a727b46ad274d5bdc1c67a55ece59d48ed7e48e1e435a95",
+            "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
+            "ResolvedValueTransfer.cost": "07d257016bddbec9e6eacefb5e26e26c8c612fd6a0884ea81b40ac667a0c9011",
+            "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
+            "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
+            "_validate_replay_leaf_identity": "0da3b8851138ef9c733fa1b64977f7ceb243e6185b5e44fa49236619ccb2e779",
+            "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
+            "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
+            "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
+            "_require_name": "af49e5c3217919d353aa787908d9d0764ff17792b1d64aaeb08afa1f0a983628",
+            "_require_enum": "4294ec9593c985870368a5d21f476900ddfffe66f42d275dbc02bec9708aba0d",
+            "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
+            "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
+            "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
+            "ValueViewDescriptor.__post_init__": "e5e888614d92e690a128d3812b217f8ddfcf6637809a896fe14c2401b6f0ef98",
+            "ValueViewDescriptor.selected_axes": "606104f0b662cf88a37ba1496a05ed142f93858c1646c2794c1aaf6cb34f1476",
+            "ValueViewDescriptor.structure_key": "39bf29f8d65be0bc19a5ee9a4b4fa6dc73a21c641f72f5d499c5367b58e0177a",
+            "ValueViewDescriptor.identity_key": "45ab6d675d4ef8c8350e34a7361dc6b307186a4558c3a420c5347bbec6326ee1",
+            "CoordinateSelection.__post_init__": "45f22f279739118a21c04a97d8fc4ad7108de34ee7fdea60b276afd1f84ddc01",
+            "TransferStage.allocates": "b17555d91ba1e9a31a9ed57148afa064982799c4953d95998b9a6fff344c472c",
+            "TransferStage.output_footprint": "41b4f1136bd24e82268fee82b7064efd7761f69d803ffa224ef434f02153ea99",
+            "ResolvedValueTransfer.consumer_shape": "2f7b722fc9a7cefd9bcc0c675fb33111ce3caff65a317e5d97014c7091b0fb95",
+            "ResolvedValueTransfer.selects": "a70c4976882f86afbd8c12c20334d58d5545540cb75bad2ee46b5fdc5c2f76db",
+            "ResolvedValueTransfer.delivers_stored_buffer": "8134faf2e24194ad2240f72eaf5ba7bdd6e63c81e1c4a84dce8d6ea7294194cf",
+            "ResolvedValueTransfer.stages": "045d5012182682b1ea9d41d56ada26ef6f92f3680eedcd706bc1986a9ddd4078",
+            "transfer_result_key": "9bfd1783f1feb8ea7549037e0505435b47fbdfd0e4b6f5dd37cb4ba762713f6a",
+            "_select_view_blocks": "e576be8253cc6f346825def3852a3def6da2dfd09c83b319c5b39a3031177b6e",
+            "_selection_operands": "7683b8e0ad2ed33a84b844cb52d66e091e8f3410848f296803d0e05eb376a61d",
+            "_select_stored_block": "b6f1647938496460dca1cf12ca5b26ba285287a01bb00c6cae0f367d391cd454",
+            "_fail_if_view_mismatches_transfer": "c7d588a05f07d1f2ecb8873539cb2ce62a3d28516bbdded5734172f8ba6cefc9",
+            "_fail_if_selections_invalid": "1ccb459a7f6b511bf7a631da7c31b5614a3b2b3a3b06a983d07333b44d6481cb",
+            "_selection_sharding": "ba7789147c8b08c57243e70d3906adc90aa8c9fe57021dc4fd7fcc27432a0e98",
+        },
+    ),
+    BACKWARD_INDUCTION_SOURCE: (
+        "1b1fd358d607e07b224bdcbfcbbd68cd13a9a735c78424da6394a07fd60a867b",
+        {
+            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
+            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
+            "_compile_all_functions": "c98a7c37f68774be63dd3b2ce5bf66a2218fd948e6e06102f9e2f4dd7ac39367",
+            "_prepare_solve_programs": "b8037f9538927815534d7d49525ac6c84726e5c8dfa6ffd1689eaae69182cda5",
+            "solve": "768952338eb094d647d936461d9d2f43d75fe6d40b73a4c5b431056eef28bee3",
+            "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
+            "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
+            "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
+            "_prepare_abstract_program": "6a4dfcaa4277f0a5e58965b73c5390129848bd243d1dbfc91c32806ee982867e",
+            "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
+            "_iter_edge_topologies": "ba1a385a7779fb841a865a76bbb185c30653f27a7f66c2d888e147dcddcd4725",
+            "_build_base_state_action_spaces": "7a0648369e6ca73456ba099ed2cde0bffd294728dfaf482a7ea07b477eea792d",
+            "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
+            "_build_structural_blueprint": "68afed608ec6c38be4539fff4ca148978f7679564a268e54c5a7c8785ad67cd0",
+            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
+            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
+            "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
+            "_lower_and_compile_wave": "7068bda7502d1136c7412667a0921c9c86178800ecc57253f0f84fc98fdf8295",
+            "_lower_resolved_candidate": "af793de4c8caec255772e0fe0336b6f33f520c5baa65eee69572dbaa4ba061d4",
+            "CompilationWave.lower": "fbcda242fd0cfa00e931b752a12877d921c405a287458898e21af07e558eba77",
+            "CompilationWave._submit": "8ad4b830ee1e97284940ec536801b365c5c02fe5708040c31273a9355e1c95b4",
+            "CompilationWave.__exit__": "21bd9016dd0ef6fd3879487d7667dabf3cf89fd27188eb914e2a78d4daf45f9d",
+            "CompilationWave._raise_first_compile_error": "787b7683440a2b26449c59bab1bd7986ff983e5210d3bff3d07be5135f5bc527",
+            "_compile_and_log": "6c2e773eaf54f547353e2734fefa2429d266a05279d94e99c8f8e596b916f74d",
+            "_run_period_kernel": "47a038258d573a3314235f49cc89bdac46eabb1f2ef0da488d1973f6cb5aa6c1",
+            "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
+            "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
+            "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
+            "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
+            "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
+            "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
+            "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
+            "_consumer_key": "84e636efe031d30a19d76638e93a95b8a0debc28b2e2814f36361b40d6f3cb13",
+            "_resolve_program_for_execution": "cc1658c1a344c669c0bfc13ef18749b886774d692fb1f7d2fb7966961619af34",
+            "_resolve_value_input_transfer_plan": "0fb74fcf8b78af2a777a6496d194afe5a6cf6927b93395179a4bf2c9120e6f52",
+            "_resolve_value_transfer_layout": "5c185b3650134f62ecc54c80e35799ce39db20aa003458498eca536bfdc4db3e",
+            "_lowering_key": "9ad1fce25968df0512af4e2c7ed1141bec689168aab645b61275ed62e5466fc4",
+            "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
+            "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
+            "_abstract_leaf_key": "b1035e3da73c72fee5ed7370f8f6cb5acce564403518f51e5734d735c0252591",
+            "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
+            "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
+            "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
+            "_publish_kernel_value": "f7685f97babcf0a002b49b1bb5708c2f723a6d64c5f28d75892650a8d6c3a43e",
+            "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
+            "_resident_inventory_by_triple": "62b94dba3601033214595d6964060fbe5c0562de7029e60b500664afa73333c0",
+            "_candidate_resident_bytes": "3e03eee2d0d510a5fb5012f6646e6121d645acbde1adaa6cf5c8c6bb976dc86c",
+            "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
+            "_period_copy_reservations": "75082956fda5cd0e642e988ffbef655df444a391b815c5e50cdd6e7d8ec3e265",
+            "_internal_reservations_by_cell": "f124d4d1a32d92a70f139138f66108ee97ca4ffc13e7f3260ea2469a9890abcb",
+            "_internal_leaf_bytes": "ece84ac1a1905891efcec6e59693074f62da35ca50e9185f0fae55c2829f1206",
+            "_retained_base_space_arrays": "b1c98e73406bfce36a00dd3a398da0ecd893d2e52e6c3911de59962126800c7c",
+            "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
+        },
+    ),
+    EAGER_CORE_SOURCE: (
+        "5964ffe72dd680e432c4bab398daea28123f8378214ca383fc2bc6b9a21ee9a1",
+        {
+            "make_eager_core": "17f304950d7a2982e94e8d2510fe67db7714e475c084c47cc8d37b81f49b5630",
+            "_EagerCore.__call__": "2a201f7f57fff1f4559d4d1feb7b932a0c5960fcdfcc81a7dcd0b851a7c6bb6d",
+            "_EagerCore.place_operand": "9ba9305e2dc4cf0da6ea94f06f34bb0f9c1c12b60a233ca3307720e94f16e939",
+            "_EagerCore._typed_sharding": "274e9d40da69831ec01f8b88626389d092d13b6e9218d5ce1f06d90bb08f1147",
+            "_EagerPlacement.internal": "a5bfdfa9096c056d706194f7de4804973483eb998b33dd0866f30f26e7a1cc71",
+            "_EagerPlacement.__call__": "be84f81c9c35e1867e56b8070f7cac857c58dfbfae50788f7382d7e1e6e06927",
+        },
+    ),
+    RUNTIME_SHARDING_SOURCE: (
+        "8089ea76122ac3ab579951a07ee8d6e9b7f02c6916476eee41f8d47934ee47ce",
+        {
+            "runtime_shardings_match": "5f7cafda4ca0420d72f0fbd007e31d4725a42f286eb82c408c5cec8defda5f27",
+        },
+    ),
+    SOLVE_PENDING_WORK_SOURCE: (
+        "9a45521ac40df04ae42ce44ae8cd11748dd69a845c4cd5b496aaadffc893c9a3",
+        {
+            "BeforeArrayDelete.__call__": "1c24de0e7bdcf0cb0bc04e791baba1c42b13d9956ddf52f8317356a5266ad74b",
+            "PendingSolveWork.__init__": "906f9616790021cbfb647a5be9e3e540f03684510fc0b077971a70102c825fa9",
+            "PendingSolveWork.before": "ff4a1626ee01b3b7bd92e381028061cafaaf5e7783600221967ae733eb9833ae",
+            "PendingSolveWork.record": "2ca9affccdc84b37cbe437cd320cd2793f627947a0af8fe347fb4d5b9362dc1f",
+            "PendingSolveWork.before_delete": "94a1cf03edab4724c3c89b5178739980fcbb921d8d5bdc7eaf398064917e1f23",
+            "PendingSolveWork.close": "fe6414b23cac14171f27d9b47d1be4782ec87455a8a49757b9d492aec57539fd",
+            "_MaterializedCopies.__call__": "2c4a4c66c43562237d26b463d44a44ec9fa04df33758ded7fd344aa7a86022c6",
+            "_MaterializedCopies.close": "1f54bd302fbd989ef36cf1c3dcd67c1e4b0bdf85a9fa5711c5fda702aec64a66",
+            "execute_with_pending_work": "ae75d43d947d8cf2872fa803b114c4a4de5ec7c7774d3118786ea7bef6c0f44e",
+            "_drain": "e29703e5803aebcfd54107150edd5bdafd73368d5d736bedece1e3e4f4573322",
+            "_complete_array": "55a0795c2c3ab63912524fcce52fabd7fbd5c9b9aff1d2e6bce9d80e49d4f6e6",
+        },
+    ),
+    NATIVE_VALUES_SOURCE: (
+        "67551ba538d3e92e91438552ddc63f75502e69106bbd7335d035e07c39a3457b",
+        {
+            "NativeValueMaterializer.require_entry": "1e16de95d530e58382d789be1a135a8f9e759b2c6d00b03113205f665ad24c94",
+            "NativeValueMaterializer.__call__": "509e68a58553a54fe0cdfc048572faa5d070b40e6111bd104be56d4dab65f750",
+        },
+    ),
+    NATIVE_ARCHIVE_SOURCE: (
+        "92efd576e518243cd3709fa87b6c8ce202f111d4933b812db3beffca09b463c2",
+        {
+            "_LazyHdf5Entry._materialize": "cced2dd36584f055d288bc0c8524bbb5648ebaa601693c6970686f95704c5e3c",
+            "_read_and_verify_leaves": "1ac865597a1a5dc3bd80dd4ed344ebbaf33aea4842d21dc35cc5182d65b48f5e",
+            "_require_local_group": "9e893f06d8382be11b4d21c0e755314ccf46baecdd01df838e90bbf0a59d2a5d",
+            "_require_local_dataset": "29c000b8a6132d9ff764a8b5eda7e62108d85e82bec5dbbe99b0af26eb3ba8f1",
+            "_array_checksum": "3c00687a7b4fd0a92a18573c0123884b468f95959c8c26bd617c918f513a86d8",
+            "_array_checksum_from_leaf_metadata": "85e202228b36bbe6065b33aa90e4f6d7695a5b3ce762426ad325215cb1ec2e7e",
+            "_to_jax_without_narrowing": "1b25088759f37cb0e69618da38903e96e763aba1e0de238f5660190596a82071",
+        },
+    ),
+    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
+        "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
+        {
+            "abstract_program_inputs": "a0a1e8e4bc32c407704e58c2bf6322dfe068d44cc3a5ed14966ce301699c046e",
+            "_OperandDescriptor.__call__": "f5f1dd8803d687c50ba2899e0bab0d5e49e9bef83c0def08582844e9351285b3",
+            "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
+        },
+    ),
+    COMBINED_ASSEMBLY_SOURCE: (
+        "69287dc4fe39ac4cfdc4107ab5ca16bd0b9a75ff2e2d4c5a789a59063aee4b0f",
+        {
+            "concatenate_arrays": "166524acde202897680156949a7154946eada67c9d334c0c7049d44946378ca3",
+            "slice_array": "cfc7f9f403e29db130f989ca681841baebb2a301672cd4acd7b21bdb55fbf37a",
+            "_run_assembly": "1fba372cd49b25333eb25f8c0d2161f90f3ae5f1c0f1f2a8f2be1d0e233ad5d8",
+            "_concatenate_arrays": "3788d18fa58eacc8369dbe797ba53d55cb4176b41a5af5fd78eee982947c5716",
+            "_slice_array": "7fcb5248d6614a00a301a43c2e5a7bc438d81f3cb7593894d6c44486bc84deb6",
+        },
+    ),
+    COMBINED_CHUNK_OFFLOAD_SOURCE: (
+        "b9ab908caa5df5af326df92d1cbee1566cdb9e51738305ed086f59a8e1cbafe0",
+        {
+            "chunk_host_device": "78b1dab1f595c20eceb674b65fcd24f29280a050134327b9d297ecf541a2eb40",
+            "offload_chunk": "c1879b72e6f1726a75b3766c8ecaf1e7da2039024cb77f4955383e4808899670",
+            "_copy_reservation": "61b5fcba503ac11831458b4522800283b492fa3fd51753ba9cb6e24e2236679d",
+        },
+    ),
+    COMBINED_CHUNK_OPERATIONS_SOURCE: (
+        "f88474824ab712b580ee5ee0d909499e63eb9a8bbf308b810502dc6c5470f1c5",
+        {
+            "slice_population": "9cbd202511ad883dda5edf9265fbb254b071a241c46bc01bd9bc57b776a896cb",
+            "_slice_population": "d792ed23b4f16950eec4a3db4ee0c8ff95aede40469d0f220bd697a47a2d661e",
+            "period_age": "3f7f8c712cde6b3a6cd90ebfb6e66a1680010ca05670ccae90eaecb42353e333",
+            "_period_age": "e514ab831281075c33ac82eaf68aeb57779770d04051aefe64e02a5762c9b820",
+            "regime_mask": "8fbc0153274cb05704a54704fcbb370211e0b635bb2224ee2630a5fa06a5fc4f",
+            "_regime_mask": "e520b5e61daa2fd190ab3b79c0a66e332787e977a4fb0b173e59884e7d8a840d",
+            "broadcast_collective": "55c4bbcc3e163aa8fdb221c2ed3e0ebfdbefae7e86dfa76366f565f00075241d",
+            "_broadcast_collective": "e4e18b73e6c89877dae70e21a6707472219d44ed6fb5eef672577c276e34620b",
+            "broadcast_value": "d19aca835a4b98e2775d9e5a0a4c1099deb65f6c4af5d8887f492b440086d6f9",
+            "_broadcast_value": "52ec120e28113306a52e9a9a2b868485148ebbc2b0cceccff3dd2864db949b4d",
+            "empty_fallback": "6364471157867280847d71bfd4660faee1f5137d08b896f2d952dec8a86a9b50",
+            "_empty_fallback": "974cd130dd3ba7977b514a21225c5936bb4545f20c9d92412b85021424af9627",
+        },
+    ),
+    COMBINED_CHUNK_PLANNING_SOURCE: (
+        "5bb1570fc049b40cc2c1856c3237d7f340cc9e75bf6b84e62043cea656362cec",
+        {
+            "IndependentChunkReceipt.profile_count": "246417809388fdd5e03c2e38c3b81863e76bb7078bd5f2d04338da0ac7caebde",
+            "SimulationStageProfile.__post_init__": "2a0a901ce96cdd863b8b93d237c6ad88b40bb9bddd6f0b90290374c1074c7f4b",
+            "SimulationChunkProfile.__post_init__": "dc35ef9a8a3b963fa62d6f3fb2f54eb645e6d7d2f024a50bf4174d0a32bba602",
+            "SimulationChunkPlan.__post_init__": "f6c3be86ea1d1f22e94c94743dc6fea1275027095004ccfdb30684bca8428cca",
+            "ChunkProfiler.__call__": "0d8cfb4c8530d329393a4f74150d216e68bb03a061b10b6fe93e401a33c6dc51",
+            "plan_simulation_chunks": "56f7031e6be4dfbd264314cc8c6203b969e10c61f7a740c4aebff16e66a1d122",
+            "_required_bytes": "41c7b9e4758796454b1eb87ec5d943331e76849976f567dec0e0628abeaeeeca",
+            "_validate_devices": "c7387fae49d5a96a9a3b0454ffd74e0d5c7a798a8b4c837bd2c66d6751cd7c3e",
+        },
+    ),
+    COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: (
+        "bc3a2979553989bb00feecea5fd748d2e00f81c7e70dd1c2f0587ad30ba9272a",
+        {
+            "abstract_tree": "8cce8a4cc56e20693edfda8749ef0b0ab2671904cc854383e21868fe1f05d723",
+            "_abstract_leaf": "fd004b414b28d73667040353fd35c2fd73be2b07dcafa93c3fdbb1192ae67304",
+            "payload_bytes": "54780bdb4d5ae0febdd86b1a420d422c8dcb536d2de62c9c4e06c147cc3fb427",
+            "add_bytes": "dc8405be6264d34c70ef2522ab4792b55f21865953e2aecc0cd6a53a3bf8ef78",
+            "maximum_bytes": "783dddf0ef2b38ae119990b8c4815f4469a7396b94a993a7ddfd3b3b36bc020c",
+            "ChunkProfileInventory.operation": "aa3ddb71a5ff57d525d1d466042af4841e430868cc0ae2810b463d967ead8cd0",
+            "ChunkProfileInventory.compiled": "e7967b9004b67ff6bbf77e07b397198bc5470b1106ff6d06454bbdf510eb322f",
+            "ChunkProfileInventory.close_unit": "f65d7fedec0c9f24adf4d8be034aa5be7dd72ae9bb87d312c7dcdefeb885831c",
+        },
+    ),
+    COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: (
+        "796b404a0fe45bd3a5ddb363612286d721a8c0c75656c1522432abd254f141a5",
+        {
+            "period_value_flags": "1ca9e9e2920a0333915071a229cc907c2fdea761f313ebed1aa6e7d35235908c",
+            "owned_value_nan_count": "e6168d82082f8c26ffd75a75386d46764a59d1ec3030b11e9688d019a9e668d7",
+            "transition_counts": "9ab0013eeb414dcc3bde5bf91cf144079b27ea4b3538d4b7858687cfbe84dfbe",
+            "profiled_transition_counts": "586661d6d039c19a88a0bc9c450342a8c31f36eb0453d0d82147ee6d15cf6def",
+            "DiagnosticBinding.__post_init__": "e94a4dd9f381772b875a4dc7715ab199f7f0c7b5d49d3bcff67399f6473d5e72",
+            "diagnostic_bindings": "0266571f8d59c095f9797b9e05bd43e5e5eb9463740b845896b51f555fcea090",
+        },
+    ),
+    COMBINED_POPULATION_OPERATIONS_SOURCE: (
+        "0a848b0b82869b622d9c3ef464c898935cebfb2f0b2f4c2e193d1b1f44581472",
+        {
+            "default_roles": "88afa3c0d2bc242098f72d9ab7232308a7a26ba97fdcf02620b70c0cb1929a13",
+            "regime_is_occupied": "8e2e9ccdf0821653598ae983149767955a446b506bb532065f681e785addc62e",
+            "canonical_roles": "4542061502177865523b5c1d0c5346c2aa2ff46286c5b81d3df65a0e7e29fb12",
+            "role_mismatch": "faba46dd0931feb531692c4b87d8cce2991dcf2d7a6f6c14de8f9b24d6a4feb2",
+            "starting_periods": "211a8bcd2a68fa7bf617cb176c7e1321af79a5b4fa4858d5dbab5283b0546672",
+            "match_starting_periods": "0d27c548f2a58283b23dc3ae92cfe86fc12cde81286479eeb6dea43ba2dbcf12",
+        },
+    ),
+    COMBINED_SOLUTION_COPIES_SOURCE: (
+        "5894fd162877de03428bf8bc4b8c2ba446943541a5f78f4394f13e9194878dea",
+        {
+            "copy_solution_leaf": "7967a1766bfeeec72757ded50d7a17a32089f9395c95710da8afb2acf40c50df",
+            "_copy_value_leaf": "70a9b70985afb5ad1252e4e430e7884366a8e19a09c363ae2efbcaa07d0970fb",
+        },
+    ),
+    COMBINED_RESULT_SNAPSHOT_SOURCE: (
+        "e39d74fae960d34157f92f254017b345dc1955e31848f4b3a3573883fd6f13e2",
+        {
+            "snapshot_value_store": "08c3aefcfd9223df8f908bbafc0fddcfd4b34583cf05483f713b86f160a4c3f0",
+            "_snapshot_value_coordinate": "9e3b60a69ba820b65b589cded3adb8a4a50be655d546012209ec4f2f80557e54",
+            "_keep_payload": "ebc1bf419c862f893f78569cc8d06c1e7676e99421133222f254d206d293b6af",
+        },
+    ),
+    COMBINED_VALIDATE_V_SOURCE: (
+        "9268c8bf6d2e16e7d690d85e9cb1eecea0222b092da9941ea15448934d5782ad",
+        {
+            "value_function_nan_error": "df3ef2ed002fa93625d40067b882afe2e063522362c5609160b5c07951b394c6",
+            "_entry_support_cause": "eaf8001c1762ca0d88cc374068a06ad22d43868b03ff8fa462c574dc788771b2",
+        },
+    ),
+    COMBINED_LOGGING_SOURCE: (
+        "d8d57540d5b6a495aaa060e232e5cf4bdfd7acee308b2dc70b3f18b470f53912",
+        {
+            "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
+            "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
+            "log_non_finite_values": "c03a58684f08342c1ae9001fcad29c3d5a5ec4862d27d04fe2807dc9ffa28493",
+            "log_regime_transition_counts": "11c5f45c415bfac54b36a55d52cded2911152f3e411e61e2d90a47ab19b11725",
+            "validation_enabled": "14475c5e923e2ddab2f7128215e0ebaecfb9ff756a6ad786d2139f1a490e4b35",
+            "validation_raises": "1cce1da3fb0520f1118923b0d5873d6d38b2e7ca8ae72ee9968627f8b43d2206",
+        },
+    ),
+    COMBINED_AUTHORITY_SOURCE: (
+        "c45e467e420b3d47e8928fbf6b5555aa601f0b3b37b2f606f134582556b06998",
+        {
+            "_ArrayCopier.__call__": "d708cfc14d20e8e157d30abe2336b3faa117b225f4ed3b10840d4dfbd4fa4c36",
+            "_copy_artifact_array_leaf": "a4b4e8c07026ff9de60e4bc5861c48a548b2d9041954299b4cf1ee172089d3da",
+        },
+    ),
+    COMBINED_ENTRIES_SOURCE: (
+        "0d030c3a92570d9943a046be77679da27912b8e029fad77d4ac2e88b429dc831",
+        {
+            "_ValueMaterializer.__call__": "dd2c4fdf01569d0a93422b1b60864536b3edc367b71cae21920cdbb05b6fa990",
+            "_copy_solution_value": "ebf2636dba8b0ad9e93e87354da26f1cecc82fe03a35e9432241639e181123ef",
+            "_CanonicalValueEntry.materialize": "c92e8585201ddd0d377aeb75e4d32b6d08116e96f9002ad73d8b2d6621dd1682",
+            "_CanonicalValueEntry._fresh": "4741ea3c98fecd4f6c80282249fee83e74594fe84046746ed4edcec35a7e10b1",
+            "_canonical_value_entry": "be024f9eae76be0d5376b8d2e3b0d25c0184158e230a0da78dad3d1a1a57e08e",
+        },
+    ),
+    COMBINED_STORES_SOURCE: (
+        "7f7e51ef64dc69aa4aabea50307261e82beff0f966b9e6f5de5780f2597d0a23",
+        {
+            "_admit_value_entry": "60bd7786314e7a5aeff8f8f74115860d308f41eb449b8e7132029a393d0c5e8f",
+            "ValueStore.__post_init__": "4f81b32757d589ced2e605619de79013a2d9450f319e7adf77094e898b8fe7bb",
+            "ValueStore._initialize": "077c0761c319e9c45a36723cbdf0c870c7d3d0e41ebd8a1f471bcb0a7967c28b",
+            "ValueStore._from_entries_with_copy": "eb389069075becdfbfd100077f286fe56ca7280ee38904df068c735ab1d5248e",
+            "ValueStore._load": "f84ba1dcf88a3e5ec494fbec8b14cf9154f4fc9c74e8acd83a303ce4149bef9c",
+            "ValueStore.materialize": "3e32297e221c4bb51cd25687ff756f6c02180bb204978d4ac169c9d0a3b08802",
+            "ValueStore._materialize_with_copy": "8577e39aaca402c4b60d400482cd7354fd7c89c6b3b9714adc054edd62973de1",
+        },
+    ),
+    CORE_PROGRAM_SOURCE: (
+        "c850379603895cc5dbf090587cfb64caf04dbe6fe6b31672ee5070412c85f308",
+        {
+            "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
+            "ValueRead.__post_init__": "9eb25ccdd2f056a241092952e6b92acef943f1babd2f2063af7b32da935a7190",
+            "ReducedAxis.__post_init__": "030c5cd6aadd91db7c7362241817b7b1734cf27d853824376ba1206bdfae05ef",
+            "ReducedAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
+            "TiledOutputAxis.__post_init__": "dc42959d05c19bee720f1423b60179a0d729b74546bfd278e0928cd2a6b2d3e2",
+            "CoreExecutionRequirements.__post_init__": "b8c76151ae6388cf29f8b580d1b6604c5969829bfcc46838a5adcd7d04e73c7b",
+            "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
+            "CoreProgram.__post_init__": "cc2b0daa4751a08b0be23ba75f086bc0c1d8ffcb6a45a9f7b1e3d914375bbf47",
+            "MaterializedCoreProgram.__post_init__": "91815679a6b9b6ac14dfc35f3a2f40b3fecf31200cb03105692a963712570437",
+            "ResolvedCoreProgram.__post_init__": "468796cd81e23cb793ba8fcc49edcac4167064550a54c16fcfdbd4abe48674c0",
+            "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
+            "_reject_native_duplicate_authorities": "02f48b342f94e73d6c57732bb28b31d9c64f33df9f5f4b7ea63930450831d4f9",
+            "_snapshot_and_validate_graph": "391b89b66355ecdba2d0c869b4a748f2a0ef065610255e4819e398cf53faa7ca",
+            "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
+            "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
+            "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
+            "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
+            "_validate_disposition_reason": "5df6651c2d9db4ebeb5542394c738c5238144ff19f48f0639b3bb6b43c63bc8d",
+            "materialize_core_program": "7bde944455cb6ba4b0e8dfa5919970d0f2ad52b0af657dff49b597feb5cfbd6e",
+            "resolve_core_program": "0ec2c3d08016ccb5dfcd205ff179edcdcdeb7fd1a773bd695ea6d287f21598b8",
+            "resolve_core_program_candidates": "290aa30be2202a404c89d7d6a31f9c77847c2be1d5280d059d48864e6a72cafa",
+            "_resolve_core_program": "435df0ae27ed0f6afb1d0ababe872e5cc33b98dc6db06f25b3ae875b24632109",
+            "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
+            "_validate_core_program": "b7558f7fe479363723c2b4d4925ab954e262883c4e07cbc956b72bbbe4291511",
+            "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
+            "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
+            "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
+            "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
+            "_validate_transfer_argument_metadata": "2da767cf572598810ce123e021513c3a2e0cae1813e07857a011b9262590c051",
+            "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
+            "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
+            "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
+            "_validate_width_keyword": "d35cbcfe40e9888d2d9bdde001c488fd82f01b6a8eabbd7dbf6121bfe709674e",
+        },
+    ),
+    SIMULATION_TRANSITIONS_SOURCE: (
+        "634b07c5ad8460b7c8c46d3740af8a31d8e8285c84a9c8a929a2837ed6d1967c",
+        {
+            "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
+            "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
+            "calculate_next_states": "fa123ef47cb0aff0c4e6f93753244292d2c25b331825fd9de573424770831922",
+            "calculate_next_regime_membership": "c9083b3e4d83c8c30cb36a963093890e2388aba3bd203a6895cf1bb80eb828ec",
+            "_update_regime_ids": "93e8f8c1aba6e42f14269aac5d911c722e5e132c207cae6fa3e07bf138a58163",
+            "_draw_random_regime_ids": "87fa7035d1095f0dc1a17e51e517ef559808039ac8a107864995ce94f2bf7430",
+            "_advance_states_for_subjects": "a7ea5a0c113ec1aca76552c7d54502133076bee2ebe96052299ef46bf9518547",
+        },
+    ),
+    SIMULATION_RANDOM_SOURCE: (
+        "c4d8e3dd9c67fb0ee5ae84d00d28d7962bb88dbe8409e3222c0b4959eafdb236",
+        {
+            "_generate_windowed_simulation_keys": "7f78949425a2334609fdcafc40af7004735f24079634d434a8ce4a0610092dd6",
+            "_validated_chunk_window": "b3ea4d659dd8c777e88a08d8c3e3524236d5cecff309bc5cfdf3217e5766876c",
+            "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
+            "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
+            "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
+            "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
+            "generate_simulation_keys": "d56b65542b750105b09b3e7e08975cb0cf70bc24e95006e502c7fce88855c194",
+            "_generate_simulation_keys": "87d86ba01310209a8ac5b222c2ea6aebc8ff4488b2ba373b1b28d5b682c737b8",
+            "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
+        },
+    ),
+    SIMULATION_RUNTIME_SOURCE: (
+        "3258e2f6cebf889db1a7e4d492d87ed8ac174d6385c4ad44d08f3c8fb3031ea6",
+        {
+            "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
+            "SimulationRuntime.prepare_abstract": "152d3122c06e5567794b5b31ea7ba3c2988ce72b12d7ebf3ae195c15b02301b4",
+            "_materialize_abstract": "e1f29c1a75793df468596db0c413a630e106a1c24ab6290b4dbae435b3e09687",
+            "_dispatch_widths": "d68b9429ae1eed54ed99a49ce6793880f52bb5c09fa6248e1ffdf85f81806406",
+            "_unbudgeted_subject_width": "2abdeb21c827cce18a98efda59515ac14649d7f20b797fa433b0765368c5457d",
+            "_subject_slice_bytes": "8f5c1eabf55dec703079531a5d44138ceeeac5f66dd21384f873598096bfb5b3",
+            "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
+            "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
+            "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
+            "SimulationRuntime._bind_prepared_route": "096e7a9fb3488df5c2b3cd44c1bba2231bc17806c00c3b4e988d30f0732a3617",
+            "SimulationRuntime._publish_prepared_route": "01e0eac9f1d73abe967ffcb570f7e6ec1e98eb139205ee0c50709e8028b637c1",
+            "_operand_signature": "baafdf01b0e315e7edf3e12555ddf94901382991391470e28bfc0c41fa6b747f",
+            "_prepared_route_key": "ff75bfb0ea43f52496bd27c049f0ab34e6ca1285f919cb69fad3d78d89e54e1e",
+            "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
+            "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
+            "SimulationRuntime._prepare_materialized": "3bb08504989dddee6748dec912a78f12b013ccc232a74070e05dabbb80727c95",
+            "execute_simulation_program": "dcfc7673ad5c8614f117c36bceac9679b832a46c36d5dea3eb5e789a4d9940a4",
+            "_SimulationCandidateCompiler.__call__": "d2292d22403be650b888d30b7649b0a089ed81115e1056180712cb3f650d5ad5",
+            "_SimulationCandidateCompiler.lower": "ccfeddebd99fe733f918fa07e8a056a9e8ec4390b691b5c6173d0e95a6e06a1a",
+            "_SimulationCandidateCompiler._bound": "f2a0654fe6de82577a031f851a68d436b6e0afcb028728fa6b291f7b55c7c2dd",
+            "SimulationRuntime.lower_abstract": "cc9e55ffc01bee66c61144fb9d3095006f1179cebdc3d9db395535cc3b402403",
+            "SimulationRuntime._publish": "840f5393ba14b7d8285808f30da1bf67ea8362ebf950f9728eb6faa0b10a1d01",
+            "_with_compiler_memory": "70e07953cf8915500cc587dc425dc46f1cc81b1313517bbe675f527062b79bcf",
+            "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
+            "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
+            "SimulationRuntime._materialize": "ad4bea86c85d6fb3ac6e72f164a852c42f677fc3fab5e321ec34805f8c351aaf",
+            "SimulationRuntime._require_budget_context": "6818040f38e55d623ae48f58b61ab3f1858d7ecd79df5b3f68321c364bfa6910",
+            "SimulationRuntime.compile_candidate": "3dacb8cad7d3a1677b1e6e3a1e29613e641df3aa55b02c0c7e5c0c0da18b94f4",
+            "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
+            "_simulation_memory": "f27db66a13a6dd01dbe8acea8f3fc1348257b55eebb8e4f45ed8c7f8ca3607ca",
+            "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
+            "_simulation_lowering_key": "707adbce53fb0fbb1c5d30dbed7d058357cd007ccd5a507952d64e17b8c0d63a",
+        },
+    ),
+    STRUCTURAL_BLUEPRINTS_SOURCE: (
+        "eee5dd71e1e0561c9690d1b9746c753ff6d7528ac11023dde5922aa4f20c0a2b",
+        {
+            "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
+            "StructuralBlueprintCache.get": "bbe960e78093b2927cf39b80aa9e33086af960f8d0f10cdaa649666b8d8b6826",
+            "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
+            "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
+            "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
+            "abstract_schema": "8cc83dd74696815ae043e0018c36c338368df95f8ec2ca62616010f5731cfa6c",
+            "_leaf_schema": "bf4b44554b4f894745d4f61261889a0ab7f88e4c1cac6cb13f6bf13c2fc5c2bc",
+            "frozen_policy": "20d8d9fb6447eaaa3dbf374c55171e51de1708b48b1b7b194a285fb1bddcc406",
+        },
+    ),
+    SIMULATION_POLICY_PROGRAMS_SOURCE: (
+        "fed9b10f6b0eed6c68bd5f02cf4e8087f499fc6d6017400fcbab3aa267f15a6f",
+        {
+            "ReplayPayload.from_policy": "e29e2d20b51b07a6412aff4392720c1818e0b8662ceac0eee986f31e786dbc98",
+            "ReplayPayload.restore": "e1599af0b523cc29f9c85190c51f29c6276cbb995d9dab8f085543780e511170",
+            "_flatten_payload": "88772a75afb06970eb255fbe2dafb459f2617f1cb727f451e37da99cd2ac978f",
+            "_unflatten_payload": "993e4c674e8a06442716e162a9bf32aa39a8cc31b03724dcea4f4ebe49cd33e6",
+            "declare_finite_replay_programs": "ead89e6e9501a866d391bdd1b4b67d9770a5e95b33fab1b47bb2c9a7c1de9ea2",
+            "_program": "fd061f3011dbf4913421fe3571f7ce4f11d2857b2a41db6a24bad65de75133de",
+            "_policy_reads": "e678aceaa76d010683e744ed0f7c1ed1cea8a4566d97fa21a55f2fc5a21c9eea",
+            "_Prepare.__call__": "374933bb70048d428d6e4167df7eaa6d6d2befaf68ac29bb1c7d8bbfac44cde0",
+            "_Rank.__signature__": "50aa82bb239a45eb831ec1de9cc04766c44b88f9e2a8898243273711d1ca5bd7",
+            "_Rank.__call__": "b445df6a9966f74500b8d48f0f0251d4d9ad712e62722fd471e7504025f55984",
+        },
+    ),
+    PUBLISHED_POLICY_SOURCE: (
+        "37875b498e9524f4e0c4e5e1214b86c9123836be6639ae14de9773d79bb93b3e",
+        {
+            "_flatten_nnbegm_policy": "17b76f15fbdb8367e77d5f1513d811f18602ea4dd3a3735351d1bb392bbb64c8",
+            "_unflatten_nnbegm_policy": "7e5218f3047b4aee879ed8bb21c586f4e820939cc32afb7799d56f0398a35f05",
+        },
+    ),
+    MODEL_PROCESSING_SOURCE: (
+        "a6663ba7fc215cf1a7ff4bbfe9cea9228c562abc7ff2e77bed247fd32e6f5d33",
+        {
+            "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
+        },
+    ),
+    ENGINE_SOURCE: (
+        "816e6b86343db1df6ae81acd826eff083ed62bd00deb21cf68669562ad5ce1b3",
+        {
+            "SolutionPhase.resolve_process_grids": "700a7c24fe948dd51bb3bf1057504a5d05ff7ea1499fe51f8341623ffe41e34e",
+            "SolutionPhase.state_action_space": "582368bba80ec725dffb46af088874dae5dee05c8601290e9fe3e8ab34a68cab",
+        },
+    ),
+    SIMULATION_COMPILE_SOURCE: (
+        "d172ba65d290efe4cec76f6c4efe9488388b5377bc9f2610e8568a83faef474a",
+        {
+            "bind_simulation_runtime": "658c0e2dae1f0cbac50698962f522512dd10751aa1352174387ec15c7aace158",
+            "_subject_devices": "712ffa064623ab4c54ccd34c6c6421e48cea41ed19a0c28038c01bf08bf9d46d",
+        },
+    ),
+    SUPPORT_DIAGNOSTICS_SOURCE: (
+        "86017abd334165edb8d02067e615c7cb89789f1c65f7db8303b06f13083b315a",
+        {
+            "_emit_post_loop_diagnostics": "5b7023fdae689cc738497a394532a608c7500a92cb92959813be11ee8f37f650",
+            "_raise_first_nan_row": "216ab701be0575c51f6d17ae8a27f6b831015758b6ad535cdb6508b0fc3ab1ad",
+            "_raise_at": "89a2d780cb053b3b4515c6565a2618c2979b8918ddfa10f94b7723252e876066",
+            "_reconstruct_next_regime_to_V_arr": "4bd93914f56d0a9e25592c7a50d64e303f314e591d31c55c5d19bf22bb67315f",
+        },
+    ),
+    SUPPORT_FINGERPRINT_SOURCE: (
+        "ef24f72e11a61afd9fd21a86e064fb0769d081094437aa56717ebd699947625a",
+        {
+            "fingerprint_solution_support": "db6206fa4209d1d6892566377c6c62c6bed1aa28f23ce49d85fb3455f978d19f",
+            "fingerprint_model": "c878bed2a01bf199e0389a6229b18ddcaaf75d29cdd272eff3604f8aa0df3cc9",
+            "_grid_support": "f19da7f398d1100feb6ff9aed31bdd3f148224b0845de4c111bb58d3d31e32d7",
+        },
+    ),
+    SUPPORT_AUTHORITY_SOURCE: (
+        "b1848c0035d685dc981add5c5112c34613880d87f2ce963b179f7950b48c6a15",
+        {
+            "build_solution_authority": "c0a6f7fc32e639933c0b8fba7ebd532b99225d1abe51f307619bee31152db085",
+        },
+    ),
+    SUPPORT_PRECONDITIONS_SOURCE: (
+        "4bbe8af9cd8931d0b41d88a019f8749ae46d4450d6685b46f1690417adfdcf38",
+        {
+            "check_pareto_weights": "bd2ea6e6891bfbdf2be6fc5dc8b5d87fbc7e39745c6b39e888beee482d950d9f",
+            "_check_one_regimes_weights": "d3bf3f8ddf8cbcbb26f4a39a3226c140e93d23f773d8d045d0044ac686a87d06",
+        },
+    ),
+    SUPPORT_TRANSITION_CHECKS_SOURCE: (
+        "5e8ceb5067bf2b6261fc9a49f2bd5f68e9540991f62f513ec6bc876cf8dbc06e",
+        {
+            "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
+            "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
+            "_validate_transition_sequence": "1cbb942690276df31cccf38a5160b6cd3f350fa514c3bd4539dae3192f5ef531",
+            "validate_regime_transition_probs_all_periods": "590f7c1debd98c0f44ac93e6ca44af536d76e40850e5cc58073a78160f1ee77a",
+            "_validate_regime_transition_single": "ed77f591bc0dbac9f80134571bf04c8af236ee539b96234c555321e51a9a3121",
+            "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
+            "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
+            "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
+            "_validate_regime_transition_probs": "371b68c59b598bf4abcdf29730df6228cead632b6741a6b2114ea6168fd6e385",
+            "validate_state_transitions_all_periods": "42888f7cece37dba55c9e8b5f3fba248da241c17592a8b6145045f2a055c283d",
+            "validate_joint_transitions_all_periods": "62db74faf3e92d4c8ef9dcd6421a62129e4002e48052489bc6adbafba33fe839",
+            "_own_transition_outputs": "085cdb41137ed449dd98bb287ce58074326ebcf36f4e83ac6595164ca14f11d9",
+            "_set_transition_outputs": "a88568379c33a3be6c227e62cf39e829da241ba3ccb9a5ca3533bb82c640c635",
+            "_transition_owner_tree": "01eb5a7f5088184d91d6b03d39f966fa186e41a942c94a3ffad76def470ebe9b",
+            "_validate_joint_laws": "64789515b4b4c810b18f1bc0be46d6ab79a0d2e06e65401f71b0ce4a88ba1659",
+            "_check_joint_support_schema": "72019c8e11b917975cc895995038f59d6ca3d714d9d56915a20ba6c45a7a2845",
+            "_evaluate_joint_support": "1e3cebbb2287dad9b0b97e0f9e23884b0c6e10235244f524187ef43c73e69ca4",
+            "_validate_joint_support": "71f984d86873cb59c4a3ce9780190b313bf4633b105a1813984dd5460c79eb7b",
+            "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
+            "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
+            "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
+            "_validate_state_transition_single": "d67c63ea4b32d94a59857fc5799188e4cad325be285cd5c64caa3c00dd165dcd",
+            "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
+            "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
+            "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",
+            "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
+            "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
+            "_check_state_probs": "95af24958448e8ba5d8c7d385eb998c9d0597063c6f5157a2bee1af963a37608",
+        },
+    ),
+    PROCESS_GRID_RESOLUTION_SOURCE: (
+        "f6e56d413ae3206bd18f352853b127a3166e26ea19efab1ceee2fd63f7b74aba",
+        {
+            "ProcessGridResolver.supports": "63f102efa777a1baf563b1f63f970cb699ab991e2e0e019973b02aec9e76a46a",
+            "ProcessGridResolver.__call__": "9c9c287a6df809a803e3ece8c3c542d6af50c224bb90318b86ab1c5664d5b8b8",
+        },
+    ),
+    UNIFORM_PROCESS_GRID_SOURCE: (
+        "4c9426a6895ddc53a1350a2d8356be4c9aedbe31612fef6a3e1dd85c4139db7b",
+        {
+            "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
+            "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
+            "SimulationProcessGrids.array_roots": "24d15282a1f826daa93ab0d729c9f4c2e5e918e2a86bc8322b47fddc07731697",
+            "SimulationProcessGrids.__call__": "65127cfecf2a7f45f02fa50d72a40f7e1977f1728f88c543689c5b43519bc921",
+            "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
+            "SimulationProcessGrids.close": "1fbde590b371243da9503b714cc55b822e333e3e7a64f100ed57051209076a5a",
+            "SimulationProcessGrids._produce": "718549cec38201ed8ff2e7e3890db8cc820a7543645effba0cfd4c2cd9474fd8",
+            "SimulationProcessGrids.snapshot": "65d4d6df476276c3136bb02ba811eb5b8e1cfaddc248b6893375238f4800ca0b",
+            "_uniform_parameters": "17402f2621240f3c7b362a7af8eb2c851fd0671288a75e11c04e3a5745ddffb7",
+            "_parameter_bytes": "ba52d3f0bdc2e9c217e3e97f339e1ed57964216961fd129abb315e38ee67c491",
+            "_abstract_grid_parameter": "2c8046d774f5d17556bc7efae30a2d0242b0405ad1fd9805710362310537fa6f",
+            "_compute_uniform_grid": "546e82063b47b05523ad23c64e681adaaea44dfda66071aa6b6f2ec94cde9d89",
+            "SimulationProcessGrids._produce_normal": "27b0b6ba97637e24e0715ab93bc66c4cc9f56ac5491b6f5cb5dc98a0719e581e",
+            "_normal_parameters": "697447939334023c477f246465018d78f56f9c9707bd43174de9d00514379107",
+            "_normal_fixed_identity": "77b7f200afd6ecd055c0359b4d5214ea1d863af5182434b82301a3bafd18404c",
+            "_compute_normal_stage": "e49e8d6ed2760a94e39877a1717a6567220467d098de8f1670033411016d003f",
+            "SimulationProcessGrids._produce_staged": "2c1a1db74c840023a8311a8c47fc79aa2a0cbcaa4f50579a948b1877a7f15240",
+            "_complete_process_parameters": "ce46e9801d7ccb642e1c4191f6ff9a96d7188a53232659bcaea868d6afee59c5",
+            "_process_fixed_identity": "23218125e2e6e7ef39e906d13a4597b3482762e6a03f55a482ddc97183a11fd6",
+            "_staged_parameter_is_weak": "a1d45ae344c6ddb0c1d0a655f67d985e5adb6cf61bd2508c9f26263344d6e9cd",
+            "_trace_process_jaxpr": "dd10af762e7eb11d3b0394cd116dc6ae00daca130c2b23141e3fb04bbe92f4cc",
+            "_process_grid_call": "6b721d47cc31ed8807f57df63ecd6ca38df7213fae435046dc607fc8b5de0f8c",
+            "_validated_process_recipe": "043b704a538ae99cf020600dbf61424e80ddbae0024612ce5291c130b3591400",
+            "_validate_attached_process_value": "abb48d5c8105fe8f97546bd7cf1f082130aa9ced55153581f4cda3bbda67cbc4",
+            "_validated_process_operand": "e12ce14e567bff2463294a163bac0e9510cf893e9142d76c34f641d61563ffdf",
+            "_validate_process_equation": "6632117d9b6371442596b320bb2f0d72783044ca54b21fd736a1151462d90ac0",
+            "_validate_linspace_jaxpr": "5e510b9af81fe99259e89f8371166fe7bd15837d5ffdc0c955068e09f36f8707",
+            "_jaxpr_schema": "1f8b0e61695a556f72f1f28b2c3def05cc4a2e2243e8b080b5304cfb4b646a53",
+            "_root_equation_schema": "f224abc60bbc8c4c29e2b1e685ede62da2202060e0bf2e4f9895d281daab2d51",
+            "_equation_schema": "f8a2b65e5ad72f88bc596b43f54ecc090ae8859aa2f431a0157a255d28d40372",
+            "_graph_atom_schema": "b9ef567b66eb8801eeb870fece8b92aeb230cd424f074163522e9fdc9c40eba5",
+            "_aval_schema": "8bf2e8b88d86d1f8dca7a48fdea2407d547f0468b101e41b32638732daa4b0ba",
+            "_aval_shape": "6007e8e38f5755ca0fa209d70d891cf3d0f73eccc7a1c72ad00d481175836b51",
+            "_aval_dtype": "e360ab7aeae392e4af78f0ac779bad7d74e60a09c1549a1eb2d501022500e97e",
+            "_read_process_operand": "852cdbbe2f9ed8980a80934c2637e0c7d32e496a4e19dc707e17ced3e3c026c6",
+            "_compute_process_stage": "0cc67600ad383da92e58943450ba05e420d772d661d094451f24391fcb6f714e",
+        },
+    ),
+    DISPATCHERS_SOURCE: (
+        "aec3119e69b285cbbd12eb713a05ab1d9583723473e2a0d66577578d8bb6fc00",
+        {
+            "tiled_productmap": "f9abfc940c4ade124483a286bdb5ab6eec4aac4c928680b2f685b859e673d104",
+            "_CountBroadcastExtentInWidth.__call__": "9edca2667a1015b9fe2f8b3e0b11b385f7f2aa71e8022be63324014d81819781",
+            "_TiledProductMap.__call__": "11dc5d9d31dddc72ad93e90cad1729d179d179b15b7ff1ab044fa24038553dc5",
+            "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
+            "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
+            "_map_whole_product": "14c2d1b0508346f247a30494b0b4983bca7046216f467318eeaf0ade75bb5f4b",
+            "_final_mapper": "c7fb439e2c51e205d7dfbfdc785b7a89e96fee7906312564fef5b4021f4c1dee",
+            "_MapWholeCoordinate.__call__": "1f0d033c579a54294d8c3397abf8b3ae2e5be27c7921f6a444e453960252d506",
+            "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
+            "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
+            "map_over_leading_axis": "b1d033acd692898271f38d8f2954c27d00b1b1b2198ea2dca48248466387c098",
+            "_RestoreProductAxisOrder.__call__": "63d433afc99fab8238b273b0075f926b672c20943aea9d2b6170dfc1a6ee5df0",
+            "_transpose_product_axes": "54961f0159833bf5de6053053200dda0e3745caae17447c2aafd2e6f4faadae3",
+        },
+    ),
+    ACTION_GRID_SOURCE: (
+        "a7380cbf9a3a4b2359f02bc759260ec57981908a673736a067fc0ac69837ac59",
+        {
+            "PreflightActionGrids.resolve": "7a7cd711bce8db510ff03af04d1c992f1671d9b2060846b53d5f39041692c451",
+            "PreflightActionGrids.close": "9551fdaca558706aeb32a670e27daf66e9e1ae0fddce3242be2a02b67c6b7ee9",
+        },
+    ),
+    GRID_SEARCH_SOURCE: (
+        "cca83d7e10cac848e1bd5b18ba6c73ae25468b8f95ba37704eda1dd878db97fb",
+        {
+            "GridSearch.build_period_kernels": "19bec5035c11fc9d3657e1a780169754c2e3cb1164f2d12804ce13e598dc986b",
+            "_action_partition_mesh": "cab2381dbe9650e10620db20b6614ccb015eb147ff3356ab66e90cec58bf06fe",
+            "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+            "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
+            "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
+            "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
+            "_edge_reference_regimes_for_targets": "9bd8c8de92411abd731020f62cb3c44ef814d4f3b64ab496b6299fcb925473e0",
+            "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
+            "_value_reads": "9712ae402debbd0c37a12999b224e365c0ca1e1a8bcbb6e7bbb4043cbcfcacfc",
+            "_value_read": "082a372c7e48bf7a32d390079e2dd60b9ed5aa56868cbf9fbccf0b8f924b3bb6",
+            "_GridSearchArgumentBuilder.__call__": "5db5ba5ccb2eb2654a7d3c831dd046ffd1cde6d2075cddfe9bbddda1affe6012",
+            "_GridSearchArgumentBuilder._with_edge_substitution": "8d253b526755274685f3dbf2e28efe4f35062993bedd017cffddf2d17fe657cc",
+            "_GridSearchArgumentBuilder._edge_reference_args": "7f0fa948fea067fb0d2215a6eda2326288bfd7db41647479f7d348441d184b0a",
+            "_GridSearchArgumentBuilder._same_period_params": "f0ca3f10c934daf68bab9aef09389340746cf66b668291305b45b557e7b51b50",
+            "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
+            "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
+            "_GridSearchPeriodKernel.with_fixed_params": "5f5a26e02b136c760bd242cd91c22b76153adc9828a13d20de7a6a98f5877e14",
+            "_GridSearchPeriodKernel.__call__": "30bd170d721fdf3d4e7de47b5c846eee24cdc3b52d34d3c72e932b5b4b3b0b4c",
+        },
+    ),
+    MAX_Q_SOURCE: (
+        "e96b4051cb461360246205620fe84dc01fff7d5c13526eeea1fe3b05fc335db4",
+        {
+            "get_action_partitioned_max_Q_over_a": "9443177495a4aa17b12aed6bda675dace04c1422b7d37a96e6fc76df8e46c30e",
+            "_ActionPartitionedMaxQOverA.__call__": "42b11107cae7f2d6ddcf098584a4bf01e358b5c333b6e94c785c0d525ef42d30",
+            "_arguments_named": "6666a0078aec6dfa0c91d175ea84cf4c9342b770d9c32704b848fa1a209742d7",
+            "_OnActionPartitionAxis.__call__": "bdae3f821f2b03d181665c69c8892a9bab24c4ac53ea83085446376ae5253071",
+            "_call_with_operands": "5758549543745e6470dae727d7a774c784acf7fd6e5e2e314626015b8dece189",
+            "_get_extra_param_names": "ccb1bc531a850fb9475d70e0a06b5d0bf53888e4b7b447e9c06f9e8b8333e958",
+            "_fail_if_action_width_keyword_collides": "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4",
+            "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
+            "_fail_if_full_V_streaming_route_is_unsupported": "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c",
+            "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
+            "_wrap_with_fold_reduction": "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c",
+            "_StreamedMaxQOverA.__call__": "33ce3d55caed7206385b8bb20c93dcd387f2c7eaf1f6127b71476811595e85d4",
+        },
+    ),
+    ACTION_STREAMING_SOURCE: (
+        "b79ecc19d6c9e6eb58fa28825b44b3d316baaebbbd0af5c1ba93d33dbfd3f37c",
+        {
+            "build_partitioned_streaming_max_Q_over_a": "c5d535574a8f38951a58347fdb54875ad8904fb75ca883397ce392a687df5e38",
+            "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
+            "_fail_if_not_positive_int": "6944a14f1c0cef5505aaf713589fa95b9aa921ab03d6ef624db5a24c1011e2e0",
+            "ActionPartitionLayout.__post_init__": "9957631cd979a1ec48136310cb5e3cfb246b1c7367331544c68447b0b092539b",
+            "ActionPartitionLayout.n_blocks": "269793628a54b8cd15b276fa360f884a97483ffbeb27bff2b68d4ba94ae055fe",
+            "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
+            "ActionPartitionLayout.block_range": "c306308ded5a8642519248ce4bd7f400c8ea13b25b06a3fe2c01c24c90f03845",
+            "ActionPartitionLayout.action_interval": "dbaa877fae3466c4ea5af7c2657fe18be813c4487ed3a26e6cbb06b1fac17aba",
+            "_PartitionedStreamingHardMax.__call__": "26e4d541e495cc023c1c1850682225cd9e74d08e6e0cbb1c0b29e7227e0c3b60",
+            "_PartitionedStreamingHardMax.local": "13cf5ff7e5add6629a2d33bfe02a0e3aed39b74280e335d2b69dafa3f6f2bf7a",
+            "_evaluate_owned_block": "f95eb5df6591891562f8d2779dd24a879e5f6fd931f146888b46393b7f4e6366",
+            "_validate_streaming_configuration": "aadcd9931b24e60ef8ecdac59f540163642ce656cc10c88e7d58eafa0c790210",
+            "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
+            "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
+            "_evaluate_one_action": "4898f988e87d4d49195e08da2651e4dc9a7c2601e827f686460e71dfd95d1e89",
+            "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
+            "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
+            "_trace_block": "368060da34288b24118b684d2db2e8ca6cc31267cd5592033b08c032235ff1b0",
+            "_empty_reduction": "8135c3d0fb8b4ad0068e59b705e587ad88f330228d00e020f579dd4e36d9c884",
+            "_typed_like": "fc7809b3ba41f45007a2464926696f92b1cf2f937c2933223c49ce4984d56b22",
+            "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
+            "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
+            "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
+            "build_streaming_max_Q_over_a": "e5ae9742ba7baf789ff4659fd14c544ae5e5034a14117a1e704b27babd1087c6",
+            "build_streaming_collective_max_Q_over_a": "9b855229c633e1a03ccbd56aa626be0d6f5ab668b1881d9f54f9010083842d70",
+            "build_streaming_ev1_max_Q_over_a": "58c1d90efaa42c39bf4e8fb919a74cc1462bdec5420f016cc509af1151491236",
+            "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
+            "_StreamingHardMax.__call__": "f820f280a0303df25e68e8540dff89558ce32f9e1e5fb710bae93160a4c3ff09",
+            "_StreamingCollectiveHardMax.__call__": "4e43b2defe47abf07a805f9c07d01dee583dc55140165e2a05c18390eb80b1a6",
+            "_StreamingEV1ExpectedMax.__call__": "04f71b3eec47586505cb5d7335f2737fbd609656fe4420b35387e317f5b84ec1",
+            "_evaluate_ev1_branch_block": "5f88bff6dc8900c8d179df8c4be4763ff7c9656ee66bc78fe44f10f3939517fe",
+            "_evaluate_collective_block": "33db932726923fa9e5cde59e3d1974b6500ef8cfebc166cc65f67a39d6dd8616",
+            "_scan_blocks": "90d220fa12e133d9921aaad62053012fc47ab1917b16a623db2abea8a2ecc62f",
+            "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
+            "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
+            "_scan_collective_blocks": "2af8554d14cb82cab0ccd29f86fe325860add8700fd726b33bffe92a95b4aa7a",
+            "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
+            "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
+            "_validate_scalar_Q_and_F": "a2b49855d9fe1572f7440248db7edfce283a2179394648ca55b6b8ce550f5364",
+            "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
+            "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
+            "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
+            "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
+            "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
+            "_scan_ev1_blocks": "e7e3248f6d4c9e175e76f3099655e7a1fb830c83803d49b89a912d8f53ea6f3f",
+            "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
+        },
+    ),
+    ACTION_REDUCTION_SOURCE: (
+        "875f69aba4cd24712f749ad4276232dfbe3a3b311ddb53c3d6f98d62b85bd987",
+        {
+            "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
+            "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
+            "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
+            "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
+            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
+            "HardMaxReduction.semantic_key": "f024d59aadbce68d4647522cd802f542ed3a39c7cbc05664b03c5a362c6468bd",
+        },
+    ),
+    FUNCTOOLS_SOURCE: (
+        None,
+        {
+            "_split_bound_arguments": "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8",
+            "allow_args": "aafbd21439f91d8e29c52097e4b0711469942a9ca6bafce071278ef69b3d78fe",
+        },
+    ),
+    INTERNAL_OUTPUTS_SOURCE: (
+        None,
+        {
+            "resolve_producer": "7b9c19ee788a2bd30a18756f4d0fb9395023d1f6f5bf6f02bb0f49ddb3d51496",
+            "assert_width_invariant_internal_outputs": "cf54d009a3abce9124ea579209b720ab06f7fe9bff641753f60753cc2ab1e975",
+            "consumed_producer_names": "6c7019c97744a8bd73f34344a6dc45f195972e393dfeff1d1a206f0dce286ee2",
+            "internal_input_templates": "4854454958ec8301926d97ddce7e09d5557babb4d79fab1aa5c475bd9477769b",
+        },
+    ),
+    COLLECTIVE_ACTION_REDUCTION_SOURCE: (
+        None,
+        {
+            "CollectiveHardMaxReduction.semantic_key": "1a2875f2b718377e51a76e0d37f1614f40f3e08b4cc730032add7a2373c5734b",
+            "CollectiveHardMaxReduction.initialize": "78e55824232f334491375fa641fb20e28bdc7be3dc2cd59cceedbe1b1e74db03",
+            "CollectiveHardMaxReduction.add": "8d69ebff49fe1f231e7941129ea582137430dfeb5c2719061676691e80aee747",
+            "CollectiveHardMaxReduction.merge": "4e288cd957f4840ebc2f5c185051a208c8e82d7df59d8d64dda3f9e5a42f530c",
+            "CollectiveHardMaxReduction.finalize": "2c2128c3095d373853e0bfc2bf9f8519d8782c58c9170fd79a5cc96358d6ee47",
+            "_validate_block_shapes": "ef3ba0ed14e345bd21da5ab0ac1e79824b04317f8817fce58f8ecd07a8a1b8a5",
+            "_reduce_block": "75ee08bb4dc9fc5bc9ec1ef3d700dba200b3e3cea5fd8def060f12d70403bd31",
+            "_take_stakeholder_values": "b84709a267bb886bef97f01076e40d5670e30caa1c4ffeede8d402008848072d",
+        },
+    ),
+    LOGSUMEXP_ACTION_REDUCTION_SOURCE: (
+        None,
+        {
+            "BoundLogSumExpReduction.initialize": "a85a8161da058019e24d2b33ce72d9881e4d8df843bcb57e2ea1143c7ad37d36",
+            "BoundLogSumExpReduction.add": "bc07d13e5fa3101df3216f75942966086537395d81bb2c6abc4276158ccf9a4d",
+            "BoundLogSumExpReduction.merge": "e1b12504e631c9659f1de5f55a48de26e3d4a1d5c089e6bc75738a52313fffc7",
+            "BoundLogSumExpReduction.finalize": "a5d920589ee7f6b7454e241c9ef5b0be41c11b75c806e578932d1244884ce5cb",
+            "LogSumExpReduction.semantic_key": "13bc88fd7862f49c2ef01b2de88e9c695276a163bc896d9c40dae5d4b104c671",
+            "LogSumExpReduction.bind": "1e3f07eb92d208799636c7958d2d2fdd8c955863630606ffa1a1fbba7c8de06a",
+        },
+    ),
+    PROCESSING_SOURCE: (
+        None,
+        {
+            "_build_per_subject_decisions_per_period": "3b2dfd37e32f72e41f17264ec806fcb9309bf9f6d2faed91fafd1477871cea83",
+            "process_regimes": "81a8982dc4701de83bf879474b459e7c75237be77075036cc1f271fbe3f74d29",
+            "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
+            "_TerminalCarryPeriodKernel.with_fixed_params": "4ee13dc7cbc4ebaa68102cc6eea4272791590fa1005080dbbbcf898e5f92a8f6",
+            "_TerminalCarryPeriodKernel.__call__": "881aec52b12c741b24f9e6fd2483b13e3b858a2890279d0a1bce75f2f05309e0",
+        },
+    ),
+    SIMULATION_PROGRAMS_SOURCE: (
+        "30c890cbba9586b5a0c27495d483e73b83c17267178a317a3b298d4702d42ab1",
+        {
+            "build_simulation_programs": "22ff4a3460252d9a7431e795eff0344bf87b038f30f0132dd914db6a7ee58ea0",
+            "_decision_programs": "1594a9e60852e1db131b0f158f3c48ca66f7ac4f36e5ea22357b7e98dd559f6a",
+            "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
+            "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
+            "budgeted_simulation_programs_ready": "0cb813fd106dee1a74a7a04138ce35ed40fafbefc5731cdc618535313fc3f87f",
+            "_GateFoldBody.__call__": "fb82517b6d92aa92b77cff101ae6756b50b7883212723a9a920835cb93d5224b",
+            "_GateRouteBody.__call__": "44209bbfd3fa63d0642d6d67e51d8c44df6d54b5179fa2e5ec450c0aa6ca64e4",
+            "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
+            "_decision_subject_arg_names": "3bf80bc49a6326e6be6369de80863482db1615e713b95ce476966e9562d6fde5",
+            "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
+            "_decision_body": "42f84d94a9520d5462d81c7f4e1ae322f832b14a98945346f57469c1799d978e",
+            "_StreamedArgmaxQOverA.__call__": "a32599a767896a0389a70cbac3e193c656abaebae1b90c237deb9bd7cc80c721",
+            "_StreamedArgmaxQOverA._fold": "0396d37b300cace88652b5ad0c5040a82f3b45df2ef8892cea61e37d3e2ce793",
+            "_SubjectTiled.__call__": "400c354c6d2c566f17b4d08abb3692f0a3c61d6f6e17f579fc445aa761761c4b",
+            "_evaluate_subject_tile": "9094e457bed0e17f6bfc4d6fc00ed22ccaa39bfa5a74a5b6371da7f6e34d72c2",
+            "_ArgumentsBoundAtDispatch.__call__": "fd35ff6f3ed6f5a272f4aa291869b2972b07533cb051bdf86e00ca82c6edd34d",
+        },
+    ),
+    SIMULATION_PROGRAM_TYPES_SOURCE: (
+        "d9fbea69c51978e1d8997f033ed323dd804fbb881af9fbcf91fd098b5bf6f173",
+        {
+            "SimulationBuildContext.__post_init__": "00641d48094283340c57d2137f90f4568bd7dfa8ff6372e0348ccf6abad54a31",
+            "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
+            "SimulationPrograms.__post_init__": "4628d895b955a9c1915e50c12972b3d7b7981e72bdb2d3e832a23b5b8aec2322",
+            "SimulationPrograms.declared_axis_names": "1451b9d993c5de21035c9a25f9aa19ba953d2e8dfebb5f952bda617d2fa69b81",
+            "SimulationPrograms.forward_decision": "369b61edb30600fcabc910d0d6a333a939519fcda229f315d91101b96cb4de3f",
+            "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
+            "route_output_roles": "81ccd2cdf1a29d1dcb3021d775c4abc8cb70364819a027303968afc69af19a2e",
+            "subject_axis": "2d1dda5c95debf5b8c7d0a72c8fa71db6c42b2fb22763cc943ec494dfd3d942f",
+        },
+    ),
+    NBEGM_SOURCE: (
+        "390acd20ae587f0809405e113eaa79bdf0e93400a8fd80235b3d919456a7197c",
+        {
+            "NBEGM.declare_continuation_reads": "d188ae1df197e1bc589c2766c32566a6170bfaa8247b513b3a39b173014aeb9f",
+            "_with_ride_marginal_reads": "818468585a9f3f317e6043af4008e8a5da77e274de0b8d4a641e22c230445033",
+        },
+    ),
+    CONTINUATION_ARGUMENTS_SOURCE: (
+        "eb4ceba17420732ef34f0bb894f61657626fba036a16ba3fd6d5eeecef0684a3",
+        {
+            "MarginalLeafArguments.__call__": "8a9b17300b9ac51e172e6a57e74c4f7c726a62fc941f63ca09c2f4d4cf96420b",
+            "MarginalLeafCore.__call__": "bcaae73b48e35ed6f8e672a23c93c74a189bea4545d2fb50475f86d5bed8d873",
+            "marginal_leaf_reads": "02ce2895a2ee099f1df276087ebc98d4e88c4bebc0fe841e4af2bab72a0af9e1",
+        },
+    ),
+    PERIOD_REPLAY_SOURCE: (
+        None,
+        {
+            "replay_period": "de011de034661023087bd7a3f4d6fcbf826b14fa49da09de722779bb1aa4b778",
+            "_compile_cores_for_one_period": "29d003faea81a8359e37359fd960f5be8c9234a970be2ab8eaa9da7dbf4c7c48",
+            "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
+        },
+    ),
+}
+
+_SELECTED_PINS: set[tuple[str, str]] = set()
+
+
+def _surface_pin(source: str) -> str:
+    """Select one certified source's pinned module transport surface."""
+    surface = _CORRIDOR_PINS[source][0]
+    if surface is None:
+        raise ValueError(f"no module transport surface is pinned for {source}")
+    _SELECTED_PINS.add((source, source))
+    return surface
+
+
+def _callable_pins(*, source: str, names: tuple[str, ...]) -> dict[str, str]:
+    """Select pinned callable digests of one source, in the order named."""
+    pinned = _CORRIDOR_PINS[source][1]
+    missing = [name for name in names if name not in pinned]
+    if missing:
+        raise ValueError(f"no callable pin is stored for {source}: {missing}")
+    _SELECTED_PINS.update((source, name) for name in names)
+    return {name: pinned[name] for name in names}
+
+
+def _contracts(
+    selection: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, dict[str, str]]]:
+    """Select one family's module surfaces and callable pins from the store."""
+    return {
+        source: (_surface_pin(source), _callable_pins(source=source, names=names))
+        for source, names in selection.items()
+    }
+
+
+def _unselected_pins() -> tuple[tuple[str, str], ...]:
+    """Return each stored `(source, name)` pin that no certificate family selects.
+
+    A module surface is named by its source path.
+    """
+    stored = {
+        (source, source)
+        for source, (surface, _) in _CORRIDOR_PINS.items()
+        if surface is not None
+    } | {
+        (source, name)
+        for source, (_, callables) in _CORRIDOR_PINS.items()
+        for name in callables
+    }
+    return tuple(sorted(stored - _SELECTED_PINS))
 
 
 def canonical_json(payload: dict[str, Any]) -> str:
@@ -1081,19 +2521,6 @@ def _method_definition(
     return cls, methods[0]
 
 
-def _function_definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
-    matches = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == name
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            f"expected one top-level function {name!r}, found {len(matches)}"
-        )
-    return matches[0]
-
-
 def _grid_base_errors(tree: ast.Module) -> list[str]:
     """Forbid inherited interception of concrete grid coordinate materializers."""
     errors: list[str] = []
@@ -1219,7 +2646,7 @@ def _engine_state_action_space_errors(tree: ast.Module) -> list[str]:
 def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
     """Pin the simulation adapter to a state-only replacement of the completed base."""
     try:
-        node = _function_definition(tree=tree, name="create_regime_state_action_space")
+        node = _definition(tree=tree, name="create_regime_state_action_space")
     except ValueError as error:
         return [f"simulation state-action adapter: {error}"]
     expected_body = (
@@ -1251,7 +2678,7 @@ def _simulation_state_action_space_errors(tree: ast.Module) -> list[str]:
 def _simulation_state_action_space_caller_errors(tree: ast.Module) -> list[str]:
     """Pin the live simulation caller to the params-completed base without wrapping."""
     try:
-        node = _function_definition(tree=tree, name="_simulate_regime_in_period")
+        node = _definition(tree=tree, name="_simulate_regime_in_period")
     except ValueError as error:
         return [f"simulation state-action caller: {error}"]
     body = _body_without_docstring(node)
@@ -1777,6 +3204,7 @@ Q_and_F = productmap(
                 "allow_args",
                 "allow_only_kwargs",
                 "argmax_and_max",
+                "build_partitioned_streaming_max_Q_over_a",
                 "build_streaming_collective_max_Q_over_a",
                 "build_streaming_ev1_max_Q_over_a",
                 "build_streaming_max_Q_over_a",
@@ -1813,7 +3241,7 @@ Q_and_F = productmap(
                     "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
                 ),
                 (
-                    "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
+                    "from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a, build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
                 ),
                 "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
@@ -1825,6 +3253,7 @@ Q_and_F = productmap(
                 "allow_args": 1,
                 "allow_only_kwargs": 1,
                 "argmax_and_max": 1,
+                "build_partitioned_streaming_max_Q_over_a": 1,
                 "build_streaming_collective_max_Q_over_a": 1,
                 "build_streaming_ev1_max_Q_over_a": 1,
                 "build_streaming_max_Q_over_a": 1,
@@ -1868,29 +3297,25 @@ Q_and_F = productmap(
     return errors
 
 
+_STREAMED_MAX_BUILDER_PINS = _callable_pins(
+    source=MAX_Q_SOURCE,
+    names=(
+        "get_streaming_max_Q_over_a",
+        "_fail_if_action_width_keyword_collides",
+        "_fail_if_full_V_streaming_route_is_unsupported",
+        "_fail_if_streaming_co_map_layout_is_invalid",
+        "_wrap_with_fold_reduction",
+        "_StreamedMaxQOverA.__call__",
+    ),
+)
+
+
 def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
     """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
     return _exact_callable_errors(
         tree=tree,
         label="streamed max-Q builder",
-        contracts={
-            "get_streaming_max_Q_over_a": "f6049aafdb1361ab3dc07245c3e201f35719fe199c7278fb748c7658ac5f8a63",
-            "_fail_if_action_width_keyword_collides": (
-                "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
-            ),
-            "_fail_if_full_V_streaming_route_is_unsupported": (
-                "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c"
-            ),
-            "_fail_if_streaming_co_map_layout_is_invalid": (
-                "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979"
-            ),
-            "_wrap_with_fold_reduction": (
-                "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
-            ),
-            "_StreamedMaxQOverA.__call__": (
-                "33ce3d55caed7206385b8bb20c93dcd387f2c7eaf1f6127b71476811595e85d4"
-            ),
-        },
+        contracts=_STREAMED_MAX_BUILDER_PINS,
     )
 
 
@@ -1975,20 +3400,58 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
     return errors
 
 
+_FUNCTOOLS_ADAPTER_PINS = _callable_pins(
+    source=FUNCTOOLS_SOURCE,
+    names=("_split_bound_arguments", "allow_args"),
+)
+
+
 def _functools_adapter_errors(tree: ast.Module) -> list[str]:
     """Pin positional-origin preservation through nested co-map adapters."""
     return _exact_callable_errors(
         tree=tree,
         label="allow-args positional transport",
-        contracts={
-            "_split_bound_arguments": (
-                "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8"
-            ),
-            "allow_args": (
-                "aafbd21439f91d8e29c52097e4b0711469942a9ca6bafce071278ef69b3d78fe"
-            ),
-        },
+        contracts=_FUNCTOOLS_ADAPTER_PINS,
     )
+
+
+_CORE_PROGRAM_TRANSPORT_PINS = _callable_pins(
+    source=CORE_PROGRAM_SOURCE,
+    names=(
+        "ValueRead.__post_init__",
+        "ReducedAxis.__post_init__",
+        "ReducedAxis.extent",
+        "TiledOutputAxis.__post_init__",
+        "CoreExecutionRequirements.__post_init__",
+        "CoreBuildContext.__post_init__",
+        "CoreProgram.__post_init__",
+        "MaterializedCoreProgram.__post_init__",
+        "ResolvedCoreProgram.__post_init__",
+        "core_program_graph",
+        "_reject_native_duplicate_authorities",
+        "_snapshot_and_validate_graph",
+        "_validate_replay_replacements",
+        "_validate_program_declaration",
+        "_validate_retention_declaration",
+        "_validate_retained_artifact_payload_types",
+        "_validate_disposition_reason",
+        "materialize_core_program",
+        "resolve_core_program",
+        "resolve_core_program_candidates",
+        "_resolve_core_program",
+        "select_programs",
+        "_validate_core_program",
+        "_validate_materialized_declaration",
+        "_resolve_input_transfer_plan",
+        "_validate_value_reads",
+        "_value_read_argument_leaf",
+        "_validate_transfer_argument_metadata",
+        "_validate_reduced_axis",
+        "_validate_tile_width",
+        "_validate_coordinate_argument",
+        "_validate_width_keyword",
+    ),
+)
 
 
 def _core_program_transport_errors(tree: ast.Module) -> list[str]:
@@ -2223,43 +3686,21 @@ ARTIFACT = "artifact"
         _exact_callable_errors(
             tree=tree,
             label="core-program provider-to-resolver transport",
-            contracts={
-                "ValueRead.__post_init__": "9eb25ccdd2f056a241092952e6b92acef943f1babd2f2063af7b32da935a7190",
-                "ReducedAxis.__post_init__": "030c5cd6aadd91db7c7362241817b7b1734cf27d853824376ba1206bdfae05ef",
-                "ReducedAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
-                "TiledOutputAxis.__post_init__": "dc42959d05c19bee720f1423b60179a0d729b74546bfd278e0928cd2a6b2d3e2",
-                "CoreExecutionRequirements.__post_init__": "b8c76151ae6388cf29f8b580d1b6604c5969829bfcc46838a5adcd7d04e73c7b",
-                "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
-                "CoreProgram.__post_init__": "cc2b0daa4751a08b0be23ba75f086bc0c1d8ffcb6a45a9f7b1e3d914375bbf47",
-                "MaterializedCoreProgram.__post_init__": "91815679a6b9b6ac14dfc35f3a2f40b3fecf31200cb03105692a963712570437",
-                "ResolvedCoreProgram.__post_init__": "468796cd81e23cb793ba8fcc49edcac4167064550a54c16fcfdbd4abe48674c0",
-                "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
-                "_reject_native_duplicate_authorities": "02f48b342f94e73d6c57732bb28b31d9c64f33df9f5f4b7ea63930450831d4f9",
-                "_snapshot_and_validate_graph": "391b89b66355ecdba2d0c869b4a748f2a0ef065610255e4819e398cf53faa7ca",
-                "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
-                "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
-                "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
-                "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
-                "_validate_disposition_reason": "5df6651c2d9db4ebeb5542394c738c5238144ff19f48f0639b3bb6b43c63bc8d",
-                "materialize_core_program": "7bde944455cb6ba4b0e8dfa5919970d0f2ad52b0af657dff49b597feb5cfbd6e",
-                "resolve_core_program": "0ec2c3d08016ccb5dfcd205ff179edcdcdeb7fd1a773bd695ea6d287f21598b8",
-                "resolve_core_program_candidates": "290aa30be2202a404c89d7d6a31f9c77847c2be1d5280d059d48864e6a72cafa",
-                "_resolve_core_program": "435df0ae27ed0f6afb1d0ababe872e5cc33b98dc6db06f25b3ae875b24632109",
-                "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
-                "_validate_core_program": "b7558f7fe479363723c2b4d4925ab954e262883c4e07cbc956b72bbbe4291511",
-                "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
-                "_resolve_input_transfer_plan": "f62a9fc86af542f15a99a0dd93978b681e1dd0c45d14772b711a6d80d3eceb2e",
-                "_validate_value_reads": "7195e459ee532bf8ba4761bbf4570079282122e85a588f4f77064b0bb3a07ca0",
-                "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
-                "_validate_transfer_argument_metadata": "2da767cf572598810ce123e021513c3a2e0cae1813e07857a011b9262590c051",
-                "_validate_reduced_axis": "ddbd1f45950e27f98e26c4ec6e966cb81720a58fc76b509304a1584e66b39c55",
-                "_validate_tile_width": "12b8130b0c8fd36ca93fb5c8d5fc47b7b02b802e5c0c84a47858c7999d61e98e",
-                "_validate_coordinate_argument": "b37c132508f8a2ca8803c1db613fff68b4506e417b0832638cbd1ff432a74cd0",
-                "_validate_width_keyword": "d35cbcfe40e9888d2d9bdde001c488fd82f01b6a8eabbd7dbf6121bfe709674e",
-            },
+            contracts=_CORE_PROGRAM_TRANSPORT_PINS,
         )
     )
     return errors
+
+
+_INTERNAL_OUTPUTS_TRANSPORT_PINS = _callable_pins(
+    source=INTERNAL_OUTPUTS_SOURCE,
+    names=(
+        "resolve_producer",
+        "assert_width_invariant_internal_outputs",
+        "consumed_producer_names",
+        "internal_input_templates",
+    ),
+)
 
 
 def _internal_outputs_transport_errors(tree: ast.Module) -> list[str]:
@@ -2275,13 +3716,47 @@ def _internal_outputs_transport_errors(tree: ast.Module) -> list[str]:
     return _exact_callable_errors(
         tree=tree,
         label="internal-output producer-to-consumer transport",
-        contracts={
-            "resolve_producer": "7b9c19ee788a2bd30a18756f4d0fb9395023d1f6f5bf6f02bb0f49ddb3d51496",
-            "assert_width_invariant_internal_outputs": "cf54d009a3abce9124ea579209b720ab06f7fe9bff641753f60753cc2ab1e975",
-            "consumed_producer_names": "6c7019c97744a8bd73f34344a6dc45f195972e393dfeff1d1a206f0dce286ee2",
-            "internal_input_templates": "4854454958ec8301926d97ddce7e09d5557babb4d79fab1aa5c475bd9477769b",
-        },
+        contracts=_INTERNAL_OUTPUTS_TRANSPORT_PINS,
     )
+
+
+_ACTION_STREAMING_PINS = _callable_pins(
+    source=ACTION_STREAMING_SOURCE,
+    names=(
+        "build_streaming_max_Q_over_a",
+        "build_streaming_collective_max_Q_over_a",
+        "build_streaming_ev1_max_Q_over_a",
+        "GridSearchEV1ActionReduction.semantic_key",
+        "_StreamingHardMax.__call__",
+        "_StreamingCollectiveHardMax.__call__",
+        "_StreamingEV1ExpectedMax.__call__",
+        "_prepare_action_call",
+        "_evaluate_block",
+        "_evaluate_ev1_branch_block",
+        "_evaluate_collective_block",
+        "_trace_block",
+        "_empty_reduction",
+        "_typed_like",
+        "_start_reduction",
+        "_scan_blocks",
+        "_add_block",
+        "_reduce_no_action",
+        "_start_collective_reduction",
+        "_scan_collective_blocks",
+        "_add_collective_block",
+        "_reduce_collective_no_action",
+        "_decode_action",
+        "_validate_scalar_Q_and_F",
+        "_validate_block_Q_and_F",
+        "_validate_collective_scalar_Q_and_F",
+        "_validate_collective_block_Q_and_F",
+        "_initialize_ev1_reduction",
+        "_add_ev1_block",
+        "_finalize_open_ev1_branch_group",
+        "_scan_ev1_blocks",
+        "_flush_ev1_branch_group",
+    ),
+)
 
 
 def _action_streaming_errors(tree: ast.Module) -> list[str]:
@@ -2344,40 +3819,23 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
         _exact_callable_errors(
             tree=tree,
             label="streamed action evaluator",
-            contracts={
-                "build_streaming_max_Q_over_a": "e5ae9742ba7baf789ff4659fd14c544ae5e5034a14117a1e704b27babd1087c6",
-                "build_streaming_collective_max_Q_over_a": "9b855229c633e1a03ccbd56aa626be0d6f5ab668b1881d9f54f9010083842d70",
-                "build_streaming_ev1_max_Q_over_a": "58c1d90efaa42c39bf4e8fb919a74cc1462bdec5420f016cc509af1151491236",
-                "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
-                "_StreamingHardMax.__call__": "98e334a19ebeaa5e3aab9f87205166256a7cad545eba2bc2e7c1bc758d334b5b",
-                "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
-                "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
-                "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
-                "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
-                "_evaluate_ev1_branch_block": "5f88bff6dc8900c8d179df8c4be4763ff7c9656ee66bc78fe44f10f3939517fe",
-                "_evaluate_collective_block": "33db932726923fa9e5cde59e3d1974b6500ef8cfebc166cc65f67a39d6dd8616",
-                "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
-                "_scan_remaining_blocks": "c22ed2d6f392d72483a2d8cfbf5e741d8c248a8aef1baf9b914938ef255f03d2",
-                "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
-                "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
-                "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
-                "_scan_remaining_collective_blocks": "e40fba3b89b43e03a36d8b5fd6ebc32560bbe7fb8b5817c47bd8735fa27b641b",
-                "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
-                "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
-                "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
-                "_validate_scalar_Q_and_F": "a2b49855d9fe1572f7440248db7edfce283a2179394648ca55b6b8ce550f5364",
-                "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
-                "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
-                "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
-                "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
-                "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
-                "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-                "_scan_remaining_ev1_blocks": "219ff26f338b96e2fce757277ef6495afcda3bf134c7a36fe1d8822aaa0151a9",
-                "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
-            },
+            contracts=_ACTION_STREAMING_PINS,
         )
     )
     return errors
+
+
+_HARD_MAX_STREAMING_REDUCTION_PINS = _callable_pins(
+    source=ACTION_REDUCTION_SOURCE,
+    names=(
+        "HardMaxReduction.semantic_key",
+        "HardMaxReduction.initialize",
+        "HardMaxReduction.add",
+        "HardMaxReduction.merge",
+        "HardMaxReduction.finalize",
+        "_reduce_block",
+    ),
+)
 
 
 def _hard_max_streaming_reduction_errors(tree: ast.Module) -> list[str]:
@@ -2385,15 +3843,23 @@ def _hard_max_streaming_reduction_errors(tree: ast.Module) -> list[str]:
     return _exact_callable_errors(
         tree=tree,
         label="streamed singleton hard-max reduction",
-        contracts={
-            "HardMaxReduction.semantic_key": "f024d59aadbce68d4647522cd802f542ed3a39c7cbc05664b03c5a362c6468bd",
-            "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
-            "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
-            "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
-            "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
-            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
-        },
+        contracts=_HARD_MAX_STREAMING_REDUCTION_PINS,
     )
+
+
+_COLLECTIVE_HARD_MAX_STREAMING_REDUCTION_PINS = _callable_pins(
+    source=COLLECTIVE_ACTION_REDUCTION_SOURCE,
+    names=(
+        "CollectiveHardMaxReduction.semantic_key",
+        "CollectiveHardMaxReduction.initialize",
+        "CollectiveHardMaxReduction.add",
+        "CollectiveHardMaxReduction.merge",
+        "CollectiveHardMaxReduction.finalize",
+        "_validate_block_shapes",
+        "_reduce_block",
+        "_take_stakeholder_values",
+    ),
+)
 
 
 def _collective_hard_max_streaming_reduction_errors(
@@ -2403,17 +3869,21 @@ def _collective_hard_max_streaming_reduction_errors(
     return _exact_callable_errors(
         tree=tree,
         label="streamed collective hard-max reduction",
-        contracts={
-            "CollectiveHardMaxReduction.semantic_key": "1a2875f2b718377e51a76e0d37f1614f40f3e08b4cc730032add7a2373c5734b",
-            "CollectiveHardMaxReduction.initialize": "78e55824232f334491375fa641fb20e28bdc7be3dc2cd59cceedbe1b1e74db03",
-            "CollectiveHardMaxReduction.add": "8d69ebff49fe1f231e7941129ea582137430dfeb5c2719061676691e80aee747",
-            "CollectiveHardMaxReduction.merge": "4e288cd957f4840ebc2f5c185051a208c8e82d7df59d8d64dda3f9e5a42f530c",
-            "CollectiveHardMaxReduction.finalize": "2c2128c3095d373853e0bfc2bf9f8519d8782c58c9170fd79a5cc96358d6ee47",
-            "_validate_block_shapes": "ef3ba0ed14e345bd21da5ab0ac1e79824b04317f8817fce58f8ecd07a8a1b8a5",
-            "_reduce_block": "75ee08bb4dc9fc5bc9ec1ef3d700dba200b3e3cea5fd8def060f12d70403bd31",
-            "_take_stakeholder_values": "b84709a267bb886bef97f01076e40d5670e30caa1c4ffeede8d402008848072d",
-        },
+        contracts=_COLLECTIVE_HARD_MAX_STREAMING_REDUCTION_PINS,
     )
+
+
+_LOGSUMEXP_STREAMING_REDUCTION_PINS = _callable_pins(
+    source=LOGSUMEXP_ACTION_REDUCTION_SOURCE,
+    names=(
+        "BoundLogSumExpReduction.initialize",
+        "BoundLogSumExpReduction.add",
+        "BoundLogSumExpReduction.merge",
+        "BoundLogSumExpReduction.finalize",
+        "LogSumExpReduction.semantic_key",
+        "LogSumExpReduction.bind",
+    ),
+)
 
 
 def _logsumexp_streaming_reduction_errors(tree: ast.Module) -> list[str]:
@@ -2430,17 +3900,41 @@ def _logsumexp_streaming_reduction_errors(tree: ast.Module) -> list[str]:
         _exact_callable_errors(
             tree=tree,
             label="streamed log-sum-exp reduction",
-            contracts={
-                "BoundLogSumExpReduction.initialize": "a85a8161da058019e24d2b33ce72d9881e4d8df843bcb57e2ea1143c7ad37d36",
-                "BoundLogSumExpReduction.add": "bc07d13e5fa3101df3216f75942966086537395d81bb2c6abc4276158ccf9a4d",
-                "BoundLogSumExpReduction.merge": "e1b12504e631c9659f1de5f55a48de26e3d4a1d5c089e6bc75738a52313fffc7",
-                "BoundLogSumExpReduction.finalize": "a5d920589ee7f6b7454e241c9ef5b0be41c11b75c806e578932d1244884ce5cb",
-                "LogSumExpReduction.semantic_key": "13bc88fd7862f49c2ef01b2de88e9c695276a163bc896d9c40dae5d4b104c671",
-                "LogSumExpReduction.bind": "1e3f07eb92d208799636c7958d2d2fdd8c955863630606ffa1a1fbba7c8de06a",
-            },
+            contracts=_LOGSUMEXP_STREAMING_REDUCTION_PINS,
         )
     )
     return errors
+
+
+_GRID_SEARCH_STREAMED_PROVIDER_PINS = _callable_pins(
+    source=GRID_SEARCH_SOURCE,
+    names=(
+        "_select_action_width_keyword",
+        "_select_cell_width_keyword",
+        "_select_width_keyword",
+        "GridSearch.build_period_kernels",
+        "_edge_reference_regimes_for_targets",
+        "_classify_action_streaming",
+        "_supports_action_streaming",
+        "_value_reads",
+        "_value_read",
+    ),
+)
+
+
+_GRID_SEARCH_NATIVE_GRAPH_PINS = _callable_pins(
+    source=GRID_SEARCH_SOURCE,
+    names=(
+        "_GridSearchArgumentBuilder.__call__",
+        "_GridSearchArgumentBuilder._with_edge_substitution",
+        "_GridSearchArgumentBuilder._edge_reference_args",
+        "_GridSearchArgumentBuilder._same_period_params",
+        "_GridSearchPeriodKernel.__post_init__",
+        "_GridSearchPeriodKernel.core_programs",
+        "_GridSearchPeriodKernel.with_fixed_params",
+        "_GridSearchPeriodKernel.__call__",
+    ),
+)
 
 
 def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
@@ -2514,17 +4008,7 @@ def category(self) -> str:
         _exact_callable_errors(
             tree=tree,
             label="solve caller live streamed provider",
-            contracts={
-                "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
-                "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
-                "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
-                "GridSearch.build_period_kernels": "0c4a2f448364a67ec9d06e86c9deaf9b388b19c0e8d0b5165c1cc5e328e6a828",
-                "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
-                "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
-                "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
-                "_value_reads": "9712ae402debbd0c37a12999b224e365c0ca1e1a8bcbb6e7bbb4043cbcfcacfc",
-                "_value_read": "082a372c7e48bf7a32d390079e2dd60b9ed5aa56868cbf9fbccf0b8f924b3bb6",
-            },
+            contracts=_GRID_SEARCH_STREAMED_PROVIDER_PINS,
         )
     )
     errors.extend(
@@ -2564,19 +4048,29 @@ def category(self) -> str:
         _exact_callable_errors(
             tree=tree,
             label="solve caller shared builder and native program graph",
-            contracts={
-                "_GridSearchArgumentBuilder.__call__": "44f395121e063a099adc1c8fea5b7fd377ce5ac8019ea2ec59ffd82a9fb0915e",
-                "_GridSearchArgumentBuilder._with_edge_substitution": "8d253b526755274685f3dbf2e28efe4f35062993bedd017cffddf2d17fe657cc",
-                "_GridSearchArgumentBuilder._edge_reference_args": "dbc3490fe06a35e27546fd6c4a29d185c4e05c3ebc500aa2a1f220615f55c0b9",
-                "_GridSearchArgumentBuilder._same_period_params": "8a9e646c6abededa222865ead1ad7e07c5355626b32a9fb1e631497a4889a58e",
-                "_GridSearchPeriodKernel.__post_init__": "1e8c230f0845d9b8335c667f38593221a957c34955efe44921763bce6cd24ac7",
-                "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
-                "_GridSearchPeriodKernel.with_fixed_params": "39a6130127f37d321af8c28eb803952e7fd583b910b3a8f3058850e8960e166f",
-                "_GridSearchPeriodKernel.__call__": "30bd170d721fdf3d4e7de47b5c846eee24cdc3b52d34d3c72e932b5b4b3b0b4c",
-            },
+            contracts=_GRID_SEARCH_NATIVE_GRAPH_PINS,
         )
     )
     return errors
+
+
+_OUTPUT_LAYOUT_PINS = _callable_pins(
+    source=OUTPUT_LAYOUT_SOURCE,
+    names=(
+        "resolve_output_layout",
+        "_validate_output_roles",
+        "assert_output_layout",
+        "_assert_output_metadata",
+        "PlannedCore.__post_init__",
+        "PlannedCore.__call__",
+        "assert_value_leaf_layout",
+        "_assert_output_leaf",
+        "_resolve_output_leaf",
+        "_state_axes_leading_sharding",
+        "_state_axis_spec",
+        "StateAxesLeading.__post_init__",
+    ),
+)
 
 
 def _output_layout_errors(tree: ast.Module) -> list[str]:
@@ -2648,20 +4142,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
         _exact_callable_errors(
             tree=tree,
             label="output layout",
-            contracts={
-                "resolve_output_layout": "b22b19e7669e657b6b0e37190f52c4b8a4f8e39cb4101a3d7b2fc5c522c25fee",
-                "_validate_output_roles": "7cbf07ffbcb4becaabdb34d86ea44caca2bb8561b14f6768970ebccea79e4b08",
-                "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
-                "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
-                "PlannedCore.__post_init__": "92f25766a12bbd9fe2e9be8a5b8a4034c537633499adcd7acc832b460becb73c",
-                "PlannedCore.__call__": "08bfb7b759bc903ff3a4225f57edd4d2298c2e5e8c38832c5ef6b81a878828da",
-                "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
-                "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
-                "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
-                "_state_axes_leading_sharding": "275366296965e4160350df8a1ca9482d4985be24f394afd4a441bbf0fbd8404e",
-                "_state_axis_spec": "49e002ddc32f703b089ecc147a6bb5296157f2c4f6313335c308e82f06ddd18d",
-                "StateAxesLeading.__post_init__": "0bd0d18d5a0caff060ce3a860622a537a26aa061a164e9bdab4423b2ea4d2698",
-            },
+            contracts=_OUTPUT_LAYOUT_PINS,
         )
     )
     assignments = [
@@ -2681,6 +4162,52 @@ DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
     ):
         errors.append("output layout: logical output-role bindings changed")
     return errors
+
+
+_VALUE_TRANSFER_PINS = _callable_pins(
+    source=VALUE_TRANSFER_SOURCE,
+    names=(
+        "ValueArtifactAddress.__post_init__",
+        "ValueConsumerAddress.__post_init__",
+        "ResolvedValueTransfer.__post_init__",
+        "resolve_value_transfer",
+        "apply_value_transfer",
+        "apply_value_transfer_plan",
+        "classify_value_transfer",
+        "ResolvedValueTransfer.cost",
+        "_named_axes",
+        "_replace_transfer_leaf",
+        "_validate_edge_identity",
+        "_validate_replay_leaf_identity",
+        "_validate_continuation_leaf_identity",
+        "_assert_value_metadata",
+        "_normalize_shape",
+        "_require_period",
+        "_require_name",
+        "_require_enum",
+        "_validate_path_segment",
+        "_require_sharding",
+        "_check_sharding_shape",
+        "ValueViewDescriptor.__post_init__",
+        "ValueViewDescriptor.selected_axes",
+        "ValueViewDescriptor.structure_key",
+        "ValueViewDescriptor.identity_key",
+        "CoordinateSelection.__post_init__",
+        "TransferStage.allocates",
+        "TransferStage.output_footprint",
+        "ResolvedValueTransfer.consumer_shape",
+        "ResolvedValueTransfer.selects",
+        "ResolvedValueTransfer.delivers_stored_buffer",
+        "ResolvedValueTransfer.stages",
+        "transfer_result_key",
+        "_select_view_blocks",
+        "_selection_operands",
+        "_select_stored_block",
+        "_fail_if_view_mismatches_transfer",
+        "_fail_if_selections_invalid",
+        "_selection_sharding",
+    ),
+)
 
 
 def _value_transfer_errors(tree: ast.Module) -> list[str]:
@@ -2889,47 +4416,7 @@ COLLECTIVE = "collective"
         _exact_callable_errors(
             tree=tree,
             label="value transfer",
-            contracts={
-                "ValueArtifactAddress.__post_init__": "cafe101592a7a7d2019ac1f2bc57e2e64295da6093a399dbb948bf8c38765e0e",
-                "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
-                "ResolvedValueTransfer.__post_init__": "60d77078407d8b253b0654dd03dca371c32a06cf1efb05470ff453c815a7092b",
-                "resolve_value_transfer": "1fb20659b43515507a727b46ad274d5bdc1c67a55ece59d48ed7e48e1e435a95",
-                "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
-                "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
-                "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
-                "ResolvedValueTransfer.cost": "07d257016bddbec9e6eacefb5e26e26c8c612fd6a0884ea81b40ac667a0c9011",
-                "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
-                "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
-                "_validate_edge_identity": "b9dc316bc5c544a59041fd3c7c67a48766829f66db5db31a6d1bb48eb96afc05",
-                "_validate_replay_leaf_identity": "0da3b8851138ef9c733fa1b64977f7ceb243e6185b5e44fa49236619ccb2e779",
-                "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
-                "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
-                "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
-                "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
-                "_require_name": "af49e5c3217919d353aa787908d9d0764ff17792b1d64aaeb08afa1f0a983628",
-                "_require_enum": "4294ec9593c985870368a5d21f476900ddfffe66f42d275dbc02bec9708aba0d",
-                "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
-                "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
-                "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
-                "ValueViewDescriptor.__post_init__": "e5e888614d92e690a128d3812b217f8ddfcf6637809a896fe14c2401b6f0ef98",
-                "ValueViewDescriptor.selected_axes": "606104f0b662cf88a37ba1496a05ed142f93858c1646c2794c1aaf6cb34f1476",
-                "ValueViewDescriptor.structure_key": "39bf29f8d65be0bc19a5ee9a4b4fa6dc73a21c641f72f5d499c5367b58e0177a",
-                "ValueViewDescriptor.identity_key": "45ab6d675d4ef8c8350e34a7361dc6b307186a4558c3a420c5347bbec6326ee1",
-                "CoordinateSelection.__post_init__": "45f22f279739118a21c04a97d8fc4ad7108de34ee7fdea60b276afd1f84ddc01",
-                "TransferStage.allocates": "b17555d91ba1e9a31a9ed57148afa064982799c4953d95998b9a6fff344c472c",
-                "TransferStage.output_footprint": "41b4f1136bd24e82268fee82b7064efd7761f69d803ffa224ef434f02153ea99",
-                "ResolvedValueTransfer.consumer_shape": "2f7b722fc9a7cefd9bcc0c675fb33111ce3caff65a317e5d97014c7091b0fb95",
-                "ResolvedValueTransfer.selects": "a70c4976882f86afbd8c12c20334d58d5545540cb75bad2ee46b5fdc5c2f76db",
-                "ResolvedValueTransfer.delivers_stored_buffer": "8134faf2e24194ad2240f72eaf5ba7bdd6e63c81e1c4a84dce8d6ea7294194cf",
-                "ResolvedValueTransfer.stages": "045d5012182682b1ea9d41d56ada26ef6f92f3680eedcd706bc1986a9ddd4078",
-                "transfer_result_key": "9bfd1783f1feb8ea7549037e0505435b47fbdfd0e4b6f5dd37cb4ba762713f6a",
-                "_select_view_blocks": "e576be8253cc6f346825def3852a3def6da2dfd09c83b319c5b39a3031177b6e",
-                "_selection_operands": "7683b8e0ad2ed33a84b844cb52d66e091e8f3410848f296803d0e05eb376a61d",
-                "_select_stored_block": "b6f1647938496460dca1cf12ca5b26ba285287a01bb00c6cae0f367d391cd454",
-                "_fail_if_view_mismatches_transfer": "c7d588a05f07d1f2ecb8873539cb2ce62a3d28516bbdded5734172f8ba6cefc9",
-                "_fail_if_selections_invalid": "1ccb459a7f6b511bf7a631da7c31b5614a3b2b3a3b06a983d07333b44d6481cb",
-                "_selection_sharding": "ba7789147c8b08c57243e70d3906adc90aa8c9fe57021dc4fd7fcc27432a0e98",
-            },
+            contracts=_VALUE_TRANSFER_PINS,
         )
     )
     errors.extend(
@@ -3057,16 +4544,18 @@ COLLECTIVE = "collective"
     return errors
 
 
+_PROCESSING_CALLER_PINS = _callable_pins(
+    source=PROCESSING_SOURCE,
+    names=("_build_per_subject_decisions_per_period", "process_regimes"),
+)
+
+
 def _processing_caller_errors(tree: ast.Module) -> list[str]:
     """Pin canonical dense reducers and live publication of the program bundle."""
     errors = _exact_callable_errors(
         tree=tree,
         label="simulate caller",
-        contracts={
-            "_build_per_subject_decisions_per_period": "762d57a4dca8e9ce3cafc9725c81032b1a87dff7a2297593395cb5040fab1e2d",
-            "_argmax_reducer": "d703712f2beec0f93e9cacbb67754faffe20bf4628e71979dba4dd8f4dd6842c",
-            "process_regimes": "a06cc715815a797f376452a1ea753397aaf02ca5d33749889e91683bbbf3384a",
-        },
+        contracts=_PROCESSING_CALLER_PINS,
     )
     try:
         live = _definition(tree=tree, name="_build_simulation_phase")
@@ -3081,6 +4570,15 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
     stakeholders=stakeholders,
     pareto_weights=pareto_weights,
 )""",
+        # The grouped route's dense reducer must reduce the type-local Q/F it is
+        # declared beside, never the ordinary one.
+        "type_local_per_subject_decisions": """type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
+    state_action_space=state_action_space,
+    Q_and_F_functions=type_local_Q_and_F_functions,
+    has_taste_shocks=has_taste_shocks,
+    stakeholders=stakeholders,
+    pareto_weights=pareto_weights,
+)""",
         "programs": """programs = build_simulation_programs(
     context=solver_context,
     Q_and_F_functions=Q_and_F_functions,
@@ -3089,7 +4587,9 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
     per_subject_route=per_subject_route,
     simulation_state_names=simulation_variables.state_names,
     active_periods=tuple(simulated_periods[regime_name]),
-    has_gated_edges=bool(user_regime.gated_edges),
+    has_gated_edges=bool(law.gated_edges),
+    type_local_Q_and_F_functions=type_local_Q_and_F_functions,
+    type_local_per_subject_decisions=type_local_per_subject_decisions,
 )""",
     }
     bindings = _scope_binding_counts(live_body)
@@ -3151,7 +4651,6 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
                 "attach_gated_simulation_programs": 1,
                 "SimulationPhase": 1,
                 "_build_per_subject_decisions_per_period": 1,
-                "_argmax_reducer": 1,
                 "id": 0,
                 "len": 0,
             },
@@ -3193,6 +4692,69 @@ def _transport_module_surface(tree: ast.Module) -> str:
     )
 
 
+_SIMULATION_PROGRAM_CORRIDOR_CONTRACTS = _contracts(
+    {
+        SIMULATION_PROGRAMS_SOURCE: (
+            "build_simulation_programs",
+            "_decision_programs",
+            "attach_gated_simulation_programs",
+            "gated_simulation_programs_ready",
+            "budgeted_simulation_programs_ready",
+            "_GateFoldBody.__call__",
+            "_GateRouteBody.__call__",
+            "_fail_if_the_streamed_reduction_is_wrong",
+            "_decision_subject_arg_names",
+            "_decision_value_reads",
+            "_decision_body",
+            "_StreamedArgmaxQOverA.__call__",
+            "_StreamedArgmaxQOverA._fold",
+            "_SubjectTiled.__call__",
+            "_evaluate_subject_tile",
+            "_ArgumentsBoundAtDispatch.__call__",
+        ),
+        SIMULATION_PROGRAM_TYPES_SOURCE: (
+            "SimulationBuildContext.__post_init__",
+            "SimulationProgramExecutor.dispatch",
+            "SimulationPrograms.__post_init__",
+            "SimulationPrograms.declared_axis_names",
+            "SimulationPrograms.forward_decision",
+            "transition_output_roles",
+            "route_output_roles",
+            "subject_axis",
+        ),
+        SIMULATION_RUNTIME_SOURCE: (
+            "CompiledSimulationProgram.__call__",
+            "SimulationRuntime.dispatch",
+            "SimulationRuntime._bind_prepared_route",
+            "SimulationRuntime._publish_prepared_route",
+            "_operand_signature",
+            "_prepared_route_key",
+            "SimulationRuntime.prepare",
+            "SimulationRuntime.is_prepared",
+            "SimulationRuntime._prepare_materialized",
+            "execute_simulation_program",
+            "_SimulationCandidateCompiler.__call__",
+            "_SimulationCandidateCompiler.lower",
+            "_SimulationCandidateCompiler._bound",
+            "SimulationRuntime.lower_abstract",
+            "SimulationRuntime._publish",
+            "_materialize_abstract",
+            "_with_compiler_memory",
+            "_with_subject_extent",
+            "_build_context",
+            "SimulationRuntime._materialize",
+            "SimulationRuntime._require_budget_context",
+            "SimulationRuntime.compile_candidate",
+            "_CachedSimulationCandidateCompiler.__call__",
+            "_simulation_memory",
+            "_SimulationResidentBytes.__call__",
+            "_simulation_lowering_key",
+        ),
+        SIMULATION_COMPILE_SOURCE: ("bind_simulation_runtime", "_subject_devices"),
+    }
+)
+
+
 def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
     """Pin the reviewed declaration → materialization → dispatch corridor.
 
@@ -3204,83 +4766,16 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
     prepares the same cache with bounded transient templates; budgeted preparation
     is deferred until live residency is available at the first dispatch.
 
+    The ordinary and the type-local decision families are declared by the same
+    pinned per-period builder, and the forward selector that substitutes the
+    type-local family on the grouped route is pinned beside them, so both
+    families stay inside this corridor.
+
     Callable ASTs pin these executable bodies independently of refreshable byte
     seals. Separate module surfaces forbid import rebinding, altered constants,
     descriptors or replacement classes from bypassing those body checks.
     """
-    contracts = {
-        SIMULATION_PROGRAMS_SOURCE: (
-            "5d43ee8fb30373028920203d16b2cd0878b86f15e669a88775774a4bbda4d447",
-            {
-                "build_simulation_programs": "7ff25aef568c7c051816027a19a0ecdcbf70d386f4efb403508bb70e144e14e1",
-                "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
-                "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
-                "budgeted_simulation_programs_ready": "0cb813fd106dee1a74a7a04138ce35ed40fafbefc5731cdc618535313fc3f87f",
-                "_GateFoldBody.__call__": "fb82517b6d92aa92b77cff101ae6756b50b7883212723a9a920835cb93d5224b",
-                "_GateRouteBody.__call__": "44209bbfd3fa63d0642d6d67e51d8c44df6d54b5179fa2e5ec450c0aa6ca64e4",
-                "_fail_if_the_streamed_reduction_is_wrong": "4393d8f3dc1dded01122dc6bf97e4f51c88e52f3804f79b08d600bc75496dd0a",
-                "_decision_subject_arg_names": "3bf80bc49a6326e6be6369de80863482db1615e713b95ce476966e9562d6fde5",
-                "_decision_value_reads": "7480309f78099994ba417dab87ff44c8ccc545f662855a44bc142bd3509cc1a9",
-                "_decision_body": "42f84d94a9520d5462d81c7f4e1ae322f832b14a98945346f57469c1799d978e",
-                "_StreamedArgmaxQOverA.__call__": "a32599a767896a0389a70cbac3e193c656abaebae1b90c237deb9bd7cc80c721",
-                "_StreamedArgmaxQOverA._fold": "0396d37b300cace88652b5ad0c5040a82f3b45df2ef8892cea61e37d3e2ce793",
-                "_SubjectTiled.__call__": "400c354c6d2c566f17b4d08abb3692f0a3c61d6f6e17f579fc445aa761761c4b",
-                "_evaluate_subject_tile": "9094e457bed0e17f6bfc4d6fc00ed22ccaa39bfa5a74a5b6371da7f6e34d72c2",
-                "_ArgumentsBoundAtDispatch.__call__": "fd35ff6f3ed6f5a272f4aa291869b2972b07533cb051bdf86e00ca82c6edd34d",
-            },
-        ),
-        SIMULATION_PROGRAM_TYPES_SOURCE: (
-            "81726d05629e441082a37b651fa1e0d204644765b3a1d1c19a86ab5f0f54746d",
-            {
-                "SimulationBuildContext.__post_init__": "00641d48094283340c57d2137f90f4568bd7dfa8ff6372e0348ccf6abad54a31",
-                "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
-                "SimulationPrograms.__post_init__": "c8553612fe9e2204ef4843a74e4784a35c0909d6ba0d4aa0291fcd0279f1e7fa",
-                "SimulationPrograms.declared_axis_names": "9c31ae1d44062d26d72200a825240175988cc2dd036c3706bdb1f85243bfbb5c",
-                "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
-                "route_output_roles": "81ccd2cdf1a29d1dcb3021d775c4abc8cb70364819a027303968afc69af19a2e",
-                "subject_axis": "2d1dda5c95debf5b8c7d0a72c8fa71db6c42b2fb22763cc943ec494dfd3d942f",
-            },
-        ),
-        SIMULATION_RUNTIME_SOURCE: (
-            "3258e2f6cebf889db1a7e4d492d87ed8ac174d6385c4ad44d08f3c8fb3031ea6",
-            {
-                "CompiledSimulationProgram.__call__": "4329a4109ff7b367918e5570f8ef892aed246f2192a95825bbd48e01d60d6c96",
-                "SimulationRuntime.dispatch": "8ba6cd9386f3210c6478c5f31684f9f0dd9acff0533e272dbc34bbbb4cf89463",
-                "SimulationRuntime._bind_prepared_route": "096e7a9fb3488df5c2b3cd44c1bba2231bc17806c00c3b4e988d30f0732a3617",
-                "SimulationRuntime._publish_prepared_route": "01e0eac9f1d73abe967ffcb570f7e6ec1e98eb139205ee0c50709e8028b637c1",
-                "_operand_signature": "baafdf01b0e315e7edf3e12555ddf94901382991391470e28bfc0c41fa6b747f",
-                "_prepared_route_key": "ff75bfb0ea43f52496bd27c049f0ab34e6ca1285f919cb69fad3d78d89e54e1e",
-                "SimulationRuntime.prepare": "86e18a7900a901875d89609c94cf96f75866f404a7d1f2c3834966b467019a48",
-                "SimulationRuntime.is_prepared": "9495309ce3a74126c48f3fc04b517c738081fc7a1a8e20a8de3f0b2ddd28f6b5",
-                "SimulationRuntime._prepare_materialized": "3bb08504989dddee6748dec912a78f12b013ccc232a74070e05dabbb80727c95",
-                "execute_simulation_program": "da913ce854658373c080a13dc50150f6b71ee2aedb929bb6499b3cab8cc2fa2b",
-                "_SimulationCandidateCompiler.__call__": "d2292d22403be650b888d30b7649b0a089ed81115e1056180712cb3f650d5ad5",
-                "_SimulationCandidateCompiler.lower": "ccfeddebd99fe733f918fa07e8a056a9e8ec4390b691b5c6173d0e95a6e06a1a",
-                "_SimulationCandidateCompiler._bound": "f2a0654fe6de82577a031f851a68d436b6e0afcb028728fa6b291f7b55c7c2dd",
-                "SimulationRuntime.lower_abstract": "cc9e55ffc01bee66c61144fb9d3095006f1179cebdc3d9db395535cc3b402403",
-                "SimulationRuntime._publish": "840f5393ba14b7d8285808f30da1bf67ea8362ebf950f9728eb6faa0b10a1d01",
-                "_materialize_abstract": "e1f29c1a75793df468596db0c413a630e106a1c24ab6290b4dbae435b3e09687",
-                "_with_compiler_memory": "70e07953cf8915500cc587dc425dc46f1cc81b1313517bbe675f527062b79bcf",
-                "_with_subject_extent": "c48502d31e8f9fb29221122b0de6d10f38f3d6f740854a82512c2b964079e463",
-                "_build_context": "d2de03c66739cd53f5c9e1f95f9fd0ab4c57334ca853e7a5e8f0422cf733852d",
-                "SimulationRuntime._materialize": "ad4bea86c85d6fb3ac6e72f164a852c42f677fc3fab5e321ec34805f8c351aaf",
-                "SimulationRuntime._require_budget_context": "6818040f38e55d623ae48f58b61ab3f1858d7ecd79df5b3f68321c364bfa6910",
-                "SimulationRuntime.compile_candidate": "3dacb8cad7d3a1677b1e6e3a1e29613e641df3aa55b02c0c7e5c0c0da18b94f4",
-                "_CachedSimulationCandidateCompiler.__call__": "28dcd8f5efac82c89e21143112cf45402a5dde3585423bd912f4c7b455e62107",
-                "_simulation_memory": "f27db66a13a6dd01dbe8acea8f3fc1348257b55eebb8e4f45ed8c7f8ca3607ca",
-                "_SimulationResidentBytes.__call__": "1de7cce7b963299d2803cc325d95389fe99fad8282a3b9a707bdddbb3dccd450",
-                "_simulation_lowering_key": "707adbce53fb0fbb1c5d30dbed7d058357cd007ccd5a507952d64e17b8c0d63a",
-            },
-        ),
-        SIMULATION_COMPILE_SOURCE: (
-            "d172ba65d290efe4cec76f6c4efe9488388b5377bc9f2610e8568a83faef474a",
-            {
-                "bind_simulation_runtime": "658c0e2dae1f0cbac50698962f522512dd10751aa1352174387ec15c7aace158",
-                "_subject_devices": "712ffa064623ab4c54ccd34c6c6421e48cea41ed19a0c28038c01bf08bf9d46d",
-            },
-        ),
-    }
-    surface, callables = contracts[source]
+    surface, callables = _SIMULATION_PROGRAM_CORRIDOR_CONTRACTS[source]
     errors = _exact_callable_errors(
         tree=tree, label="simulation program corridor", contracts=callables
     )
@@ -3291,6 +4786,59 @@ def _simulation_program_corridor_errors(*, tree: ast.Module, source: str) -> lis
     return errors
 
 
+_SIMULATION_DISPATCH_CORRIDOR_CONTRACTS = _contracts(
+    {
+        SIMULATION_SOURCE: (
+            "_simulate_regime_in_period",
+            "_execute_finite_replay",
+            "simulate",
+            "_simulate_subject_chunk",
+            "_bind_unit_executor",
+            "_lookup_values_from_indices",
+            "_read_external_replay",
+            "_replay_nnbegm_candidates",
+            "_prepare_nnbegm_candidate_bank",
+            "_rank_nnbegm_candidate_bank",
+            "_initialize_chunk_state",
+        ),
+        SIMULATION_TRANSITIONS_SOURCE: (
+            "calculate_next_states",
+            "calculate_next_regime_membership",
+            "_update_regime_ids",
+            "_draw_random_regime_ids",
+            "_advance_states_for_subjects",
+        ),
+        MODEL_SOURCE: (
+            "_validate_sharded_state_capability",
+            "_supports_continuous_sharding_vocabulary",
+            "_supports_unsharded_continuous_process",
+            "Model.__init__",
+            "Model._runtime_regimes_for_shape",
+            "Model.simulate",
+            "Model._open_entry_allocations",
+            # Fixed caller owners flow through both private automatic-solve
+            # boundaries without becoming numerical operands or cache keys.
+            "Model._solve_from_flat_params",
+            "Model._solve_compiled",
+            "Model._build_external_replay_readers",
+            "_fail_if_invalid_taste_shock_seed",
+            "Model._process_params",
+            "_simulation_programs",
+        ),
+        SIMULATION_RANDOM_SOURCE: (
+            "create_simulation_key",
+            "_create_simulation_key",
+            "split_simulation_key",
+            "_split_simulation_key",
+            "generate_simulation_keys",
+            "_generate_simulation_keys",
+            "draw_random_seed",
+        ),
+        ENGINE_SOURCE: (),
+    }
+)
+
+
 def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> list[str]:
     """Pin phase publication and consumption of the selected decision's exact pair.
 
@@ -3299,70 +4847,7 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     index through the same completed action grids. Model call-shape publication and
     dispatch share the same executor; phase schemas cannot substitute a property.
     """
-    contracts = {
-        SIMULATION_SOURCE: (
-            "69830d773bdf9a5ebeec162f5a38d0cfc4ae70c7e32f33d52fe6d738008cddc9",
-            {
-                "_simulate_regime_in_period": "a89372767a1d32774cc5d258c345e3f24e5bf3a7b2390c60236f4a4b6d01a0b3",
-                "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
-                "simulate": "3b28023953edbec97eaeb7d4e66966924f39ce4377406182f7014ea51e265f2f",
-                "_simulate_subject_chunk": "2b6a50a861e3350ee364336ff2a15530b576fe2419f2facfe00c4cd93de5f255",
-                "_bind_unit_executor": "b6bd770b2af202adb765511eaff29ed05bf2c2823a34c22226b36dd792533064",
-                "_lookup_values_from_indices": "ebc4a036a447857f061c117b2eb0c9b9e61d5f17a40e90ea14a6e6205233ea9f",
-                "_read_external_replay": "7972d2214dbda0c4173fedfabe12b9ae3b03ed099db9f950cd176ee082131c90",
-                "_replay_nnbegm_candidates": "5733c0a4a29a916da35662961a0b6ab2628bdb7668bbda923c4cffb999f93a36",
-                "_prepare_nnbegm_candidate_bank": "d5406bb8fb04f481aeb91ecbce93394cf531239a137df46d28ace9993797b62f",
-                "_rank_nnbegm_candidate_bank": "fe9d4341209042a24be1359ee77089f1f43cbd4a0a4ca1da63ee308b5c547f64",
-                "_initialize_chunk_state": "0597964759cc394aea8126642ecf7a6d0902c080cf9ceff9cd704e805a4c149d",
-            },
-        ),
-        SIMULATION_TRANSITIONS_SOURCE: (
-            "f8d34dd5e8ba1cf440221406ada37a187d273a977c202986107ce0f46dd77c9f",
-            {
-                "calculate_next_states": "3e3f6492867d2ec3b57cd8d458d43ebae5929ad572ffe7376fb4edd7cf65c298",
-                "calculate_next_regime_membership": "e1ca9be9bebc2f9a5160664fee6e06e398f91922df3294872b729aaa362df5c1",
-                "_update_regime_ids": "93e8f8c1aba6e42f14269aac5d911c722e5e132c207cae6fa3e07bf138a58163",
-                "_draw_random_regime_ids": "87fa7035d1095f0dc1a17e51e517ef559808039ac8a107864995ce94f2bf7430",
-                "_advance_states_for_subjects": "a7ea5a0c113ec1aca76552c7d54502133076bee2ebe96052299ef46bf9518547",
-            },
-        ),
-        MODEL_SOURCE: (
-            "636b427502b358fe0cf2639a96817a3b95315ce56e05e4d02482d5890ef663d7",
-            {
-                "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
-                "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-                "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-                "Model.__init__": "23a5459b9b1e63e36f24f63a8e83bd3f85f1164c117c43091846d273785e2ab5",
-                "Model._runtime_regimes_for_shape": "b85ceab93d6b925942a9d577c69afcb4df55bae3beb6aaf2220e2249d24697f8",
-                "Model.simulate": "421bc7b6388c4bd18b8dfba0d609a7ae9aee1732ef77ea5d2338b135d12d0964",
-                # Fixed caller owners flow through both private automatic-solve
-                # boundaries without becoming numerical operands or cache keys.
-                "Model._solve_from_flat_params": "67aeaaf94721c1199afd242d6a66dfe1c02aa0ffda48091dac188bd3e9d90931",
-                "Model._solve_compiled": "a604e0b9d37df95a39e556a6a98883c5d4c8303498fd51019d31b60ab169dabc",
-                "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
-                "_fail_if_invalid_taste_shock_seed": "5a8c4643d73c99c83160024bac7ede90deb9da24141e750103ec48eb76ae0486",
-                "Model._process_params": "955131a77406adb4e76ff4ebf53cddcd14f7c4063051c80b3eb874001db6147a",
-                "_simulation_programs": "02d69b94d7005c2f01cb72585af823fcc62801fb5b45fbbac975fdfc1ceaae70",
-            },
-        ),
-        SIMULATION_RANDOM_SOURCE: (
-            "cf360b1f08f877d031559f9b6964af3d24a2042a97987f233a0daf32e1e76884",
-            {
-                "create_simulation_key": "76fca4fbc2e18885d2ee67512e8207616fe8d17443954d9b36765a4bc52b3dd4",
-                "_create_simulation_key": "1ab7921d3e42ea7255fb8bbc60d1ed58e408e8818d0bac91ec132c276c62a05d",
-                "split_simulation_key": "9968b4530b74638b082b63c0160391573b8ae4c20a9dc3b733a9b424de259921",
-                "_split_simulation_key": "666d1e23f386815a8fd331cd543813fa2fcdb501f7672a82be9f48fe31c293b2",
-                "generate_simulation_keys": "fca1aaea960cf409abee1dc2130e889d292eb12f20b3dc284f4b1e850eb2b503",
-                "_generate_simulation_keys": "87d86ba01310209a8ac5b222c2ea6aebc8ff4488b2ba373b1b28d5b682c737b8",
-                "draw_random_seed": "42fb402a3282c789664d45fb988b3ed07b8cec706924d3e6e11e26b44c393502",
-            },
-        ),
-        ENGINE_SOURCE: (
-            "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
-            {},
-        ),
-    }
-    surface, callables = contracts[source]
+    surface, callables = _SIMULATION_DISPATCH_CORRIDOR_CONTRACTS[source]
     errors = _exact_callable_errors(
         tree=tree, label="simulation dispatch corridor", contracts=callables
     )
@@ -3373,430 +4858,342 @@ def _simulation_dispatch_corridor_errors(*, tree: ast.Module, source: str) -> li
     return errors
 
 
-_SIMULATION_ADAPTER_CONTRACTS = {
-    # Pandas validates labels and assembles numeric host arrays before the same
-    # admitted writer used by ordinary inputs. Recursion keeps that writer and
-    # completed leaves stay owned until the complete mapping is published.
-    PANDAS_UTILS_SOURCE: (
-        "598502e34b44650f31bd20b497e6bf99657d01d15c9d47d50f8f04ebbd66a098",
-        {
-            "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
-            "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
-            "_write_pandas_array": "fc6fdb8c0b16669a7672c6eac52c951bb92f6180ebf607af7bd15907260c0a4d",
-            "convert_series_in_params": "30530b016415924c609dd56f200289643f3ea9dd506d104742a2e30e1889f78c",
-            "_convert_param_value": "d3dbe841331053864f44d94edbd8dbe85eb3224ab8e6a2de6854dfa37434fb59",
-            "array_from_series": "0d2d919f86566ac63eb3a66884b2100332a951cbf8f25500653a9c6d6de42dfa",
-            "_scatter_series": "68981f1c512410fc68eccb42c39ecb3a4b0d4be3a3c4f414329f69b5287f79cf",
-        },
-    ),
-    DTYPES_SOURCE: (
-        "661c05486d0b4cc02d475d8f74bfc9f845a3a4d1e7c2d3fdd03b90b8a2b82c24",
-        {
-            "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
-            "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
-            "safe_to_int_dtype": "86a320656f3eeda21585f62873741bcff8d92b336364b48c920261c503a0d152",
-            "safe_to_float_dtype": "9ccfddda18e625106d7d9cd4be5fda4319583cb9e665efc24b16bdd2dc169a07",
-        },
-    ),
-    PARAMS_PROCESSING_SOURCE: (
-        "57bf8cfb10f45b118e3c5f09ca964bebc7f2a289fb8abbda6c1e20b2f9971676",
-        {
-            "cast_params_to_canonical_dtypes": "4a8f4b204ea7de32d0c4ff2a500ceea8fe5bd5b3f51e158771359572973610e9",
-            "_cast_shared": "8d132f4bfc4c96b597e62f6bd48c2326624bb5ea88dc13b0fb62e3b8b2b51e80",
-            "_cast_leaves_to_canonical_dtype": "0d326605061f3956372a589edc5244a2297ed1966a41a5f5a80a6ba1eefa04e1",
-        },
-    ),
-    SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
-        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
-        {
-            "SimulationEntryAllocations.snapshot": "3d6f0df5cbf4a49bbcb305a4db03698b5d6190b148c2f9eade3944db0f9d3367",
-            "SimulationEntryAllocations.solve_input_roots": "f07a0bebb0c5ae4103acff0f791c0529072096bd043f67af6db801b34f765369",
-            "SimulationEntryAllocations.__call__": "d16c9d254801ebbff8ef1ce18125a3a9fe68073d83672bf8855eabf923da6624",
-            "SimulationEntryAllocations.publish": "a8e437cc229448ceb3f4338fc580081b830cc530dd2fc837b1073fbe546e2ae8",
-            "SimulationEntryAllocations.pad": "cfe078114a6c07cfa9ad0ecb0bf0411b8985742aee92a5359d8bae8315d4f0c5",
-            "SimulationEntryAllocations.update_solution": "c0b444df24bb2bc44e0d3db1253353b129ca4c881063066a59fcb7c6a37d7972",
-            "SimulationEntryAllocations.close": "b662848316cdc45090e3e37b26aa4f1f6a3bbd7afbc3fddde351f8bb8c20ef08",
-            "_pad_initial_leaf": "b5ce0e61085c360e97280d593948a3e8e775e10424620a905c038f34142dd7a0",
-            "SimulationEntryAllocations.place_solve_parameters": "1a3cf57127857cb1dc8a154de9aedfa3f07aba9eab142a0af5424a0588891297",
-        },
-    ),
-    # The entry coordinator preserves both validation families and passes the
-    # real retained inventory to each newly profiled summary allocation.
-    INITIAL_CONDITIONS_SOURCE: (
-        "8d4c89da7cdd9b2fc674117312ed7d7571988c70836cf5e05053c4dc681a69ea",
-        {
-            "validate_simulation_inputs": "fbac5c256018854a1b4dcd5b765ed2cb0c6798251301c8025b298522499e318d",
-            "_preflight_memory": "34e74b133b2ec3172f854bbb73392907606f300adaca2d24ea55d60efb02b7a2",
-            "_discrete_initial_specs": "6e837939569bad3b27093ab4a14ce38ad16756f86910f37127432d07291195a6",
-            "_pack_initial_summary": "504e89911be3016190066e13c8acebdb890328a4a7d40c4f9e8afd6a6f0b748a",
-            "_read_initial_cohorts": "feb4db88b882a240bbe40cb179495e6d7cfe4d62f95e90d7df3792ef320337a9",
-            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
-            "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
-            "_age_specialized_feasibility_message": "e76cdd6831a2e28f939e86741ca651c38391774bd7297255fa28f3e6a1933163",
-            "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
-            "_regime_feasibility_mask": "003fcee3a807c53e043e67f83750faf45a5fc3643e838c3c72175cad7cc10dd6",
-            "_run_profiled_feasibility": "d7aef56bf157b320a635adfeda328f9a76c1e6311f9a04bd87964a171e5e2aa4",
-            "_batched_feasibility_check": "455041410a3c2ecb1b8795c834e0dbc9624bab239e2a19d1dee2c2ae02d70e8d",
-            "_evaluate_constant_feasibility": "12c654a6e1a02d4267156e8e501fe98a7a295eb46da3e736840b85eab506e012",
-            "_admits_any_action": "546746b14fcca4269a3e438d2ec0c5c214259c3199169f5e727839c4d9fb0463",
-            "_per_constraint_feasibility": "e74cb94395615def30c4f11cea311c64c42f0711a22fe91b417dbd3197c554df",
-            "_format_infeasibility_message": "cbacb8c81970497c4fd808f428a896685f752a1be534788d7581417e8604d046",
-            "_gather_feasibility_inputs": "557c76957b3e216d9a95166daee80fefdd0af163633920b30b1d7215596d8515",
-            "_subject_feasibility_flag": "58bfc237bc5b8a51897de10ffee1eb33f7a2cb6504c094ed48544946185bd404",
-            "_constant_feasibility_flag": "f7b994fa04576c7157f8bab30ef0e17126c181ba874cbe493c1e19e6be056f17",
-            "canonicalize_initial_conditions": "c11e1f052794f712ecff808acc643787e6347c4f2234d4612d3e5ae2c4fecca0",
-        },
-    ),
-    SIMULATION_TASTE_STREAM_SOURCE: (
-        "947474b7e88fd4664df411678ada61eaf7c026cf7bed0abb6fb348057809bc93",
-        {
-            "create_taste_shock_key": "d0b1e91beb7a9d482b7cc520dc00543112c082ff285f37e17c8ea1a283685d32",
-            "prepare_decision_taste_keys": "ef085a5cfac60dce08367fc50b280500313659e270771b1e94367b73e3ddf717",
-            "generate_taste_shock_keys": "66f0dddec645c123e66957e33ea5da7f932c83c23822dd9a49c308034339a038",
-            "advance_simulation_taste_key": "49eecd1a5724049acc7108921c86640236140477924fbf3b561156c7a449381b",
-            "build_taste_stream_addresses": "b880a2eb4e2eed50de19654b6385ab4a46e68530fbd017643cf1fd599a47947d",
-            "_encode_subject_row": "9206dbef80b1bf9607d6cfc42db24af9d7a01ee34ee04079d13c61582eeba82a",
-            "_advance_simulation_taste_key": "d8854c351a6aac51cc858691332541a21413b90baccf6dd2a52fd2ae601a3752",
-            "_taste_address_words": "4490c80c002e777c58e57d242f5a722e17f31d10e7d8120e32b31123ea284478",
-            "draw_taste_shock_keys": "bdc7eb50b64e31949af64b051935650b7f744467074adadc2dea930012d9d577",
-            "_row_offset_words": "5b7e8a0ca6032c00fd2db2d24513c6642a270e20d98facc362b45bc784d80778",
-            "_fold_subject_key": "6c3faf14f43234d25195bd3525659c095512857f4b9d4422e05e43e33d936493",
-        },
-    ),
-    COMPILER_INPUTS_SOURCE: (
-        "ab4df3a33f7b46329e2eb3a4ac7c6a96c75560172f7528e2874e06bed37dae4d",
-        {
-            "compiler_input_paths": "2e9389aca0e3ee57a2a79fe4ef17ba9f09f1fe8eca8711ccfb3e4f5f837d2413",
-            "_is_none": "70af7d997029f74d8784c981b5512e4e6e622af65c8d1ba75d0f55eebafc1a4e",
-        },
-    ),
-    SIMULATION_MEMBERSHIP_SOURCE: (
-        "a57a98eed95f797a3fe7a1a4337db52ecdf78785af4985be4118ae5a4b76a556",
-        {
-            "initialize_subject_membership": "3d9e4107e20e56414489ba06572036dc00f3f950581dcc239e9f1f43b4d3be6b",
-            "activate_subject_membership": "277a6e91b924ca50b5e4bdfc3b5e1d58a2131ddeab82c80838702f7183c2a960",
-            "_empty_subject_membership": "9176841676cd38a179ffecbfdd0b78aa8df87a385b4503dc199cfd7776389a1d",
-            "_activate_subject_membership": "f75db18f16aa2f67a76a5e88cc0b9ab683638e364e97f80685b3ef154f54cc71",
-        },
-    ),
-    FOOTPRINT_SOURCE: (
-        "4dd2b67234f6ef9bb384b35e338d4bcb67bd3d4ccc8c2e8444a39940e6ea5f58",
-        {
-            "ArtifactFootprint.__post_init__": "508bd37bbb30d5e0511ddb2de9d98f6c1c2318ab928635b73b413c942d72a4a7",
-            "ScheduledUnit.__post_init__": "2c144891456c3626aaf1b62591a35e6c004e5d182b1ceb12dab4ce10d0b4d7d5",
-            "ResidentInventory.__post_init__": "75124f4adb54bfbfc0347d29218b4a83835ac800fe30a53f4008ab55f13df35d",
-            "ResidentInventory.resident_bytes": "f3aeaf93e4e584e9cbe96b3cce8f6e0b49daf95e202bbba0dce89e7ae0a98aa7",
-            "concrete_device_bytes": "14a88daf386078b838eacdf48a33e3c9894b3e958894e6973be7f823b6ffaab0",
-            "plan_resident_bytes": "e9c46841e6663fe1e7b33a952b2bd7c08335e87e70ca813cd0e3314068ab985f",
-            "plan_resident_inventory": "ad8c2a316cade31c67c6ee4ccfcb13d93334971bcac34a9bddb65b39473ece8a",
-            "per_device_footprint": "35c8fc0f90d8a9342d58a87f2286cf08426043a03b3dc5577f4e13adab75cfcd",
-            "layout_footprint": "6d4954af608d5c781e8ae3093a435d745e989333cfa9f3d62570ca366c6a33e6",
-            "sharding_device_ids": "c66e89e2760e52cbdda063cccb1e45e26f78a66be5f9bebb97b28a076261e049",
-            "_walk_wave": "00277db02d7a09bb58776c3b9da6cbab067c49e0079c97c6b563299f1fcea3d3",
-            "_walk_period_folds": "b24a1e035b26b6aada8169115aa7d2319f769e5e7ae7a4530c333b56eaf9c8b1",
-            "_register_outputs": "53c8b7518505e12ff7e2c670a90db42e7d61cf7dcda3591d0a9fb33ab3f2093e",
-            "_resident_inventory": "8f2d1cb122164804dfaeaa79821253732f556dcc65d1b0b82ad4b13a60556f9d",
-            "_device_bytes": "9a13b9a28cbd04171b79b314b94c4ca52c82b4cea75a508477aa59f2b1651a1e",
-            "_group_bytes": "d3921a94db53838b762ad28d47dbd821ccdd061c9b8a3111a531edd6dc5ace3c",
-            "_group_is_present": "0ca9e11967bb6f3677c2ae4f18b306a39d35ff58a15d96ff75d8bcb48d507ab0",
-            "_group_is_consumed": "be4f8158fb0972735e2a5609c453744a62bb5bbb8084de5ea2032f0723cc6539",
-            "_release_after_dispatch": "7c60f35772266db8d9a97c0793b5fb8f15aafa41570f8c24a9c7d12bb4180005",
-            "_fail_if_footprint_is_unplanned": "7e40a8e62d5394d451086773fd4bd9ac08ecde2f5b3ed244c2ad5a8c8826e511",
-            "_fail_if_period_disagrees": "238a0dde28594bfb1a48ac4eccba31453144c123bebe3c61d733ed1528a11c81",
-            "_fail_if_negative": "aee2b71bd25be15a27a70981c5c9f27b78f67a3b53622169be9512db47b300c1",
-            "_fail_if_not_a_device_set": "9d500f39fd8e6e8486888d403cc0c4a80c9c292f35a33644268656270b93d9b1",
-        },
-    ),
-    SIMULATION_OPERANDS_SOURCE: (
-        "eff2fc136a1fc5392c9557bfea039312e5a329c63f83280057b0fda74fe66b8a",
-        {
-            "SubjectArgumentNames.subject_arg_names": "46cc9cd2b5af3c1a622819cf136f77ca33152cb4dbe6a00b2a111d50848d1f4e",
-            "place_simulation_arguments": "6dcd4aab726fbd0a230d73fb73159c2a6fa428473581fd8be31ac6a55759b191",
-            "_require_operand_headroom": "b5c9e594752891c3fe1c8a5356cf9232dbc3cc8611cd8435985c5e4813099c31",
-            "_required_operand_bytes": "95093050111d5a89b4019b87b132eb2261f0746dff27c5ae13b30e1aaec042a6",
-            "_operand_leaves": "16b5429e78fa8a8bd71b2f7b232fe2e276c567c40415c40623301b02c4137d06",
-            "_paths_below": "b12d8a06f78558f8c618e6c5e3209bb42e0011190230e7a68e660589ad961d52",
-            "_place_operand_tree": "4e5754d22e67058a3acf38d11f9e24a54dd7bd2e4a77b51692ca9dac9ca84fa4",
-            "_place_operand_leaf": "2e245da8cd56498ca70f0f58c7f21d10964c820335842509cc426c65adc05dc2",
-            "subject_operand_sharding": "7f408b68a50569861eac3e980e9426df3140e27fa65791e98a1cd4e8385de7bb",
-        },
-    ),
-    SIMULATION_UNIT_SOURCE: (
-        "0203411c718c44bfe546af4187ab0ddf4d0c22e0a466537d3ebe0f2c397ca995",
-        {
-            "SimulationUnitExecutor._live": "efff4a14869f95ae6371a201bf42c1bfb3ee5b4b682af149d4979a02655714f4",
-            "SimulationUnitExecutor.dispatch": "fcf7c7d15381964d3c22aba55b7576644588e31a0c53787dcef62cd78713a90d",
-            "SimulationUnitExecutor.close": "2baec2cefe68783c238e3f553ed3471b6520bb66f40aa7648a9961c3f760faca",
-        },
-    ),
-    SIMULATION_HOST_SOURCE: (
-        "d85de4188726b7df432800108ea0385915f5debb8316ad3e5b613bcb01a82ce8",
-        {
-            "ProfiledSimulationOperations.dispatch": "5a4f3e867890b13629af9ebff9c3ab11a116ecd0abf4df681735e2d23e108d4f",
-            "ProfiledSimulationOperations.compile_candidate": "a75feff396db3e29ea711ce2ecbea1097a978c6a39aad65f93c80a9361f697c4",
-            "ProfiledSimulationOperations.lower_abstract": "e2dfd3fb4ec53b874195e907f7cf7a26253c6194404a002f1005590f3f9f0ffd",
-            "ProfiledSimulationOperations._publish": "51d44b3974028c72140f3d2ca7ebab375c93c51707e296d1bb648a7a817d97bb",
-            "_abstract_operation": "e7304c5158b9b3e99ea73731806eea0ada68a578ee6b19d8e27f8ff06fb064b6",
-            "_lower_operation": "7d5cf87507d3984ed12b895429eea4a671cb0ed7464e0cef5fe0acdfec8c7e08",
-            "_OperationCompiler.__call__": "4f2d9bccfcd9524fef520a64eef658fe2f88484ff7443700e0b987f62f0e9913",
-            "_abstract_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
-            "_static_identity": "23489d8dc1669d265b3206adce1b77cf1cd2d2162444a2431ec141f3b0ce317a",
-            "_operation_memory": "0754b599ab28c5933dc5e22c38d09eec65b32d22dee37c1e8b8b314027abdce5",
-            "_ProfiledOperation.peak_bytes": "39cfc33459a34e6157f26e7de46841b13d60fb4a866854dbf9c7c89bf94f31d7",
-            "_ProfiledOperation.reservation_bytes": "ad8fe8e77b995ab9398031a06d9492d3d9080b408f68124ea048f81449bb73e5",
-        },
-    ),
-    SIMULATION_MEMORY_SOURCE: (
-        "27424e6673ee4950f5684a78211ad1ce5d014634a045ceeca0c8553800674793",
-        {
-            "SimulationMemory.__setattr__": "95103b656f23b858719e2ac691d71b21d08facd6b137716247e064af19a3cdff",
-            "SimulationMemory._period_snapshot": "5c2d15995d981f85cea04e2d0c6b608dbd33916c604115b122a17efd69a7b774",
-            "SimulationMemory.snapshot": "437a32114af3c92abf2bdcf7a046d424c24ee63402b151afbabebc2e4b542d16",
-            "SimulationMemory.budget_snapshot": "1ceeed0f0ac95eaf2031103282b27eb2d1b768cd68ddd6313634510beaec70bd",
-            "SimulationMemory.set_chunk_inputs": "1132e41412c470c63b70847dbaac4a22bb081fcbda2be1b7406b1857703270f7",
-            "SimulationMemory.publish": "d8b7ef7cca100a9635d7f9b601a7c22c00a17fe5ed7e8033c2a358582a88423d",
-            "SimulationMemory.replace_outputs": "4c7488bc6cc184501c1009a48c0f3b4d73b836f0ad56ae5af1d311712f8ec4d8",
-            "SimulationMemory.set_derived": "10e766ae18a8838bf4d202f2ecb594c76377ee9594759b5f945604815e1479bb",
-            "SimulationMemory.hold": "a11353f3ca26fa3c13594e4a1e0c7e530b3c377dccb67746d708bf2f6fa3de53",
-            "SimulationMemory.before_transfer": "8f90ea91ccd52885cef10e97c47c0789e4f7be21b0c69b846f8c82ba3c97b764",
-            "SimulationMemory.check_resident": "f5eafe87346b680fc08d2617bb10f395585346ec569bb887a8eac725485daea5",
-            "SimulationMemory.run": "9f463a9e63a74ae5ee77edf2bd3cf2d6238193eb6a0af84f80b79a477702d0a1",
-            "SimulationMemory.close_unit": "ad93e305391d4eea94af93d4561ff2ff0a699c691f24084f5f1bcb63ae589838",
-            "run_simulation_operation": "2c0982ac9b27ad92642cfc81da98c9cb4678c20cad7e130d281a0e43f2fdc1d3",
-        },
-    ),
-    SIMULATION_PERIOD_INPUTS_SOURCE: (
-        "3baeebebf1d4693045a911202220c4effdb83c630b7f2ec0ed0c6938dd7e7994",
-        {
-            "decision_reads": "e29ce56bda572aff34dde4e8018d11d3d90b5cb620786143efca424674725329",
-            "unit_value_reads": "071faa9504977ee219d69928bc77f2386532a7a921ae038955b4bf24091f8d6b",
-            "gate_reads": "9e57467e4a7147bb1de88c0010c73960fd3b966ac76b3e5e575bde8791edd261",
-            "acquire_gate_inputs": "a49be6fadbf76e8f8b2fe9b289049711ec3a6fe48851caa0fe31467ecc249abc",
-            "acquire_decision_inputs": "752a3aa7e4de32488ec11d44725744c2eb31fdde30ba4ba87c71a217bcfc4ec3",
-        },
-    ),
-    SIMULATION_REPLAY_INPUTS_SOURCE: (
-        "b941a23abc378d6908b6f270e429ba226c569a65697b252e410867bd9d8b5053",
-        {
-            "replay_payload_reads": "e1b545e6577d7b1056e5d0d3884bab82dcd804af33135b3e78dbf3244f96eff4",
-            "place_replay_payload": "acccbca62b49189e11f8e84426f8c37b39e8bc9e5648bb8eaa9ecbd61e2e7ee1",
-            "_payload_read": "e21661556db28a965ccb171eb9ee1f109992bd81a7c25fdc82066c550022e4a3",
-            "_consumer_step": "2d11c2e3653d69682cc29d7f29d95525f81749f3911869baf8ae68d178c23ef1",
-            "PreparedReplayReader.reads": "3a9de61be4467a66b9cd87633adaa6be14787697bcb60816796972ad066d0dc5",
-            "PreparedReplayReader.build": "81f1567656c679ca538b5fca9230befbd96bd189db9f2a07d4cf12823353ea6b",
-        },
-    ),
-    SIMULATION_VALUE_READS_SOURCE: (
-        "b0ee224746567aef12dc8acac13e80a2f02804bcfa1279e00919de272e3f7734",
-        {
-            "BeforeValueTransfer.__call__": "82a3f70c8e1a601fc8a5e52ec2b029488fee92b0f4f6a103c21513943f3688aa",
-            "PeriodSimulationReads.__init__": "9d8ff79bfa31922faf60005529bf05ac91ebee725c4c776420c36e5acc47cc48",
-            "PeriodSimulationReads.read": "f85626a3baef07ff220383097295bce29c9ca864f1b7f70a245bcfaf11f212e6",
-            "PeriodSimulationReads.commit": "4676b7c7ec1e4e01f1495b48dbe495ce17a15fadb6ea209eb8a955408633d39a",
-            "PeriodSimulationReads.live_values": "14324293d4a4ed4e3853ee801aa47bdba89b38fbb91559daf7aeaac2779a5c32",
-            "PeriodSimulationReads.finish": "77a88f1d96ad536556eeb486540dbf17ebef640ab772d26683f74712a7a9a6b9",
-            "PeriodSimulationReads._read_host": "a352dd98f9cdfabbac6852b32932e6ea9a98531c278d126ae09fa23035680717",
-            "PeriodSimulationReads._check_open_unit": "057505de76b8bc662e1d69a1ba83e5021cca56afb01ab67423c659cff4a3f640",
-            "_host_replay_sharding": "aa665562686325f36892f458794d1efa178492c4611e72e11817e52e2a60c739",
-        },
-    ),
-    SIMULATION_VALUE_PLACEMENT_SOURCE: (
-        "9dfbadd65ed8404b9d058ca7e2541f179c1fdccd126c1fac1f40d69a0abb1eeb",
-        {
-            "simulation_value_sharding": "529cb86cb0e1cfe3c72cfd2e5e8cbb3e235d717649b971085aff5a5da893eca2",
-        },
-    ),
-    SIMULATION_CHUNK_INPUTS_SOURCE: (
-        "1108f8ad45d23b985f8b799e3d8974bdd7287e99118976d3f8ceb1c7c6feb0ee",
-        {
-            "prepare_simulation_chunk_inputs": "f5c1bc4db0116338fe110cd0e5a1a7cf3a2e717ec58738d8e082135f161f62cd",
-        },
-    ),
-    SIMULATION_ENTRY_INPUTS_SOURCE: (
-        "39ce39b1b492106b807d61567b78df58eb9091776d2421a97dc6c21269cdf263",
-        {
-            "SimulationEntryInputs.footprint": "54cdab53cc743f08e647b64c58fb17500e927aabddedaed36a2cb38d8be543b9",
-            "capture_simulation_entry_inputs": "1f9530b0127480aac7b8257fb03510dad8682c81c8bec6f86dfa280f41f158bf",
-            "_caller_arrays": "b5816c3bf9689817cf2cff29df7bba818657ddf0baaa182036946fb3f9d1324d",
-        },
-    ),
-    SIMULATION_RESIDENCY_SOURCE: (
-        "7ccd2ba0f7c047da4de89e36306c46eee350ddee9684ba49694e88d0d62b6bfe",
-        {
-            "OwnerLedger.bind": "afdc24c3218a517f12d74f84fccfa7e5c7055bbb0b3f0ee659f375bab0119949",
-            "OwnerLedger.measure": "689177e5451cc06fe4503e63e29951ed95df9ac37305830f92e9467a518c9f9f",
-            "OwnerLedger.release": "77cebd7c193e2c14e76d9aaa981186b831626477111f14c27a999477296ac280",
-            "OwnerLedger.release_prefix": "fe266006cae3b79cb1031bdabf42ed650d01ecb15163217c319a9c8dc3e9d8bf",
-            "OwnerLedger.clear": "50605dc06e8805dc6e41bee2cc6db6e1959af9255cc79d63a88d4d2853f0e481",
-            "OwnerLedger.bump": "8997d8a8f18dcd560f6ffd669ee0c2611ae836262925d4644aa2836e48617323",
-            "OwnerLedger.union": "d77839f108e8fdcd189ead2af075daaae002dfb5ab61136484cde3c2f9bc9e28",
-            "OwnerLedger._extend": "da833202cf9271e36a3bb69e39ffa5b2bd284854b9ad586d3916e830cf01cc0d",
-            "OwnerLedger._invalidate": "bccac5f4bf4af8cca6bb493816b1c6bbb126121848f9895f8dc4a3ede25aa087",
-            "DeviceBufferFootprint.__post_init__": "6b91013dac5e169e65e44c92701ce26bbc790d4e51e49b73b96725b8c02b9cef",
-            "measure_buffer_footprint": "99ba8ec6f6b1496b580ecf82d4d979f76441aabedcb1872af22f200678262c61",
-            "union_buffer_footprints": "5928dea9a80ee77082d80a749b8ef86fdf1e1d8fddfb1441ac9112f1352a1296",
-            "resolve_budget_devices": "cb3ce34525277ff3e667132fdf3f0a0504fdff44dfd554cf2ef21c2f71a24d30",
-            "resident_bytes_by_device": "7f98f5a753acace9389784c2200b2b94375c26cb7523092c10f09e890dee2ffa",
-            "require_transfer_headroom": "74b69061e32088c8ab67c18fe47aa512d4aca140f27bfb8d16e5085216d46cef",
-            "_merge_spans": "3cdde57f56837f60963871f3ae1f04ca2f92f45a7ddc4d1c35bd3b52f2ead33f",
-            "_uncovered_bytes": "ec6738bad93d29c3c742d696b5cabce48748755ac79ce71fcde583a94442df52",
-        },
-    ),
-    SIMULATION_GATED_ROUTING_SOURCE: (
-        "0f8861d439829e36d58abc496a2c9903a13871ca336e76bf138e24f2f416e69f",
-        {
-            "simulation_gate_fold": "7f0c357a3c4309eec53c9b93edb62d5d0b20445ec5b55e69b7b7f966041e1b58",
-            "simulation_gate_route": "542434413c0789762544b6c78a601c75be05023b393ece40e68c256c5e3a10e4",
-            "_simulation_gate_route_with_closed_masks": "7f4e496c954d8dbcd0ad4bbf9e54e627f349868b59617145fd5d6d35c8abca4b",
-            "gated_route_candidates": "2142157fc928b46717dd5c1c1e9cf1cab754eb82831e803ea108d2d8cb2605b1",
-            "simulation_gate_route_delta": "66abe30fb1e1b464fb1cefce272e05242ba6d4ba8f9485fccdeb5ad2ad01cafc",
-            "commit_gated_route_delta": "301e32d9fc57ba1a46561fc1cbfbc7033e87f0d2f302736f2232dcff4d680b04",
-            "substitute_gated_edge_continuations": "58b63d9a513d86497d6b29f2f6b9c864a2d8780109e06917496a5bbfa0d6f1bb",
-            "route_gated_edges": "6289e82d7a4b59d52bacbcee5b336ae5c965f37e1483d9127d056fd45d4e3620",
-            "_route_gated_edges_with_closed_masks": "e20968321b7cf54a18de9c0f9bb66c0451a5bdadb81a04376c0ec722b1b90645",
-            "_per_row_leg_outcomes": "adfd58415412e5f4ec1e734d52514531a9f21e758fd65ef58a0f4f40ca7dd668",
-            "bind_provenance_params": "dba3f4248af81f4151fcdb79b5053b20b4a866da1903a0203d774af32cf31465",
-            "_call_vmapped_with_accepted_kwargs": "588c69856a40d54155f942a0350ae3f7de6b3b20bdbb79fa3cf8bc2ab79aaf09",
-            "split_population_call_args": "b779611293e15e0e7ddb15ce213f7e158ebe7edadcc9c62a84524d0bd66e9dfc",
-            "install_population_call": "3a1b448190acfcc503c43fb29f4ba572d7847f4496191fbd7461a97afc4d7431",
-            "_accepted_arg_names": "5edc187eeed7499d363dbbe554d978d04cbf1c63a951bf07d1b49e58146c23f9",
-            "_role_code": "439c955f56094cfce8195a6516abbed95c0a5990b6ac8cc8e8b85ca177b7e6bd",
-            "population_call": "accb1be72cccdd41796bd022bbb39960d9aabb7fbc66467df75b2e3d007ac6c8",
-            "_map_subject_tiles": "5250a4cb34ab8c1590e4e301fd1f462164b5c506c4d5dfa1448c74b4a2bd898d",
-            "_call_one_subject_with_shared": "07dd83c191465a3332813ef6a7cb0290e45732262893ded7a76b51d50df8db1f",
-            "_call_one_subject": "31a86a138a27481b19a238ea0bc680382ccddcd02d5cce3ee3b4e2e7db850ece",
-        },
-    ),
-    VALUE_TOPOLOGY_SOURCE: (
-        "bff578469ea366b108f9484bd047f4ec24ab1866aa365b39b01598230c0618da",
-        {
-            "expected_V_rank": "3fb0dac3bed9027261436cff2316bd122cff31e99dd1b825977272d09e6212f7",
-            "placed_V_sharding": "2232aa6bbc1e01337e19bd39637a254e34d14e9e6296407c2aceb6b2467333c2",
-            "_get_regime_V_shapes_and_shardings": "98dce83dcfec6ab9ee239b6072a32ebbd9b364c5ef11fdc5c0c150fa2364a167",
-            "_build_zero_V_arr": "83c861c7149e4ee341e409c56e8c08fe2a8a01d859bb8d6e80b7ff62e04a632f",
-        },
-    ),
-    RETAINED_BUFFERS_SOURCE: (
-        "394e2c6abaa4e8b59852f53358fb5005572d79fa46638faf4461dfd74a42fefb",
-        {
-            "retained_solution_buffers": "75b31cd7df576899d18b203e4963dd06acd47b900bf1b6c13c678c62e9d12d58",
-            "_RetainedBuffers.collect": "3388eed966975167c9162aa814f2870da5d61cb6dcd2a6d217ecd7215065481e",
-            "_RetainedBuffers.collect_lazy": "ddff92c86acac4cfec6093996a8f2ebec04cdd0a3ae2618e8d254b63d20426f9",
-            "_RetainedBuffers.collect_authority": "402406b70f1437e1d6427b96af3bea127d3ec5906a9a97eb9b19de07c8c0b081",
-            "_RetainedBuffers.collect_reader": "ab65de29bcfc68b9a694f47a926115124c4ee19dfd455b1c2f4a9b58317b7d99",
-            "_unsupported": "5eb49f472abdea16b95d9f0c9a4f6e56297f0cf65466d18cd87cb4ff530dd21b",
-        },
-    ),
-    SCHEDULER_SOURCE: (
-        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
-        {
-            "buffer_identity": "773d4a78840d9f58d52a23420af0b9942d22ce1e7d84af0d6e84fb3f0207716d",
-            "shard_identities": "5dcf1a2c1f363f904cd238cebc7607d4a23350cd2ea7e7673c93a4df12334559",
-            "shares_a_buffer": "d08dc057ffb25ffe0583d85004270348f45209039cddbd99762d9eac9166dc31",
-            "BufferRegistry.__init__": "929753ce0b5f18af3d68aa592eb75102496f6a9c5307d27e068f9779b548d913",
-            "BufferRegistry.declare_not_produced": "84f91c8e3740a64ca028ccd0ea11be158e6355972a07be943a6aa74a55962896",
-            "BufferRegistry.declare_passed_through": "4e02f1db9ca9d2fd707600a6ab91d9d7239b9b651705a17dc4da6ee184136f7c",
-            "BufferRegistry.declared_shards": "b1b775cd19d0837f801d0cb95e97d49aaeda1df9d0a291c831a3d0f65f82a33a",
-            "BufferRegistry.is_not_produced": "cea14b09a1cf43447b882ceff465849c21c3bbec5d9a7432d21b39a53e427c4b",
-            "BufferRegistry.register": "09edd35bee4350c467c8e224d6fa9a17cc62a8c55c9d870961c03a2e777275e8",
-            "BufferRegistry.artifacts_sharing": "477157e8be682555c1c2c9010c0d530a2303b3b49f2486144e4863ba4add7078",
-            "BufferRegistry.forget": "9ef1e2b80e6713c961ae890a09e95af5c1ff6b1ee4b4a55747279bac9497a8b5",
-            "BufferRegistry.forget_identity": "de10a1a351d0d573c380eb0db602cc2ea3f297be95df5bc18c5dbf5e1c63c9b8",
-            "BufferRegistry._prune_dead_declarations": "bc21c180ad19b29c98a38972521639dd454636f572602ffd68529e7689b2e4ab",
-            "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
-            "_one_delete_per_shared_buffer": "c6824683620084bbb6acbd667b2657a3ba1afdcf425268d7f1d384ee4b308f71",
-            "plan_period_waves": "0f2995c211c6472a1f378a69861a15181f6f2e0856db85191883176788017999",
-            "replace_leaf_by_identity": "12231a2d73d86bda8fd3611d877f8b2d23bb2006a4abd0134d480c88e7426d50",
-            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
-            "PeriodTransferCache.get": "2b12aac3bfbcef4e7d2f0da22f5b8ecd429656fa07f72ceceb51d76cc1fb9956",
-            "PeriodTransferCache.put": "292575c03a3509d986086e6428e908b6303e852eb4ada1a3f095cceb226a83d8",
-            "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
-            "PeriodTransferCache.__len__": "9fb60f4b369c44a05b578b7d992aab8b3f956ffa5c5b465715beceba5fe2728d",
-            "_add_declaring_array": "8cc69ee60ad06411506f95155fbef57acea86a11ca7246182e25c62336ade59c",
-            "_keep_live_declaring_arrays": "120348a883a1615abc6106151a8da9b6212cc82b0c5574806f4e08ae609f3a1e",
-        },
-    ),
-    LIVENESS_SOURCE: (
-        "ef675175e370550bf000b240702edb45f755588b88ff9308634756a7898f97f3",
-        {
-            "PlannedInputLiveness.__init__": "77663425c9c46d7ceeb6befac1ab122018b8a05f12680906322c7e048823577f",
-            "PlannedInputLiveness.pending_dispatches": "a24e02872f9504560a6fc23550115d0f1b45c67ad2436659fe400612ef328849",
-            "PlannedInputLiveness.remaining_counts": "989f7890f975e8ec088e58629a075db4223a4ab2c838ee8af82e52f919a93b09",
-            "PlannedInputLiveness.retained_artifacts": "3bf4021d7ae1455fcfdac1c60f13ec0997a34f69dd451c646e13761616e6f494",
-            "PlannedInputLiveness.aliases": "0655f5d6cdbc718cd5e57d930cc6c4b3bdb2a745ff19dc95437f68a6422003ff",
-            "PlannedInputLiveness.accesses_of": "d5e07768777e51024a01c99334a0ceab92e753793731a60414993a6d65ba3244",
-            "PlannedInputLiveness.is_known": "4c69d8e584489542b5218b9529f2d3174ae437cc0ef98c99f9c6bd752b69a4fd",
-            "PlannedInputLiveness.remaining_consumers": "7e75def83a9e80f11905dc1cf82e8c02e120fb416b75790765a973c7844b8603",
-            "PlannedInputLiveness.is_retained": "79ca0cab60f8eff2fc116fddad02f607b34828776e0c05b8e06b2295414cb1a5",
-            "PlannedInputLiveness.is_pinned": "9d1e5778b7cd96774f7a2e6bd8fc12bc5dc229da4ff36c2392d684831ab58494",
-            "PlannedInputLiveness.alias_group": "2ac8d40b07484895fcbfca4642591bc95858bee3c9e6a4d0933212de96162954",
-            "PlannedInputLiveness.is_release_eligible": "5298fbe687db08df9aa19e21c94a68eff972a24f5f6ce292fbbec905e4b3e29f",
-            "PlannedInputLiveness.has_sole_remaining_consumer": "4771a23cd10dfe196c037f8edc7091e0ba1283971c09c4a6521002a974da3358",
-            "PlannedInputLiveness.commit_successful_dispatch": "6da443074fa5b51958107cae5c3d5e531d59950e8da3232263d815bb2631db40",
-            "PlannedInputLiveness.assert_solve_complete": "bbb245e8d65e21dff94ea290736edf7c468e5ac370085c36936dc6e42e1cad1f",
-            "PlannedInputLiveness._require_known": "cab398b6ef7677851b2f0128407c00f65ea48a489a1c9c877f514f6047abd2a3",
-            "_snapshot_unique_hashable": "20a12fc2e97ef6aaa152b2b84b649e7c9ce61d3c22694d2a32461281428e56eb",
-            "_require_hashable": "49ad3c682a341c27cd2e2c500d9bda7d0280a9f67f8eabac8e86b40325124e71",
-        },
-    ),
-    CONTINUATION_READS_SOURCE: (
-        "357c576e3811082a90f274f382c4854640a573e04f02053d545db13089cdeb38",
-        {
-            "continuation_leaf_reads": "804b3329232b18650ef3da054384f0307554e742b5dba1bd53b14cd1463ac3dc",
-            "published_continuation_template": "a858c1f8320edf22d4fb2be451d6d426838f0363e4fe6c360df93879869a89e0",
-            "published_continuation_templates": "984dd8ca446a1c657f2532a0ef21f8297f6945526ab9c94b014b00ef598b7998",
-            "rekeyed_value_reads": "604602c93cb9636a59d4650e3a756d017d4cfc5c5881a957ac88d6218050d438",
-            "with_continuation_leaf_reads": "612f637430a21eb0490a390045dc5ff5354ac066c7f5b69d71be49c0f1fed013",
-        },
-    ),
-    WORKSPACE_PLANNING_SOURCE: (
-        "64a83df3a4e293fed731c897c7a04a0006794dcf87eee52ea027d8bf8baed2d2",
-        {
-            "_MemoryAnalyzable.memory_analysis": "28c38165b967325e04356285a49a7f1abab248c1d61cf92c8dffa33408d9637f",
-            "WorkspacePlan.__post_init__": "d5aac605f11a499bf65418187c83f288a9e6302e341aac6334a697ebf514982e",
-            "workspace_width_candidates": "6aa7f1ab2054fabf4f9232447e62b0ee672ef45210639a2be5465873e9326603",
-            "plan_workspace": "510107572ee1896d4d68a8861e9812ed048f25e8727bd5ddf7cc5c61e72bbb19",
-            "plan_axis_free_workspace": "b5cca5b8ba998f4e4db88e282856e4a360f8f1728e830c24ea3791d8da49d39c",
-            "_resident_exhausts_budget_message": "c4d70c808081a036a2b167eada3441348817e49ea0561a1100305d6a44a015a1",
-            "_no_candidate_fits_message": "ee996eb12950a8af3c1b54b384e567077d8c33e1906ce85fcbabc1391dba0d25",
-            "_validate_axes": "0df42ff02f11f7f4e5460fe7c518c300621718ae27f95408ad0aa1696d7ccb5e",
-            "_validate_axis": "05e956236b961d3872faf3ab84245b3651f169a912890465a02e43784db1cf6d",
-            "_validate_coordinates": "5453bf694d34197a0496b8af31085a2c6cf57bd46e866f0981ec932b8dfe9e53",
-            "_validate_fixed_widths": "c9f5045001afe5636961826303f1af8535504c4850cc5d27f0171eddd72e9539",
-            "_validate_budget": "975e144760477b3a3fe439a47e6b4bbd029d27c33c8301b9a83c8fc146086128",
-            "_validate_resident_bytes": "ece252f4071f0b708b42074e53d06b225400297efd225702b1ca9ae20f135c5c",
-            "bootstrap_width": "7b74ba3484d72f9525e5e3fb978ad813ca6b684e34e5078a6424342e5977983f",
-            "_tiled_bootstrap_cap": "d7e16de916ee80f4fb298ec36e65111eca2e971060759897e5e7d401a5cd3907",
-            "bootstrap_widths": "b29de7d4573e8f085e3fe83015c2d3ae7f4a111d7cd7bba588fdaf889be5c05a",
-            "_workspace_width_candidates": "fe684819ead8427ad60004be741a697acf76a54b8395ee5c71d28a367262ec53",
-            "_candidate_rank": "fb310dfffa04b1180e391907a03e7137950ecb0ff60919efe3e2db626e540e9d",
-            "_axis_frontier": "a49f8021fc84bcc1572acba3b8c95276decd31e3dd09eeb99915f7e0add84318",
-            "_fixed_width": "ca34e5f5a2c461f15be91a1c7f41ee91de833b37b174ebd3bbdff3b21d4ec8cd",
-            "_admissible_width": "e38d2036f99bc8edc1633bd783a6f8a7226fd11634826f853976d9af21f5623c",
-            "_smallest_admissible_width": "6f80c9145d0d2b9d2d674b0a3ba8fbcde84f3cacad677d099317f4c077117193",
-            "_width_mapping": "237667842db07b3505f6c2d66395e802071b8bee98047aa4794956f793826c27",
-            "_memory_for_candidate": "95e7e8b701c9098afb3320d6024503baf0d74b30a9ff6acea9a8459274677734",
-            "compiler_peak_bytes": "20c6570dec9b66a87be17f771e7de5b63836bba4b61e37c39c18cdec13153596",
-            "_peak_from_analysis": "20e1716c5e7566e14bbba657c83b000d7c25ae803513f67228b43f6e06b90dab",
-            "_peak_from_device_record": "464f6137698a234195e54180be8d525c402f80ecd35b27ba1e15c224e7b159fe",
-            "_peak_field": "05c48f60a52e95836191e153adfb1afa3efbdf6617dd7ade2f50f801cbb9e341",
-            "_normalize_peak_field": "017c42bd9ac7a4d410032ff677952d73a2999657554295c1dce234b45d92502d",
-            "_non_negative_bytes": "6a68d448313aee7f5b1a85c7f65405bffd1be6b1a546e1ed5d6379ed8f9b9707",
-            "_resident_bytes_for_candidate": "365e0864a5ae864c0594a64c5d6877623f6dfc9a50b5c696b50ffe904ff593c3",
-            "CompilerMemoryRecord.__post_init__": "ce6b673f2e4078e9fbd5cb66c194074fbce0b9f1b3555eb403d7d15ec0e77ec8",
-            "CompilerMemoryRecord.allocation_bytes": "5555d63d219382decf78853463017ba5df55d7e567714110f64226f7a691ee7e",
-            "CompilerMemoryRecord.reservation_bytes": "3bab6af91a467633cbcad7d4853eff1a27741d1b7a888c24eff51c89ffb8a0e5",
-            "CompilerMemoryReservation.__post_init__": "a9f6a5d3a7afa2a595904bb54fb7f0978eb8d53364294f494ef22d5c58c7ed1e",
-            "CompilerMemoryReservation.peak_bytes": "86e8e6c586154b1c40ef2f9938a1a8eb27c6f4911d016eab73d46fedda418bb7",
-            "CompilerMemoryReservation.reservation_bytes": "dcaa109c5f2be124f904fbf9f9311650d9443d234f3442b22bcd0347ada332a4",
-            "compiler_memory_reservation": "8dd28b8aa933a259c323de0ff67da2fafdf6a0d171da2799b3ddec8823aed3d1",
-            "_compiler_memory_analysis": "a17e65641f9cb14f1107abc2dc733839a4d9310b125e4327d14d45aecfb6d34c",
-            "_allocation_records": "9856b69e2ce973cb857a6146bb7be5f5ec537207133a5e66b02a0a5839b26305",
-            "_allocation_record": "0ff0ac3d21c198e596f104c2d5c86773040240a0200d57048f5befcce2793593",
-            "_fail_if_host_allocations": "83cbc5f652a502ae8cdea81ae129fd8a89aedb4955e3ca4f251636b5931363a6",
-        },
-    ),
-}
+_SIMULATION_ADAPTER_CONTRACTS = _contracts(
+    {
+        # Pandas validates labels and assembles numeric host arrays before the same
+        # admitted writer used by ordinary inputs. Recursion keeps that writer and
+        # completed leaves stay owned until the complete mapping is published.
+        PANDAS_UTILS_SOURCE: (
+            "initial_conditions_from_dataframe",
+            "_role_codes_from_labels",
+            "_write_pandas_array",
+            "convert_series_in_params",
+            "_convert_param_value",
+            "array_from_series",
+            "_scatter_series",
+        ),
+        DTYPES_SOURCE: (
+            "CanonicalArrayWriter.__call__",
+            "canonical_float_dtype",
+            "safe_to_int_dtype",
+            "safe_to_float_dtype",
+        ),
+        PARAMS_PROCESSING_SOURCE: (
+            "cast_params_to_canonical_dtypes",
+            "_cast_shared",
+            "_cast_leaves_to_canonical_dtype",
+        ),
+        SIMULATION_ENTRY_ALLOCATIONS_SOURCE: (
+            "SimulationEntryAllocations.snapshot",
+            "SimulationEntryAllocations.solve_input_roots",
+            "SimulationEntryAllocations.__call__",
+            "SimulationEntryAllocations.publish",
+            "SimulationEntryAllocations.pad",
+            "SimulationEntryAllocations.update_solution",
+            "SimulationEntryAllocations.close",
+            "_pad_initial_leaf",
+            "SimulationEntryAllocations.place_solve_parameters",
+        ),
+        # The entry coordinator preserves both validation families and passes the
+        # real retained inventory to each newly profiled summary allocation.
+        INITIAL_CONDITIONS_SOURCE: (
+            "validate_simulation_inputs",
+            "_preflight_memory",
+            "_discrete_initial_specs",
+            "_pack_initial_summary",
+            "_read_initial_cohorts",
+            "validate_initial_conditions",
+            "_collect_feasibility_errors",
+            "_age_specialized_feasibility_message",
+            "_check_regime_feasibility",
+            "_regime_feasibility_mask",
+            "_run_profiled_feasibility",
+            "_batched_feasibility_check",
+            "_evaluate_constant_feasibility",
+            "_admits_any_action",
+            "_per_constraint_feasibility",
+            "_format_infeasibility_message",
+            "_gather_feasibility_inputs",
+            "_subject_feasibility_flag",
+            "_constant_feasibility_flag",
+            "canonicalize_initial_conditions",
+        ),
+        SIMULATION_TASTE_STREAM_SOURCE: (
+            "create_taste_shock_key",
+            "prepare_decision_taste_keys",
+            "generate_taste_shock_keys",
+            "advance_simulation_taste_key",
+            "build_taste_stream_addresses",
+            "_encode_subject_row",
+            "_advance_simulation_taste_key",
+            "_taste_address_words",
+            "draw_taste_shock_keys",
+            "_row_offset_words",
+            "_fold_subject_key",
+        ),
+        COMPILER_INPUTS_SOURCE: ("compiler_input_paths", "_is_none"),
+        SIMULATION_MEMBERSHIP_SOURCE: (
+            "initialize_subject_membership",
+            "activate_subject_membership",
+            "_empty_subject_membership",
+            "_activate_subject_membership",
+        ),
+        FOOTPRINT_SOURCE: (
+            "ArtifactFootprint.__post_init__",
+            "ScheduledUnit.__post_init__",
+            "ResidentInventory.__post_init__",
+            "ResidentInventory.resident_bytes",
+            "concrete_device_bytes",
+            "plan_resident_bytes",
+            "plan_resident_inventory",
+            "per_device_footprint",
+            "layout_footprint",
+            "sharding_device_ids",
+            "_walk_wave",
+            "_walk_period_folds",
+            "_register_outputs",
+            "_resident_inventory",
+            "_device_bytes",
+            "_group_bytes",
+            "_group_is_present",
+            "_group_is_consumed",
+            "_release_after_dispatch",
+            "_fail_if_footprint_is_unplanned",
+            "_fail_if_period_disagrees",
+            "_fail_if_negative",
+            "_fail_if_not_a_device_set",
+        ),
+        SIMULATION_OPERANDS_SOURCE: (
+            "SubjectArgumentNames.subject_arg_names",
+            "place_simulation_arguments",
+            "_require_operand_headroom",
+            "_required_operand_bytes",
+            "_operand_leaves",
+            "_paths_below",
+            "_place_operand_tree",
+            "_place_operand_leaf",
+            "subject_operand_sharding",
+        ),
+        SIMULATION_UNIT_SOURCE: (
+            "SimulationUnitExecutor._live",
+            "SimulationUnitExecutor.dispatch",
+            "SimulationUnitExecutor.close",
+        ),
+        SIMULATION_HOST_SOURCE: (
+            "ProfiledSimulationOperations.dispatch",
+            "ProfiledSimulationOperations.compile_candidate",
+            "ProfiledSimulationOperations.lower_abstract",
+            "ProfiledSimulationOperations._publish",
+            "_abstract_operation",
+            "_lower_operation",
+            "_OperationCompiler.__call__",
+            "_abstract_operand",
+            "_static_identity",
+            "_operation_memory",
+            "_ProfiledOperation.peak_bytes",
+            "_ProfiledOperation.reservation_bytes",
+        ),
+        SIMULATION_MEMORY_SOURCE: (
+            "SimulationMemory.__setattr__",
+            "SimulationMemory._period_snapshot",
+            "SimulationMemory.snapshot",
+            "SimulationMemory.budget_snapshot",
+            "SimulationMemory.set_chunk_inputs",
+            "SimulationMemory.publish",
+            "SimulationMemory.replace_outputs",
+            "SimulationMemory.set_derived",
+            "SimulationMemory.hold",
+            "SimulationMemory.before_transfer",
+            "SimulationMemory.check_resident",
+            "SimulationMemory.run",
+            "SimulationMemory.close_unit",
+            "run_simulation_operation",
+        ),
+        SIMULATION_PERIOD_INPUTS_SOURCE: (
+            "decision_reads",
+            "unit_value_reads",
+            "gate_reads",
+            "acquire_gate_inputs",
+            "acquire_decision_inputs",
+        ),
+        SIMULATION_REPLAY_INPUTS_SOURCE: (
+            "replay_payload_reads",
+            "place_replay_payload",
+            "_payload_read",
+            "_consumer_step",
+            "PreparedReplayReader.reads",
+            "PreparedReplayReader.build",
+        ),
+        SIMULATION_VALUE_READS_SOURCE: (
+            "BeforeValueTransfer.__call__",
+            "PeriodSimulationReads.__init__",
+            "PeriodSimulationReads.read",
+            "PeriodSimulationReads.commit",
+            "PeriodSimulationReads.live_values",
+            "PeriodSimulationReads.finish",
+            "PeriodSimulationReads._read_host",
+            "PeriodSimulationReads._check_open_unit",
+            "_host_replay_sharding",
+        ),
+        SIMULATION_VALUE_PLACEMENT_SOURCE: ("simulation_value_sharding",),
+        SIMULATION_CHUNK_INPUTS_SOURCE: ("prepare_simulation_chunk_inputs",),
+        SIMULATION_ENTRY_INPUTS_SOURCE: (
+            "SimulationEntryInputs.footprint",
+            "capture_simulation_entry_inputs",
+            "_caller_arrays",
+        ),
+        SIMULATION_RESIDENCY_SOURCE: (
+            "OwnerLedger.bind",
+            "OwnerLedger.measure",
+            "OwnerLedger.release",
+            "OwnerLedger.release_prefix",
+            "OwnerLedger.clear",
+            "OwnerLedger.bump",
+            "OwnerLedger.union",
+            "OwnerLedger._extend",
+            "OwnerLedger._invalidate",
+            "DeviceBufferFootprint.__post_init__",
+            "measure_buffer_footprint",
+            "union_buffer_footprints",
+            "resolve_budget_devices",
+            "resident_bytes_by_device",
+            "require_transfer_headroom",
+            "_merge_spans",
+            "_uncovered_bytes",
+        ),
+        SIMULATION_GATED_ROUTING_SOURCE: (
+            "simulation_gate_fold",
+            "simulation_gate_route",
+            "gated_route_candidates",
+            "simulation_gate_route_delta",
+            "commit_gated_route_delta",
+            "substitute_gated_edge_continuations",
+            "route_gated_edges",
+            "_per_row_leg_outcomes",
+            "bind_provenance_params",
+            "_call_vmapped_with_accepted_kwargs",
+            "split_population_call_args",
+            "install_population_call",
+            "_accepted_arg_names",
+            "_role_code",
+            "population_call",
+            "_map_subject_tiles",
+            "_call_one_subject_with_shared",
+            "_call_one_subject",
+        ),
+        VALUE_TOPOLOGY_SOURCE: (
+            "expected_V_rank",
+            "placed_V_sharding",
+            "_get_regime_V_shapes_and_shardings",
+            "_build_zero_V_arr",
+        ),
+        RETAINED_BUFFERS_SOURCE: (
+            "retained_solution_buffers",
+            "_RetainedBuffers.collect",
+            "_RetainedBuffers.collect_lazy",
+            "_RetainedBuffers.collect_authority",
+            "_RetainedBuffers.collect_reader",
+            "_unsupported",
+        ),
+        SCHEDULER_SOURCE: (
+            "buffer_identity",
+            "shard_identities",
+            "shares_a_buffer",
+            "BufferRegistry.__init__",
+            "BufferRegistry.declare_not_produced",
+            "BufferRegistry.declare_passed_through",
+            "BufferRegistry.declared_shards",
+            "BufferRegistry.is_not_produced",
+            "BufferRegistry.register",
+            "BufferRegistry.artifacts_sharing",
+            "BufferRegistry.forget",
+            "BufferRegistry.forget_identity",
+            "BufferRegistry._prune_dead_declarations",
+            "release_closed_artifacts",
+            "_one_delete_per_shared_buffer",
+            "plan_period_waves",
+            "replace_leaf_by_identity",
+            "PeriodTransferCache.__init__",
+            "PeriodTransferCache.get",
+            "PeriodTransferCache.put",
+            "PeriodTransferCache.commit_consumer",
+            "PeriodTransferCache.__len__",
+            "_add_declaring_array",
+            "_keep_live_declaring_arrays",
+        ),
+        LIVENESS_SOURCE: (
+            "PlannedInputLiveness.__init__",
+            "PlannedInputLiveness.pending_dispatches",
+            "PlannedInputLiveness.remaining_counts",
+            "PlannedInputLiveness.retained_artifacts",
+            "PlannedInputLiveness.aliases",
+            "PlannedInputLiveness.accesses_of",
+            "PlannedInputLiveness.is_known",
+            "PlannedInputLiveness.remaining_consumers",
+            "PlannedInputLiveness.is_retained",
+            "PlannedInputLiveness.is_pinned",
+            "PlannedInputLiveness.alias_group",
+            "PlannedInputLiveness.is_release_eligible",
+            "PlannedInputLiveness.has_sole_remaining_consumer",
+            "PlannedInputLiveness.commit_successful_dispatch",
+            "PlannedInputLiveness.assert_solve_complete",
+            "PlannedInputLiveness._require_known",
+            "_snapshot_unique_hashable",
+            "_require_hashable",
+        ),
+        CONTINUATION_READS_SOURCE: (
+            "continuation_leaf_reads",
+            "published_continuation_template",
+            "published_continuation_templates",
+            "rekeyed_value_reads",
+            "with_continuation_leaf_reads",
+        ),
+        WORKSPACE_PLANNING_SOURCE: (
+            "_MemoryAnalyzable.memory_analysis",
+            "WorkspacePlan.__post_init__",
+            "workspace_width_candidates",
+            "plan_workspace",
+            "plan_axis_free_workspace",
+            "_resident_exhausts_budget_message",
+            "_no_candidate_fits_message",
+            "_validate_axes",
+            "_validate_axis",
+            "_validate_coordinates",
+            "_validate_fixed_widths",
+            "_validate_budget",
+            "_validate_resident_bytes",
+            "bootstrap_width",
+            "_tiled_bootstrap_cap",
+            "bootstrap_widths",
+            "_workspace_width_candidates",
+            "_candidate_rank",
+            "_axis_frontier",
+            "_fixed_width",
+            "_admissible_width",
+            "_smallest_admissible_width",
+            "_width_mapping",
+            "_memory_for_candidate",
+            "compiler_peak_bytes",
+            "_peak_from_analysis",
+            "_peak_from_device_record",
+            "_peak_field",
+            "_normalize_peak_field",
+            "_non_negative_bytes",
+            "_resident_bytes_for_candidate",
+            "CompilerMemoryRecord.__post_init__",
+            "CompilerMemoryRecord.allocation_bytes",
+            "CompilerMemoryRecord.reservation_bytes",
+            "CompilerMemoryReservation.__post_init__",
+            "CompilerMemoryReservation.peak_bytes",
+            "CompilerMemoryReservation.reservation_bytes",
+            "compiler_memory_reservation",
+            "_compiler_memory_analysis",
+            "_allocation_records",
+            "_allocation_record",
+            "_fail_if_host_allocations",
+        ),
+    }
+)
 
 _SIMULATION_ADAPTER_MUTATIONS = {
     "simulation_adapter:placed_operand_changed": (
@@ -3921,75 +5318,55 @@ def _simulation_adapter_errors(*, tree: ast.Module, source: str) -> list[str]:
 # The finite-policy profile uses the actual retained payload and compiler bank
 # schema. These structural guards pin admission, transfer addresses, diagnostics,
 # and dispatch bindings; numerical ranking bodies retain their existing contract.
-_FINITE_BUDGET_CONTRACTS = {
-    "src/_lcm/simulation/chunk_admission.py": (
-        "700f5b57b1d215ef3832295355f5c406d3774d03d349d6060ce59431588c19e5",
-        {
-            "_ChunkProfiler.profile_widths": "62197a2f945dc397d4c169bc5278da93dd50613ee5f012b0450838b9e376daab",
-            "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
-            "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
-            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
-            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
-            "prepare_simulation_chunks": "c8be8f6837b354e5dcb40b17af98e36ae256022049e61f17a669bec9d438be73",
-            "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
-            "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
-        },
-    ),
-    "src/_lcm/simulation/chunk_profiles.py": (
-        "a029e61292854534f6cbc956aaf1146d9640049112b025b161355b2f38887a78",
-        {
-            "profile_simulation_chunk": "180e312a8aaa5af0d6de7962c19d1d7fc501285662968b5570c6d016372bbfe5",
-            "_period_copy_reservation": "b37ba3bf57112ec8af0c0501b080b0469fff12ba162f0fcfc2f9520f876893bf",
-            "_policy_read_sources": "97ed74090101e2acb6689e8c10d074d8677a6a407c1d72d20dd120efd79a73b7",
-            "_retained_read_source": "e0233031b8fb4dcb494575a397f5c2e9ccbfd45a69d0e6f951bb3612323cf82f",
-        },
-    ),
-    "src/_lcm/simulation/forward_program_profiles.py": (
-        "81e8a11ef661da9fa2a114c04454f19dce26b0b34a7acbe46df9bfaf607362fd",
-        {
-            "profile_forward_programs": "0042e1ed6be07d88227b38c54d5bf403b972cb87ba2b9106e969c4f67b908493",
-            "profile_forward_unit": "a06100433e9013a86b55937210da3e18979e927f8a7eb60da8cdd978e7e4f565",
-            "_profile_finite_decision": "ca41f442e379c8da38fcd7b60bdfd6d7673db7f450c51c026ecd20aa1c12146e",
-            "_abstract_policy_leaf": "96e133ac576cd9b40afbf10907084378253b43bf9376d39d0faa3743d58b0cd2",
-        },
-    ),
-    "src/_lcm/simulation/program_arguments.py": (
-        "a8bb499ac2b0807c2414a5ed679484c54f1cfcca60b5b5c021aa616ad280e9f5",
-        {
-            "policy_prepare_arguments": "bb1845d1744ab4ca4c8b2fc918d9510fb4996c3eda27dc64643464a7124e9e82",
-            "policy_rank_arguments": "e7fa8d1483b70c729b25fc0ce5f195c2fdb8f368e7d349849db17a8c8f12750c",
-            "gate_fold_arguments": "cda7fa80993965acf43e733416c9c0cc7c7ef15440c52de4494f1957ce8184e3",
-            "gate_route_arguments": "0db5a702211c12376db2c58ed6de2e7c551fc60cce761be6463032dd96251313",
-        },
-    ),
-    "src/_lcm/simulation/simulate.py": (
-        "69830d773bdf9a5ebeec162f5a38d0cfc4ae70c7e32f33d52fe6d738008cddc9",
-        {
-            "simulate": "3b28023953edbec97eaeb7d4e66966924f39ce4377406182f7014ea51e265f2f",
-            "_simulate_regime_in_period": "a89372767a1d32774cc5d258c345e3f24e5bf3a7b2390c60236f4a4b6d01a0b3",
-            "_execute_finite_replay": "baaea949f797964cc6eba515c5c37bee6cbcfd18ec546f87ce115f3f8e29364c",
-            "_announce_dropped_outer_candidates": "977a3fc8627f295ad6837b46fcf94672449b532263c674be2209e509d6c088cd",
-            "_report_dropped_outer_candidates": "0825c06c02ecfe2ad8270e6d606c67f3063f945befeccf6debb4880194d54dc1",
-        },
-    ),
-    "src/_lcm/simulation/policy_diagnostics.py": (
-        "6ab53d88f11165b91371920ebecef50bf288c3ab3e4cec258e4d8787d8f84238",
-        {
-            "dropped_candidate_counts": "b82dee7807b85e869b9962f3b3b4f5fd0ee65a3ad51eeb54c074c814030b2afa",
-        },
-    ),
-    "src/lcm/model.py": (
-        "636b427502b358fe0cf2639a96817a3b95315ce56e05e4d02482d5890ef663d7",
-        {
-            "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
-            "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-            "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "23a5459b9b1e63e36f24f63a8e83bd3f85f1164c117c43091846d273785e2ab5",
-            "Model.simulate": "421bc7b6388c4bd18b8dfba0d609a7ae9aee1732ef77ea5d2338b135d12d0964",
-        },
-    ),
-}
+_FINITE_BUDGET_CONTRACTS = _contracts(
+    {
+        "src/_lcm/simulation/chunk_admission.py": (
+            "_ChunkProfiler.profile_widths",
+            "_simulation_chunk_profile_key",
+            "_independent_outer_candidates",
+            "_independent_anchor_widths",
+            "_plan_independent_chunks",
+            "_profile_independent_candidate",
+            "prepare_simulation_chunks",
+            "_ChunkProfiler.__call__",
+            "_common_axes",
+        ),
+        "src/_lcm/simulation/chunk_profiles.py": (
+            "profile_simulation_chunk",
+            "_period_copy_reservation",
+            "_policy_read_sources",
+            "_retained_read_source",
+        ),
+        "src/_lcm/simulation/forward_program_profiles.py": (
+            "profile_forward_programs",
+            "profile_forward_unit",
+            "_profile_finite_decision",
+            "_abstract_policy_leaf",
+        ),
+        "src/_lcm/simulation/program_arguments.py": (
+            "policy_prepare_arguments",
+            "policy_rank_arguments",
+            "gate_fold_arguments",
+            "gate_route_arguments",
+        ),
+        "src/_lcm/simulation/simulate.py": (
+            "simulate",
+            "_simulate_regime_in_period",
+            "_execute_finite_replay",
+            "_announce_dropped_outer_candidates",
+            "_report_dropped_outer_candidates",
+        ),
+        "src/_lcm/simulation/policy_diagnostics.py": ("dropped_candidate_counts",),
+        "src/lcm/model.py": (
+            "_validate_sharded_state_capability",
+            "_supports_continuous_sharding_vocabulary",
+            "_supports_unsharded_continuous_process",
+            "Model.__init__",
+            "Model.simulate",
+            "Model._open_entry_allocations",
+        ),
+    }
+)
 
 
 def _finite_budget_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4003,45 +5380,27 @@ def _finite_budget_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
-_EAGER_INPUT_CONTRACTS = {
-    "src/_lcm/execution/output_layout.py": (
-        "bf24629f0671e78981873d3d6b9e295ad33cbdae8c61e1a98c9f27f32aca8be6",
-        {
-            "_assert_output_leaf": "86db39c8c2dc696c5adcd8164bf080df1d5fcbee9629d5c378df1d269e978f5f",
-        },
-    ),
-    "src/_lcm/execution/value_transfer.py": (
-        "01d90eb4f4e000170e36ab8c6a23ba129ce4d0660880dec9853c02f2a6efd75b",
-        {
-            "_assert_value_metadata": "907fc083964acd015981f5c17b02586a03f57d229bf9a113e5961a0437ac6e81",
-        },
-    ),
-    "src/_lcm/solution/backward_induction.py": (
-        "e5091b5373c945d6113a35839ffbb64c703538183d7e0812f9f13f83bdc68531",
-        {
-            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
-            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_compile_all_functions": "7d53f2f339ec04f8a7459a68af13c50e5a49877447dacf6610c3b68266ff209e",
-        },
-    ),
-    EAGER_CORE_SOURCE: (
-        "5964ffe72dd680e432c4bab398daea28123f8378214ca383fc2bc6b9a21ee9a1",
-        {
-            "make_eager_core": "17f304950d7a2982e94e8d2510fe67db7714e475c084c47cc8d37b81f49b5630",
-            "_EagerCore.__call__": "2a201f7f57fff1f4559d4d1feb7b932a0c5960fcdfcc81a7dcd0b851a7c6bb6d",
-            "_EagerCore.place_operand": "9ba9305e2dc4cf0da6ea94f06f34bb0f9c1c12b60a233ca3307720e94f16e939",
-            "_EagerCore._typed_sharding": "274e9d40da69831ec01f8b88626389d092d13b6e9218d5ce1f06d90bb08f1147",
-            "_EagerPlacement.internal": "a5bfdfa9096c056d706194f7de4804973483eb998b33dd0866f30f26e7a1cc71",
-            "_EagerPlacement.__call__": "be84f81c9c35e1867e56b8070f7cac857c58dfbfae50788f7382d7e1e6e06927",
-        },
-    ),
-    RUNTIME_SHARDING_SOURCE: (
-        "8089ea76122ac3ab579951a07ee8d6e9b7f02c6916476eee41f8d47934ee47ce",
-        {
-            "runtime_shardings_match": "5f7cafda4ca0420d72f0fbd007e31d4725a42f286eb82c408c5cec8defda5f27",
-        },
-    ),
-}
+_EAGER_INPUT_CONTRACTS = _contracts(
+    {
+        "src/_lcm/execution/output_layout.py": ("_assert_output_leaf",),
+        "src/_lcm/execution/value_transfer.py": ("_assert_value_metadata",),
+        "src/_lcm/solution/backward_induction.py": (
+            "_period_transfer_scratch_reservations",
+            "_continuous_value_replica_required",
+            "_compile_all_functions",
+            "_prepare_solve_programs",
+        ),
+        EAGER_CORE_SOURCE: (
+            "make_eager_core",
+            "_EagerCore.__call__",
+            "_EagerCore.place_operand",
+            "_EagerCore._typed_sharding",
+            "_EagerPlacement.internal",
+            "_EagerPlacement.__call__",
+        ),
+        RUNTIME_SHARDING_SOURCE: ("runtime_shardings_match",),
+    }
+)
 
 
 def _eager_input_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4058,60 +5417,45 @@ def _eager_input_errors(*, tree: ast.Module, source: str) -> list[str]:
 # The call-local owner authenticates completion, not numerical arithmetic or
 # physical allocator peaks. Real pending-array and transfer regressions establish
 # execution behavior; these guards reject changed lifetime/dispatch corridors.
-_SOLVE_READINESS_CONTRACTS = {
-    SOLVE_PENDING_WORK_SOURCE: (
-        "9a45521ac40df04ae42ce44ae8cd11748dd69a845c4cd5b496aaadffc893c9a3",
-        {
-            "BeforeArrayDelete.__call__": "1c24de0e7bdcf0cb0bc04e791baba1c42b13d9956ddf52f8317356a5266ad74b",
-            "PendingSolveWork.__init__": "906f9616790021cbfb647a5be9e3e540f03684510fc0b077971a70102c825fa9",
-            "PendingSolveWork.before": "ff4a1626ee01b3b7bd92e381028061cafaaf5e7783600221967ae733eb9833ae",
-            "PendingSolveWork.record": "2ca9affccdc84b37cbe437cd320cd2793f627947a0af8fe347fb4d5b9362dc1f",
-            "PendingSolveWork.before_delete": "94a1cf03edab4724c3c89b5178739980fcbb921d8d5bdc7eaf398064917e1f23",
-            "PendingSolveWork.close": "fe6414b23cac14171f27d9b47d1be4782ec87455a8a49757b9d492aec57539fd",
-            "_MaterializedCopies.__call__": "2c4a4c66c43562237d26b463d44a44ec9fa04df33758ded7fd344aa7a86022c6",
-            "_MaterializedCopies.close": "1f54bd302fbd989ef36cf1c3dcd67c1e4b0bdf85a9fa5711c5fda702aec64a66",
-            "execute_with_pending_work": "ae75d43d947d8cf2872fa803b114c4a4de5ec7c7774d3118786ea7bef6c0f44e",
-            "_drain": "e29703e5803aebcfd54107150edd5bdafd73368d5d736bedece1e3e4f4573322",
-            "_complete_array": "55a0795c2c3ab63912524fcce52fabd7fbd5c9b9aff1d2e6bce9d80e49d4f6e6",
-        },
-    ),
-    "src/_lcm/execution/output_layout.py": (
-        "bf24629f0671e78981873d3d6b9e295ad33cbdae8c61e1a98c9f27f32aca8be6",
-        {
-            "PlannedCore.__call__": "08bfb7b759bc903ff3a4225f57edd4d2298c2e5e8c38832c5ef6b81a878828da",
-        },
-    ),
-    "src/_lcm/execution/value_transfer.py": (
-        "01d90eb4f4e000170e36ab8c6a23ba129ce4d0660880dec9853c02f2a6efd75b",
-        {
-            "MaterializedTransferObserver.__call__": "3e06bf2091d6a3291e5674060c34313e03f0e7419af22b033de98b2fb2845ca4",
-            "apply_value_transfer": "3e78b67ca2fdbb26ad1b0c793905c5e0daa6e4496ccb0a57d4be403d925548a4",
-            "apply_value_transfer_plan": "5935a6ddc11376327dbec4ea66035063acb212093c52f93d8f38f4cced622291",
-            "_replace_transfer_leaf": "7d6561650cf00a181a636eff3c320653916aa95ed57b25b32f6699582bd3084b",
-            "_transferred_leaf": "b2b9022815cc8459d04c18fd9dda22ecd1fb8dfe969540e5112d279ef0403af1",
-            "_replace_dataclass_field": "fb6a7641a0cdf063cf1933917f50a88dbad7591ac560b55bcfd49a1c68e51147",
-        },
-    ),
-    "src/_lcm/execution/scheduler.py": (
-        "7924d49d6828e4ca7030324845da5b2300895d25abb8fab314db9371ad01506a",
-        {
-            "release_closed_artifacts": "76bd3cb14ddc9fc90add485422a671db7096d06061fd34c2b48bc2158260995f",
-            "PeriodTransferCache.__init__": "5d29ffb98c2dff953aa020f6562a7116259bb53372cfbeeba00c25c7ca71c46d",
-            "PeriodTransferCache.commit_consumer": "83ffdec9aea1efd675cad1d45d317a31e72775d52169df9e11bcb157b5d9b0ef",
-        },
-    ),
-    "src/_lcm/solution/backward_induction.py": (
-        "e5091b5373c945d6113a35839ffbb64c703538183d7e0812f9f13f83bdc68531",
-        {
-            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
-            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "a30cc040a91d83293902f79ebfe83b4770018f7ebb928ed959a68fba14848c07",
-            "_cores_with_transfer_cache": "fba35f0f74a7a496f2302ea160d4ce6b832d56abc6d0fee14bc07843b47a0fd0",
-            "_release_closed_period_inputs": "b6fbfbdb2200f128c8c60f096e2eeaf173dffcf770b7c4a177d69c7e3e270951",
-            "_retire_donated_inputs": "d5c3862195f2733fa97a5489d8db20d7c55e53431f0b2313b1b4f9a49b34e20c",
-        },
-    ),
-}
+_SOLVE_READINESS_CONTRACTS = _contracts(
+    {
+        SOLVE_PENDING_WORK_SOURCE: (
+            "BeforeArrayDelete.__call__",
+            "PendingSolveWork.__init__",
+            "PendingSolveWork.before",
+            "PendingSolveWork.record",
+            "PendingSolveWork.before_delete",
+            "PendingSolveWork.close",
+            "_MaterializedCopies.__call__",
+            "_MaterializedCopies.close",
+            "execute_with_pending_work",
+            "_drain",
+            "_complete_array",
+        ),
+        "src/_lcm/execution/output_layout.py": ("PlannedCore.__call__",),
+        "src/_lcm/execution/value_transfer.py": (
+            "MaterializedTransferObserver.__call__",
+            "apply_value_transfer",
+            "apply_value_transfer_plan",
+            "_replace_transfer_leaf",
+            "_transferred_leaf",
+            "_replace_dataclass_field",
+        ),
+        "src/_lcm/execution/scheduler.py": (
+            "release_closed_artifacts",
+            "PeriodTransferCache.__init__",
+            "PeriodTransferCache.commit_consumer",
+        ),
+        "src/_lcm/solution/backward_induction.py": (
+            "_period_transfer_scratch_reservations",
+            "_continuous_value_replica_required",
+            "solve",
+            "_cores_with_transfer_cache",
+            "_release_closed_period_inputs",
+            "_retire_donated_inputs",
+        ),
+    }
+)
 
 
 def _solve_readiness_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4125,345 +5469,243 @@ def _solve_readiness_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
-_COMBINED_INPUT_CONTRACTS = {
-    # Trusted single-array native values only. Artifact codec reconstruction
-    # remains outside this claim; module surfaces pin imports and cache schemas.
-    NATIVE_VALUES_SOURCE: (
-        "67551ba538d3e92e91438552ddc63f75502e69106bbd7335d035e07c39a3457b",
-        {
-            "NativeValueMaterializer.require_entry": "1e16de95d530e58382d789be1a135a8f9e759b2c6d00b03113205f665ad24c94",
-            "NativeValueMaterializer.__call__": "509e68a58553a54fe0cdfc048572faa5d070b40e6111bd104be56d4dab65f750",
-        },
-    ),
-    NATIVE_ARCHIVE_SOURCE: (
-        "92efd576e518243cd3709fa87b6c8ce202f111d4933b812db3beffca09b463c2",
-        {
-            "_LazyHdf5Entry._materialize": "cced2dd36584f055d288bc0c8524bbb5648ebaa601693c6970686f95704c5e3c",
-            "_read_and_verify_leaves": "1ac865597a1a5dc3bd80dd4ed344ebbaf33aea4842d21dc35cc5182d65b48f5e",
-            "_require_local_group": "9e893f06d8382be11b4d21c0e755314ccf46baecdd01df838e90bbf0a59d2a5d",
-            "_require_local_dataset": "29c000b8a6132d9ff764a8b5eda7e62108d85e82bec5dbbe99b0af26eb3ba8f1",
-            "_array_checksum": "3c00687a7b4fd0a92a18573c0123884b468f95959c8c26bd617c918f513a86d8",
-            "_array_checksum_from_leaf_metadata": "85e202228b36bbe6065b33aa90e4f6d7695a5b3ce762426ad325215cb1ec2e7e",
-            "_to_jax_without_narrowing": "1b25088759f37cb0e69618da38903e96e763aba1e0de238f5660190596a82071",
-        },
-    ),
-    COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
-        "ca47609c80fc2cf672a22feaa93722cc043507589b80c37276bf103445723a4c",
-        {
-            "abstract_program_inputs": "a0a1e8e4bc32c407704e58c2bf6322dfe068d44cc3a5ed14966ce301699c046e",
-            "_OperandDescriptor.__call__": "f5f1dd8803d687c50ba2899e0bab0d5e49e9bef83c0def08582844e9351285b3",
-            "_identity": "e9a5387d2c95202d67205d5b7941b87d850dca3358faee599215f8c37f9273ab",
-        },
-    ),
-    COMBINED_ASSEMBLY_SOURCE: (
-        "5ffee884c47cd602f6f3c34a3bb515954b714780d4b0f8cd1c0e7bd40cb780d4",
-        {
-            "concatenate_arrays": "166524acde202897680156949a7154946eada67c9d334c0c7049d44946378ca3",
-            "slice_array": "cfc7f9f403e29db130f989ca681841baebb2a301672cd4acd7b21bdb55fbf37a",
-            "_run_assembly": "78ae9e6c83e25f9cd0b6ee0c4bed2956ee66eef0761df95a418edb2123f5a82f",
-            "_concatenate_arrays": "3788d18fa58eacc8369dbe797ba53d55cb4176b41a5af5fd78eee982947c5716",
-            "_slice_array": "7fcb5248d6614a00a301a43c2e5a7bc438d81f3cb7593894d6c44486bc84deb6",
-        },
-    ),
-    COMBINED_CHUNK_ADMISSION_SOURCE: (
-        "700f5b57b1d215ef3832295355f5c406d3774d03d349d6060ce59431588c19e5",
-        {
-            "_ChunkProfiler.profile_widths": "62197a2f945dc397d4c169bc5278da93dd50613ee5f012b0450838b9e376daab",
-            "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
-            "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
-            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
-            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
-            "PreparedSimulationChunks.require_chunk": "ab595a25771d41f7f5a98f4d95927d79813f70d306d856c2d53483a8da5bd88b",
-            "prepare_simulation_chunks": "c8be8f6837b354e5dcb40b17af98e36ae256022049e61f17a669bec9d438be73",
-            "_ChunkProfiler.__call__": "dfdaeb448cdff047ed8bad87b46cbce7649782bd9ae525af5b240a0d836aa2f1",
-            "_common_axes": "277ef7d313404ccdd8610cf7f5a4896b38710693206a213f6728e4377cf637ef",
-        },
-    ),
-    COMBINED_CHUNK_OFFLOAD_SOURCE: (
-        "b9ab908caa5df5af326df92d1cbee1566cdb9e51738305ed086f59a8e1cbafe0",
-        {
-            "chunk_host_device": "78b1dab1f595c20eceb674b65fcd24f29280a050134327b9d297ecf541a2eb40",
-            "offload_chunk": "c1879b72e6f1726a75b3766c8ecaf1e7da2039024cb77f4955383e4808899670",
-            "_copy_reservation": "61b5fcba503ac11831458b4522800283b492fa3fd51753ba9cb6e24e2236679d",
-        },
-    ),
-    COMBINED_CHUNK_OPERATIONS_SOURCE: (
-        "c59fde4f911dff29e84394afa29a7a734381b2371bc4a442acd4d097c5f9dc3b",
-        {
-            "slice_population": "9cbd202511ad883dda5edf9265fbb254b071a241c46bc01bd9bc57b776a896cb",
-            "_slice_population": "d792ed23b4f16950eec4a3db4ee0c8ff95aede40469d0f220bd697a47a2d661e",
-            "period_age": "3f7f8c712cde6b3a6cd90ebfb6e66a1680010ca05670ccae90eaecb42353e333",
-            "_period_age": "e514ab831281075c33ac82eaf68aeb57779770d04051aefe64e02a5762c9b820",
-            "regime_mask": "8fbc0153274cb05704a54704fcbb370211e0b635bb2224ee2630a5fa06a5fc4f",
-            "_regime_mask": "e520b5e61daa2fd190ab3b79c0a66e332787e977a4fb0b173e59884e7d8a840d",
-            "broadcast_collective": "55c4bbcc3e163aa8fdb221c2ed3e0ebfdbefae7e86dfa76366f565f00075241d",
-            "_broadcast_collective": "e4e18b73e6c89877dae70e21a6707472219d44ed6fb5eef672577c276e34620b",
-            "broadcast_value": "d19aca835a4b98e2775d9e5a0a4c1099deb65f6c4af5d8887f492b440086d6f9",
-            "_broadcast_value": "52ec120e28113306a52e9a9a2b868485148ebbc2b0cceccff3dd2864db949b4d",
-            "empty_fallback": "6364471157867280847d71bfd4660faee1f5137d08b896f2d952dec8a86a9b50",
-            "_empty_fallback": "974cd130dd3ba7977b514a21225c5936bb4545f20c9d92412b85021424af9627",
-        },
-    ),
-    COMBINED_CHUNK_PLANNING_SOURCE: (
-        "5bb1570fc049b40cc2c1856c3237d7f340cc9e75bf6b84e62043cea656362cec",
-        {
-            "IndependentChunkReceipt.profile_count": "246417809388fdd5e03c2e38c3b81863e76bb7078bd5f2d04338da0ac7caebde",
-            "SimulationStageProfile.__post_init__": "2a0a901ce96cdd863b8b93d237c6ad88b40bb9bddd6f0b90290374c1074c7f4b",
-            "SimulationChunkProfile.__post_init__": "dc35ef9a8a3b963fa62d6f3fb2f54eb645e6d7d2f024a50bf4174d0a32bba602",
-            "SimulationChunkPlan.__post_init__": "f6c3be86ea1d1f22e94c94743dc6fea1275027095004ccfdb30684bca8428cca",
-            "ChunkProfiler.__call__": "0d8cfb4c8530d329393a4f74150d216e68bb03a061b10b6fe93e401a33c6dc51",
-            "plan_simulation_chunks": "56f7031e6be4dfbd264314cc8c6203b969e10c61f7a740c4aebff16e66a1d122",
-            "_required_bytes": "41c7b9e4758796454b1eb87ec5d943331e76849976f567dec0e0628abeaeeeca",
-            "_validate_devices": "c7387fae49d5a96a9a3b0454ffd74e0d5c7a798a8b4c837bd2c66d6751cd7c3e",
-        },
-    ),
-    COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: (
-        "bc3a2979553989bb00feecea5fd748d2e00f81c7e70dd1c2f0587ad30ba9272a",
-        {
-            "abstract_tree": "8cce8a4cc56e20693edfda8749ef0b0ab2671904cc854383e21868fe1f05d723",
-            "_abstract_leaf": "fd004b414b28d73667040353fd35c2fd73be2b07dcafa93c3fdbb1192ae67304",
-            "payload_bytes": "54780bdb4d5ae0febdd86b1a420d422c8dcb536d2de62c9c4e06c147cc3fb427",
-            "add_bytes": "dc8405be6264d34c70ef2522ab4792b55f21865953e2aecc0cd6a53a3bf8ef78",
-            "maximum_bytes": "783dddf0ef2b38ae119990b8c4815f4469a7396b94a993a7ddfd3b3b36bc020c",
-            "ChunkProfileInventory.operation": "aa3ddb71a5ff57d525d1d466042af4841e430868cc0ae2810b463d967ead8cd0",
-            "ChunkProfileInventory.compiled": "e7967b9004b67ff6bbf77e07b397198bc5470b1106ff6d06454bbdf510eb322f",
-            "ChunkProfileInventory.close_unit": "f65d7fedec0c9f24adf4d8be034aa5be7dd72ae9bb87d312c7dcdefeb885831c",
-        },
-    ),
-    COMBINED_CHUNK_PROFILES_SOURCE: (
-        "a029e61292854534f6cbc956aaf1146d9640049112b025b161355b2f38887a78",
-        {
-            "profile_simulation_chunk": "180e312a8aaa5af0d6de7962c19d1d7fc501285662968b5570c6d016372bbfe5",
-            "_profile_next_subjects": "66669c014815357dea3a259dcaddb4125a9ea93b160f7bab20718cc9be0a3b00",
-            "_profile_population_roles": "99510aeb32383e09d2b2972ef0ac6354dd0259aa494d77cefd9aa43d9fecad8e",
-            "_profile_outer_storage": "654d9ed612edcf263c2eead952a5e5abbc11fef8b43af2670db23d0d098eefa1",
-            "_record_core": "942d7b15dcf03da3a04ff12b14485b2e2aec2ca3c2f0f554faa9a78d1cbf6e67",
-            "_profile_initial_carrier": "1ef1aa933990fbe5e52659aed6d1f949d76b44ae0d840c0307c2d8764efce7cb",
-            "_profile_keys": "6ee2aba029d5c6a6249f70aec78a7eab6dd66e391b8522b486de3180c6e20c49",
-            "_profile_taste": "ce976aa42f4ef30bed63fc9fedcf72652b611f2c1a5262b8085a29da83b7e622",
-            "_period_copy_reservation": "b37ba3bf57112ec8af0c0501b080b0469fff12ba162f0fcfc2f9520f876893bf",
-            "_profile_entry_key": "306ad82a059557d575d50c24ed8c51a0d172ed97b6de476a99945bc8ca10599a",
-        },
-    ),
-    COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: (
-        "796b404a0fe45bd3a5ddb363612286d721a8c0c75656c1522432abd254f141a5",
-        {
-            "period_value_flags": "1ca9e9e2920a0333915071a229cc907c2fdea761f313ebed1aa6e7d35235908c",
-            "owned_value_nan_count": "e6168d82082f8c26ffd75a75386d46764a59d1ec3030b11e9688d019a9e668d7",
-            "transition_counts": "9ab0013eeb414dcc3bde5bf91cf144079b27ea4b3538d4b7858687cfbe84dfbe",
-            "profiled_transition_counts": "586661d6d039c19a88a0bc9c450342a8c31f36eb0453d0d82147ee6d15cf6def",
-            "DiagnosticBinding.__post_init__": "e94a4dd9f381772b875a4dc7715ab199f7f0c7b5d49d3bcff67399f6473d5e72",
-            "diagnostic_bindings": "0266571f8d59c095f9797b9e05bd43e5e5eb9463740b845896b51f555fcea090",
-        },
-    ),
-    COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
-        "81e8a11ef661da9fa2a114c04454f19dce26b0b34a7acbe46df9bfaf607362fd",
-        {
-            "AbstractSimulationProfile.__post_init__": "363e5274bc77382335a7ac5d5200ed644324ff361f578889d29dfac63bf3aa31",
-            "profile_forward_programs": "0042e1ed6be07d88227b38c54d5bf403b972cb87ba2b9106e969c4f67b908493",
-            "profile_forward_unit": "a06100433e9013a86b55937210da3e18979e927f8a7eb60da8cdd978e7e4f565",
-            "_profile_program": "e75b009cff4976b32b660eb336a9ee18e174bb485f560a15e48a1804d2543f83",
-            "_prepare_program": "39f9785f6748f4420ff9f537b15df3efe2a1d3d1364689e4126b232c0f6545bf",
-            "_concrete_widths": "d8085e4c2d9d3f24d6c5b34f26239fea9eec9fff79d8e52e23a2d539c7192eab",
-            "_stochastic_keys": "dee659c1811c43e460e7e3d77191d61166c7df35b322128400244b3cbe07aa36",
-            "_shared_tree": "67d8626b76815a32f4f0e0478843460d44a1ca1d14cf2454a44fd1f67045c0e3",
-            "_shared_leaf": "2e5f342e34b2d04d048fe77fd2a9069dd23e02501cebc2df80c3b1ca54c41602",
-            "_placed_abstract": "7e7f6ef3a1b6d02436a1eebde1869d131f4f11680fff287a44763acc2040723c",
-        },
-    ),
-    COMBINED_POPULATION_OPERATIONS_SOURCE: (
-        "0a848b0b82869b622d9c3ef464c898935cebfb2f0b2f4c2e193d1b1f44581472",
-        {
-            "default_roles": "88afa3c0d2bc242098f72d9ab7232308a7a26ba97fdcf02620b70c0cb1929a13",
-            "regime_is_occupied": "8e2e9ccdf0821653598ae983149767955a446b506bb532065f681e785addc62e",
-            "canonical_roles": "4542061502177865523b5c1d0c5346c2aa2ff46286c5b81d3df65a0e7e29fb12",
-            "role_mismatch": "faba46dd0931feb531692c4b87d8cce2991dcf2d7a6f6c14de8f9b24d6a4feb2",
-            "starting_periods": "211a8bcd2a68fa7bf617cb176c7e1321af79a5b4fa4858d5dbab5283b0546672",
-            "match_starting_periods": "0d27c548f2a58283b23dc3ae92cfe86fc12cde81286479eeb6dea43ba2dbcf12",
-        },
-    ),
-    COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
-        "a8bb499ac2b0807c2414a5ed679484c54f1cfcca60b5b5c021aa616ad280e9f5",
-        {
-            "decision_arguments": "e02a1ad8f729a34ca2f06c1df8701483397a2b86e1fd4b17b75e4fae318d2f18",
-            "transition_arguments": "566d397d28efd843dd13235b3897e953736319140ebc99b2432b4d2b03705d48",
-        },
-    ),
-    COMBINED_SOLUTION_COPIES_SOURCE: (
-        "5894fd162877de03428bf8bc4b8c2ba446943541a5f78f4394f13e9194878dea",
-        {
-            "copy_solution_leaf": "7967a1766bfeeec72757ded50d7a17a32089f9395c95710da8afb2acf40c50df",
-            "_copy_value_leaf": "70a9b70985afb5ad1252e4e430e7884366a8e19a09c363ae2efbcaa07d0970fb",
-        },
-    ),
-    COMBINED_RESULT_SNAPSHOT_SOURCE: (
-        "e39d74fae960d34157f92f254017b345dc1955e31848f4b3a3573883fd6f13e2",
-        {
-            "snapshot_value_store": "08c3aefcfd9223df8f908bbafc0fddcfd4b34583cf05483f713b86f160a4c3f0",
-            "_snapshot_value_coordinate": "9e3b60a69ba820b65b589cded3adb8a4a50be655d546012209ec4f2f80557e54",
-            "_keep_payload": "ebc1bf419c862f893f78569cc8d06c1e7676e99421133222f254d206d293b6af",
-        },
-    ),
-    COMBINED_VALIDATE_V_SOURCE: (
-        "9268c8bf6d2e16e7d690d85e9cb1eecea0222b092da9941ea15448934d5782ad",
-        {
-            "value_function_nan_error": "df3ef2ed002fa93625d40067b882afe2e063522362c5609160b5c07951b394c6",
-            "_entry_support_cause": "eaf8001c1762ca0d88cc374068a06ad22d43868b03ff8fa462c574dc788771b2",
-        },
-    ),
-    COMBINED_LOGGING_SOURCE: (
-        "c1e5c03209062c39464bf2ba8e2df7078fec9248c37da16fab42a4c2997f79c6",
-        {
-            "_owned_values": "9295ced0a7415a8738e6e9dd1b6a2ee6dc933bd3fdf37193e591752239c411ed",
-            "non_finite_by_regime": "aa597487e43e16a2a001d5c05c0e00977c494349b9af3e65f8afd47aa6d63de4",
-            "log_non_finite_values": "c03a58684f08342c1ae9001fcad29c3d5a5ec4862d27d04fe2807dc9ffa28493",
-            "log_regime_transitions": "11c5f45c415bfac54b36a55d52cded2911152f3e411e61e2d90a47ab19b11725",
-            "validation_enabled": "14475c5e923e2ddab2f7128215e0ebaecfb9ff756a6ad786d2139f1a490e4b35",
-            "validation_raises": "1cce1da3fb0520f1118923b0d5873d6d38b2e7ca8ae72ee9968627f8b43d2206",
-        },
-    ),
-    COMBINED_AUTHORITY_SOURCE: (
-        "c45e467e420b3d47e8928fbf6b5555aa601f0b3b37b2f606f134582556b06998",
-        {
-            "_ArrayCopier.__call__": "d708cfc14d20e8e157d30abe2336b3faa117b225f4ed3b10840d4dfbd4fa4c36",
-            "_copy_artifact_array_leaf": "a4b4e8c07026ff9de60e4bc5861c48a548b2d9041954299b4cf1ee172089d3da",
-        },
-    ),
-    COMBINED_ENTRIES_SOURCE: (
-        "34d92f4d348bcaeab5e51e620c64fb7d492fac3b1b00168eb50a716a369061b7",
-        {
-            "_ValueMaterializer.__call__": "dd2c4fdf01569d0a93422b1b60864536b3edc367b71cae21920cdbb05b6fa990",
-            "_copy_solution_value": "ebf2636dba8b0ad9e93e87354da26f1cecc82fe03a35e9432241639e181123ef",
-            "_CanonicalValueEntry.materialize": "c92e8585201ddd0d377aeb75e4d32b6d08116e96f9002ad73d8b2d6621dd1682",
-            "_CanonicalValueEntry._fresh": "4741ea3c98fecd4f6c80282249fee83e74594fe84046746ed4edcec35a7e10b1",
-            "_canonical_value_entry": "be024f9eae76be0d5376b8d2e3b0d25c0184158e230a0da78dad3d1a1a57e08e",
-        },
-    ),
-    COMBINED_STORES_SOURCE: (
-        "7f7e51ef64dc69aa4aabea50307261e82beff0f966b9e6f5de5780f2597d0a23",
-        {
-            "_admit_value_entry": "60bd7786314e7a5aeff8f8f74115860d308f41eb449b8e7132029a393d0c5e8f",
-            "ValueStore.__post_init__": "4f81b32757d589ced2e605619de79013a2d9450f319e7adf77094e898b8fe7bb",
-            "ValueStore._initialize": "077c0761c319e9c45a36723cbdf0c870c7d3d0e41ebd8a1f471bcb0a7967c28b",
-            "ValueStore._from_entries_with_copy": "eb389069075becdfbfd100077f286fe56ca7280ee38904df068c735ab1d5248e",
-            "ValueStore._load": "c5ba3c640955d6b92bc4a5fdb9f9cde64620243005bdb8d9913e8549fa76fa6b",
-            "ValueStore.materialize": "3e32297e221c4bb51cd25687ff756f6c02180bb204978d4ac169c9d0a3b08802",
-            "ValueStore._materialize_with_copy": "ae386288d0893747e287469b2afdb30a13523aefd7c2deba1cdaf87364e61d22",
-        },
-    ),
-    "src/lcm/model.py": (
-        "636b427502b358fe0cf2639a96817a3b95315ce56e05e4d02482d5890ef663d7",
-        {
-            "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
-            "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-            "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "23a5459b9b1e63e36f24f63a8e83bd3f85f1164c117c43091846d273785e2ab5",
-            "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
-            "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
-            "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
-            "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
-            "Model._snapshot_solution_envelope": "9a4c08dc99912920df4b670212a15313e4e4e79446b8ae6a19a11fe6ba66910a",
-        },
-    ),
-    "src/_lcm/execution/core_program.py": (
-        "c850379603895cc5dbf090587cfb64caf04dbe6fe6b31672ee5070412c85f308",
-        {
-            "_validate_abstract_inputs": "70f96b7582b3a085fdac809c48c6cbe5788f28d5b5d94dd0bb19eec5a3bdc973",
-        },
-    ),
-    "src/_lcm/solution/backward_induction.py": (
-        "e5091b5373c945d6113a35839ffbb64c703538183d7e0812f9f13f83bdc68531",
-        {
-            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
-            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_prepare_abstract_program": "6a4dfcaa4277f0a5e58965b73c5390129848bd243d1dbfc91c32806ee982867e",
-        },
-    ),
-    "src/_lcm/simulation/simulate.py": (
-        "69830d773bdf9a5ebeec162f5a38d0cfc4ae70c7e32f33d52fe6d738008cddc9",
-        {
-            "_compute_starting_periods": "33feb11da04e05bfb34b8a2302530eae0746ccd14b94af5575bcefad850c411c",
-            "_concatenate_chunk_results": "e1217d0e707ef6a8b3d00dcef6abce948d065e125fc2886336bf537d276c1a41",
-            "_validate_period_values": "ef665fe0964c3f4354973ab54b2f38c51a6c88c17922b000ce2419a8a18cea8d",
-            "_validate_simulated_value": "f67171b240995b23a980791e4218f373eaee7fad34d32106777fea5b099cb9d3",
-        },
-    ),
-    "src/_lcm/simulation/transitions.py": (
-        "f8d34dd5e8ba1cf440221406ada37a187d273a977c202986107ce0f46dd77c9f",
-        {
-            "_draw_random_regime_ids_from_scalars": "548fcaf12654d05a584fabee3fbd81fe42ad256307d5ea4df826cb3ae3355a5a",
-            "draw_key_from_dict": "9dfed8dafa357fa87cde342dc7f174028e4adf8454b5906a4e0d24bee164cdae",
-        },
-    ),
-    "src/_lcm/simulation/chunk_inputs.py": (
-        "1108f8ad45d23b985f8b799e3d8974bdd7287e99118976d3f8ceb1c7c6feb0ee",
-        {
-            "SimulationCallInputs.array_roots": "ce42e9ab0be027b04c573d054e594c08fed81740441a8bf51dc414f090ccb3ba",
-            "prepare_simulation_call_inputs": "22d1f53c53f3758d81147a05c91d1c25926a96c8c5c9eca6d7528cc79536a8f1",
-        },
-    ),
-    "src/_lcm/simulation/entry_allocations.py": (
-        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
-        {
-            "SimulationEntryAllocations.copy_solution_leaf": "e4a19117088da19af2513976ccb2673f23fb21799ef5893dd6559ae091628de0",
-            "SimulationEntryAllocations.release_foreign_copies": "096914c39bdc6f0f1668cbbad08d7d4b389d79448df16888ef471573b827e06f",
-        },
-    ),
-    "src/_lcm/simulation/host_operations.py": (
-        "d85de4188726b7df432800108ea0385915f5debb8316ad3e5b613bcb01a82ce8",
-        {
-            "ProfiledSimulationOperations.prepare_abstract": "7891d4c34afab39e08c15c8cd68310bd1b15027702e9f254d7c3d8b8a5c012eb",
-            "_abstract_operation": "e7304c5158b9b3e99ea73731806eea0ada68a578ee6b19d8e27f8ff06fb064b6",
-            "_lower_operation": "7d5cf87507d3984ed12b895429eea4a671cb0ed7464e0cef5fe0acdfec8c7e08",
-            "_abstract_operation_tree": "932535e222497f01d8a3325ea8e5f7a9f670458ce46923f9871f33aeea7a9053",
-            "_operation_key": "7cf6f99451f06127a8a0d656eaf5a38c7f4d72b709c14dea94e5632b09414c16",
-            "_validated_static_arguments": "3e1c7db1bf89ff4a9c95db1c5ac18260c69ecaf248de6f0a3e9a86c3189aed39",
-            "_validated_operation_function": "c3b594419ef7a01caff34d521b7d2e9ae096c3eff969ef9ad6af80684f8771a1",
-            "_ProfiledOperation.peak_bytes": "39cfc33459a34e6157f26e7de46841b13d60fb4a866854dbf9c7c89bf94f31d7",
-            "_ProfiledOperation.reservation_bytes": "ad8fe8e77b995ab9398031a06d9492d3d9080b408f68124ea048f81449bb73e5",
-        },
-    ),
-    "src/_lcm/simulation/initial_conditions.py": (
-        "8d4c89da7cdd9b2fc674117312ed7d7571988c70836cf5e05053c4dc681a69ea",
-        {
-            "_CarrierWriter.__call__": "697bae0eaa97d3806c3079466e8c3de66ce08eec331d66402da3fa02958a573e",
-            "_build_admitted_initial_states": "ca3e5c754d9c86385c7302441e2199c338239d89edde06c5620874793afc68ec",
-            "_cast_carrier": "5a08758007268730f195c44800937e9274ee44167d6ca2ae6ea00dd75ea4800b",
-            "_fill_carrier": "0045c72197d9e16fd510a8530d9c0866327182129a2383e902a9619030be4844",
-            "_initial_own_stakeholder": "ed1ce36c6c2b26aa9f4787bd8133a1646138d2ad8e01a85f4809140a9e729278",
-            "build_initial_states": "6bc9d8948f600be8b4099ad779be639d6a30c8a66e4612562cc700d9050144c2",
-            "trim_pad_from_raw_results": "cbd171f98bdfb340441ebf055920a21b0ba2b88d1740ca7eff9448002f7e2e2e",
-        },
-    ),
-    "src/_lcm/simulation/memory.py": (
-        "27424e6673ee4950f5684a78211ad1ce5d014634a045ceeca0c8553800674793",
-        {
-            "SimulationMemory.__setattr__": "95103b656f23b858719e2ac691d71b21d08facd6b137716247e064af19a3cdff",
-            "SimulationMemory._period_snapshot": "5c2d15995d981f85cea04e2d0c6b608dbd33916c604115b122a17efd69a7b774",
-            "SimulationMemory.__post_init__": "a656f81bb6d4cdce0c048d723beb03eef9514f690049921c668d3a98348b7a24",
-        },
-    ),
-    "src/_lcm/simulation/random.py": (
-        "cf360b1f08f877d031559f9b6964af3d24a2042a97987f233a0daf32e1e76884",
-        {
-            "_generate_windowed_simulation_keys": "7f78949425a2334609fdcafc40af7004735f24079634d434a8ce4a0610092dd6",
-            "_validated_chunk_window": "b3ea4d659dd8c777e88a08d8c3e3524236d5cecff309bc5cfdf3217e5766876c",
-        },
-    ),
-    "src/_lcm/simulation/runtime.py": (
-        "3258e2f6cebf889db1a7e4d492d87ed8ac174d6385c4ad44d08f3c8fb3031ea6",
-        {
-            "SimulationDispatchContext.__post_init__": "6f9a709d7cf21cee4d48b57095eeff9d6ce553e1cea780afbb9f851e6079bba3",
-            "SimulationRuntime.prepare_abstract": "152d3122c06e5567794b5b31ea7ba3c2988ce72b12d7ebf3ae195c15b02301b4",
-            "_materialize_abstract": "e1f29c1a75793df468596db0c413a630e106a1c24ab6290b4dbae435b3e09687",
-            "_dispatch_widths": "d68b9429ae1eed54ed99a49ce6793880f52bb5c09fa6248e1ffdf85f81806406",
-            "_unbudgeted_subject_width": "2abdeb21c827cce18a98efda59515ac14649d7f20b797fa433b0765368c5457d",
-            "_subject_slice_bytes": "8f5c1eabf55dec703079531a5d44138ceeeac5f66dd21384f873598096bfb5b3",
-            "_require_abstract_arguments": "c99bca4f2c8dad3b1454441b13b5e25f81ca67fc44b98acddc00d325458bb073",
-        },
-    ),
-}
+_COMBINED_INPUT_CONTRACTS = _contracts(
+    {
+        # Trusted single-array native values only. Artifact codec reconstruction
+        # remains outside this claim; module surfaces pin imports and cache schemas.
+        NATIVE_VALUES_SOURCE: (
+            "NativeValueMaterializer.require_entry",
+            "NativeValueMaterializer.__call__",
+        ),
+        NATIVE_ARCHIVE_SOURCE: (
+            "_LazyHdf5Entry._materialize",
+            "_read_and_verify_leaves",
+            "_require_local_group",
+            "_require_local_dataset",
+            "_array_checksum",
+            "_array_checksum_from_leaf_metadata",
+            "_to_jax_without_narrowing",
+        ),
+        COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: (
+            "abstract_program_inputs",
+            "_OperandDescriptor.__call__",
+            "_identity",
+        ),
+        COMBINED_ASSEMBLY_SOURCE: (
+            "concatenate_arrays",
+            "slice_array",
+            "_run_assembly",
+            "_concatenate_arrays",
+            "_slice_array",
+        ),
+        COMBINED_CHUNK_ADMISSION_SOURCE: (
+            "_ChunkProfiler.profile_widths",
+            "_simulation_chunk_profile_key",
+            "_independent_outer_candidates",
+            "_independent_anchor_widths",
+            "_plan_independent_chunks",
+            "_profile_independent_candidate",
+            "PreparedSimulationChunks.require_chunk",
+            "prepare_simulation_chunks",
+            "_ChunkProfiler.__call__",
+            "_common_axes",
+        ),
+        COMBINED_CHUNK_OFFLOAD_SOURCE: (
+            "chunk_host_device",
+            "offload_chunk",
+            "_copy_reservation",
+        ),
+        COMBINED_CHUNK_OPERATIONS_SOURCE: (
+            "slice_population",
+            "_slice_population",
+            "period_age",
+            "_period_age",
+            "regime_mask",
+            "_regime_mask",
+            "broadcast_collective",
+            "_broadcast_collective",
+            "broadcast_value",
+            "_broadcast_value",
+            "empty_fallback",
+            "_empty_fallback",
+        ),
+        COMBINED_CHUNK_PLANNING_SOURCE: (
+            "IndependentChunkReceipt.profile_count",
+            "SimulationStageProfile.__post_init__",
+            "SimulationChunkProfile.__post_init__",
+            "SimulationChunkPlan.__post_init__",
+            "ChunkProfiler.__call__",
+            "plan_simulation_chunks",
+            "_required_bytes",
+            "_validate_devices",
+        ),
+        COMBINED_CHUNK_PROFILE_INVENTORY_SOURCE: (
+            "abstract_tree",
+            "_abstract_leaf",
+            "payload_bytes",
+            "add_bytes",
+            "maximum_bytes",
+            "ChunkProfileInventory.operation",
+            "ChunkProfileInventory.compiled",
+            "ChunkProfileInventory.close_unit",
+        ),
+        COMBINED_CHUNK_PROFILES_SOURCE: (
+            "profile_simulation_chunk",
+            "_profile_next_subjects",
+            "_profile_population_roles",
+            "_profile_outer_storage",
+            "_record_core",
+            "_profile_initial_carrier",
+            "_profile_keys",
+            "_profile_taste",
+            "_period_copy_reservation",
+            "_profile_entry_key",
+        ),
+        COMBINED_DIAGNOSTIC_OPERATIONS_SOURCE: (
+            "period_value_flags",
+            "owned_value_nan_count",
+            "transition_counts",
+            "profiled_transition_counts",
+            "DiagnosticBinding.__post_init__",
+            "diagnostic_bindings",
+        ),
+        COMBINED_FORWARD_PROGRAM_PROFILES_SOURCE: (
+            "AbstractSimulationProfile.__post_init__",
+            "profile_forward_programs",
+            "profile_forward_unit",
+            "_profile_program",
+            "_prepare_program",
+            "_concrete_widths",
+            "_stochastic_keys",
+            "_shared_tree",
+            "_shared_leaf",
+            "_placed_abstract",
+        ),
+        COMBINED_POPULATION_OPERATIONS_SOURCE: (
+            "default_roles",
+            "regime_is_occupied",
+            "canonical_roles",
+            "role_mismatch",
+            "starting_periods",
+            "match_starting_periods",
+        ),
+        COMBINED_PROGRAM_ARGUMENTS_SOURCE: (
+            "decision_arguments",
+            "transition_arguments",
+        ),
+        COMBINED_SOLUTION_COPIES_SOURCE: ("copy_solution_leaf", "_copy_value_leaf"),
+        COMBINED_RESULT_SNAPSHOT_SOURCE: (
+            "snapshot_value_store",
+            "_snapshot_value_coordinate",
+            "_keep_payload",
+        ),
+        COMBINED_VALIDATE_V_SOURCE: (
+            "value_function_nan_error",
+            "_entry_support_cause",
+        ),
+        COMBINED_LOGGING_SOURCE: (
+            "_owned_values",
+            "non_finite_by_regime",
+            "log_non_finite_values",
+            "log_regime_transition_counts",
+            "validation_enabled",
+            "validation_raises",
+        ),
+        COMBINED_AUTHORITY_SOURCE: (
+            "_ArrayCopier.__call__",
+            "_copy_artifact_array_leaf",
+        ),
+        COMBINED_ENTRIES_SOURCE: (
+            "_ValueMaterializer.__call__",
+            "_copy_solution_value",
+            "_CanonicalValueEntry.materialize",
+            "_CanonicalValueEntry._fresh",
+            "_canonical_value_entry",
+        ),
+        COMBINED_STORES_SOURCE: (
+            "_admit_value_entry",
+            "ValueStore.__post_init__",
+            "ValueStore._initialize",
+            "ValueStore._from_entries_with_copy",
+            "ValueStore._load",
+            "ValueStore.materialize",
+            "ValueStore._materialize_with_copy",
+        ),
+        "src/lcm/model.py": (
+            "_validate_sharded_state_capability",
+            "_supports_continuous_sharding_vocabulary",
+            "_supports_unsharded_continuous_process",
+            "Model.__init__",
+            "Model._check_solution_result_structure",
+            "Model._consume_foreign_solution",
+            "Model._resolve_compile_batch_size",
+            "Model._resolve_solution_result",
+            "Model._snapshot_solution_envelope",
+        ),
+        "src/_lcm/execution/core_program.py": ("_validate_abstract_inputs",),
+        "src/_lcm/solution/backward_induction.py": (
+            "_period_transfer_scratch_reservations",
+            "_continuous_value_replica_required",
+            "_prepare_abstract_program",
+        ),
+        "src/_lcm/simulation/simulate.py": (
+            "_compute_starting_periods",
+            "_concatenate_chunk_results",
+            "_validate_period_values",
+            "_validate_simulated_value",
+        ),
+        "src/_lcm/simulation/transitions.py": (
+            "_draw_random_regime_ids_from_scalars",
+            "draw_key_from_dict",
+        ),
+        "src/_lcm/simulation/chunk_inputs.py": (
+            "SimulationCallInputs.array_roots",
+            "prepare_simulation_call_inputs",
+        ),
+        "src/_lcm/simulation/entry_allocations.py": (
+            "SimulationEntryAllocations.copy_solution_leaf",
+            "SimulationEntryAllocations.release_foreign_copies",
+        ),
+        "src/_lcm/simulation/host_operations.py": (
+            "ProfiledSimulationOperations.prepare_abstract",
+            "_abstract_operation",
+            "_lower_operation",
+            "_abstract_operation_tree",
+            "_operation_key",
+            "_validated_static_arguments",
+            "_validated_operation_function",
+            "_ProfiledOperation.peak_bytes",
+            "_ProfiledOperation.reservation_bytes",
+        ),
+        "src/_lcm/simulation/initial_conditions.py": (
+            "_CarrierWriter.__call__",
+            "_build_admitted_initial_states",
+            "_cast_carrier",
+            "_fill_carrier",
+            "_initial_own_stakeholder",
+            "build_initial_states",
+            "trim_pad_from_raw_results",
+        ),
+        "src/_lcm/simulation/memory.py": (
+            "SimulationMemory.__setattr__",
+            "SimulationMemory._period_snapshot",
+            "SimulationMemory.__post_init__",
+        ),
+        "src/_lcm/simulation/random.py": (
+            "_generate_windowed_simulation_keys",
+            "_validated_chunk_window",
+        ),
+        "src/_lcm/simulation/runtime.py": (
+            "SimulationDispatchContext.__post_init__",
+            "SimulationRuntime.prepare_abstract",
+            "_materialize_abstract",
+            "_dispatch_widths",
+            "_unbudgeted_subject_width",
+            "_subject_slice_bytes",
+            "_require_abstract_arguments",
+        ),
+    }
+)
 
 
 def _combined_input_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4477,26 +5719,25 @@ def _combined_input_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
-_STRUCTURAL_BLUEPRINT_CONTRACTS = {
-    # A warm solve binds a stored structural blueprint on a key hit. The key
-    # is the inputs' abstract schema plus frozen policy values, so changed
-    # parameter values with an unchanged schema hit; a changed shape, dtype,
-    # weak type or placement misses. The store, its lookup and both key
-    # derivations are one corridor.
-    STRUCTURAL_BLUEPRINTS_SOURCE: (
-        "eee5dd71e1e0561c9690d1b9746c753ff6d7528ac11023dde5922aa4f20c0a2b",
-        {
-            "StructuralBlueprintCache.__init__": "a8a8b85317f46c32cfcec6f9af8d52506bab96b00106b219c64e7afe0097b4b9",
-            "StructuralBlueprintCache.get": "bbe960e78093b2927cf39b80aa9e33086af960f8d0f10cdaa649666b8d8b6826",
-            "StructuralBlueprintCache.put": "94c09d180ba9771cc63017bb4701fd15df81fe100cac46584a0650d8b838ee87",
-            "StructuralBlueprintCache.values": "50b589fd1b12dd52d036aab2fa8e32f04a3a943c30f0491e4693a6cdc6cc9cdb",
-            "StructuralBlueprintCache.__len__": "1e7e25d95aac75c48b88dbb12749874be08aee275bd168bab4da5e03ad745403",
-            "abstract_schema": "8cc83dd74696815ae043e0018c36c338368df95f8ec2ca62616010f5731cfa6c",
-            "_leaf_schema": "bf4b44554b4f894745d4f61261889a0ab7f88e4c1cac6cb13f6bf13c2fc5c2bc",
-            "frozen_policy": "20d8d9fb6447eaaa3dbf374c55171e51de1708b48b1b7b194a285fb1bddcc406",
-        },
-    ),
-}
+_STRUCTURAL_BLUEPRINT_CONTRACTS = _contracts(
+    {
+        # A warm solve binds a stored structural blueprint on a key hit. The key
+        # is the inputs' abstract schema plus frozen policy values, so changed
+        # parameter values with an unchanged schema hit; a changed shape, dtype,
+        # weak type or placement misses. The store, its lookup and both key
+        # derivations are one corridor.
+        STRUCTURAL_BLUEPRINTS_SOURCE: (
+            "StructuralBlueprintCache.__init__",
+            "StructuralBlueprintCache.get",
+            "StructuralBlueprintCache.put",
+            "StructuralBlueprintCache.values",
+            "StructuralBlueprintCache.__len__",
+            "abstract_schema",
+            "_leaf_schema",
+            "frozen_policy",
+        ),
+    }
+)
 
 
 def _structural_blueprint_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4510,36 +5751,24 @@ def _structural_blueprint_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
-_FINITE_REPLAY_CONTRACTS = {
-    SIMULATION_POLICY_PROGRAMS_SOURCE: (
-        "fed9b10f6b0eed6c68bd5f02cf4e8087f499fc6d6017400fcbab3aa267f15a6f",
-        {
-            "ReplayPayload.from_policy": "e29e2d20b51b07a6412aff4392720c1818e0b8662ceac0eee986f31e786dbc98",
-            "ReplayPayload.restore": "e1599af0b523cc29f9c85190c51f29c6276cbb995d9dab8f085543780e511170",
-            "_flatten_payload": "88772a75afb06970eb255fbe2dafb459f2617f1cb727f451e37da99cd2ac978f",
-            "_unflatten_payload": "993e4c674e8a06442716e162a9bf32aa39a8cc31b03724dcea4f4ebe49cd33e6",
-            "declare_finite_replay_programs": "ead89e6e9501a866d391bdd1b4b67d9770a5e95b33fab1b47bb2c9a7c1de9ea2",
-            "_program": "fd061f3011dbf4913421fe3571f7ce4f11d2857b2a41db6a24bad65de75133de",
-            "_policy_reads": "e678aceaa76d010683e744ed0f7c1ed1cea8a4566d97fa21a55f2fc5a21c9eea",
-            "_Prepare.__call__": "374933bb70048d428d6e4167df7eaa6d6d2befaf68ac29bb1c7d8bbfac44cde0",
-            "_Rank.__signature__": "50aa82bb239a45eb831ec1de9cc04766c44b88f9e2a8898243273711d1ca5bd7",
-            "_Rank.__call__": "b445df6a9966f74500b8d48f0f0251d4d9ad712e62722fd471e7504025f55984",
-        },
-    ),
-    PUBLISHED_POLICY_SOURCE: (
-        "37875b498e9524f4e0c4e5e1214b86c9123836be6639ae14de9773d79bb93b3e",
-        {
-            "_flatten_nnbegm_policy": "17b76f15fbdb8367e77d5f1513d811f18602ea4dd3a3735351d1bb392bbb64c8",
-            "_unflatten_nnbegm_policy": "7e5218f3047b4aee879ed8bb21c586f4e820939cc32afb7799d56f0398a35f05",
-        },
-    ),
-    MODEL_PROCESSING_SOURCE: (
-        "905af10bac9ea9b44872268b84a1d906d4bd2e34b5291643ae12f13973078ebf",
-        {
-            "build_regimes_and_template": "c5610c5e6a4cf80dd9696685653ee05664ec7824ad45a7ec0455b4901ba70312",
-        },
-    ),
-}
+_FINITE_REPLAY_CONTRACTS = _contracts(
+    {
+        SIMULATION_POLICY_PROGRAMS_SOURCE: (
+            "ReplayPayload.from_policy",
+            "ReplayPayload.restore",
+            "_flatten_payload",
+            "_unflatten_payload",
+            "declare_finite_replay_programs",
+            "_program",
+            "_policy_reads",
+            "_Prepare.__call__",
+            "_Rank.__signature__",
+            "_Rank.__call__",
+        ),
+        PUBLISHED_POLICY_SOURCE: ("_flatten_nnbegm_policy", "_unflatten_nnbegm_policy"),
+        MODEL_PROCESSING_SOURCE: ("build_regimes_and_template",),
+    }
+)
 
 
 def _finite_replay_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -4560,22 +5789,38 @@ def _finite_replay_errors(*, tree: ast.Module, source: str) -> list[str]:
     return errors
 
 
+_NBEGM_DONATION_PINS = _callable_pins(
+    source=NBEGM_SOURCE,
+    names=("NBEGM.declare_continuation_reads", "_with_ride_marginal_reads"),
+)
+
+
+_NBEGM_DONATION_SURFACE = _surface_pin(NBEGM_SOURCE)
+
+
 def _nbegm_donation_errors(tree: ast.Module) -> list[str]:
     """Pin donation installation and eligibility, excluding NB-EGM method arithmetic."""
     errors = _exact_callable_errors(
         tree=tree,
         label="NB-EGM donation declaration",
-        contracts={
-            "NBEGM.declare_continuation_reads": "d188ae1df197e1bc589c2766c32566a6170bfaa8247b513b3a39b173014aeb9f",
-            "_with_ride_marginal_reads": "818468585a9f3f317e6043af4008e8a5da77e274de0b8d4a641e22c230445033",
-        },
+        contracts=_NBEGM_DONATION_PINS,
     )
-    if (
-        _transport_module_surface(tree)
-        != "83aabec5fba21ca46e4027da9f102e83627349866988a7f52f68ecef09c70e16"
-    ):
+    if _transport_module_surface(tree) != _NBEGM_DONATION_SURFACE:
         errors.append("NB-EGM donation declaration: module bindings changed")
     return errors
+
+
+_CONTINUATION_ARGUMENT_PINS = _callable_pins(
+    source=CONTINUATION_ARGUMENTS_SOURCE,
+    names=(
+        "MarginalLeafArguments.__call__",
+        "MarginalLeafCore.__call__",
+        "marginal_leaf_reads",
+    ),
+)
+
+
+_CONTINUATION_ARGUMENT_SURFACE = _surface_pin(CONTINUATION_ARGUMENTS_SOURCE)
 
 
 def _continuation_argument_errors(tree: ast.Module) -> list[str]:
@@ -4583,18 +5828,70 @@ def _continuation_argument_errors(tree: ast.Module) -> list[str]:
     errors = _exact_callable_errors(
         tree=tree,
         label="donation argument transport",
-        contracts={
-            "MarginalLeafArguments.__call__": "8a9b17300b9ac51e172e6a57e74c4f7c726a62fc941f63ca09c2f4d4cf96420b",
-            "MarginalLeafCore.__call__": "bcaae73b48e35ed6f8e672a23c93c74a189bea4545d2fb50475f86d5bed8d873",
-            "marginal_leaf_reads": "02ce2895a2ee099f1df276087ebc98d4e88c4bebc0fe841e4af2bab72a0af9e1",
-        },
+        contracts=_CONTINUATION_ARGUMENT_PINS,
     )
-    if (
-        _transport_module_surface(tree)
-        != "eb4ceba17420732ef34f0bb894f61657626fba036a16ba3fd6d5eeecef0684a3"
-    ):
+    if _transport_module_surface(tree) != _CONTINUATION_ARGUMENT_SURFACE:
         errors.append("donation argument transport: module bindings changed")
     return errors
+
+
+_BACKWARD_OUTPUT_LAYOUT_PINS = _callable_pins(
+    source=BACKWARD_INDUCTION_SOURCE,
+    names=(
+        "_period_transfer_scratch_reservations",
+        "_continuous_value_replica_required",
+        "_evaluate_edge_fold",
+        "_lower_and_compile_wave",
+        "_lower_resolved_candidate",
+        "CompilationWave.lower",
+        "CompilationWave._submit",
+        "CompilationWave.__exit__",
+        "CompilationWave._raise_first_compile_error",
+        "_compile_and_log",
+        "_run_period_kernel",
+        "_regime_retains_replay",
+        "_select_period_programs",
+        "_selected_artifact_keys_for_cell",
+        "_compile_all_functions",
+        "_prepare_solve_programs",
+        "_CompilerMemoryLookup.__call__",
+        "_resolve_output_layouts_and_lowering_keys",
+        # The structural blueprint is where every program is materialized
+        # and its top-ranked candidate resolved against abstract inputs; a
+        # warm solve binds the stored blueprint, so the recipe, its key and
+        # its per-call binding are one corridor with the resolver above.
+        "_build_structural_blueprint",
+        "_bind_structural_blueprint",
+        "_structural_key",
+        "_select_runtime_donation_cores",
+        "_donation_ownership_refusal",
+        "_mark_reused_transfers",
+        "_consumer_key",
+        "_resolve_program_for_execution",
+        "_resolve_value_input_transfer_plan",
+        "_resolve_value_transfer_layout",
+        "_lowering_key",
+        "_abstract_arguments_key",
+        "_abstract_value_key",
+        "_abstract_leaf_key",
+        "_output_roles_key",
+        "_assert_lowered_output_roles",
+        "_attach_resolved_output_layout",
+        "_publish_kernel_value",
+        "_resident_bytes_by_triple",
+        "_resident_inventory_by_triple",
+        "_candidate_resident_bytes",
+        "_compiler_reads_source",
+        "_period_copy_reservations",
+        "_internal_reservations_by_cell",
+        "_internal_leaf_bytes",
+        "_retained_base_space_arrays",
+        "_CandidateResidencyLookup.__call__",
+    ),
+)
+
+
+_BACKWARD_OUTPUT_LAYOUT_SURFACE = _surface_pin(BACKWARD_INDUCTION_SOURCE)
 
 
 def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
@@ -4602,56 +5899,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     errors = _exact_callable_errors(
         tree=tree,
         label="backward output-layout transport",
-        contracts={
-            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
-            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "_evaluate_edge_fold": "1da268a4d4b0f6b5499bd8522803f916d0a194b8cd3be02b190e0797bb9a28ff",
-            "_lower_and_compile_wave": "7068bda7502d1136c7412667a0921c9c86178800ecc57253f0f84fc98fdf8295",
-            "_lower_resolved_candidate": "af793de4c8caec255772e0fe0336b6f33f520c5baa65eee69572dbaa4ba061d4",
-            "CompilationWave.lower": "fbcda242fd0cfa00e931b752a12877d921c405a287458898e21af07e558eba77",
-            "CompilationWave._submit": "28252293262e2c6ad173aa56610a8e5a3be0a81e8fb0f798729f0f16c7e96cea",
-            "CompilationWave.__exit__": "21bd9016dd0ef6fd3879487d7667dabf3cf89fd27188eb914e2a78d4daf45f9d",
-            "CompilationWave._raise_first_compile_error": "787b7683440a2b26449c59bab1bd7986ff983e5210d3bff3d07be5135f5bc527",
-            "_compile_and_log": "6c2e773eaf54f547353e2734fefa2429d266a05279d94e99c8f8e596b916f74d",
-            "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
-            "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
-            "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
-            "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "7d53f2f339ec04f8a7459a68af13c50e5a49877447dacf6610c3b68266ff209e",
-            "_CompilerMemoryLookup.__call__": "77803efda3bb7e83aa81966820c20b8c3ab51bf6b7a0b5f9d738cf587eea73ba",
-            "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
-            # The structural blueprint is where every program is materialized
-            # and its top-ranked candidate resolved against abstract inputs; a
-            # warm solve binds the stored blueprint, so the recipe, its key and
-            # its per-call binding are one corridor with the resolver above.
-            "_build_structural_blueprint": "fd3b6f0018268e8c77142425acd86aef86c26dbf0b2105bb835c2712aa4d97b3",
-            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
-            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
-            "_select_runtime_donation_cores": "2f79409a1373d240cb3366fb45ae33937aab26ac8707cd14a087209e888a3d19",
-            "_donation_ownership_refusal": "64cc4f02e17b0d295aea9a7bf30c5fa13ab93578f6c226475461d4e45bb3a248",
-            "_mark_reused_transfers": "55e6e53f9d98a5e16b8b0548de876ed9e73a208d92156cacb837f594784d17fd",
-            "_consumer_key": "84e636efe031d30a19d76638e93a95b8a0debc28b2e2814f36361b40d6f3cb13",
-            "_resolve_program_for_execution": "cc1658c1a344c669c0bfc13ef18749b886774d692fb1f7d2fb7966961619af34",
-            "_resolve_value_input_transfer_plan": "0fb74fcf8b78af2a777a6496d194afe5a6cf6927b93395179a4bf2c9120e6f52",
-            "_resolve_value_transfer_layout": "5c185b3650134f62ecc54c80e35799ce39db20aa003458498eca536bfdc4db3e",
-            "_lowering_key": "9ad1fce25968df0512af4e2c7ed1141bec689168aab645b61275ed62e5466fc4",
-            "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
-            "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
-            "_abstract_leaf_key": "b1035e3da73c72fee5ed7370f8f6cb5acce564403518f51e5734d735c0252591",
-            "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
-            "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
-            "_attach_resolved_output_layout": "f707999431091164dc9aaa784b89560044f95c11c9cf3fe9631cb094952f9944",
-            "_publish_kernel_value": "f7685f97babcf0a002b49b1bb5708c2f723a6d64c5f28d75892650a8d6c3a43e",
-            "_resident_bytes_by_triple": "b87b5df2ce91647adf464bf2175d9453c186c1c65a7cc7e54ff6967dc015aa1d",
-            "_resident_inventory_by_triple": "62b94dba3601033214595d6964060fbe5c0562de7029e60b500664afa73333c0",
-            "_candidate_resident_bytes": "3e03eee2d0d510a5fb5012f6646e6121d645acbde1adaa6cf5c8c6bb976dc86c",
-            "_compiler_reads_source": "20c00aa592517ee03fba67359c951a15152129e96f3d7ccbf38415506f2fa60e",
-            "_period_copy_reservations": "75082956fda5cd0e642e988ffbef655df444a391b815c5e50cdd6e7d8ec3e265",
-            "_internal_reservations_by_cell": "f124d4d1a32d92a70f139138f66108ee97ca4ffc13e7f3260ea2469a9890abcb",
-            "_internal_leaf_bytes": "ece84ac1a1905891efcec6e59693074f62da35ca50e9185f0fae55c2829f1206",
-            "_retained_base_space_arrays": "b1c98e73406bfce36a00dd3a398da0ecd893d2e52e6c3911de59962126800c7c",
-            "_CandidateResidencyLookup.__call__": "7090dee9635f84f107ac4758fd21811925a264e73738341224298b43859f082e",
-        },
+        contracts=_BACKWARD_OUTPUT_LAYOUT_PINS,
     )
     # A stored blueprint outlives its solve, so it may hold only abstract,
     # immutable recipe facts: no ledger, donation, lowering key or cursor.
@@ -4674,10 +5922,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             decorators=("dataclasses.dataclass(frozen=True, kw_only=True)",),
         )
     )
-    if (
-        _transport_module_surface(tree)
-        != "e5091b5373c945d6113a35839ffbb64c703538183d7e0812f9f13f83bdc68531"
-    ):
+    if _transport_module_surface(tree) != _BACKWARD_OUTPUT_LAYOUT_SURFACE:
         errors.append("backward output-layout transport: module bindings changed")
     try:
         solve = _definition(tree=tree, name="solve")
@@ -4741,12 +5986,22 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "c17bbbf82a14ffdb4d88ef171d48eef7d4a5d205668310b278eff7273e026d1e"
+        expected = "a4cee1b42742def4634b2c087305aaaf927d12e839f9a72b2795cbb79a6836aa"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
             )
     return errors
+
+
+_TERMINAL_OUTPUT_WRAPPER_PINS = _callable_pins(
+    source=PROCESSING_SOURCE,
+    names=(
+        "_TerminalCarryPeriodKernel.core_programs",
+        "_TerminalCarryPeriodKernel.with_fixed_params",
+        "_TerminalCarryPeriodKernel.__call__",
+    ),
+)
 
 
 def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
@@ -4770,14 +6025,20 @@ def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
         _exact_callable_errors(
             tree=tree,
             label="terminal output-layout wrapper",
-            contracts={
-                "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
-                "_TerminalCarryPeriodKernel.with_fixed_params": "c9069b5fcc41d4b7b42a2ec21be12004fa57379216fbd7e4fc624473b4d89cc6",
-                "_TerminalCarryPeriodKernel.__call__": "2b8b83c8c997c5020409c2e11fccb7ed6427093c1f758c7b579206fae9188646",
-            },
+            contracts=_TERMINAL_OUTPUT_WRAPPER_PINS,
         )
     )
     return errors
+
+
+_PERIOD_REPLAY_PINS = _callable_pins(
+    source=PERIOD_REPLAY_SOURCE,
+    names=(
+        "replay_period",
+        "_compile_cores_for_one_period",
+        "_core_build_context_for_one_period",
+    ),
+)
 
 
 def _period_replay_errors(tree: ast.Module) -> list[str]:
@@ -4785,11 +6046,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
     return _exact_callable_errors(
         tree=tree,
         label="period replay native-program transport",
-        contracts={
-            "replay_period": "de011de034661023087bd7a3f4d6fcbf826b14fa49da09de722779bb1aa4b778",
-            "_compile_cores_for_one_period": "29d003faea81a8359e37359fd960f5be8c9234a970be2ab8eaa9da7dbf4c7c48",
-            "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
-        },
+        contracts=_PERIOD_REPLAY_PINS,
     )
 
 
@@ -5284,6 +6541,11 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
     if set(_SOURCE_SEALS) != set(_CERTIFIED_CORRIDOR_SOURCES):
         errors.append("certificate: the source-seal set differs from the corridor set")
         offending.add("tests/candidate_certificate/direct_flow.py")
+    for source, name in _unselected_pins():
+        errors.append(
+            f"certificate: stored corridor pin {source}::{name} is selected by no family"
+        )
+        offending.add("tests/candidate_certificate/direct_flow.py")
     for relative in _CERTIFIED_CORRIDOR_SOURCES:
         path = root / relative
         try:
@@ -5476,6 +6738,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             errors.extend(new_errors)
             if new_errors:
                 offending.add(relative)
+    for relative in _ACTION_PARTITION_CONTRACTS:
+        tree = parsed.get(relative)
+        if tree is not None:
+            new_errors = _action_partition_errors(tree=tree, source=relative)
+            errors.extend(new_errors)
+            if new_errors:
+                offending.add(relative)
     for relative in _UNIFORM_PROCESS_CONTRACTS:
         tree = parsed.get(relative)
         if tree is not None:
@@ -5606,6 +6875,13 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "Q_and_F -> canonical C-order action blocks -> exact mergeable "
                 "hard max -> optional unchanged fold quadrature -> VALUE-only "
                 "compiled core"
+            ),
+            "singleton_action_partitioned_solve": (
+                "admitted GridSearch request -> device-mapped kernel over the "
+                "action axis -> per-device contiguous run of whole C-order blocks, "
+                "every block inside the scan, unowned and padded slots infeasible "
+                "-> exact hard-max accumulator -> gather over the action axis -> "
+                "ascending-order exact hard-max merge -> VALUE-only compiled core"
             ),
             "singleton_simulate": (
                 "published decision program: Q_and_F -> canonical dense argmax or "
@@ -6478,6 +7754,19 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
         "        with jax.set_mesh(mesh):",
         "        with jax.set_mesh(None):",
     ),
+    # The grouped route dispatches the type-local decision family in place of
+    # the ordinary one; both its selection and its dense reducer's Q/F pairing
+    # are live candidate transport.
+    "type_local_decision:ordinary_decision_shadows_type_local": (
+        SIMULATION_PROGRAM_TYPES_SOURCE,
+        "MappingProxyType({**self.decision, **self.type_local_decision})",
+        "MappingProxyType({**self.type_local_decision, **self.decision})",
+    ),
+    "type_local_decision:reducer_reads_ordinary_q_and_f": (
+        PROCESSING_SOURCE,
+        "        Q_and_F_functions=type_local_Q_and_F_functions,\n        has_taste_shocks",
+        "        Q_and_F_functions=Q_and_F_functions,\n        has_taste_shocks",
+    ),
     "structural_blueprint:cache_hit_ignores_key": (
         STRUCTURAL_BLUEPRINTS_SOURCE,
         "            blueprint = self._entries.get(key)\n",
@@ -6493,245 +7782,186 @@ _SUPPLEMENTAL_SOURCE_MUTATIONS = {
 
 # These contracts cover admitted Uniform support and its explicit consumer transport.
 # Runtime tests establish numerical support, budget refusal and ownership lifetimes.
-_UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = {
-    "src/_lcm/engine.py": (
-        "ab8c60a676fcbb65164564ad75b4720b83e9fdf98596471c06777ebe8914d51d",
-        {
-            "SolutionPhase.resolve_process_grids": "a55dc3105166d3a9ab413e6abaf302335fdf8eb7bffc5fe3ff7157ab27ac5b55",
-            "SolutionPhase.state_action_space": "40ce37d189b00879e93e4aacb8352dee685c0db751601379e4bbd7adecbed85a",
-        },
-    ),
-    "src/_lcm/simulation/chunk_admission.py": (
-        "700f5b57b1d215ef3832295355f5c406d3774d03d349d6060ce59431588c19e5",
-        {
-            "_ChunkProfiler.profile_widths": "62197a2f945dc397d4c169bc5278da93dd50613ee5f012b0450838b9e376daab",
-            "_simulation_chunk_profile_key": "18e3cde4b65997347ed5622e2a43dc6c66d75d1ce7b28481cbbe8d7286b1c505",
-            "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
-            "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
-            "_plan_independent_chunks": "6a3498d6672a85b1950ecfe85321c91e9124456a51d08428f69feaaf10a80164",
-            "_profile_independent_candidate": "ce068ef18ed9af1fe995d9d31853fce46414f4f8508fa94c8ada778556213491",
-            "prepare_simulation_chunks": "c8be8f6837b354e5dcb40b17af98e36ae256022049e61f17a669bec9d438be73",
-        },
-    ),
-    "src/_lcm/simulation/chunk_inputs.py": (
-        "1108f8ad45d23b985f8b799e3d8974bdd7287e99118976d3f8ceb1c7c6feb0ee",
-        {
-            "prepare_simulation_call_inputs": "22d1f53c53f3758d81147a05c91d1c25926a96c8c5c9eca6d7528cc79536a8f1",
-            "prepare_simulation_chunk_inputs": "f5c1bc4db0116338fe110cd0e5a1a7cf3a2e717ec58738d8e082135f161f62cd",
-        },
-    ),
-    "src/_lcm/simulation/compile.py": (
-        "d172ba65d290efe4cec76f6c4efe9488388b5377bc9f2610e8568a83faef474a",
-        {
-            "bind_simulation_runtime": "658c0e2dae1f0cbac50698962f522512dd10751aa1352174387ec15c7aace158",
-        },
-    ),
-    "src/_lcm/simulation/entry_allocations.py": (
-        "4ca5cec2657cf85fb865f2d3bbf66ef99b59bd5e8f0d93b3484c548c1fdedc26",
-        {
-            "SimulationEntryAllocations.__post_init__": "ffa19e8bc72ec7fc9d0382c3cc4f6c7a501059dec278e6e3b7a1c5cc1fb27e18",
-            "SimulationEntryAllocations.snapshot": "3d6f0df5cbf4a49bbcb305a4db03698b5d6190b148c2f9eade3944db0f9d3367",
-            "SimulationEntryAllocations.solve_input_roots": "f07a0bebb0c5ae4103acff0f791c0529072096bd043f67af6db801b34f765369",
-            "SimulationEntryAllocations.close": "b662848316cdc45090e3e37b26aa4f1f6a3bbd7afbc3fddde351f8bb8c20ef08",
-            "_EntryFootprint.__call__": "6a64901028e6ed4c92615e2b97beec064da8ad89c81003a9b66e46c2358c0a4e",
-        },
-    ),
-    "src/_lcm/simulation/initial_conditions.py": (
-        "8d4c89da7cdd9b2fc674117312ed7d7571988c70836cf5e05053c4dc681a69ea",
-        {
-            "validate_simulation_inputs": "fbac5c256018854a1b4dcd5b765ed2cb0c6798251301c8025b298522499e318d",
-            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
-            "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
-            "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
-            "_regime_feasibility_mask": "003fcee3a807c53e043e67f83750faf45a5fc3643e838c3c72175cad7cc10dd6",
-        },
-    ),
-    "src/_lcm/simulation/simulate.py": (
-        "69830d773bdf9a5ebeec162f5a38d0cfc4ae70c7e32f33d52fe6d738008cddc9",
-        {
-            "simulate": "3b28023953edbec97eaeb7d4e66966924f39ce4377406182f7014ea51e265f2f",
-            "_simulate_subject_chunk": "2b6a50a861e3350ee364336ff2a15530b576fe2419f2facfe00c4cd93de5f255",
-        },
-    ),
-    "src/_lcm/solution/backward_induction.py": (
-        "e5091b5373c945d6113a35839ffbb64c703538183d7e0812f9f13f83bdc68531",
-        {
-            "_period_transfer_scratch_reservations": "fdf69334cf139ae765e43ce566d5467cf9c55684a6ce8710ca3792f0b87951f5",
-            "_continuous_value_replica_required": "04b83bd686091892911424ed92acd8f68de2fa7fef08272d2fd665b8955ed9f6",
-            "solve": "a30cc040a91d83293902f79ebfe83b4770018f7ebb928ed959a68fba14848c07",
-            "_build_continuation_templates": "17db7479d707cffef247c5e24ee08e253ef0ab4efd4590bff5f9a9a0a258ad3f",
-            "_iter_edge_topologies": "de3078515a59f624e07889c6f3e05c8ac948472416c81a993c8d02f29905789b",
-            "_build_base_state_action_spaces": "88a6c21424ff36a839d74fd9f2d0c5005ea0c58d4f6ba2ee0ad6bdee22901ddb",
-            "_compile_all_functions": "7d53f2f339ec04f8a7459a68af13c50e5a49877447dacf6610c3b68266ff209e",
-            "_resolve_output_layouts_and_lowering_keys": "ed47d05b8436c101b0970699337357fb9ed6586954ff2ffb272cb387c8e5c199",
-            "_build_structural_blueprint": "fd3b6f0018268e8c77142425acd86aef86c26dbf0b2105bb835c2712aa4d97b3",
-            "_bind_structural_blueprint": "38863c515d34388c2525c2b74500375d550a7ec3a101be2943bc8bd4d15505f1",
-            "_structural_key": "f02f67eb9eba568d0a66c23cddbc5a9116ffb7eab7dec00b7faeeceb01da7e46",
-        },
-    ),
-    "src/_lcm/solution/diagnostics.py": (
-        "3b9bbc9628bce57bd9a1b5287fdfb544df75346df436f3a90e58f7c532dcaf63",
-        {
-            "_emit_post_loop_diagnostics": "5b7023fdae689cc738497a394532a608c7500a92cb92959813be11ee8f37f650",
-            "_raise_first_nan_row": "216ab701be0575c51f6d17ae8a27f6b831015758b6ad535cdb6508b0fc3ab1ad",
-            "_raise_at": "14f15732468fd8c5084431d250af49c1e0064108cecc2e0ee66a3f3982dd7e60",
-            "_reconstruct_next_regime_to_V_arr": "4bd93914f56d0a9e25592c7a50d64e303f314e591d31c55c5d19bf22bb67315f",
-        },
-    ),
-    "src/_lcm/solution/fingerprint.py": (
-        "b50c56824dd6de1000c1861477941ca829d164de6896de6237286a36d53336e0",
-        {
-            "fingerprint_solution_support": "7ccac4755a555ca12f935e9d9f039f0ab4aa5ba4b1c198d3873fac016294ddd7",
-            "fingerprint_model": "4ef219fa9a2379a7586f35808b39b5acb30936d49f1bb18a81161ad3ddc33c83",
-            "_grid_support": "f19da7f398d1100feb6ff9aed31bdd3f148224b0845de4c111bb58d3d31e32d7",
-        },
-    ),
-    "src/_lcm/solution/model_authority.py": (
-        "0729ba9608fe7e94ebde9e6603edd7b0e89e5bf5579df66505d41c23d58b24dc",
-        {
-            "build_solution_authority": "0bfa16d89e07cdec832e050403e3d89cf217a9b9b50c2945026eaddaa7e6b2a6"
-        },
-    ),
-    "src/_lcm/solution/preconditions.py": (
-        "75174b1054dcb4077d6aace2f129a7c04a75ce60843856bdaed4d0749ce73836",
-        {
-            "check_pareto_weights": "aef24e847e7d7639cb71a6d000b27b86538c065b5a12f17b05ca31f3fd70c23f",
-            "_check_one_regimes_weights": "d3bf3f8ddf8cbcbb26f4a39a3226c140e93d23f773d8d045d0044ac686a87d06",
-        },
-    ),
-    "src/_lcm/solution/v_topology.py": (
-        "bff578469ea366b108f9484bd047f4ec24ab1866aa365b39b01598230c0618da",
-        {
-            "_get_regime_V_shapes_and_shardings": "98dce83dcfec6ab9ee239b6072a32ebbd9b364c5ef11fdc5c0c150fa2364a167"
-        },
-    ),
-    "src/_lcm/transition_checks.py": (
-        "ef7b786fc00d71ef25b6272795ae539770a0e100badf6fe9835cd9a752a284f2",
-        {
-            "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
-            "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
-            "_validate_transition_sequence": "e0dfef9bad2eaad6f33ad7729841c6d813913c85cb3c5977ad3650292be4f98a",
-            "validate_regime_transitions_all_periods": "7fb17014051ab54f47b56332129ef2faff1d1d1d26304de95d271b46096e395c",
-            "_validate_regime_transition_single": "ed77f591bc0dbac9f80134571bf04c8af236ee539b96234c555321e51a9a3121",
-            "_evaluate_regime_probability_law": "c16f5612edb533d8f89d75d0c90fa903d723b4b4235dcc40b0a3e31dc3aecd42",
-            "_regime_probability_law": "0af1c02dca10a6d00a10e67342b51996fb23a078886097a363a12935f7c0ab39",
-            "_check_and_release_regime_probability": "f54a64b0239559ff0527404fe7dcaaf0783361ee24d5bf628d971f8037873b4b",
-            "_validate_regime_transition_probs": "d476e3698be208084c7dc40e6100c18b442317f549e8ae89d65c6719d68fc247",
-            "validate_state_transitions_all_periods": "41c223ea8426a823b51d3eac44e3e81d5a86c1c21175030b5000793d82a8fcf1",
-            "validate_joint_transitions_all_periods": "816ac82cc7f45fcdc06c169507fa8915ee597f83a672fefe31367b7bd213c6dc",
-            "_own_transition_outputs": "29d4ac7f946991d9b73ecf8e8f9b49f5830e5266fbe1a2c006b45e8de8dec6c0",
-            "_set_transition_outputs": "a88568379c33a3be6c227e62cf39e829da241ba3ccb9a5ca3533bb82c640c635",
-            "_transition_owner_tree": "01eb5a7f5088184d91d6b03d39f966fa186e41a942c94a3ffad76def470ebe9b",
-            "_validate_joint_laws": "64789515b4b4c810b18f1bc0be46d6ab79a0d2e06e65401f71b0ce4a88ba1659",
-            "_check_joint_support_schema": "72019c8e11b917975cc895995038f59d6ca3d714d9d56915a20ba6c45a7a2845",
-            "_evaluate_joint_support": "1e3cebbb2287dad9b0b97e0f9e23884b0c6e10235244f524187ef43c73e69ca4",
-            "_validate_joint_support": "71f984d86873cb59c4a3ce9780190b313bf4633b105a1813984dd5460c79eb7b",
-            "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
-            "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
-            "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "ec73e10371dbdcf60ca1a443116c2e1bbf379291ed1df1856c3c6b7a16c55eb0",
-            "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
-            "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
-            "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",
-            "_state_probability_law": "d058c6e928b67b7c8a30380cdd92b0eb76811c17e5fbf3fd85e36716221c3f3d",
-            "_abstract_transition_operand": "72b7f4217b9ec8773711a592ba298526bb7ac32e691393d6aee78d2b8300beba",
-            "_check_state_probs": "95af24958448e8ba5d8c7d385eb998c9d0597063c6f5157a2bee1af963a37608",
-        },
-    ),
-    "src/lcm/model.py": (
-        "636b427502b358fe0cf2639a96817a3b95315ce56e05e4d02482d5890ef663d7",
-        {
-            "_validate_sharded_state_capability": "c0190e55675c1f5baa1610f539b3435282e7d4e39b66a57efabf9bc6b3c15204",
-            "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
-            "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "23a5459b9b1e63e36f24f63a8e83bd3f85f1164c117c43091846d273785e2ab5",
-            "Model._declared_solution_authority": "433f2ad859695f0b08fc91770269d3861e7b318d0bff84bc6d5b2f665c8707f3",
-            "Model._model_fingerprint": "1244c00c7a0c9e4b4286a39479b9685ef6ec0e9da157f13944b853d1b27c5cf6",
-            "Model.solve": "692edc01a1726606e632714cc164d25df3cde01e8329cbe62f1ec20b266ebf0f",
-            "Model._solve_from_flat_params": "67aeaaf94721c1199afd242d6a66dfe1c02aa0ffda48091dac188bd3e9d90931",
-            "Model._solve_compiled": "a604e0b9d37df95a39e556a6a98883c5d4c8303498fd51019d31b60ab169dabc",
-            "Model._resolve_solution_result": "089380ec11cde45fff87c839c2c66d8bba14ffe29637a155411d01a791d4025b",
-            "Model._consume_owned_solution": "19c0e7b062f651ee6f7ca4cf11239021eba42d711ac73f603d2b9ea7aac31c3f",
-            "Model._consume_foreign_solution": "aefca084f762675829c9f6dfa76a5a4b3cd4079b2c6612451faf168eaac4864e",
-            "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
-            "Model._build_external_replay_readers": "0ac59ff5080f34308987f01348a3df6d3f81c8d57e4c779b00313d3884eb125d",
-            "Model.simulate": "421bc7b6388c4bd18b8dfba0d609a7ae9aee1732ef77ea5d2338b135d12d0964",
-            "Model._resolve_compile_batch_size": "27791b63c37282ce72ab9e537fda65cd20796d2a494a804392862219401dba7e",
-        },
-    ),
-    "src/_lcm/processes/grid_resolution.py": (
-        "f6e56d413ae3206bd18f352853b127a3166e26ea19efab1ceee2fd63f7b74aba",
-        {
-            "ProcessGridResolver.supports": "63f102efa777a1baf563b1f63f970cb699ab991e2e0e019973b02aec9e76a46a",
-            "ProcessGridResolver.__call__": "9c9c287a6df809a803e3ece8c3c542d6af50c224bb90318b86ab1c5664d5b8b8",
-        },
-    ),
-    "src/_lcm/simulation/process_grids.py": (
-        "4c9426a6895ddc53a1350a2d8356be4c9aedbe31612fef6a3e1dd85c4139db7b",
-        {
-            "_shared_uniform_operations": "77e4fa81b76a13e05edecb8cbc14571226bb6e34a9a80842289ac345cef3ad6e",
-            "SimulationProcessGrids.supports": "47c6617af89cdcd6ba3a99aae345a8c32f8aec740f838bd0b37817236306ab79",
-            "SimulationProcessGrids.array_roots": "24d15282a1f826daa93ab0d729c9f4c2e5e918e2a86bc8322b47fddc07731697",
-            "SimulationProcessGrids.__call__": "65127cfecf2a7f45f02fa50d72a40f7e1977f1728f88c543689c5b43519bc921",
-            "SimulationProcessGrids.seal": "71dde0f63544df96a4c57b99a75f9dd844dd904be7c599ad30a3125262756e9d",
-            "SimulationProcessGrids.close": "1fbde590b371243da9503b714cc55b822e333e3e7a64f100ed57051209076a5a",
-            "SimulationProcessGrids._produce": "718549cec38201ed8ff2e7e3890db8cc820a7543645effba0cfd4c2cd9474fd8",
-            "SimulationProcessGrids.snapshot": "65d4d6df476276c3136bb02ba811eb5b8e1cfaddc248b6893375238f4800ca0b",
-            "_uniform_parameters": "17402f2621240f3c7b362a7af8eb2c851fd0671288a75e11c04e3a5745ddffb7",
-            "_parameter_bytes": "ba52d3f0bdc2e9c217e3e97f339e1ed57964216961fd129abb315e38ee67c491",
-            "_abstract_grid_parameter": "2c8046d774f5d17556bc7efae30a2d0242b0405ad1fd9805710362310537fa6f",
-            "_compute_uniform_grid": "546e82063b47b05523ad23c64e681adaaea44dfda66071aa6b6f2ec94cde9d89",
-            "SimulationProcessGrids._produce_normal": "27b0b6ba97637e24e0715ab93bc66c4cc9f56ac5491b6f5cb5dc98a0719e581e",
-            "_normal_parameters": "697447939334023c477f246465018d78f56f9c9707bd43174de9d00514379107",
-            "_normal_fixed_identity": "77b7f200afd6ecd055c0359b4d5214ea1d863af5182434b82301a3bafd18404c",
-            "_compute_normal_stage": "e49e8d6ed2760a94e39877a1717a6567220467d098de8f1670033411016d003f",
-            "SimulationProcessGrids._produce_staged": "2c1a1db74c840023a8311a8c47fc79aa2a0cbcaa4f50579a948b1877a7f15240",
-            "_complete_process_parameters": "ce46e9801d7ccb642e1c4191f6ff9a96d7188a53232659bcaea868d6afee59c5",
-            "_process_fixed_identity": "23218125e2e6e7ef39e906d13a4597b3482762e6a03f55a482ddc97183a11fd6",
-            "_staged_parameter_is_weak": "a1d45ae344c6ddb0c1d0a655f67d985e5adb6cf61bd2508c9f26263344d6e9cd",
-            "_trace_process_jaxpr": "dd10af762e7eb11d3b0394cd116dc6ae00daca130c2b23141e3fb04bbe92f4cc",
-            "_process_grid_call": "6b721d47cc31ed8807f57df63ecd6ca38df7213fae435046dc607fc8b5de0f8c",
-            "_validated_process_recipe": "043b704a538ae99cf020600dbf61424e80ddbae0024612ce5291c130b3591400",
-            "_validate_attached_process_value": "abb48d5c8105fe8f97546bd7cf1f082130aa9ced55153581f4cda3bbda67cbc4",
-            "_validated_process_operand": "e12ce14e567bff2463294a163bac0e9510cf893e9142d76c34f641d61563ffdf",
-            "_validate_process_equation": "6632117d9b6371442596b320bb2f0d72783044ca54b21fd736a1151462d90ac0",
-            "_validate_linspace_jaxpr": "5e510b9af81fe99259e89f8371166fe7bd15837d5ffdc0c955068e09f36f8707",
-            "_jaxpr_schema": "1f8b0e61695a556f72f1f28b2c3def05cc4a2e2243e8b080b5304cfb4b646a53",
-            "_root_equation_schema": "f224abc60bbc8c4c29e2b1e685ede62da2202060e0bf2e4f9895d281daab2d51",
-            "_equation_schema": "f8a2b65e5ad72f88bc596b43f54ecc090ae8859aa2f431a0157a255d28d40372",
-            "_graph_atom_schema": "b9ef567b66eb8801eeb870fece8b92aeb230cd424f074163522e9fdc9c40eba5",
-            "_aval_schema": "8bf2e8b88d86d1f8dca7a48fdea2407d547f0468b101e41b32638732daa4b0ba",
-            "_aval_shape": "6007e8e38f5755ca0fa209d70d891cf3d0f73eccc7a1c72ad00d481175836b51",
-            "_aval_dtype": "e360ab7aeae392e4af78f0ac779bad7d74e60a09c1549a1eb2d501022500e97e",
-            "_read_process_operand": "852cdbbe2f9ed8980a80934c2637e0c7d32e496a4e19dc707e17ced3e3c026c6",
-            "_compute_process_stage": "0cc67600ad383da92e58943450ba05e420d772d661d094451f24391fcb6f714e",
-        },
-    ),
-}
+_UNIFORM_PROCESS_CONTRACTS: dict[str, tuple[str, dict[str, str]]] = _contracts(
+    {
+        "src/_lcm/engine.py": (
+            "SolutionPhase.resolve_process_grids",
+            "SolutionPhase.state_action_space",
+        ),
+        "src/_lcm/simulation/chunk_admission.py": (
+            "_ChunkProfiler.profile_widths",
+            "_simulation_chunk_profile_key",
+            "_independent_outer_candidates",
+            "_independent_anchor_widths",
+            "_plan_independent_chunks",
+            "_profile_independent_candidate",
+            "prepare_simulation_chunks",
+        ),
+        "src/_lcm/simulation/chunk_inputs.py": (
+            "prepare_simulation_call_inputs",
+            "prepare_simulation_chunk_inputs",
+        ),
+        "src/_lcm/simulation/compile.py": ("bind_simulation_runtime",),
+        "src/_lcm/simulation/entry_allocations.py": (
+            "SimulationEntryAllocations.__post_init__",
+            "SimulationEntryAllocations.snapshot",
+            "SimulationEntryAllocations.solve_input_roots",
+            "SimulationEntryAllocations.close",
+            "_EntryFootprint.__call__",
+        ),
+        "src/_lcm/simulation/initial_conditions.py": (
+            "validate_simulation_inputs",
+            "validate_initial_conditions",
+            "_collect_feasibility_errors",
+            "_check_regime_feasibility",
+            "_regime_feasibility_mask",
+        ),
+        "src/_lcm/simulation/simulate.py": ("simulate", "_simulate_subject_chunk"),
+        "src/_lcm/solution/backward_induction.py": (
+            "_period_transfer_scratch_reservations",
+            "_continuous_value_replica_required",
+            "solve",
+            "_build_continuation_templates",
+            "_iter_edge_topologies",
+            "_build_base_state_action_spaces",
+            "_compile_all_functions",
+            "_prepare_solve_programs",
+            "_resolve_output_layouts_and_lowering_keys",
+            "_build_structural_blueprint",
+            "_bind_structural_blueprint",
+            "_structural_key",
+        ),
+        "src/_lcm/solution/diagnostics.py": (
+            "_emit_post_loop_diagnostics",
+            "_raise_first_nan_row",
+            "_raise_at",
+            "_reconstruct_next_regime_to_V_arr",
+        ),
+        "src/_lcm/solution/fingerprint.py": (
+            "fingerprint_solution_support",
+            "fingerprint_model",
+            "_grid_support",
+        ),
+        "src/_lcm/solution/model_authority.py": ("build_solution_authority",),
+        "src/_lcm/solution/preconditions.py": (
+            "check_pareto_weights",
+            "_check_one_regimes_weights",
+        ),
+        "src/_lcm/solution/v_topology.py": ("_get_regime_V_shapes_and_shardings",),
+        "src/_lcm/transition_checks.py": (
+            "_ValidationSummary.state_action_space",
+            "validate_transitions",
+            "_validate_transition_sequence",
+            "validate_regime_transition_probs_all_periods",
+            "_validate_regime_transition_single",
+            "_evaluate_regime_probability_law",
+            "_regime_probability_law",
+            "_check_and_release_regime_probability",
+            "_validate_regime_transition_probs",
+            "validate_state_transitions_all_periods",
+            "validate_joint_transitions_all_periods",
+            "_own_transition_outputs",
+            "_set_transition_outputs",
+            "_transition_owner_tree",
+            "_validate_joint_laws",
+            "_check_joint_support_schema",
+            "_evaluate_joint_support",
+            "_validate_joint_support",
+            "_validate_joint_probabilities",
+            "_evaluate_joint_weights",
+            "_joint_weight_law",
+            "_validate_state_transition_single",
+            "_check_and_release_state_probability",
+            "_evaluate_state_probability_law",
+            "_evaluate_admitted_transition_producer",
+            "_state_probability_law",
+            "_abstract_transition_operand",
+            "_check_state_probs",
+        ),
+        "src/lcm/model.py": (
+            "_validate_sharded_state_capability",
+            "_supports_continuous_sharding_vocabulary",
+            "_supports_unsharded_continuous_process",
+            "Model.__init__",
+            "Model._declared_solution_authority",
+            "Model._model_fingerprint",
+            "Model.solve",
+            "Model._solve_from_flat_params",
+            "Model._solve_compiled",
+            "Model._resolve_solution_result",
+            "Model._consume_owned_solution",
+            "Model._consume_foreign_solution",
+            "Model._check_solution_result_structure",
+            "Model._build_external_replay_readers",
+            "Model.simulate",
+            "Model._open_entry_allocations",
+            "Model._resolve_compile_batch_size",
+        ),
+        "src/_lcm/processes/grid_resolution.py": (
+            "ProcessGridResolver.supports",
+            "ProcessGridResolver.__call__",
+        ),
+        "src/_lcm/simulation/process_grids.py": (
+            "_shared_uniform_operations",
+            "SimulationProcessGrids.supports",
+            "SimulationProcessGrids.array_roots",
+            "SimulationProcessGrids.__call__",
+            "SimulationProcessGrids.seal",
+            "SimulationProcessGrids.close",
+            "SimulationProcessGrids._produce",
+            "SimulationProcessGrids.snapshot",
+            "_uniform_parameters",
+            "_parameter_bytes",
+            "_abstract_grid_parameter",
+            "_compute_uniform_grid",
+            "SimulationProcessGrids._produce_normal",
+            "_normal_parameters",
+            "_normal_fixed_identity",
+            "_compute_normal_stage",
+            "SimulationProcessGrids._produce_staged",
+            "_complete_process_parameters",
+            "_process_fixed_identity",
+            "_staged_parameter_is_weak",
+            "_trace_process_jaxpr",
+            "_process_grid_call",
+            "_validated_process_recipe",
+            "_validate_attached_process_value",
+            "_validated_process_operand",
+            "_validate_process_equation",
+            "_validate_linspace_jaxpr",
+            "_jaxpr_schema",
+            "_root_equation_schema",
+            "_equation_schema",
+            "_graph_atom_schema",
+            "_aval_schema",
+            "_aval_shape",
+            "_aval_dtype",
+            "_read_process_operand",
+            "_compute_process_stage",
+        ),
+    }
+)
 
 
-_GROUPED_MAPPER_CONTRACTS = {
-    "src/_lcm/utils/dispatchers.py": (
-        "aec3119e69b285cbbd12eb713a05ab1d9583723473e2a0d66577578d8bb6fc00",
-        {
-            "tiled_productmap": "f9abfc940c4ade124483a286bdb5ab6eec4aac4c928680b2f685b859e673d104",
-            "_CountBroadcastExtentInWidth.__call__": (
-                "9edca2667a1015b9fe2f8b3e0b11b385f7f2aa71e8022be63324014d81819781"
-            ),
-            "_TiledProductMap.__call__": "11dc5d9d31dddc72ad93e90cad1729d179d179b15b7ff1ab044fa24038553dc5",
-            "_map_grouped_product": "5aa01e79393201769fc79d10a00ee264b9083ad40a0a23462e4170327e25bc20",
-            "_MapOverFinalCoordinate.__call__": "d4934af255cab7f3583631ee376e18eabc6bb6f7742ff945f1e95a260fdf3ece",
-            "_map_whole_product": "14c2d1b0508346f247a30494b0b4983bca7046216f467318eeaf0ade75bb5f4b",
-            "_final_mapper": "c7fb439e2c51e205d7dfbfdc785b7a89e96fee7906312564fef5b4021f4c1dee",
-            "_MapWholeCoordinate.__call__": "1f0d033c579a54294d8c3397abf8b3ae2e5be27c7921f6a444e453960252d506",
-            "_EvaluateTiledCell.__call__": "6836bd1b2ab970e74485a818ace01e603a3e25d9b49337e0a11e39efe88e770a",
-            "_restore_product_axes": "aefd91d6e6d5c1d49f1451435c80b04c616fc010784907adcf8e377508f087c2",
-            "map_over_leading_axis": "b1d033acd692898271f38d8f2954c27d00b1b1b2198ea2dca48248466387c098",
-            "_RestoreProductAxisOrder.__call__": "63d433afc99fab8238b273b0075f926b672c20943aea9d2b6170dfc1a6ee5df0",
-            "_transpose_product_axes": "54961f0159833bf5de6053053200dda0e3745caae17447c2aafd2e6f4faadae3",
-        },
-    )
-}
+_GROUPED_MAPPER_CONTRACTS = _contracts(
+    {
+        "src/_lcm/utils/dispatchers.py": (
+            "tiled_productmap",
+            "_CountBroadcastExtentInWidth.__call__",
+            "_TiledProductMap.__call__",
+            "_map_grouped_product",
+            "_MapOverFinalCoordinate.__call__",
+            "_map_whole_product",
+            "_final_mapper",
+            "_MapWholeCoordinate.__call__",
+            "_EvaluateTiledCell.__call__",
+            "_restore_product_axes",
+            "map_over_leading_axis",
+            "_RestoreProductAxisOrder.__call__",
+            "_transpose_product_axes",
+        )
+    }
+)
 
 
 def _grouped_mapper_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -6952,26 +8182,22 @@ def grouped_guard_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]
     )
 
 
-_ACTION_GRID_CONTRACTS = {
-    "src/_lcm/simulation/action_grids.py": (
-        "a7380cbf9a3a4b2359f02bc759260ec57981908a673736a067fc0ac69837ac59",
-        {
-            "PreflightActionGrids.resolve": "7a7cd711bce8db510ff03af04d1c992f1671d9b2060846b53d5f39041692c451",
-            "PreflightActionGrids.close": "9551fdaca558706aeb32a670e27daf66e9e1ae0fddce3242be2a02b67c6b7ee9",
-        },
-    ),
-    "src/_lcm/simulation/initial_conditions.py": (
-        "8d4c89da7cdd9b2fc674117312ed7d7571988c70836cf5e05053c4dc681a69ea",
-        {
-            "validate_simulation_inputs": "fbac5c256018854a1b4dcd5b765ed2cb0c6798251301c8025b298522499e318d",
-            "validate_initial_conditions": "c4ce9c80052f493775d61fd3ab7b8e5af8967a5816ff2dfded8d246dbbee7f04",
-            "_collect_feasibility_errors": "44069ec69fdb5195f039c09ee4354c8667a217666ff0418cea4e8753b1f93c9f",
-            "_check_regime_feasibility": "6d08d0a147ab6ec009f5be36d224fb436537f8ba426faac3f3c772e4da7e7e0a",
-            "_regime_feasibility_mask": "003fcee3a807c53e043e67f83750faf45a5fc3643e838c3c72175cad7cc10dd6",
-            "_build_flat_action_grid": "65b4591dd17c07ed9e30c5ddf8f89ead9a2899c2af663b9a1d1286fb9e990e0a",
-        },
-    ),
-}
+_ACTION_GRID_CONTRACTS = _contracts(
+    {
+        "src/_lcm/simulation/action_grids.py": (
+            "PreflightActionGrids.resolve",
+            "PreflightActionGrids.close",
+        ),
+        "src/_lcm/simulation/initial_conditions.py": (
+            "validate_simulation_inputs",
+            "validate_initial_conditions",
+            "_collect_feasibility_errors",
+            "_check_regime_feasibility",
+            "_regime_feasibility_mask",
+            "_build_flat_action_grid",
+        ),
+    }
+)
 
 
 def _action_grid_errors(*, tree: ast.Module, source: str) -> list[str]:
@@ -7797,6 +9023,347 @@ def allocation_reservation_mutation_specs(
     """Keep represented-allocation controls separately identifiable."""
     return _callable_mutation_specs(
         repo_root=repo_root, mutations=_ALLOCATION_RESERVATION_MUTATIONS
+    )
+
+
+# The action-partitioned singleton solve is its own corridor. GridSearch selects
+# it only for an admitted request; the device-mapped kernel hands Q_and_F
+# exactly its declared arguments and the planner-bound width; every device
+# streams the contiguous run of whole blocks the layout assigns it, every block
+# inside the scan as on the unpartitioned stream, with blocks it does not own
+# and padded slots infeasible; the per-device hard-max accumulators are
+# gathered over the action axis and merged in ascending partition order with the
+# exact hard-max law. Shared stream helpers are pinned here too, at the digests
+# the unpartitioned corridor pins them to, so the route is proved end to end.
+_ACTION_PARTITION_CONTRACTS = _contracts(
+    {
+        GRID_SEARCH_SOURCE: (
+            "GridSearch.build_period_kernels",
+            "_action_partition_mesh",
+            "_classify_action_streaming",
+            "_select_action_width_keyword",
+            "_select_cell_width_keyword",
+        ),
+        MAX_Q_SOURCE: (
+            "get_action_partitioned_max_Q_over_a",
+            "_ActionPartitionedMaxQOverA.__call__",
+            "_arguments_named",
+            "_OnActionPartitionAxis.__call__",
+            "_call_with_operands",
+            "_get_extra_param_names",
+            "_fail_if_action_width_keyword_collides",
+        ),
+        ACTION_STREAMING_SOURCE: (
+            "build_partitioned_streaming_max_Q_over_a",
+            "merge_partition_accumulators",
+            "_fail_if_not_positive_int",
+            "ActionPartitionLayout.__post_init__",
+            "ActionPartitionLayout.n_blocks",
+            "ActionPartitionLayout.blocks_per_partition",
+            "ActionPartitionLayout.block_range",
+            "ActionPartitionLayout.action_interval",
+            "_PartitionedStreamingHardMax.__call__",
+            "_PartitionedStreamingHardMax.local",
+            "_evaluate_owned_block",
+            "_validate_streaming_configuration",
+            "_prepare_action_call",
+            "_evaluate_block",
+            "_evaluate_one_action",
+            "_decode_action",
+            "_validate_block_Q_and_F",
+            "_trace_block",
+            "_empty_reduction",
+            "_typed_like",
+            "_scan_one_block",
+            "_add_block",
+        ),
+        ACTION_REDUCTION_SOURCE: (
+            "HardMaxReduction.initialize",
+            "HardMaxReduction.add",
+            "HardMaxReduction.merge",
+            "HardMaxReduction.finalize",
+            "_reduce_block",
+        ),
+    }
+)
+
+
+def _action_partition_errors(*, tree: ast.Module, source: str) -> list[str]:
+    """Pin the action-partitioned hard-max route independently of byte seals."""
+    surface, callables = _ACTION_PARTITION_CONTRACTS[source]
+    errors = _exact_callable_errors(
+        tree=tree, label="action-partitioned route", contracts=callables
+    )
+    if _transport_module_surface(tree) != surface:
+        errors.append(
+            "action-partitioned route: module bindings or kernel schemas changed"
+        )
+    return errors
+
+
+# Each control seeds one defect into the action-partitioned hard-max route: the
+# GridSearch selection, the device-mapped kernel, the contiguous block layout,
+# the per-device stream, the accumulator exchange, and the ordered merge.
+_ACTION_PARTITION_MUTATIONS = {
+    "action_partition:merge_order_reversed": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "tuple(range(self.n_partitions))",
+        "tuple(reversed(range(self.n_partitions)))",
+        1,
+    ),
+    "action_partition:merge_starts_at_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[0]",
+        "order[-1]",
+        1,
+    ),
+    "action_partition:merge_skips_last_partition": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "order[1:]",
+        "order[1:-1]",
+        1,
+    ),
+    "action_partition:elementwise_max_replaces_hard_max_merge": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        (
+            "HARD_MAX_REDUCTION.merge(left=merged, right=jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        (
+            "jax.tree.map(jnp.maximum, merged, jax.tree.map("
+            "lambda leaf, index=partition: leaf[index], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:merged_accumulator_discarded": (
+        ACTION_STREAMING_SOURCE,
+        "merge_partition_accumulators",
+        "expression",
+        "HARD_MAX_REDUCTION.finalize(accumulator=merged)",
+        (
+            "HARD_MAX_REDUCTION.finalize(accumulator=jax.tree.map("
+            "lambda leaf: leaf[order[0]], accumulators))"
+        ),
+        1,
+    ),
+    "action_partition:local_only_reduce": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        (
+            "merge_partition_accumulators(accumulators=gathered, "
+            "order=tuple(range(self.n_partitions)))"
+        ),
+        "HARD_MAX_REDUCTION.finalize(accumulator=local)",
+        1,
+    ),
+    "action_partition:gather_replaced_by_local_copies": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.all_gather(local, self.axis_name)",
+        "jax.tree.map(lambda leaf: jnp.stack([leaf] * self.n_partitions), local)",
+        1,
+    ),
+    "action_partition:partition_index_constant": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.__call__",
+        "expression",
+        "jax.lax.axis_index(self.axis_name).astype(jnp.int32)",
+        "jnp.int32(0)",
+        1,
+    ),
+    "action_partition:scan_starts_at_block_zero": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
+        1,
+    ),
+    "action_partition:scan_skips_first_owned_block": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
+        1,
+    ),
+    "action_partition:start_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "partition * n_blocks // self.n_partitions",
+        "partition * n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:stop_bound_off_by_one": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "expression",
+        "(partition + 1) * n_blocks // self.n_partitions",
+        "(partition + 1) * n_blocks // self.n_partitions - 1",
+        1,
+    ),
+    "action_partition:padded_tail_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_PartitionedStreamingHardMax.local",
+        "keyword",
+        "n_actions",
+        "n_actions + self.block_width",
+        2,
+    ),
+    "action_partition:layout_block_count_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.n_blocks",
+        "expression",
+        "-(-self.n_actions // self.block_width)",
+        "self.n_actions // self.block_width",
+        1,
+    ),
+    "action_partition:layout_run_length_floored": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.blocks_per_partition",
+        "expression",
+        "-(-self.n_blocks // self.n_partitions)",
+        "self.n_blocks // self.n_partitions",
+        1,
+    ),
+    "action_partition:layout_block_range_overlaps": (
+        ACTION_STREAMING_SOURCE,
+        "ActionPartitionLayout.block_range",
+        "expression",
+        "(partition + 1) * self.n_blocks // self.n_partitions",
+        "(partition + 1) * self.n_blocks // self.n_partitions + 1",
+        1,
+    ),
+    "action_partition:unowned_blocks_admitted": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "feasible & owned",
+        "feasible",
+        1,
+    ),
+    "action_partition:owned_upper_bound_inclusive": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "block_index < stop_block_index",
+        "block_index <= stop_block_index",
+        1,
+    ),
+    "action_partition:partition_local_action_ids": (
+        ACTION_STREAMING_SOURCE,
+        "_evaluate_owned_block",
+        "expression",
+        "global_ids",
+        "global_ids - global_ids[0]",
+        1,
+    ),
+    "action_partition:kernel_ignores_planned_width": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "keyword",
+        "block_width",
+        "1",
+        1,
+    ),
+    "action_partition:q_arguments_unfiltered": (
+        MAX_Q_SOURCE,
+        "_ActionPartitionedMaxQOverA.__call__",
+        "expression",
+        (
+            "_arguments_named(arguments=states_actions_params, "
+            "names=self.q_and_f_arg_names)"
+        ),
+        "states_actions_params",
+        1,
+    ),
+    "action_partition:kernel_partition_count_dropped": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "n_partitions",
+        "1",
+        1,
+    ),
+    "action_partition:state_product_order_reversed": (
+        MAX_Q_SOURCE,
+        "get_action_partitioned_max_Q_over_a",
+        "keyword",
+        "variables",
+        "tuple(reversed(state_names))",
+        2,
+    ),
+    "action_partition:manual_axes_widened": (
+        MAX_Q_SOURCE,
+        "_OnActionPartitionAxis.__call__",
+        "expression",
+        "frozenset({ACTION_PARTITION_AXIS})",
+        "frozenset(self.mesh.axis_names)",
+        1,
+    ),
+    "action_partition:route_selection_bypassed": (
+        GRID_SEARCH_SOURCE,
+        "GridSearch.build_period_kernels",
+        "expression",
+        "action_partition_mesh is not None",
+        "False",
+        1,
+    ),
+    "action_partition:request_silently_ignored": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "context.action_partitions == 1",
+        "True",
+        1,
+    ),
+    "action_partition:unstreamed_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "action_streaming is not _ActionStreamingDisposition.STREAMED",
+        "False",
+        1,
+    ),
+    "action_partition:fold_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.fold_state_names)",
+        "False",
+        1,
+    ),
+    "action_partition:co_map_route_admitted": (
+        GRID_SEARCH_SOURCE,
+        "_action_partition_mesh",
+        "expression",
+        "bool(context.co_map_state_names)",
+        "False",
+        1,
+    ),
+}
+
+EXPECTED_ACTION_PARTITION_MUTATION_COUNT = 29
+EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256 = (
+    "011688c988e1b107b5e63adc8cb13df4900bc84137531153bd2ab8743aeb9798"
+)
+
+
+def action_partition_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
+    """Build the action-partitioned hard-max route's mutation population."""
+    return _callable_mutation_specs(
+        repo_root=repo_root, mutations=_ACTION_PARTITION_MUTATIONS
     )
 
 
@@ -8909,8 +10476,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     action_streaming_cases = {
         "streaming_blocks:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=1,
         ),
         "streaming_blocks:admit_padded_tail": _replace_nth(
@@ -8938,14 +10505,14 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_ev1:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=2,
         ),
         "streaming_collective_blocks:skip_last_block": _replace_nth(
             text=action_streaming_source,
-            marker="            n_remaining=n_blocks - 1,",
-            replacement="            n_remaining=n_blocks - 2,",
+            marker="            n_blocks=n_blocks,",
+            replacement="            n_blocks=n_blocks - 1,",
             occurrence=3,
         ),
         "streaming_collective_blocks:admit_padded_tail": replace_once(
@@ -9650,7 +11217,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "source": replace_once(
                     source=simulation_runtime_source,
                     old="        program=families[family][period],",
-                    new='        program=families["regime_transitions"][period],',
+                    new='        program=families["route"][period],',
                     label="dispatch_family_replaced",
                 ),
             },
@@ -9723,24 +11290,24 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     processing_cases = {
         "caller_simulate:action_names_slice": replace_once(
             source=processing_source,
-            old="        action_names=state_action_space.action_names,",
-            new="        action_names=state_action_space.action_names[:-1],",
+            old="                action_names=state_action_space.action_names,",
+            new="                action_names=state_action_space.action_names[:-1],",
             label="simulate caller action names",
         ),
         "caller_simulate:wrong_discrete_axis_count": replace_once(
             source=processing_source,
-            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),",
-            new="        n_discrete_action_axes=max(\n"
+            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),",
+            new="                n_discrete_action_axes=max(\n"
             "                    0, len(state_action_space.discrete_actions) - 1\n"
             "                ),",
             label="simulate caller axis count",
         ),
         "caller_simulate:taste_flag_disabled": replace_once(
             source=processing_source,
-            old="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "        has_taste_shocks=has_taste_shocks,",
-            new="        n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
-            "        has_taste_shocks=False,",
+            old="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "                has_taste_shocks=has_taste_shocks,",
+            new="                n_discrete_action_axes=len(state_action_space.discrete_actions),\n"
+            "                has_taste_shocks=False,",
             label="simulate caller taste flag",
         ),
         "caller_simulate:live_taste_flag_rebinding": replace_once(
@@ -10738,10 +12305,15 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=model_processing_source,
                 old=(
-                    "        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))"
+                    "        regime_fixed = dict(\n"
+                    "            regime_kernel_params(fixed_flat_params, regime_name=regime_name)\n"
+                    "        )"
                 ),
                 new=(
-                    '        regime_fixed = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))\n        regime_fixed = {key: -value if key.endswith("__points") else value for key, value in regime_fixed.items()}'
+                    "        regime_fixed = dict(\n"
+                    "            regime_kernel_params(fixed_flat_params, regime_name=regime_name)\n"
+                    "        )\n"
+                    '        regime_fixed = {key: -value if key.endswith("__points") else value for key, value in regime_fixed.items()}'
                 ),
                 label="fixed runtime action points changed before state-space completion",
             ),
@@ -10909,6 +12481,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
     guard = grouped_guard_mutation_specs(repo_root=root)
     allocation = allocation_reservation_mutation_specs(repo_root=root)
     normal = normal_process_mutation_specs(repo_root=root)
+    partition = action_partition_mutation_specs(repo_root=root)
     cases: dict[str, dict[str, Any]] = {}
     with tempfile.TemporaryDirectory() as raw:
         temp_root = Path(raw) / "repo"
@@ -10926,6 +12499,7 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
             | guard
             | allocation
             | normal
+            | partition
         ).items():
             relative = spec["path"]
             target = temp_root / relative
@@ -10938,6 +12512,15 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
                 "offending_paths": result["offending_paths"],
             }
             target.write_text(originals[relative], encoding="utf-8")
+    partition_cases = {name: cases.pop(name) for name in partition}
+    partition_admitted = sorted(
+        name for name, result in partition_cases.items() if not result["rejected"]
+    )
+    partition_names_match = (
+        len(partition_cases) == EXPECTED_ACTION_PARTITION_MUTATION_COUNT
+        and _mutation_name_digest(tuple(partition_cases))
+        == EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256
+    )
     normal_cases = {name: cases.pop(name) for name in normal}
     normal_admitted = sorted(
         name for name, result in normal_cases.items() if not result["rejected"]
@@ -11026,6 +12609,10 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "expected_mutation_names_sha256": (EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256),
         "mutation_names_match_expected": names_match_expected,
         "admitted_mutations": admitted,
+        "action_partition_mutations": partition_cases,
+        "action_partition_mutation_count": len(partition_cases),
+        "action_partition_names_match_expected": partition_names_match,
+        "admitted_action_partition_mutations": partition_admitted,
         "normal_process_mutations": normal_cases,
         "normal_process_mutation_count": len(normal_cases),
         "normal_process_names_match_expected": normal_names_match,
@@ -11060,6 +12647,8 @@ def run_direct_flow_mutation_controls(*, repo_root: Path) -> dict[str, Any]:
         "admitted_supplemental_mutations": supplemental_admitted,
         "all_rejected": (
             clean["ok"]
+            and not partition_admitted
+            and partition_names_match
             and not normal_admitted
             and normal_names_match
             and not allocation_admitted

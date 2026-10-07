@@ -645,7 +645,11 @@ def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
 def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
     hash_seed: int,
 ) -> None:
-    """Continuation lottery axes retain process declaration order in fresh processes."""
+    """Continuation draws retain process declaration order in fresh processes.
+
+    The order covers the joint node axes followed by the draws averaged inside
+    the continuation reader.
+    """
     root = Path(__file__).resolve().parents[1]
     script = textwrap.dedent("""
         import json
@@ -653,8 +657,8 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         from typing import Any
         import jax.numpy as jnp
         import numpy as np
-        from lcm import (AgeGrid, DeterministicTransition,
-                         Model, Regime, UniformIIDProcess, categorical)
+        from lcm import (AgeGrid, Model, Regime, UniformIIDProcess,
+                         categorical)
         from lcm.typing import ContinuousState, FloatND, ScalarInt
         from _lcm.regime_building import Q_and_F
 
@@ -667,15 +671,14 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                     beta: ContinuousState) -> FloatND:
             return gamma + 2 * alpha + 3 * beta
 
-        def next_regime(period: int) -> ScalarInt:
-            return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
-
         observed = []
         original = Q_and_F._build_target_continuation
         def observe(**kwargs: Any) -> Any:
             result = original(**kwargs)
             if kwargs['target_regime_name'] == 'alive':
-                observed.append(list(result.lottery_axis_names))
+                observed.append([*result.lottery_axis_names, *(
+                    name.rpartition('__')[2]
+                    for name in result.slice_weight_names)])
             return result
         Q_and_F._build_target_continuation = observe
         try:
@@ -689,10 +692,8 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                             'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
                         },
                         functions={'utility': utility},
-                        regime_transitions=DeterministicTransition(func=next_regime),
                     ),
-                    'dead': Regime(functions={'utility': lambda: 0.0},
-                                   regime_transitions=None),
+                    'dead': Regime(functions={'utility': lambda: 0.0}),
                 },
                 ages=AgeGrid(start=0, inclusive_stop=2, step='Y'),
                 regime_id_class=RegimeId,
