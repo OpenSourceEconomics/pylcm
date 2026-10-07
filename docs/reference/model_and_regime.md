@@ -53,7 +53,8 @@ Public inspection attributes include:
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, immutable admissible age–regime pairs;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
-  pruning reasons and `laws`, each regime's law as the model binds it from its edges
+  pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
+  bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
   (`laws[name].terminal` is true for a regime without outgoing edges,
   `laws[name].gated_edges` holds the edges its `ValueDependentTransition` cells
   declare);

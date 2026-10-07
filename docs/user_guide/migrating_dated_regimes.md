@@ -55,10 +55,31 @@ This replaces laws such as `"dead"`, `ByAge.until(law="working", then="retired")
 selector that only ever returns the one available destination. A regime whose removed
 law was `None` simply has no outgoing edges.
 
-`Regime.terminal`, `Regime.gated_edges` and `Regime.decomposed_transition` are removed.
-Code that read a regime's law back reads it from the model graph:
-`model.graph.laws[name].terminal`, `model.graph.laws[name].gated_edges` and
-`model.graph.laws[name].decomposed_transition`.
+Code that read a regime's law back reads it from the model:
+
+| Removed                                 | Read instead                                   |
+| --------------------------------------- | ---------------------------------------------- |
+| `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
+| `Regime.gated_edges`                    | `model.graph.laws[name].gated_edges`           |
+| `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
+| the law passed as `regime_transitions=` | `model.edges[name].law`                        |
+
+`model.edges` holds the edges exactly as declared, so `model.edges[name].law` is the law
+of a source declared as a `Transition` (under `model.edges.solve` and
+`model.edges.simulate` when the whole mapping is `Phased`). `model.graph.laws[name]` is
+the law the solver and simulator evaluate: bound to the graph, pruned of fixed-zero
+cells and lowered to the ages the starts demand. A regime is terminal when it has no
+outgoing edge in `Model(edges=...)`, and `model.graph.laws[name].terminal` says so:
+
+```python
+assert model.graph.laws["dead"].terminal
+assert not model.graph.laws["working"].terminal
+```
+
+The bound law carries no destinations; a source's declared targets are the keys of
+`model.edges[name]`, or `model.edges[name].targets` for a `Transition`, and the exact
+source ages per phase are `model.graph.edges.solve[name]` and
+`model.graph.edges.simulate[name]`.
 
 Where a source age has several destinations, move the former law unchanged into a
 `Transition` that replaces the source's destination mapping:
