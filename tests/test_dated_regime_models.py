@@ -782,4 +782,4 @@ def test_model_edges_is_read_only() -> None:
     """The declared edges cannot be rebound on a built model."""
     model = _dated_model()
     with pytest.raises(AttributeError):
-        model.edges = {}
+        model.edges = {}  # ty: ignore[invalid-assignment]

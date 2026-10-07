@@ -65,6 +65,14 @@ class AgeRange:
 
 type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
 
+# One phase's edges: each source regime maps to its destinations' source-age
+# selectors, or to a `Transition` whose law chooses among them.
+type PhaseEdges = Mapping[str, Transition | Mapping[str, AgeSelector]]
+
+# What `Model(edges=...)` takes: one phase's edges for both phases, or a
+# `Phased` pair of them.
+type ModelEdges = PhaseEdges | Phased[PhaseEdges, PhaseEdges]
+
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)

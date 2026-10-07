@@ -290,6 +290,7 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
+from lcm.transition import ModelEdges
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -690,7 +691,7 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
-        self.edges = edges
+        self._edges = cast("ModelEdges", edges)
         laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # The laws as declared, before any age selects among them: the `edges`
         # parameter template and its Series conversion read these.
@@ -992,6 +993,11 @@ class Model:
             solution_param_projection(self._regimes)
         )
         self._seal()
+
+    @property
+    def edges(self) -> ModelEdges:
+        """The edges exactly as declared in `Model(edges=...)`, laws included."""
+        return self._edges
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
