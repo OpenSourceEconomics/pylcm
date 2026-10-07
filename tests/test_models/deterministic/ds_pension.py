@@ -399,8 +399,8 @@ def _edges(
 ) -> dict[str, object]:
     """Work until retiring, stay retired until the last alive age, then die.
 
-    Working has one outgoing edge at every age. Where a retiree can both stay
-    retired and die, `retired_law` chooses between them.
+    Working has one outgoing edge at every age; `retired_law` chooses where a
+    retiree goes.
     """
     values = ages.exact_values
     stay_working = values[: retirement_period - 1]
@@ -411,10 +411,12 @@ def _edges(
             **({"working": stay_working} if stay_working else {}),
             "retired": values[retirement_period - 1],
         },
-        "retired": (
-            Transition(targets={"retired": stay_retired, "dead": dies}, law=retired_law)
-            if stay_retired
-            else {"dead": dies}
+        "retired": Transition(
+            targets={
+                **({"retired": stay_retired} if stay_retired else {}),
+                "dead": dies,
+            },
+            law=retired_law,
         ),
     }
 
@@ -440,8 +442,6 @@ def get_params(
     retirement_income: float = 0.50,
     final_age_alive: float = 4.0,
     pension_payout_return: float | None = None,
-    n_periods: int = 5,
-    retirement_period: int = 3,
 ) -> dict:
     """Get parameters for the DS pension model (faithful calibration from `SetupPar.m`).
 
@@ -453,15 +453,8 @@ def get_params(
     regime's felicity and by the closed-form `(u')^-1` an endogenous-grid regime
     declares, so the same tree fits the brute and the EGM variants of the model.
 
-    `final_age_alive` is read only by the retired law, which a model of the given
-    `n_periods` and `retirement_period` declares only when a retiree can still
-    both stay retired and die at some age (see `_edges`).
+    `final_age_alive` is read only by the retired law.
     """
-    retired_law_params = (
-        {"final_age_alive": final_age_alive}
-        if retirement_period < n_periods - 2
-        else {}
-    )
     if pension_payout_return is None:
         pension_payout_return = 1.0 + return_pension
     return {
@@ -499,6 +492,6 @@ def get_params(
                     "return_liquid": return_liquid,
                 }
             },
-            **retired_law_params,
         },
+        "edges": {"retired": {"final_age_alive": final_age_alive}},
     }
