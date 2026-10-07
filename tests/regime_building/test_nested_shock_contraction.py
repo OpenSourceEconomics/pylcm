@@ -18,6 +18,7 @@ primitives.
 import inspect
 import itertools
 import re
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Any
 
@@ -941,4 +942,184 @@ def test_certain_three_quarters_of_max_beats_a_lottery_worth_half_of_it(
     )
     np.testing.assert_array_equal(
         np.asarray(lookup.actions["choice"]), np.ones(2, dtype=np.int32)
+    )
+
+
+@categorical(ordered=False)
+class _OuterRegimeId:
+    alive: ScalarInt
+    high: ScalarInt
+    nothing: ScalarInt
+
+
+def _near_one(dtype: np.dtype) -> np.floating:
+    return np.nextafter(dtype.type(1.0), dtype.type(0.0))
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _high_probability(*, choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == 0, 0.5, 1.0)
+
+
+def _nothing_probability(*, choice: DiscreteAction) -> FloatND:
+    return jnp.where(choice == 0, 0.5, 0.0)
+
+
+def _nothing_value() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _outer_weighted_model(
+    *, dtype: np.dtype, enable_jit: bool, with_choice: bool
+) -> Model:
+    """The finite-range lottery behind a later regime probability.
+
+    `z` lands on the peak with probability one step below one and on zero
+    otherwise; the 18-node slice draw `h` sums to one exactly. The lottery's
+    target `high` is reached with probability one half, the stateless target
+    `nothing`, worth zero, with the other half. With a choice, action 1 moves
+    to `high` for sure and lands on its certain node worth `3/4` of the peak.
+    """
+    q = _near_one(dtype)
+    coordinate_row = (q, dtype.type(1.0) - q)
+    slice_row = _UNIT_SLICE_ROWS[dtype.name]
+
+    def coordinate_probabilities() -> FloatND:
+        return jnp.asarray(coordinate_row, dtype=dtype)
+
+    def slice_probabilities() -> FloatND:
+        return jnp.asarray(slice_row, dtype=dtype)
+
+    states = {
+        "z": DiscreteGrid(category_class=_Binary),
+        "h": DiscreteGrid(category_class=_Slice),
+        "landing": DiscreteGrid(category_class=_Landing if with_choice else _Binary),
+    }
+    alive = Regime(
+        regime_transitions={
+            "high": StochasticTransition(
+                func=_high_probability if with_choice else _half
+            ),
+            "nothing": StochasticTransition(
+                func=_nothing_probability if with_choice else _half
+            ),
+        },
+        states=states,
+        state_transitions={
+            "z": StochasticTransition(func=coordinate_probabilities),
+            "h": StochasticTransition(func=slice_probabilities),
+            "landing": _next_landing_with_choice if with_choice else _next_landing,
+        },
+        actions={"choice": DiscreteGrid(category_class=_Binary)} if with_choice else {},
+        functions={"utility": _zero_utility},
+    )
+    high = Regime(
+        regime_transitions=None,
+        states=states,
+        functions={
+            "utility": _peak_or_three_quarters_for_certain
+            if with_choice
+            else _peak_at_the_first_landing
+        },
+    )
+    nothing = Regime(regime_transitions=None, functions={"utility": _nothing_value})
+    return Model(
+        regimes={"alive": alive, "high": high, "nothing": nothing},
+        regime_id_class=_OuterRegimeId,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        edges={"alive": {"high": 0, "nothing": 0}},
+        initial_nodes=((0, "alive"),),
+        enable_jit=enable_jit,
+    )
+
+
+def _outer_weighted_params(*, model: Model, peak: np.floating) -> Any:
+    params: Any = model.get_params_template()
+    params["alive"]["koopmans_aggregator"]["discount_factor"] = 1.0
+    params["high"]["utility"]["peak"] = jnp.asarray(peak)
+    return params
+
+
+@pytest.mark.parametrize("sign", [1, -1], ids=["max", "negative-max"])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_regime_probability_weights_a_near_certain_maximum_to_half_of_it(
+    *,
+    sign: int,
+    enable_jit: bool,
+    fixture_name: str,
+    dtype: np.dtype,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A target worth `q M`, reached half the time, contributes `q M / 2`.
+
+    `q` is one step below one and `M` the largest finite value, so the target's
+    expectation sits within a few roundings of the format's end while the
+    published value is half of it.
+    """
+    request.getfixturevalue(fixture_name)
+    q = _near_one(dtype)
+    assert q < 1
+    assert dtype.type(1.0) - q > 0
+    assert sum(map(Fraction.from_float, _UNIT_SLICE_ROWS[dtype.name])) == 1
+    peak = dtype.type(sign) * np.finfo(dtype).max
+    model = _outer_weighted_model(dtype=dtype, enable_jit=enable_jit, with_choice=False)
+    solution = model.solve(
+        params=_outer_weighted_params(model=model, peak=peak), log_level="off"
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["alive"]),
+        (peak / dtype.type(2)) * q,
+        rtol=32 * np.finfo(dtype).eps,
+        atol=0.0,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_certain_three_quarters_of_max_beats_a_half_weighted_near_max_target(
+    *,
+    enable_jit: bool,
+    fixture_name: str,
+    dtype: np.dtype,
+    request: pytest.FixtureRequest,
+) -> None:
+    """The certain `3M/4` is chosen over the risky action worth about `M/2`."""
+    request.getfixturevalue(fixture_name)
+    model = _outer_weighted_model(dtype=dtype, enable_jit=enable_jit, with_choice=True)
+    params = _outer_weighted_params(model=model, peak=np.finfo(dtype).max)
+    solution = model.solve(params=params, log_level="off")
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="alive",
+        states={
+            "z": jnp.zeros(2, dtype=jnp.int32),
+            "h": jnp.zeros(2, dtype=jnp.int32),
+            "landing": jnp.zeros(2, dtype=jnp.int32),
+        },
+    )
+    np.testing.assert_array_equal(
+        np.asarray(lookup.actions["choice"]), np.ones(2, dtype=np.int32)
+    )
+
+
+@pytest.mark.parametrize(("fixture_name", "dtype"), _FINITE_RANGE_PRECISIONS)
+def test_certain_action_value_is_three_quarters_of_max(
+    *, fixture_name: str, dtype: np.dtype, request: pytest.FixtureRequest
+) -> None:
+    """The chosen certain action publishes `3M/4`, not an infinity."""
+    request.getfixturevalue(fixture_name)
+    model = _outer_weighted_model(dtype=dtype, enable_jit=True, with_choice=True)
+    params = _outer_weighted_params(model=model, peak=np.finfo(dtype).max)
+    solution = model.solve(params=params, log_level="off")
+    np.testing.assert_allclose(
+        np.asarray(solution.values[0]["alive"]),
+        dtype.type(0.75) * np.finfo(dtype).max,
+        rtol=32 * np.finfo(dtype).eps,
+        atol=0.0,
     )
