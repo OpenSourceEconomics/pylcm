@@ -635,6 +635,29 @@ def test_declared_transitions_carry_the_targets_a_law_names() -> None:
     }
 
 
+def test_a_bare_name_case_beside_per_target_cases_derives_its_edge() -> None:
+    """A `ByAge` mixing per-target cases with a bare-name case derives an edge
+    to the named regime at that case's age."""
+    law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=55): {
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            },
+            55: "retirement",
+        }
+    )
+    model = _dated_model(
+        edges={"working": Transition(law=law), "retirement": RETIREMENT_EDGES}
+    )
+    targets = model.declared_transitions["solve"]["working"].targets
+    assert targets == {
+        "working": (25, 35, 45),
+        "dead": (25, 35, 45),
+        "retirement": (55,),
+    }
+
+
 def test_declared_transitions_read_the_declared_law_typed() -> None:
     """A declared `Transition`'s law reads back as declared, typed `TransitionLaw`."""
     declared = _working_law()

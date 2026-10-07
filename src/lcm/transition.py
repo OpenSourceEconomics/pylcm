@@ -143,9 +143,10 @@ class Transition:
         }
 
     A law is evaluated at every source age with outgoing edges, also where only
-    one edge leaves the source, and there it must put unit mass on that edge. A
-    `ByAge` law need not select ages with a single outgoing edge; the edge is the
-    law there. It must select every age with more than one.
+    one edge leaves the source, and there it must put unit mass on that edge.
+    With declared `targets`, a `ByAge` law need not select ages with a single
+    outgoing edge; the edge is the law there. It must select every age with more
+    than one. With derived targets, an age no case selects has no edge.
 
     `gates` makes the transition into a target value-dependent: the law still
     supplies the probability of reaching it, and the target's `Gate` decides
@@ -649,6 +650,11 @@ class ByAge:
 
     Cases may not overlap. A law available at the last age is legal while no
     nonterminal problem is required there.
+
+    When a `Transition` derives its targets from the schedule, every source age
+    with an edge needs a case. An age with a single certain destination takes
+    that regime's bare name, which mixes with per-target cases in one schedule:
+    `cases={AgeRange(exclusive_stop=64): {"worker": p, "dead": q}, 64: "retiree"}`.
     `None` — terminality — is never a case: a terminal regime is a source
     without outgoing edges in `Model(edges=...)`.
     """
