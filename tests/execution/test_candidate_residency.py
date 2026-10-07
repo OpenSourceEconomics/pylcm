@@ -121,6 +121,31 @@ def test_fixed_and_reserved_storage_sum_per_device_before_the_maximum() -> None:
     assert inventory.resident_bytes(consumes=()) == 114
 
 
+def _inventory_with_fixed_only_device() -> footprint.ResidentInventory:
+    """Workspace on device 1, a fixed owner on device 0, nothing on device 2."""
+    return footprint.ResidentInventory(
+        device_ids=(1,),
+        live={},
+        peer_bytes={1: 3},
+        declared_inputs=(),
+        fixed_bytes={0: 500, 1: 20, 2: 0},
+        internal_bytes=11,
+    )
+
+
+def test_admission_covers_a_device_holding_only_fixed_owners() -> None:
+    """A device with fixed-owner bytes but no workspace is admitted."""
+    assert _inventory_with_fixed_only_device().admission_device_ids == (0, 1)
+
+
+def test_fixed_only_device_is_charged_its_owners_without_peer_or_internal() -> None:
+    """The fixed-only device carries 500 bytes; the workspace carries 20+3+11."""
+    inventory = _inventory_with_fixed_only_device()
+    assert inventory.resident_bytes(consumes=()) == 500
+    smaller = replace(inventory, fixed_bytes={0: 30, 1: 20})
+    assert smaller.resident_bytes(consumes=()) == 34
+
+
 def _internal_pair(*, first: object, second: object) -> object:
     return first, second
 

@@ -813,6 +813,7 @@ def _uncovered_code_bytes(
 
 
 _INITIAL_CONDITIONS = {
+    "age": np.array([0.0]),
     "wealth": np.array([10.0]),
     "health": np.array([_Health.good], dtype=np.int32),
     "regime_id": np.array([_RegimeId.alive], dtype=np.int32),
