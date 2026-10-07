@@ -382,10 +382,12 @@ def get_params(
 
     """
     final_age_alive = 40 + (n_periods - 2) * 10
+    # A two-coordinate graph has no selector reading `final_age_alive`.
+    has_selector = n_periods > 2  # noqa: PLR2004
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
-        "final_age_alive": final_age_alive,
+        **({"final_age_alive": final_age_alive} if has_selector else {}),
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},

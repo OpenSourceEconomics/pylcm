@@ -204,12 +204,17 @@ def get_params(retirement_age: int = 24) -> dict:
 
     """
     model = get_model(retirement_age=retirement_age)
+    working_life_params = {
+        "utility": {"disutility_of_work": 0.05},
+        "next_wealth": {"interest_rate": 0.05},
+    }
+    transition_params = model.get_params_template()["working_life"].get(
+        "next_regime", {}
+    )
+    if "n_periods" in transition_params:
+        working_life_params["next_regime"] = {"n_periods": model.n_periods}
     return {
         "discount_factor": 0.95,
-        "working_life": {
-            "utility": {"disutility_of_work": 0.05},
-            "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"n_periods": model.n_periods},
-        },
+        "working_life": working_life_params,
         "retirement": {},
     }

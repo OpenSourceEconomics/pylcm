@@ -261,6 +261,7 @@ def get_model(
 
 def get_params(
     *,
+    n_periods: int = 4,
     discount_factor: float = 0.945,
     crra: float = 1.458,
     housing_weight: float = 0.66,
@@ -272,7 +273,14 @@ def get_params(
     borrowing_floor: float = 0.01,
     final_age_alive: float = 3.0,
 ) -> dict:
-    """Get parameters for the housing model (faithful calibration from `housing.py`)."""
+    """Get parameters for the housing model (faithful calibration from `housing.py`).
+
+    Pass the same `n_periods` to `get_model` and `get_params`. For example,
+    `get_model(n_periods=2)` pairs with
+    `get_params(n_periods=2, final_age_alive=1.0)`. The horizon determines
+    whether the graph retains a selector reading `final_age_alive`; its
+    numerical value does not determine whether to include the parameter.
+    """
     transition_args = {
         "return_liquid": return_liquid,
         "return_housing": return_housing,
@@ -282,7 +290,7 @@ def get_params(
     }
     return {
         "discount_factor": discount_factor,
-        "final_age_alive": final_age_alive,
+        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
         "working": {
             "utility": {"crra": crra, "housing_weight": housing_weight},
             "next_liquid": transition_args,
