@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the candidate certificate's exact source inventory from its AST."""
+"""Generate the candidate certificate's exact source inventory from its AST.
+
+The inventory lists each certified source once, under `sources`. Each profile in
+`derived_policy.profiles` references that list by name and carries one explicit
+override slot, `exclude_sources`; `profile_sources` resolves the effective set of
+every profile, and `upgrade_inventory` carries an older-schema inventory forward.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +19,9 @@ from typing import Any
 CERTIFICATE_PATH = "tests/test_grid_search_candidate_certificate.py"
 INVENTORY_PATH = "tests/candidate_certificate/sources.json"
 REQUIRED_PROFILES = ("fast", "certified")
+SCHEMA_VERSION = "2"
+# The top-level key holding the canonical source list every profile references.
+INVENTORY_KEY = "sources"
 
 
 def sha256_file(path: Path) -> str:
@@ -54,13 +63,105 @@ def inventory_digest(sources: list[dict[str, str]]) -> str:
 
 
 def upgrade_inventory(payload: dict[str, Any]) -> dict[str, Any]:
-    """Upgrade an inventory to the current schema."""
-    raise NotImplementedError
+    """Return `payload` in the current schema, carrying every profile override.
+
+    Schema 1 repeated the whole source list in each profile. A profile that listed
+    every inventory source becomes a plain reference; one that listed a subset
+    becomes a reference whose `exclude_sources` names the omitted paths. A schema-1
+    profile entry absent from the inventory has no exclusion form and is refused.
+    """
+    version = payload.get("schema_version")
+    if version == SCHEMA_VERSION:
+        return payload
+    if version != "1":
+        raise ValueError(f"unknown inventory schema_version {version!r}")
+    paths = [item["path"] for item in payload.get("sources", [])]
+    profiles: dict[str, Any] = {}
+    for profile, entry in payload.get("derived_policy", {}).get("profiles", {}).items():
+        listed = [item["path"] for item in entry.get("candidate_sources", [])]
+        stray = sorted(set(listed) - set(paths))
+        if stray:
+            raise ValueError(
+                f"schema-1 profile {profile!r} lists sources outside the inventory: "
+                f"{stray}"
+            )
+        profiles[profile] = {
+            "inventory": INVENTORY_KEY,
+            "exclude_sources": [path for path in paths if path not in listed],
+        }
+    return {
+        **payload,
+        "schema_version": SCHEMA_VERSION,
+        "derived_policy": {"profiles": profiles},
+    }
 
 
 def profile_sources(payload: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
-    """Resolve each profile's effective candidate sources."""
-    raise NotImplementedError
+    """Resolve each required profile's candidate sources from the one inventory.
+
+    A profile entry is `{"inventory": "sources", "exclude_sources": [...]}`: it
+    references the canonical list by name and drops the paths its override slot
+    names. An override naming a path absent from the inventory, or naming one
+    twice, is refused rather than ignored.
+    """
+    version = payload.get("schema_version")
+    if version != SCHEMA_VERSION:
+        raise ValueError(
+            f"inventory schema_version {version!r} is not {SCHEMA_VERSION!r}; "
+            "regenerate it with generate_sources.py --write"
+        )
+    sources = payload.get(INVENTORY_KEY)
+    if not isinstance(sources, list):
+        raise ValueError(f"inventory has no {INVENTORY_KEY!r} list")
+    policy = payload.get("derived_policy")
+    profiles = policy.get("profiles") if isinstance(policy, dict) else None
+    if not isinstance(profiles, dict):
+        raise ValueError("inventory has no derived_policy profiles object")
+    paths = [item.get("path") for item in sources]
+    resolved: dict[str, list[dict[str, str]]] = {}
+    for profile in REQUIRED_PROFILES:
+        entry = profiles.get(profile)
+        if not isinstance(entry, dict):
+            raise ValueError(f"inventory has no derived policy profile {profile!r}")
+        reference = entry.get("inventory")
+        if reference != INVENTORY_KEY:
+            raise ValueError(
+                f"profile {profile!r} references {reference!r}, not {INVENTORY_KEY!r}"
+            )
+        excluded = entry.get("exclude_sources")
+        if not isinstance(excluded, list) or not all(
+            isinstance(path, str) for path in excluded
+        ):
+            raise ValueError(f"profile {profile!r} exclude_sources is not a path list")
+        repeated = sorted({path for path in excluded if excluded.count(path) > 1})
+        unknown = sorted(set(excluded) - set(paths))
+        if repeated or unknown:
+            raise ValueError(
+                f"profile {profile!r} exclude_sources names paths twice {repeated} "
+                f"or outside the inventory {unknown}"
+            )
+        resolved[profile] = [item for item in sources if item["path"] not in excluded]
+    return resolved
+
+
+def _committed_overrides(root: Path) -> dict[str, list[str]]:
+    """Read each profile's hand-set exclusions from the committed inventory.
+
+    The override slot is the one hand-maintained part of the inventory, so
+    regeneration carries it forward, upgrading an older schema on the way. A
+    missing or unreadable inventory has no overrides.
+    """
+    try:
+        committed = json.loads((root / INVENTORY_PATH).read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return {}
+    if not isinstance(committed, dict):
+        return {}
+    profiles = upgrade_inventory(committed)["derived_policy"]["profiles"]
+    return {
+        profile: list(entry.get("exclude_sources", []))
+        for profile, entry in profiles.items()
+    }
 
 
 def build_inventory(repo_root: Path) -> dict[str, Any]:
@@ -71,22 +172,21 @@ def build_inventory(repo_root: Path) -> dict[str, Any]:
         {"path": relative, "sha256": sha256_file(root / relative)}
         for relative in derive_source_paths(certificate)
     ]
-    digest = inventory_digest(sources)
+    overrides = _committed_overrides(root)
     return {
-        "schema_version": "1",
+        "schema_version": SCHEMA_VERSION,
         "certificate": CERTIFICATE_PATH,
         "generation_rule": (
             "unique sorted literal _parse(<repo-relative path>) call arguments "
             "in the certificate AST"
         ),
-        "sources": sources,
-        "source_inventory_sha256": digest,
+        INVENTORY_KEY: sources,
+        "source_inventory_sha256": inventory_digest(sources),
         "derived_policy": {
             "profiles": {
                 profile: {
-                    "candidate_sources": sources,
-                    "source_inventory_sha256": digest,
-                    "source_count": len(sources),
+                    "inventory": INVENTORY_KEY,
+                    "exclude_sources": overrides.get(profile, []),
                 }
                 for profile in REQUIRED_PROFILES
             }
