@@ -19,6 +19,7 @@ from typing import Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
+from jax.extend.core import Var
 
 from _lcm.regime_building.collective import _weighted_sum
 from _lcm.solution.action_reduction import (
@@ -491,11 +492,17 @@ class _StreamingEV1ExpectedMax:
                 dtype=jnp.int32,
             ),
         )
-        values = _block_shape(evaluate_block=evaluate_block)[0]
-        accumulator = _initialize_ev1_reduction(
-            branch_value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype),
-            completed_value_template=jnp.zeros(values.shape[2:], dtype=values.dtype),
-            reduction=reduction,
+        block = _trace_block(evaluate_block=evaluate_block)
+        values = block.shapes[0]
+        accumulator = _typed_ev1_reductions(
+            accumulator=_initialize_ev1_reduction(
+                branch_value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype),
+                completed_value_template=jnp.zeros(
+                    values.shape[2:], dtype=values.dtype
+                ),
+                reduction=reduction,
+            ),
+            arrays=block.read_arrays,
         )
         accumulator = _scan_ev1_blocks(
             accumulator=accumulator,
@@ -548,12 +555,16 @@ class _StreamingCollectiveHardMax:
             stakeholders=self.stakeholders,
             weights=self.weights,
         )
-        stakeholder_values = _block_shape(evaluate_block=evaluate_block)[1]
+        block = _trace_block(evaluate_block=evaluate_block)
+        stakeholder_values = block.shapes[1]
         accumulator = _scan_collective_blocks(
-            accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-                stakeholder_template=jnp.zeros(
-                    stakeholder_values.shape[1:], dtype=stakeholder_values.dtype
-                )
+            accumulator=_typed_like(
+                accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
+                    stakeholder_template=jnp.zeros(
+                        stakeholder_values.shape[1:], dtype=stakeholder_values.dtype
+                    )
+                ),
+                arrays=block.read_arrays,
             ),
             evaluate_block=evaluate_block,
             n_blocks=n_blocks,
@@ -758,23 +769,69 @@ def _evaluate_one_action(
     return Q_and_F(**fixed_kwargs, **action_kwargs)
 
 
-def _block_shape(
-    *, evaluate_block: Callable[..., tuple[jax.Array, ...]]
-) -> tuple[jax.ShapeDtypeStruct, ...]:
-    """Return one block's output shapes and dtypes without staging the block.
+class _BlockTrace(NamedTuple):
+    """One block's output types and the outer arrays its outputs read."""
 
-    Seeds an empty accumulator, so every block is evaluated in the scan body
-    and `Q_and_F` appears once in the staged program.
+    shapes: tuple[jax.ShapeDtypeStruct, ...]
+    read_arrays: list[jax.Array]
+
+
+def _trace_block(
+    *, evaluate_block: Callable[..., tuple[jax.Array, ...]]
+) -> _BlockTrace:
+    """Trace one block without staging it into the surrounding program.
+
+    The empty accumulator is seeded from the shapes, so every block is
+    evaluated in the scan body and `Q_and_F` appears once in the staged
+    program. The read arrays are the surrounding program's values that reach
+    the block's outputs.
     """
-    return jax.eval_shape(partial(evaluate_block, block_index=jnp.int32(0)))
+    closed = jax.make_jaxpr(partial(evaluate_block, block_index=jnp.int32(0)))()
+    jaxpr = closed.jaxpr
+    live = {var for var in jaxpr.outvars if isinstance(var, Var)}
+    for eqn in reversed(jaxpr.eqns):
+        if eqn.effects or any(var in live for var in eqn.outvars):
+            live.update(var for var in eqn.invars if isinstance(var, Var))
+    return _BlockTrace(
+        shapes=tuple(
+            jax.ShapeDtypeStruct(aval.shape, aval.dtype) for aval in closed.out_avals
+        ),
+        read_arrays=[
+            const
+            for var, const in zip(jaxpr.constvars, closed.consts, strict=True)
+            if var in live and isinstance(const, jax.Array)
+        ],
+    )
 
 
 def _empty_reduction(*, evaluate_block: Callable[..., _Block]) -> HardMaxAccumulator:
     """Create the empty hard-max accumulator for the blocks `evaluate_block` makes."""
-    values = _block_shape(evaluate_block=evaluate_block)[0]
-    return HARD_MAX_REDUCTION.initialize(
-        value_template=jnp.zeros(values.shape[1:], dtype=values.dtype)
+    block = _trace_block(evaluate_block=evaluate_block)
+    values = block.shapes[0]
+    return _typed_like(
+        accumulator=HARD_MAX_REDUCTION.initialize(
+            value_template=jnp.zeros(values.shape[1:], dtype=values.dtype)
+        ),
+        arrays=block.read_arrays,
     )
+
+
+def _typed_like[Accumulator](
+    *, accumulator: Accumulator, arrays: list[jax.Array]
+) -> Accumulator:
+    """Give every leaf of `accumulator` the batching and varying type of `arrays`.
+
+    An empty accumulator is built from constants, while each block reduced into
+    it reads `arrays`. Under `vmap` or `shard_map` the scan carry would then
+    change type on its first step. Each leaf is selected through a predicate
+    that reads every array and is always false, which keeps its value and gives
+    it the arrays' type; the compiler folds the predicate and the selection
+    away.
+    """
+    never = jnp.zeros((), dtype=bool)
+    for array in arrays:
+        never = never & jnp.any(jnp.not_equal(array, array))
+    return jax.tree.map(lambda leaf: jnp.where(never, leaf, leaf), accumulator)
 
 
 def _start_reduction(*, block: _Block) -> HardMaxAccumulator:
@@ -909,10 +966,33 @@ def _finalize_ev1_branch_group_operand(
     *,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Close the open branch group of a ``lax.cond`` operand."""
-    return _finalize_open_ev1_branch_group(
-        accumulator=accumulator,
-        reduction=reduction,
+    """Close the open branch group of a ``lax.cond`` operand.
+
+    The reopened empty branch group is built from constants, so it takes the
+    operand's type to match the other branch, which returns the operand.
+    """
+    return _typed_ev1_reductions(
+        accumulator=_finalize_open_ev1_branch_group(
+            accumulator=accumulator,
+            reduction=reduction,
+        ),
+        arrays=jax.tree.leaves(accumulator.branch_group),
+    )
+
+
+def _typed_ev1_reductions(
+    *, accumulator: _EV1ActionAccumulator, arrays: list[jax.Array]
+) -> _EV1ActionAccumulator:
+    """Give both reductions of an EV1 accumulator the type of `arrays`.
+
+    The open group's id keeps its own type: it follows the block index alone.
+    """
+    return _EV1ActionAccumulator(
+        active_branch_group_id=accumulator.active_branch_group_id,
+        branch_group=_typed_like(accumulator=accumulator.branch_group, arrays=arrays),
+        completed_branch_groups=_typed_like(
+            accumulator=accumulator.completed_branch_groups, arrays=arrays
+        ),
     )
 
 

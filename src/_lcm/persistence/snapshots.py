@@ -46,9 +46,8 @@ def _bind_forward_refs(
     refs resolve at call time without depending on an ad-hoc assignment
     from outside the module.
     """
-    global Model, SimulationResult  # noqa: PLW0603
-    Model = model_cls  # ty: ignore[invalid-assignment]
-    SimulationResult = simulation_result_cls  # ty: ignore[invalid-assignment]
+    globals()["Model"] = model_cls
+    globals()["SimulationResult"] = simulation_result_cls
 
 
 def _save_solve_snapshot(
