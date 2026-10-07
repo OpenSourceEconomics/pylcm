@@ -42,7 +42,9 @@ from _lcm.regime_building.transition_support import (
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.regime_law import bind_regime_law
 from _lcm.solution.backward_induction import solve
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import (
+    validate_regime_law,  # ty: ignore[unresolved-import]
+)
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -353,7 +355,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     `test_fold_gate_guard.py`/`test_fold_guard_complete.py`), which correctly
     checks the TARGET side of the same declarations instead.
     """
-    validate_regime(
+    validate_regime_law(
         Regime(states={"wage_shock": _shock(fold=True)}),
         law=bind_regime_law(
             {
@@ -378,7 +380,7 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
     compose with folding it: the shock is integrated out, so nothing
     downstream may depend on which node was realized."""
     with pytest.raises(RegimeInitializationError, match="next-period transition"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={
                     "wage_shock": _shock(fold=True),
@@ -391,6 +393,42 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
                 functions={"utility": _utility},
             ),
             law=bind_regime_law(_next_regime),
+        )
+
+
+def _probability_reading_the_shock(wage_shock: FloatND) -> FloatND:
+    return jnp.where(wage_shock > 0.0, 1.0, 1.0)
+
+
+def test_fold_on_dated_regime_law_conditioning_shock_is_rejected():
+    """A regime law that reads the folded shock is refused once it is bound.
+
+    The law is an age schedule, the form a model binds from its edges; the
+    check reads the probability cell inside it.
+    """
+    regime = Regime(
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"fold=True on state\(s\) \['wage_shock'\] conflicts with a "
+        r"next-period transition",
+    ):
+        validate_regime_law(
+            regime,
+            law=bind_regime_law(
+                ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "terminal": StochasticTransition(
+                                func=_probability_reading_the_shock
+                            )
+                        }
+                    }
+                )
+            ),
         )
 
 

@@ -14,7 +14,9 @@ from _lcm.regime_building.transitions import (
     collect_state_transitions,
 )
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import (
+    validate_regime_law,  # ty: ignore[unresolved-import]
+)
 from lcm import (
     AgeRange,
     DeterministicTransition,
@@ -23,6 +25,7 @@ from lcm import (
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    Phased,
     Transition,
     categorical,
     fixed_transition,
@@ -107,6 +110,67 @@ def test_state_name_does_not_contain_separator():
         )
 
 
+def _aggregator(*, utility, CE, discount_factor):
+    return utility + discount_factor * CE
+
+
+def test_phased_aggregator_missing_a_phase_is_rejected_once_the_regime_has_a_law():
+    """A non-terminal regime needs a Koopmans aggregator in both phases.
+
+    Whether the regime is terminal comes from its law, so the regime itself
+    constructs and the check fires when the law is bound.
+    """
+    regime = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        koopmans_aggregator=Phased(solve=None, simulate=_aggregator),
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"`koopmans_aggregator` is `Phased\(\.\.\.\)` with `solve=None`",
+    ):
+        validate_regime_law(regime, law=bind_regime_law(lambda: 0))
+
+
+@pytest.mark.parametrize(
+    ("regime_kwargs", "match"),
+    [
+        (
+            {"functions": {"utility": utility, "next_helper": lambda: 1}},
+            r"must not start with 'next_'.*\['next_helper'\]",
+        ),
+        (
+            {
+                "functions": {
+                    "utility": utility,
+                    "helper": Phased(solve=lambda: 1, simulate=3),
+                },
+            },
+            r"functions\['helper'\] simulate variant must be a callable, got 3",
+        ),
+        (
+            {
+                "functions": {"utility": utility},
+                "states": {"wealth": WEALTH_GRID},
+                "state_transitions": {"wealth": fixed_transition("savings")},
+            },
+            r"`fixed_transition\('savings'\)` is assigned to state 'wealth'",
+        ),
+    ],
+    ids=[
+        "next-prefixed function",
+        "non-callable phase variant",
+        "mismatched fixed transition",
+    ],
+)
+def test_regime_local_declaration_errors_raise_at_construction(*, regime_kwargs, match):
+    """Errors that need no law are raised when the regime is constructed."""
+    with pytest.raises(RegimeInitializationError, match=match):
+        UserRegime(**regime_kwargs)
+
+
 def test_terminal_regime_creation():
     """A regime bound to no outgoing law is terminal and can have states and utility."""
     regime = UserRegime(
@@ -114,7 +178,7 @@ def test_terminal_regime_creation():
         states={"wealth": WEALTH_GRID},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
 
 
@@ -126,7 +190,7 @@ def test_terminal_regime_with_actions():
         actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
     assert "bequest_share" in regime.actions
 
@@ -140,7 +204,7 @@ def test_non_terminal_regime_has_transition():
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     law = bind_regime_law(next_wealth)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is False
 
 
@@ -151,7 +215,7 @@ def test_terminal_regime_can_be_created_without_states():
         states={},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
     assert regime.states == {}
 
@@ -291,7 +355,7 @@ def test_state_grid_with_fixed_transition_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "wealth" in regime.states
 
 
@@ -303,7 +367,7 @@ def test_state_grid_with_transition_callable_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "wealth" in regime.states
 
 
@@ -315,7 +379,7 @@ def test_action_grid_without_transition_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "consumption" in regime.actions
 
 
