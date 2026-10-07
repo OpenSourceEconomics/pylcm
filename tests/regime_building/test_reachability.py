@@ -589,6 +589,8 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
     state_law = source.state_transitions["wealth"]
     assert isinstance(transition, Phased)
     assert isinstance(state_law, Phased)
+    assert isinstance(transition.solve, Mapping)
+    assert isinstance(transition.simulate, Mapping)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}
     assert set(state_law.solve) == {"low"}
@@ -646,6 +648,8 @@ def test_shared_probability_cell_follows_each_phases_helper_dag() -> None:
     )
     transition = reduced.laws["source"].transition
     assert isinstance(transition, Phased)
+    assert isinstance(transition.solve, Mapping)
+    assert isinstance(transition.simulate, Mapping)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}
     assert reduced.consumed_param_keys == frozenset({"probability"})

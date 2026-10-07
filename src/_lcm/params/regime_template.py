@@ -55,7 +55,7 @@ from lcm.transition import (
     StochasticTransition,
     Transition,
 )
-from lcm.typing import UserFunction
+from lcm.typing import ParameterName, ReferenceName, UserFunction
 
 
 def create_regime_params_template(
@@ -256,7 +256,7 @@ def create_regime_params_template(
 class EdgeVocabulary:
     """The names a regime gives the edge callables that read it."""
 
-    variables: frozenset[str]
+    variables: frozenset[ReferenceName]
     """Names a law of this source reads that the engine binds: its states,
     actions and functions, `period`, `age`, `CE` and a collective regime's
     aggregator inputs."""
@@ -341,7 +341,7 @@ def create_edge_params_template(
 
     """
     variables = set(vocabulary_by_regime[source].variables)
-    params_by_path: list[tuple[tuple[str, ...], dict[str, str]]] = []
+    params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
             non_params = (
@@ -375,6 +375,7 @@ def create_edge_params_template(
     _fail_if_coarse_law_params_meet_per_target_cells(
         source=source, params_by_path=params_by_path
     )
+    # A mutable build buffer of nested slots; freezing gives it its template type.
     template: dict[str, Any] = {}
     for path, params in params_by_path:
         for param_name, annotation in params.items():
@@ -387,7 +388,7 @@ def create_edge_params_template(
 def _fail_if_coarse_law_params_meet_per_target_cells(
     *,
     source: RegimeName,
-    params_by_path: list[tuple[tuple[str, ...], dict[str, str]]],
+    params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]],
 ) -> None:
     """Reject a source whose laws read parameters both over all targets and per target.
 
@@ -432,7 +433,10 @@ def iter_transition_callables(
 
 
 def iter_edge_callables(
-    *, law: object, path: tuple[str, ...]
+    # Any value: the final branch is what refuses a value that is no law form.
+    *,
+    law: object,
+    path: tuple[str, ...],
 ) -> Iterator[tuple[tuple[str, ...], UserFunction, Gate | None]]:
     """Yield every callable a declared law holds, at its declaration path.
 
@@ -527,7 +531,7 @@ def _edge_slot_clash(*, path: tuple[str, ...]) -> str:
     )
 
 
-def _wired_names(user_regime: UserRegime) -> set[str]:
+def _wired_names(user_regime: UserRegime) -> set[ReferenceName]:
     """Return the names a regime's own callables read that the engine binds.
 
     Args:
@@ -758,7 +762,9 @@ def _discovered_params(
 def _fail_if_a_joint_node_is_read_outside_its_transition(
     user_regime: UserRegime,
     *,
-    template_functions: Mapping[str, object],
+    template_functions: Mapping[
+        FunctionName | TransitionFunctionName, UserFunction | Phased
+    ],
 ) -> None:
     """Reject transition-local nodes outside target-output evaluation.
 
@@ -943,7 +949,11 @@ def _fail_if_a_joint_node_is_read(
 
 # keyword-only-exempt: primary-argument=user_regime
 def _fail_if_a_next_name_is_read_outside_a_transition(
-    user_regime: UserRegime, *, template_functions: Mapping[str, object]
+    user_regime: UserRegime,
+    *,
+    template_functions: Mapping[
+        FunctionName | TransitionFunctionName, UserFunction | Phased
+    ],
 ) -> None:
     """Check that only a state transition, or a function feeding one, reads `next_`.
 
@@ -1479,9 +1489,9 @@ def _fallbacks_by_phase(
 
 def _gated_edge_wired_names(
     *,
-    gate_reference_names: frozenset[str],
+    gate_reference_names: frozenset[ReferenceName],
     target_state_names: frozenset[StateName],
-) -> set[str]:
+) -> set[ReferenceName]:
     """Return the names ONE edge's callables read that the engine binds itself.
 
     A gate and a projection are evaluated on that edge's TARGET regime's grid, so

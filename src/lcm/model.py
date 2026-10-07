@@ -257,7 +257,6 @@ from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
-from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -695,9 +694,7 @@ class Model:
         laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
-        self._declared_transitions = collect_declared_transitions(
-            cast("Mapping[RegimeName, object] | Phased", edges)
-        )
+        self._declared_transitions = collect_declared_transitions(self._edges)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (

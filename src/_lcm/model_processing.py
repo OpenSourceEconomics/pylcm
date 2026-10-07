@@ -818,7 +818,8 @@ def _remove_fixed_params_from_template(
 
     """
 
-    trimmed: dict[str, MappingProxyType[str, object]] = {
+    # Template subtrees: `_trim_fixed_params` copies nodes of any depth.
+    trimmed: dict[RegimeName, MappingProxyType[str, object]] = {
         regime_name: MappingProxyType(
             _trim_fixed_params(
                 branch=regime_template,

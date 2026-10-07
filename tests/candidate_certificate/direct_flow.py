@@ -339,11 +339,11 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # still reject altered transport after byte resealing and require semantic review.
 _SOURCE_SEALS = {
     ACTION_GRID_SOURCE: "c42cee28751589e409fe2815c6ffadc0d51db69065798a8c2a6cb1d0bcb3867c",
-    SUPPORT_TRANSITION_CHECKS_SOURCE: "7f81579937e5ebc6598fecc33bba897874ce328998b7db32b6f39cdaea53806f",
+    SUPPORT_TRANSITION_CHECKS_SOURCE: "e5f55f1c9b8ea8bb619bc4137e36f0af32aa1c5e3825c091e567381869ef715b",
     SUPPORT_DIAGNOSTICS_SOURCE: "10b757375053135f314208b5ffe8a079d99c2926bf0446d1d7a12d448ba565af",
     SUPPORT_PRECONDITIONS_SOURCE: "dc04c759d9048082af18ee6de5a79f71e8de7b27673e724520d33261bc824467",
     SUPPORT_AUTHORITY_SOURCE: "92b2351832c333457699b3f53e1e86845504f78a59e447efab07c61fed6e5e28",
-    SUPPORT_FINGERPRINT_SOURCE: "1114c56ece042772de88a7b4dc058331371c666f2b8486d12dc34b59636ef943",
+    SUPPORT_FINGERPRINT_SOURCE: "0736975de4e3d83dd4e1c70f7fd8623952dfbca7ab6d9249865541fb6c2b5208",
     UNIFORM_PROCESS_GRID_SOURCE: "03d7ac9a101a1c39c19b44df40d7bbc59203d361ca313b8b8812b1db392dcf96",
     PROCESS_GRID_RESOLUTION_SOURCE: "c9eb81f9442d7628793d6ad905b2e96e4655e9eb48bf3de32f636541b985269f",
     NATIVE_VALUES_SOURCE: "37627a347ff56b72d3a1487b428481b9952959cfd753e4b412776296a7516d6f",
@@ -405,7 +405,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
-    PROCESSING_SOURCE: "356a362f277ced5d60af738eb8cf9aa5aab583f0ccb7b9612aad0912b7929e50",
+    PROCESSING_SOURCE: "c167333e7e8671b0f89f83a7e2acc0586edfd915331e27fefdf566e0d5eba035",
     GRID_SEARCH_SOURCE: "bc9822bf8d3421edc26186fa94977d2476a92629d41586de4988dc39e045611c",
     CORE_PROGRAM_SOURCE: "c96f689b764ebb28e6dd346fadef165959001dcab95ec298c576ba188926cf54",
     OUTPUT_LAYOUT_SOURCE: "69c971f8ce3555837c9a41e3ef756aca2399aef301e1ea529ddbc792eff914e9",
@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "e4817cfc29f7125b9a0ddfb50a5228f293880f86de63d4b3db9a27a64a798282",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "2c5754aab1f6445b981878d2385d3f9dbff7da75fd245e3545bb351b35c46075",
+    MODEL_SOURCE: "a3b5b5cea50dabb328f12330923887df92ee93ad42d5d9016e4c844cfb70e94c",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "6f9d7c855ff24d6e11d48cacdc440222a74c54abd8ef9f304083876d802c477e",
     PERIOD_REPLAY_SOURCE: "0d90c05fade8282b8a38021e84efe714b33d9c15d9895c0eefc035ae53046bdb",
@@ -449,12 +449,12 @@ _SOURCE_SEALS = {
     PROCESS_IID_SOURCE: "2023a7010fc720877c176bffa70f846e8eae260c649af8bb994c484a52b4e8c1",
     PROCESS_AR1_SOURCE: "ea9235cfde4494f962f015fcbf443328b1802f6b97e9afab807c1bf160f59171",
     VARIABLES_SOURCE: "b22e58d7bbf84bb6235a6296c3a4f90f6d216de1f087bc6f31547b3892ee8cb6",
-    PARAMS_REGIME_TEMPLATE_SOURCE: "626ee1150b2a845df1f9842a184e0aac1a2d5f5c00f8f219c263c24a660a49ab",
-    PARAMS_PROCESSING_SOURCE: "9156f269c1e3e884d3d01ed006b28ba896d95c98c5692380d11ed51c39488ade",
+    PARAMS_REGIME_TEMPLATE_SOURCE: "6c42aca77a219c321e9af6988fa80e421c270be38669571d708aba9d8566c76f",
+    PARAMS_PROCESSING_SOURCE: "365fcc4bf215b1c5d69aa5b77f04fd7ae6f80add2974f8235374da4f39f634db",
     DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
-    PANDAS_UTILS_SOURCE: "966b368ea1e691097f79a2f6d995e89aab24bacff5e74b3163081ed188d3a535",
-    MODEL_PROCESSING_SOURCE: "6fcabc7f5ec1a8b5138640f5cdbf17d3dd9fd0200ac470f1b928863bd65a75d3",
+    PANDAS_UTILS_SOURCE: "56a4e3f78305412342e0e2e63a091c7e0c135edd01c1cd6fec91c939b13b2a0d",
+    MODEL_PROCESSING_SOURCE: "8d26adbb0c957134c3af0b94d97e1909ca3e21a9c9606beed52e3b1b8a19b3f2",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -479,7 +479,7 @@ EXPECTED_UNIFORM_PROCESS_MUTATION_NAMES_SHA256 = (
 # that no family selects is a verifier error rather than a silent no-op.
 _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     PANDAS_UTILS_SOURCE: (
-        "43a1dfd133e4cdfc32e78a6d74d3f3d430e4d1d1a411ab256ab983fe08d7422f",
+        "4fe65dd8956e074519e020cbb2c3f896cb51ac45e0ac54cd2417a58413c636f3",
         {
             "initial_conditions_from_dataframe": "ccdc7238f3c2d036ca14b26ac6b2196fdfc4acd23cbf4978cc791749dd3fa394",
             "_role_codes_from_labels": "7427bf2fa16abc7494e981ec61e9b4c5fdd71328cd880f707736cb7c443ea3bd",
@@ -500,9 +500,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PARAMS_PROCESSING_SOURCE: (
-        "5f89f0e1bd232c245bc806bfc487035e48a70dde5bfc040ff650571967c7b6f8",
+        "7e3bbeb30fd79ba000f10ab7319cde4c6d3d2cddec4999afae2de123c06b5f21",
         {
-            "cast_params_to_canonical_dtypes": "a7af984f9d79aec7bb825bda4dfdefcd05bd6ee80549650afb243350729dc5a0",
+            "cast_params_to_canonical_dtypes": "6cc7c2c9fb562b4339009d82c2ba9cc03c88c66becab0fa9c718acdb053af204",
             "_cast_shared": "8d132f4bfc4c96b597e62f6bd48c2326624bb5ea88dc13b0fb62e3b8b2b51e80",
             "_cast_leaves_to_canonical_dtype": "0d326605061f3956372a589edc5244a2297ed1966a41a5f5a80a6ba1eefa04e1",
         },
@@ -1002,12 +1002,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "8fe60b8d97fb16d4ad1df04238a0957973da6a9fada85719bd18decd1d7b5397",
+        "9f31933cd83f15dc97ac4834ccca9287a5f34e7ee6c8ed580b8feeaf0d33a2e6",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "3fd809ec895ccc9c7bcdc723625e7ad606cad017f8c7066399905072463db793",
+            "Model.__init__": "f5c844da5f2c3510b245e3ec1f6c4d99d724bb66701f792fcf500a74c41b984d",
             "Model.simulate": "6580c40839e8a95af5941f206811213dd51a91c094f4d9c3db76b6f419d1d04b",
             "Model._open_entry_allocations": "a1290ef470627e4d6179bc1c11924964cd812a59d2056a8335c1c53f21ef4c32",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",
@@ -1521,7 +1521,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_FINGERPRINT_SOURCE: (
-        "d7f56d948c53ff2d43f53d7d2cea6105eb1f8aeb5676192ac812c274995cd8f1",
+        "ef24f72e11a61afd9fd21a86e064fb0769d081094437aa56717ebd699947625a",
         {
             "fingerprint_solution_support": "db6206fa4209d1d6892566377c6c62c6bed1aa28f23ce49d85fb3455f978d19f",
             "fingerprint_model": "c878bed2a01bf199e0389a6229b18ddcaaf75d29cdd272eff3604f8aa0df3cc9",
@@ -1542,7 +1542,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
-        "46613edf937cb7cbc267ae98134f41196f9868bb17b66a0501b743ec405a7345",
+        "6c7695a3ab6655310ddeea23aff34c3af59bf196bf32e96724e5efdd11649e4b",
         {
             "_ValidationSummary.state_action_space": "130e9abc335a298a37205deb98e1a3583e7632fd371ad0feae8413d91732cc4f",
             "validate_transitions": "b4f8bbf09853deb22924e5ab2e773713bd6e743237fa74bf3695f1f0681d5871",
@@ -1565,7 +1565,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_validate_joint_probabilities": "3b124fe5d4fba178edd52773f48eb1361a1de5b437281bfb4c9434b001775442",
             "_evaluate_joint_weights": "8f772f549ba1c742f81a32792b89e61f4bdd92f75ef9300053681e1301664e8f",
             "_joint_weight_law": "2e388ad1cf1799cf701f0ce29ad53eded7130cf14896b2b6feac46605adb3d5b",
-            "_validate_state_transition_single": "8a2e7ef09710bd705975593cf1d1e569d6cfd69573230e4528d88ebc6824ed88",
+            "_validate_state_transition_single": "d67c63ea4b32d94a59857fc5799188e4cad325be285cd5c64caa3c00dd165dcd",
             "_check_and_release_state_probability": "bbe5c53744d66283f4268a996341767fb18455c29017ca5bf6476e1f6ae1df6a",
             "_evaluate_state_probability_law": "174978de10330b5e88f558dcbde10a8d3a614fb2529a7f24a70bf8e704319804",
             "_evaluate_admitted_transition_producer": "47e8bdf3105132b7311b2128556ed8705d612679faef4cc3661c3d44b030e031",

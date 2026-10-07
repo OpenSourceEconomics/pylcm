@@ -37,7 +37,7 @@ from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition, Transition
-from lcm.typing import Float1D, FloatND, Int1D
+from lcm.typing import Float1D, FloatND, Int1D, UserFunction
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
@@ -327,6 +327,7 @@ def convert_series_in_params(
         arrays.
 
     """
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
     result: dict[RegimeName, Mapping[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
         if regime_name == EDGES:
@@ -416,6 +417,7 @@ def convert_series_in_params(
 def _convert_edge_params(
     *,
     source: RegimeName,
+    # User leaves, keyed by slot path; the values are heterogeneous.
     leaves: Mapping[str, object],
     declared_transitions: tuple[Transition, ...],
     ages: AgeGrid,
@@ -445,10 +447,11 @@ def _convert_edge_params(
         The slots with every Series replaced by its array.
 
     """
-    readers: dict[tuple[str, ...], list[tuple[Callable[..., Any], bool]]] = {}
+    readers: dict[tuple[str, ...], list[tuple[UserFunction, bool]]] = {}
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
             readers.setdefault(path, []).append((func, gate is not None))
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
     converted: dict[str, object] = {}
     for key, value in leaves.items():
         if not _value_contains_series(value):

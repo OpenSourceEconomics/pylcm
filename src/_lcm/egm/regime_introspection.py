@@ -29,7 +29,7 @@ from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
-from lcm.typing import ScalarFloat, UserFunction
+from lcm.typing import ScalarFloat, StateOrActionName, UserFunction
 
 
 def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
@@ -142,7 +142,7 @@ def _get_child_discrete_actions(
 
 def _get_child_resources(
     *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
-) -> tuple[Callable[..., ScalarFloat], frozenset[str]]:
+) -> tuple[Callable[..., ScalarFloat], frozenset[StateOrActionName]]:
     """Build the closed-over resources map of one carry target and its arguments.
 
     For a DC-EGM or NEGM target the map is its (inner) resources function

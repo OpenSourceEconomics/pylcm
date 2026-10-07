@@ -2578,6 +2578,7 @@ def edge_may_fold_at_period(
 def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
+    # `object` leaves: the claw would otherwise check every leaf on every call.
     flat_params: Mapping[str, object],
 ) -> MappingProxyType[RegimeName, Mapping[str, _ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.

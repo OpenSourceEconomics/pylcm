@@ -15,7 +15,11 @@ from typing import cast
 from beartype.door import is_bearable
 
 from _lcm.gated_edge import GatedEdge
-from _lcm.regime_building.schedules import declaration_view, uses_declaration_vocabulary
+from _lcm.regime_building.schedules import (
+    RegimeTransitionLaw,
+    declaration_view,
+    uses_declaration_vocabulary,
+)
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
@@ -46,7 +50,7 @@ type DecomposedTransition = (
 class RegimeLaw:
     """The law that moves a source regime's subjects to their next regime."""
 
-    transition: object
+    transition: RegimeTransitionLaw
     """The bound law, `None` for a terminal regime (no outgoing edges).
 
     Otherwise one of:
@@ -82,7 +86,7 @@ class RegimeLaw:
         period-independent `declaration_view`; every other law is returned as
         bound. The gates are not part of it: they are `gated_edges`.
         """
-        return cast("DecomposedTransition", _engine_view(self.transition))
+        return _engine_view(self.transition)
 
 
 type RegimeLaws = Mapping[RegimeName, RegimeLaw]
@@ -101,6 +105,7 @@ type RegimeLawDeclaration = (
 
 # keyword-only-exempt: primary-argument=transition
 def bind_regime_law(
+    # Any value: the declaration check below is what refuses a non-law.
     transition: object,
     *,
     gated_edges: Mapping[RegimeName, GatedEdge] = MappingProxyType({}),
@@ -127,10 +132,11 @@ def bind_regime_law(
             "`StochasticTransition`, a per-target mapping of probabilities, or a "
             f"`ByAge` or `Phased` of these; got {transition!r}."
         )
-    fail_if_phased_wraps_a_schedule(transition)
-    named = _named_targets(transition)
+    law = cast("RegimeTransitionLaw", transition)
+    fail_if_phased_wraps_a_schedule(law)
+    named = _named_targets(law)
     return RegimeLaw(
-        transition=transition,
+        transition=law,
         gated_edges=ensure_containers_are_immutable(
             {
                 target: edge
@@ -141,7 +147,7 @@ def bind_regime_law(
     )
 
 
-def _named_targets(transition: object) -> frozenset[RegimeName] | None:
+def _named_targets(transition: RegimeTransitionLaw) -> frozenset[RegimeName] | None:
     """The targets a law can reach in any case or phase.
 
     `None` for a law over all targets that is not yet bound to the graph's
@@ -153,7 +159,9 @@ def _named_targets(transition: object) -> frozenset[RegimeName] | None:
             if isinstance(transition, ByAge)
             else (transition.solve, transition.simulate)
         )
-        named = tuple(_named_targets(case) for case in cases)
+        named = tuple(
+            _named_targets(cast("RegimeTransitionLaw", case)) for case in cases
+        )
         if any(case_named is None for case_named in named):
             return None
         return frozenset().union(*cast("tuple[frozenset[RegimeName], ...]", named))
@@ -168,8 +176,8 @@ def _named_targets(transition: object) -> frozenset[RegimeName] | None:
     return frozenset(transition) if isinstance(transition, Mapping) else None
 
 
-def _engine_view(transition: object) -> object:
+def _engine_view(transition: RegimeTransitionLaw) -> DecomposedTransition:
     """Read a declaration-vocabulary law through its period-independent view."""
     if uses_declaration_vocabulary(transition):
-        return declaration_view(transition)
-    return transition
+        return cast("DecomposedTransition", declaration_view(transition))
+    return cast("DecomposedTransition", transition)
