@@ -4,6 +4,7 @@ Each case runs against a throwaway copy of the certified sources and the
 verifier, so a run that rewrites a pin cannot touch the checkout.
 """
 
+import ast
 import importlib.util
 import shutil
 from pathlib import Path
@@ -41,6 +42,9 @@ check_seals = _load_by_path(
     name="_check_seals_under_test",
     path=_REPO_ROOT / "tests/candidate_certificate/check_seals.py",
 )
+direct_flow = _load_by_path(
+    name="_direct_flow_under_test", path=_REPO_ROOT / _DIRECT_FLOW
+)
 
 
 @pytest.fixture
@@ -59,38 +63,109 @@ def certificate_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _repeated_pin(*, repo_root: Path) -> Any:
-    """Return a pin whose digest literal stands more than once in the file."""
-    counts: dict[str, int] = {}
-    pins = repin_corridors.collect_pins(repo_root=repo_root)
-    for pin in pins:
-        counts[pin.pinned] = counts.get(pin.pinned, 0) + 1
-    for pin in pins:
-        if counts[pin.pinned] > 1:
-            return pin
-    raise AssertionError("no digest literal is written more than once")
+def _first_callable_pin(*, repo_root: Path) -> Any:
+    """Return the first callable pin in the certificate's pin store."""
+    return next(
+        pin
+        for pin in repin_corridors.collect_pins(repo_root=repo_root)
+        if pin.kind == "callable"
+    )
 
 
 def _other_digest(digest: str) -> str:
     return "b" * 64 if digest != "b" * 64 else "c" * 64
 
 
-def test_a_name_pinned_to_two_different_digests_is_refused(
-    certificate_root: Path,
-) -> None:
+def test_each_corridor_pin_stands_once_in_the_certificate() -> None:
+    """No source, kind and name is pinned at two places in `direct_flow.py`."""
+    pins = repin_corridors.collect_pins(repo_root=_REPO_ROOT)
+
+    assert len(pins) == len({(pin.source, pin.kind, pin.name) for pin in pins})
+
+
+def test_every_stored_pin_is_selected_by_a_certificate_family() -> None:
+    """A pin no family selects would be checked by nothing, so none exists."""
+    assert direct_flow._unselected_pins() == ()
+
+
+def test_a_family_selection_returns_the_stored_digests() -> None:
+    """Selecting one callable yields the stored module surface and callable digest."""
+    source, (surface, callables) = next(iter(direct_flow._CORRIDOR_PINS.items()))
+    name, digest = next(iter(callables.items()))
+
+    assert direct_flow._contracts({source: (name,)}) == {
+        source: (surface, {name: digest})
+    }
+
+
+def test_a_family_selecting_an_unpinned_callable_is_refused() -> None:
+    """A selection naming a callable the store does not pin raises, naming it."""
+    source = next(iter(direct_flow._CORRIDOR_PINS))
+
+    with pytest.raises(ValueError, match="no_such_callable"):
+        direct_flow._callable_pins(source=source, names=("no_such_callable",))
+
+
+def test_a_name_pinned_twice_in_the_store_is_refused(certificate_root: Path) -> None:
     """One name denoting two digests is re-pinned by hand, never by this tool."""
-    pin = _repeated_pin(repo_root=certificate_root)
+    pin = _first_callable_pin(repo_root=certificate_root)
     path = certificate_root / _DIRECT_FLOW
-    text = path.read_text(encoding="utf-8")
-    path.write_text(
-        text.replace(pin.pinned, _other_digest(pin.pinned), 1), encoding="utf-8"
-    )
+    lines = path.read_text(encoding="utf-8").split("\n")
+    duplicate = lines[pin.line - 1].replace(pin.pinned, _other_digest(pin.pinned))
+    lines.insert(pin.line, duplicate)
+    path.write_text("\n".join(lines), encoding="utf-8")
 
     outcome = repin_corridors.evaluate(
         repo_root=certificate_root, changed_sources=frozenset({pin.source})
     )
 
     assert any(pin.name in message for message in outcome.ambiguous)
+
+
+def test_a_digest_shared_by_two_sources_is_rewritten_for_the_named_one_only(
+    certificate_root: Path,
+) -> None:
+    """Re-pinning one source leaves an identical digest owned by another in place.
+
+    Two certified sources can hold callables with identical bodies, so their
+    digests coincide. Editing one of them and naming it re-pins that entry; the
+    other source's entry still matches its own, unchanged tree.
+    """
+    pins = repin_corridors.collect_pins(repo_root=certificate_root)
+    by_digest: dict[str, list[Any]] = {}
+    for pin in pins:
+        by_digest.setdefault(pin.pinned, []).append(pin)
+    edited = next(
+        group[0]
+        for group in by_digest.values()
+        if len({pin.source for pin in group}) > 1 and "." not in group[0].name
+    )
+    source_path = certificate_root / edited.source
+    source_lines = source_path.read_text(encoding="utf-8").split("\n")
+    function = next(
+        node
+        for node in ast.parse("\n".join(source_lines)).body
+        if isinstance(node, ast.FunctionDef) and node.name == edited.name
+    )
+    indent = " " * function.body[-1].col_offset
+    source_lines.insert(function.end_lineno or 0, f"{indent}pass")
+    source_path.write_text("\n".join(source_lines), encoding="utf-8")
+
+    repin_corridors.main(
+        [
+            "--repo-root",
+            str(certificate_root),
+            "--changed-source",
+            edited.source,
+        ]
+    )
+
+    assert (
+        repin_corridors.evaluate(
+            repo_root=certificate_root, changed_sources=frozenset()
+        ).foreign
+        == ()
+    )
 
 
 def test_drift_in_a_source_that_was_not_named_is_reported_as_foreign(
@@ -217,3 +292,19 @@ def test_a_seal_name_containing_a_digit_is_resealed_by_fix(
     check_seals.fix(repo_root=certificate_root)
 
     assert check_seals.check(repo_root=certificate_root) == ([], [])
+
+
+def test_fix_rewrites_seal_lines_inside_the_seal_map_only(
+    certificate_root: Path,
+) -> None:
+    """A `<NAME>_SOURCE: "<digest>",` line outside `_SOURCE_SEALS` is left alone."""
+    decoy = f'    LOGSUM_SOURCE: "{"0" * 64}",'
+    path = certificate_root / _DIRECT_FLOW
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n_DECOY = {{\n{decoy}\n}}\n",
+        encoding="utf-8",
+    )
+
+    check_seals.fix(repo_root=certificate_root)
+
+    assert decoy in path.read_text(encoding="utf-8").split("\n")

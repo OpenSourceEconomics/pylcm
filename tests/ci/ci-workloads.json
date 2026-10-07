@@ -70,6 +70,7 @@
  ],
  "general_shard_universe": [
   "tests/candidate_certificate/test_check_mutation_anchors.py",
+  "tests/candidate_certificate/test_generate_sources.py",
   "tests/candidate_certificate/test_repin_corridors.py",
   "tests/ci/test_benchmark_workflow_contract.py",
   "tests/ci/test_ci_workloads_guardrails.py",
@@ -1070,6 +1071,7 @@
    "junit": "junit-cpu-fp64-Linux-general-3.xml",
    "files": [
     "tests/candidate_certificate/test_check_mutation_anchors.py",
+    "tests/candidate_certificate/test_generate_sources.py",
     "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_ci_workloads_manifest.py",
     "tests/ci/test_mahler_execution.py",
@@ -2133,6 +2135,7 @@
    "junit": "junit-cpu-fp64-Windows-general-4.xml",
    "files": [
     "tests/candidate_certificate/test_check_mutation_anchors.py",
+    "tests/candidate_certificate/test_generate_sources.py",
     "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_policy_launcher.py",
     "tests/ci/test_receipt_plugin.py",
@@ -2578,6 +2581,7 @@
    "junit": "junit-cpu-fp32-Linux-general-2.xml",
    "files": [
     "tests/candidate_certificate/test_check_mutation_anchors.py",
+    "tests/candidate_certificate/test_generate_sources.py",
     "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_benchmark_workflow_contract.py",
     "tests/ci/test_ci_workloads_manifest.py",
@@ -5773,6 +5777,7 @@
    "junit": "junit-cpu-fp64-macOS-general-3.xml",
    "files": [
     "tests/candidate_certificate/test_check_mutation_anchors.py",
+    "tests/candidate_certificate/test_generate_sources.py",
     "tests/candidate_certificate/test_repin_corridors.py",
     "tests/ci/test_benchmark_workflow_contract.py",
     "tests/ci/test_keyword_only_convention.py",
@@ -14707,6 +14712,7 @@
  },
  "unweighted_files": [
   "tests/candidate_certificate/test_check_mutation_anchors.py",
+  "tests/candidate_certificate/test_generate_sources.py",
   "tests/candidate_certificate/test_repin_corridors.py",
   "tests/ci/test_ci_workloads_guardrails.py",
   "tests/ci/test_ci_workloads_manifest.py",
