@@ -207,3 +207,38 @@ def test_summary_grid_groups_by_title(tmp_path: Path) -> None:
     text = summarygrid_js.read_text(encoding="utf-8")
     assert "var group = bm.pretty_name ? bm.pretty_name.split(" in text
     assert "var display_name = bm.pretty_name ? bm.pretty_name.split(" in text
+
+
+def test_retired_aca_gpu_memory_profiles_leave_the_published_history(
+    tmp_path: Path,
+) -> None:
+    """Stored ACA GPU-memory results are dropped; ACA debug-log timing stays."""
+    machine_dir = tmp_path / "results" / "gpu-01"
+    machine_dir.mkdir(parents=True)
+    (machine_dir / "machine.json").write_text(json.dumps(_MACHINE), encoding="utf-8")
+    debug_log = "bench_aca_baseline.AcaBaselineDebugLog.track_execution_time"
+    path = _write_result(
+        machine_dir=machine_dir,
+        commit="aaaaaaaa",
+        ram="134807396352",
+        results={
+            debug_log: [[5.0], [], "2", 1, 0.1],
+            (
+                "bench_aca_baseline.AcaBaselineGpuPeakMem."
+                "track_peak_gpu_mem_automatic_solve_simulate"
+            ): [[1e9], [], "2", 1, 0.1],
+            (
+                "bench_aca_baseline.AcaBaselineDebugLogGpuPeakMem."
+                "track_peak_gpu_mem_automatic_solve_simulate"
+            ): [[2e9], [], "3", 1, 0.1],
+            (
+                "bench_aca_baseline._AcaBaselineDebugLogGpuPeakMem."
+                "track_peak_gpu_mem_automatic_solve_simulate"
+            ): [[2e9], [], "3", 1, 0.1],
+        },
+    )
+
+    publish._normalise_results(tmp_path / "results")
+
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert list(stored["results"]) == [debug_log]
