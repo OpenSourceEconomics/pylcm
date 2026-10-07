@@ -1902,6 +1902,7 @@ class Model:
                         "only canonical eager and admitted native values are supported."
                         f"{self._execution.device_memory_cap_note()}"
                     )
+            self._fail_if_another_instances_result(solution=solution)
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -3387,6 +3388,37 @@ class Model:
             return None
         return cast("RetainedComponentValues | None", engine_view.component_values)
 
+    def _fail_if_another_instances_result(
+        self, *, solution: _SolutionResultBoundary | None
+    ) -> None:
+        """Refuse an in-memory result another instance built, before copying it.
+
+        Such a result is never simulated, so a budgeted simulation refuses it
+        before it copies or uploads any of its values. A malformed result
+        passes through to the full structural checks.
+
+        Raises:
+            InvalidSimulationInputError: The result is held in memory and was
+                built by another model instance.
+
+        """
+        if type(solution) is not SolutionResult:
+            return
+        metadata = solution.metadata
+        if (
+            type(metadata) is SolutionMetadata
+            and metadata.source is SolutionSource.IN_MEMORY
+            and not _same_exactly_typed(
+                actual=metadata.model_instance_id,
+                expected=self._solution_model_instance_id,
+            )
+        ):
+            msg = (
+                "SolutionResult metadata is incompatible with this model: "
+                "model_instance_id does not match this Model."
+            )
+            raise InvalidSimulationInputError(msg)
+
     def _fail_if_component_simulation_is_unsupported(
         self, *, log_path: str | Path | None
     ) -> None:
@@ -3535,6 +3567,10 @@ class Model:
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
         V_arrs, sim_policies, _, replay_readers = resolved
+        if self._owned_component_values(solution=solution) is not None:
+            # A block-major result keeps its values on the host; its value
+            # store assembles each value the lookup reads, when it reads it.
+            V_arrs = solution.values  # noqa: PD011
         if (
             sim_policies.get(period, {}).get(regime_name) is not None
             or replay_readers.get(period, {}).get(regime_name) is not None
