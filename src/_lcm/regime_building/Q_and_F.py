@@ -3532,6 +3532,8 @@ class _ExpectationOverSliceDraws:
     """The slice marginal-weight argument names, one per slice draw."""
     coordinate_weight_names: tuple[str, ...]
     """The coordinate marginal-weight argument names, in node-axis order."""
+    block_size: int | None = None
+    """Slice nodes contracted per loop step; `None` applies `_slice_block_size`."""
     interpolator_args: frozenset[str] = field(init=False)
     """Every argument the interpolator reads."""
 
@@ -3615,6 +3617,12 @@ class _ExpectationOverSliceDraws:
         return jnp.clip(
             jnp.sum(numerator) / jnp.sum(mass), jnp.min(lowest), jnp.max(highest)
         )
+
+
+def _slice_block_size(*, n_slice_nodes: int) -> int:
+    """Return how many slice nodes one loop step contracts."""
+    del n_slice_nodes
+    return 1
 
 
 def _joint_weights_at_slice_node(
