@@ -434,11 +434,12 @@ def _fail_if_supplied_targets_disagree(
 ) -> None:
     """Refuse supplied `Transition.targets` that differ from the targets its law names.
 
-    The law is read only where its edge can fire: out of an age at which the
-    source is active, into a target that is active at the next age. A regime is
-    active at the ages its edges leave in either phase, and at every age if no
-    edge leaves it. A gate's route fallbacks join the targets at the ages its
-    gated target is reached.
+    Both are read only where an edge can fire: out of an age at which the source
+    is active, into a target that is active at the next age. A regime is active
+    at the ages its edges leave in either phase, and at every age if no edge
+    leaves it. A gate's route fallbacks join the targets at the ages its gated
+    target is reached. A supplied edge that cannot fire is left to the
+    structural check, which names the missing problem.
     """
     active = _active_ages(resolved=resolved, regimes=regimes, ages=ages)
     next_age = dict(zip(ages.exact_values[:-1], ages.exact_values[1:], strict=True))
@@ -449,24 +450,29 @@ def _fail_if_supplied_targets_disagree(
         for source, transition in phase.items():
             if not isinstance(transition, Transition) or transition.targets is None:
                 continue
+            entry_ages = {
+                target: frozenset(
+                    age
+                    for age in active[source]
+                    if age in next_age and next_age[age] in target_ages
+                )
+                for target, target_ages in active.items()
+            }
             derived = _derived_target_ages(
                 transition=transition,
                 ages=ages,
                 fallback_phases=(side,) if phased else _PHASE_SIDES,
-                entry_ages={
-                    target: frozenset(
-                        age
-                        for age in active[source]
-                        if age in next_age and next_age[age] in target_ages
-                    )
-                    for target, target_ages in active.items()
-                },
+                entry_ages=entry_ages,
             )
             if derived is None:
                 continue
-            supplied = _supplied_target_ages(
-                source=source, transition=transition, ages=ages
-            )
+            supplied = {
+                target: entered
+                for target, selected in _supplied_target_ages(
+                    source=source, transition=transition, ages=ages
+                ).items()
+                if (entered := selected & entry_ages.get(target, selected))
+            }
             if supplied != derived:
                 raise ModelInitializationError(
                     f"`Transition.targets` of '{source}' disagree with the targets "
@@ -532,7 +538,7 @@ def _derived_target_ages(
     """The source ages at which a law names each target; `None` if it names none.
 
     With `entry_ages`, a regime it lists is named only at the ages it lists for
-    it; a gate's fallbacks follow their gated target's ages.
+    it; a gate's fallbacks follow their gated target's ages, within their own.
     """
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
@@ -564,7 +570,11 @@ def _derived_target_ages(
                 ).regime
                 for phase in fallback_phases
             }:
-                selected.setdefault(fallback, set()).update(selected.get(target, ()))
+                selected.setdefault(fallback, set()).update(
+                    age
+                    for age in selected.get(target, ())
+                    if entry_ages is None or age in entry_ages.get(fallback, (age,))
+                )
     return {name: frozenset(found) for name, found in selected.items() if found}
 
 
