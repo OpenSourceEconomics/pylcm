@@ -33,7 +33,6 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
-from _lcm.gated_edge import gated_edge_from_gate
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.max_Q_over_a import _select_fold_reducer
 from _lcm.regime_building.processing import process_regimes
@@ -62,7 +61,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
@@ -356,23 +355,29 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     """
     validate_regime_law(
         Regime(states={"wage_shock": _shock(fold=True)}),
-        law=bind_regime_law(
-            {"some_target": StochasticTransition(func=lambda: jnp.asarray(1.0))},
-            gated_edges={
-                "some_target": gated_edge_from_gate(
-                    Gate(
-                        predicate=lambda wage_shock: wage_shock > 0.0,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="elsewhere", projection={}
+        law=bind_laws(
+            {
+                "source": Transition(
+                    law={
+                        "some_target": StochasticTransition(
+                            func=lambda: jnp.asarray(1.0)
+                        )
+                    },
+                    gates={
+                        "some_target": Gate(
+                            predicate=lambda wage_shock: wage_shock > 0.0,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="elsewhere", projection={}
+                                    )
                                 )
-                            )
-                        },
-                    )
+                            },
+                        )
+                    },
                 )
-            },
-        ),
+            }
+        )["source"],
     )
 
 

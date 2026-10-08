@@ -199,7 +199,9 @@ def test_model_rejects_a_joint_target_outside_the_declared_edges() -> None:
 
 def test_terminal_regime_cannot_declare_joint_transition() -> None:
     """A terminal regime has no target edge on which to own a joint kernel."""
-    with pytest.raises(RegimeInitializationError, match=r"Terminal.*joint_transitions"):
+    with pytest.raises(
+        RegimeInitializationError, match=r"regime is terminal.*joint_transitions"
+    ):
         _regime(law=None, joint_transitions={"couple": {"match": _kernel()}})
 
 

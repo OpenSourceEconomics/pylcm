@@ -699,7 +699,13 @@ def build_prepared_structure(
         declared_transitions={name: law.transition for name, law in laws.items()},
         code_by_name={name: code for code, name in enumerate(laws)},
     )
-    bound = bind_laws(lowered)
+    # Lowering keeps each regime's law only; its gates stay those it declares.
+    bound = MappingProxyType(
+        {
+            name: bind_regime_law(transition, gated_edges=laws[name].gated_edges)
+            for name, transition in lowered.items()
+        }
+    )
     return prepare_model_structure(
         user_regimes=user_regimes,
         laws=bound,
