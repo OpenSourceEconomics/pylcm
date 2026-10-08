@@ -402,7 +402,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "13d279a7740c003d0524acd1c1f5753989b1b36a134722d148cf96b60353aa27",
     SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "c5e9944ed3732ca48549266c3814c53bd7797def059306a652174bada51307d0",
+    ARGMAX_SOURCE: "94410a462b896992ae1c842fc2e1ffff00c98c33f383398024bccf80fa783f9c",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
     PROCESSING_SOURCE: "b41aeb3cd6a76565b9a072c43954519e476248720e18faf91857eb8f45b7742f",
@@ -6403,6 +6403,7 @@ return _paired_max(values, ids, initial_arr)
 )
 """
     expected_pair_jvp = r"""values, ids, initial = primals
+values = jax.lax.optimization_barrier(values)
 values_dot = tangents[0]
 best, best_id = _paired_max(values, ids, initial)
 attains = (values == best[..., jnp.newaxis]).astype(values.dtype)

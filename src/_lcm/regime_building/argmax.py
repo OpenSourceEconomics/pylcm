@@ -133,9 +133,13 @@ def _paired_max_jvp(
 
     The tangent is linear in the value tangent with weights fixed by the
     primals, so reverse mode transposes it. `{-0, +0}` compare equal, so a
-    signed-zero tie averages both elements whatever sign the max carries.
+    signed-zero tie averages both elements whatever sign the max carries. The
+    max and the equality test read one materialized copy of the values: a
+    producer the compiler evaluated once per use could round differently and
+    leave no element equal to the max.
     """
     values, ids, initial = primals
+    values = jax.lax.optimization_barrier(values)
     values_dot = tangents[0]
     best, best_id = _paired_max(values, ids, initial)
     attains = (values == best[..., jnp.newaxis]).astype(values.dtype)

@@ -267,3 +267,24 @@ def test_hard_max_derivatives_hold_across_masks_orders_and_ties(
     np.testing.assert_array_max_ulp(
         np.asarray(jvp)[n_winners == 3], exact_jvp[n_winners == 3], maxulp=1
     )
+
+
+def test_hard_max_tangent_compares_the_values_it_reduced() -> None:
+    """The tangent's tie test reads the same materialized values as the max.
+
+    Were the values' producer evaluated once for the max and once for the
+    equality test, the two copies could round apart and no element would equal
+    the max, losing the derivative.
+    """
+    values = jnp.asarray([1.0, 3.0], dtype=jnp.zeros(()).dtype)
+
+    def value(x: FloatND) -> FloatND:
+        return _hard_max(
+            values=jnp.exp(x),
+            feasible=jnp.ones(x.shape, dtype=bool),
+            action_ids=jnp.arange(x.shape[-1], dtype=jnp.int32),
+        )[0]
+
+    jaxpr = jax.make_jaxpr(lambda x, t: jax.jvp(value, (x,), (t,)))(values, values)
+
+    assert "optimization_barrier" in str(jaxpr)
