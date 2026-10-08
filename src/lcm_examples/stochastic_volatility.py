@@ -18,7 +18,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
@@ -106,11 +105,7 @@ def get_model(
             on="uncertainty", by={"low": sigma_low, "high": sigma_high}
         ),
     )
-    alive_law = ByAge.until(
-        stop_age_exclusive=final_age_alive + 10,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
+    alive_law = DeterministicTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=40.0, n_points=wealth_n_points),
@@ -141,13 +136,7 @@ def get_model(
         ),
     }
     return Model(
-        edges={
-            "alive": (
-                Transition(targets=alive_targets, law=alive_law)
-                if len(alive_targets) > 1
-                else alive_targets
-            )
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},

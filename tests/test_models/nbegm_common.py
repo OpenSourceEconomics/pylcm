@@ -189,8 +189,8 @@ def make_alive_dead_model(
         extra_state_transitions: Transition entries for the extra states.
         survival_transition: Per-target survival law for the alive regime. When
             given, the alive regime can die at every non-final age and this law
-            chooses between staying alive and dying wherever both edges leave
-            an age; the final alive age takes its `"dead"` entry.
+            chooses between staying alive and dying at every alive age; at the
+            last alive age it must put unit mass on `"dead"`.
         model_states: States broadcast at model level.
         liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
             `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
@@ -240,7 +240,7 @@ def make_alive_dead_model(
                 then={"dead": survival_transition["dead"]},
             ),
         )
-        if survival_transition is not None and stays
+        if survival_transition is not None
         else alive_targets
     )
     # Built per branch rather than from one shared mapping: the two regime

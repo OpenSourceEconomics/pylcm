@@ -405,9 +405,9 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
   contract that every field is annotated `ScalarInt`. Raised at decoration time, before
   any grid, regime, or derived-categorical mapping is built.
 
-- **`InvalidNameError`**: Names are invalid --- a name contains the reserved separator,
-  or two name sets that must be disjoint overlap. A parameter written at two levels of
-  the params dict also lands here.
+- **`InvalidNameError`**: Names are invalid --- a parameter name contains the reserved
+  separator or starts or ends with `_`, or two name sets that must be disjoint overlap.
+  A parameter written at two levels of the params dict also lands here.
 
 - **`NBEGMCaseError`**: An NBEGM case-boundary or formula-piece declaration is invalid
   --- a malformed boundary or piece, hidden branching caught by the smoothness gate, or

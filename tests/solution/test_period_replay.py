@@ -20,9 +20,13 @@ from typing import Any
 
 import cloudpickle
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax._src import compilation_cache as jax_compilation_cache
+from jaxlib import (
+    _hlo,  # ty: ignore[unresolved-import] - installed native API has no stub
+)
 
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
@@ -42,6 +46,9 @@ from tests.test_models.deterministic.discrete import (
     get_params,
 )
 from tests.test_models.initial_nodes import initial_nodes_of
+from tests.test_sharded_state_across_gated_edge import (
+    build_model as build_gated_edge_model,
+)
 
 _N_PERIODS = 3
 _FULL_TOPOLOGY_EDGES = {
@@ -582,6 +589,96 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
         observed=observed, warm_writes=warmed["writes"], records=caplog.records
     )
     assert not (capture.directory / "working_life@0" / "entry.h5").exists()
+
+
+@pytest.mark.parametrize("target", [("solo", 1), ("solo", 2), ("mate", 1)])
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
+    *,
+    tmp_path: Path,
+    target: tuple[str, int],
+    persistent_compilation_cache: bool,
+) -> None:
+    """A regime without gated edges of its own captures and replays exactly.
+
+    Another regime of the model leaves through a gated edge, so the solve carries
+    gated-edge values; the target never reads them.
+    """
+    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
+    params = {"discount_factor": 0.9}
+    capture = PeriodCapture(
+        directory=tmp_path,
+        periods=(target,),
+        source_identity={"model": "gated-edge-topology-v1"},
+    )
+    result = build_gated_edge_model(devices=(0,), sharded=()).solve(
+        params=params, log_level="off", period_capture=capture
+    )
+    regime_name, period = target
+    replay = build_gated_edge_model(devices=(0,), sharded=()).replay_period(
+        directory=tmp_path / f"{regime_name}@{period}",
+        params=params,
+        source_identity=capture.source_identity,
+    )
+    observed = (
+        np.array_equal(
+            np.asarray(replay.value).view(np.uint8),
+            np.asarray(result.values[period][regime_name]).view(np.uint8),
+        ),
+        replay.reference_matches,
+        replay.optimized_hlo_matches,
+    )
+    assert observed == (True, True, True)
+
+
+_ATTRIBUTE_BACKEND_CONFIG = re.compile(r"backend_config=(\{[A-Za-z_]\w* = [^}]*\})")
+
+
+def _optimized_hlo_text(func, *args) -> str:
+    """Print a jitted function's optimized HLO with the capture print options."""
+    options = _hlo.HloPrintOptions.canonical()
+    options.canonicalize_computations = True
+    options.print_ids = False
+    options.print_large_constants = True
+    options.print_backend_config = True
+    executable = jax.jit(func).lower(*args).compile().runtime_executable()
+    assert executable is not None
+    return "\n".join(module.to_string(options) for module in executable.hlo_modules())
+
+
+@pytest.mark.parametrize(
+    "func",
+    [
+        pytest.param(jnp.linalg.cholesky, id="cholesky"),
+        pytest.param(jnp.linalg.eigh, id="eigh"),
+        pytest.param(lambda matrix: jnp.linalg.solve(matrix, jnp.ones(3)), id="solve"),
+    ],
+)
+def test_optimized_hlo_identity_retains_attribute_backend_configuration(
+    *, func
+) -> None:
+    """Attribute-dictionary backend configurations survive canonicalization intact.
+
+    Linear-algebra custom calls print `backend_config={uplo = 76 : ui8}` rather
+    than JSON. Canonical text keeps every such configuration in order.
+    """
+    text = _optimized_hlo_text(func, 2.0 * jnp.eye(3))
+    original = _ATTRIBUTE_BACKEND_CONFIG.findall(text)
+    assert original
+    canonical = public_period_capture._canonicalize_optimized_hlo(text)
+    assert _ATTRIBUTE_BACKEND_CONFIG.findall(canonical) == original
+
+
+def test_optimized_hlo_identity_binds_attribute_backend_configuration_values() -> None:
+    """Differing attribute-dictionary values give differing canonical text."""
+    prefix = "ROOT x = f32[3,3] custom-call(a), backend_config="
+    upper = public_period_capture._canonicalize_optimized_hlo(
+        prefix + "{uplo = 85 : ui8}"
+    )
+    lower = public_period_capture._canonicalize_optimized_hlo(
+        prefix + "{uplo = 76 : ui8}"
+    )
+    assert upper != lower
 
 
 @pytest.mark.parametrize(("nested_value", "equal"), [(3, True), (4, False)])

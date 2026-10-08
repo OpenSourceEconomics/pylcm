@@ -1,10 +1,10 @@
 """Declarations a regime makes about collective and value-dependent choice.
 
-Six objects, each declared inside a slot the regime already has:
-`CollectiveUtility` and its `ParetoObjective` in `functions["utility"]`, a
-`ValueDependentConstraint` in `constraints`, and a
-`ValueDependentTransition` with stakeholder routes in the law of the source's
-`Transition` in `Model(edges=...)`.
+Six objects, each declared inside a slot that already exists:
+`CollectiveUtility` and its `ParetoObjective` in a regime's
+`functions["utility"]`, a `ValueDependentConstraint` in its `constraints`, and a
+`Gate` with stakeholder routes in the `gates` of the source's `Transition` in
+`Model(edges=...)`.
 `ProjectedRegimeValue` is the common reference used by the last two — a
 reading of another regime's value in the same period.
 """
@@ -12,7 +12,7 @@ reading of another regime's value in the same period.
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal
 
 from beartype import beartype
 
@@ -21,7 +21,6 @@ from _lcm.typing import RegimeName, StateName
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import StochasticTransition
 from lcm.typing import UserFunction
 
 
@@ -103,8 +102,8 @@ class ProjectedRegimeValue:
     - inside `ValueDependentConstraint.references` it projects from the
       DECLARING regime's state cell, receives that regime's `period` / `age`,
       and may introduce no free parameters;
-    - inside `ValueDependentTransition` — as a `gate_references` entry or a
-      route's `fallback` — it projects from the TARGET regime's grid, receives
+    - inside a `Gate` — as a `references` entry or a route's `fallback` — it
+      projects from the TARGET regime's grid, receives
       that target fold's `period` / `age`, and its free arguments are collected
       as that edge's own parameters.
     """
@@ -246,7 +245,7 @@ class StakeholderRoute:
     singleton regime carries no role.
     """
 
-    fallback: ProjectedRegimeValue | Phased
+    fallback: ProjectedRegimeValue | Phased[ProjectedRegimeValue, ProjectedRegimeValue]
     """The gate-closed branch: a reference regime's same-period value at a
     projection from the TARGET regime's grid.
 
@@ -261,6 +260,12 @@ class StakeholderRoute:
 
     Both sides must be `ProjectedRegimeValue`, and each is validated against
     the phase that reads it.
+
+    `solve_fallback` and `simulate_fallback` read either form as the
+    `ProjectedRegimeValue` of their phase, so `route.simulate_fallback.regime`
+    needs no narrowing. The field itself keeps the union: a route read back
+    from `model.graph.laws` or `model.declared_transitions` is looked up by
+    regime name, so its type cannot carry which form that one route declared.
     """
 
     target_stakeholder: str | None = None
@@ -271,16 +276,14 @@ class StakeholderRoute:
     def solve_fallback(self) -> ProjectedRegimeValue:
         """The reference whose value the gate-closed branch is priced at."""
         return (
-            cast("ProjectedRegimeValue", self.fallback.solve)
-            if isinstance(self.fallback, Phased)
-            else self.fallback
+            self.fallback.solve if isinstance(self.fallback, Phased) else self.fallback
         )
 
     @property
     def simulate_fallback(self) -> ProjectedRegimeValue:
         """The reference a routed row's regime, role and states come from."""
         return (
-            cast("ProjectedRegimeValue", self.fallback.simulate)
+            self.fallback.simulate
             if isinstance(self.fallback, Phased)
             else self.fallback
         )
@@ -293,28 +296,21 @@ class StakeholderRoute:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class ValueDependentTransition:
-    """A transition into one target whose branch depends on values there.
+class Gate:
+    """A value-dependent branch on the transition into one target.
 
-    Declared inside the per-target law of the source's `Transition` in
-    `Model(edges=...)`, keyed by target regime name, so
-    target selection and value-dependent routing are one declaration of one
-    semantic transition rather than two.
+    Declared in `Transition(gates={target: Gate(...)})`, keyed by the target it
+    gates. The `Transition`'s law supplies the probability of reaching that
+    target, as for any other destination; the gate decides, once there, whether
+    a row stays or takes its route's fallback. One gate holds at every age the
+    target is reached, and in both phases.
 
     **The key is always the GATE-OPEN target** — the regime a row enters when
-    the gate is true. A dissolution edge is therefore keyed by the CONTINUING
-    collective regime under `gate = ~D_target`, with each partner's own regime
-    as that partner's route fallback; keying it by one partner's regime would
-    send both partners there whenever the couple stays together.
-
-    `probability` and `gate` are two distinct operations: the first selects
-    whether this target edge is attempted at all, the second keeps that target
-    or takes the route's stakeholder-specific fallback.
-
-    In an outer `Phased` transition, a target must carry this declaration in
-    both phases or neither. The gate must be the same callable and the routes,
-    references, and off-grid contract must be equal; only `probability` may
-    differ between solve and simulation.
+    the predicate is true. A dissolution edge is therefore keyed by the
+    CONTINUING collective regime under `predicate = ~D_target`, with each
+    partner's own regime as that partner's route fallback; keying it by one
+    partner's regime would send both partners there whenever the couple stays
+    together.
 
     This is what unlocks mixed singleton/collective topologies — a singleton
     regime reaching a collective one under mutual consent, a collective regime
@@ -323,29 +319,20 @@ class ValueDependentTransition:
     rejected.
     """
 
-    probability: UserFunction | StochasticTransition
-    """Probability of attempting this target edge.
-
-    A `StochasticTransition` passes through unchanged. A bare callable is a
-    convenience of `ValueDependentTransition` and is wrapped in
-    `StochasticTransition` in the regime's `decomposed_transition` view. Ordinary
-    per-target transition cells still require the wrapper explicitly.
-    """
-
-    gate: UserFunction
+    predicate: UserFunction
     """Boolean predicate on the TARGET regime's grid, in the target fold's context.
 
     May read the target's value — `V_target` for a singleton target,
     `V_target_<s>` per stakeholder for a collective one — the target's
     dissolution flag `D_target` (a collective target only; reading it on a
     singleton target is rejected while the model is built), each key of
-    `gate_references`, ordinary target states and params, and the target fold's
-    `period` / `age`. Mutual consent is the strict, unanimous gate
+    `references`, ordinary target states and params, and the target fold's
+    `period` / `age`. Mutual consent is the strict, unanimous predicate
     `(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution
-    this period" is `~D_target`. A gate returning a probability rather than a
-    Boolean is rejected when the gate is evaluated, i.e. on the first `solve()`
-    rather than at model build: the branch is selected with a strict `where`,
-    in which every nonzero value is true.
+    this period" is `~D_target`. A predicate returning a probability rather
+    than a Boolean is rejected when it is evaluated, i.e. on the first
+    `solve()` rather than at model build: the branch is selected with a strict
+    `where`, in which every nonzero value is true.
     """
 
     routes: Mapping[str, StakeholderRoute]
@@ -354,20 +341,21 @@ class ValueDependentTransition:
     A singleton source declares exactly one route, under any key.
     """
 
-    gate_references: Mapping[str, ProjectedRegimeValue] = field(
+    references: Mapping[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """The same-period reference values `gate` reads, projected from the target
-    regime's grid."""
+    """The same-period reference values `predicate` reads, projected from the
+    target regime's grid, keyed by the name each one enters the predicate
+    under."""
 
     off_grid: Literal["pointwise", "reject"] = "pointwise"
-    """What the edge promises about a landing point between the target's nodes.
+    """What the gate promises about a landing point between the target's nodes.
 
     - `"pointwise"` (the default) reads every operand at the landing point and
-      applies the gate there, in both phases. The operands are interpolated, so
-      the value carries the ordinary interpolation error of any continuation —
-      but it is a value one branch really delivers, and the branch the solve
-      priced is the branch simulation routes down.
+      applies the predicate there, in both phases. The operands are
+      interpolated, so the value carries the ordinary interpolation error of
+      any continuation — but it is a value one branch really delivers, and the
+      branch the solve priced is the branch simulation routes down.
     - `"reject"` demands that no such point exists: the model refuses to build
       unless the target regime's grid is reached exactly, i.e. it carries no
       continuous state. Declare it where a straddled gate would be an economic
@@ -377,7 +365,5 @@ class ValueDependentTransition:
     def __post_init__(self) -> None:
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))
         object.__setattr__(
-            self,
-            "gate_references",
-            ensure_containers_are_immutable(self.gate_references),
+            self, "references", ensure_containers_are_immutable(self.references)
         )

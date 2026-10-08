@@ -244,16 +244,16 @@ def get_model(
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working"},
         edges={
-            "working": (
-                Transition(
-                    targets={
-                        "working": ages.exact_values[:-2],
-                        "dead": ages.exact_values[:-1],
-                    },
-                    law=DeterministicTransition(func=next_regime_from_working),
-                )
-                if ages.exact_values[:-2]
-                else {"dead": ages.exact_values[:-1]}
+            "working": Transition(
+                targets={
+                    **(
+                        {"working": ages.exact_values[:-2]}
+                        if ages.exact_values[:-2]
+                        else {}
+                    ),
+                    "dead": ages.exact_values[:-1],
+                },
+                law=DeterministicTransition(func=next_regime_from_working),
             )
         },
     )
@@ -272,7 +272,12 @@ def get_params(
     borrowing_floor: float = 0.01,
     final_age_alive: float = 3.0,
 ) -> dict:
-    """Get parameters for the housing model (faithful calibration from `housing.py`)."""
+    """Get parameters for the housing model (faithful calibration from `housing.py`).
+
+    The regime law dies from the age `final_age_alive - 1` on; the default fits
+    the default four-period model, and `get_model(n_periods=n)` pairs with
+    `final_age_alive=n - 1`.
+    """
     transition_args = {
         "return_liquid": return_liquid,
         "return_housing": return_housing,

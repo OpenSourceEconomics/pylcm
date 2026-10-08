@@ -42,7 +42,6 @@ from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
-from _lcm.regime_law import bind_regime_law
 from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
@@ -55,13 +54,14 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -256,31 +256,35 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
 def _shared_fallback_laws() -> dict[str, object]:
     """The regimes' laws, as `Model(edges=...)` would bind them."""
     return {
-        "married": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_ir": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_shared",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_shared",
-                                    projection={"wage": _reverse_wage},
-                                ),
-                            ),
-                        },
-                    )
+        "married": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married_ir": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "married_ir": Gate(
+                    predicate=_no_dissolution_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_shared",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_shared",
+                                projection={"wage": _reverse_wage},
+                            ),
+                        ),
+                    },
+                )
+            },
         ),
         "married_ir": None,
         "single_shared": None,
@@ -315,7 +319,9 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     laws = _dissolution_laws()
-    married_edge = bind_regime_law(laws["married"]).gated_edges["married_ir"]
+    married_edge = bind_laws({"married": laws["married"]})["married"].gated_edges[
+        "married_ir"
+    ]
     fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.
@@ -346,6 +352,7 @@ _REGIME_IDS = MappingProxyType(
 def _leg(source_stakeholder: str | None) -> ResolvedStakeholderRoute:
     """One leg sending its stakeholder home to that stakeholder's own regime."""
     return ResolvedStakeholderRoute(
+        route=str(source_stakeholder),
         source_stakeholder=source_stakeholder,
         target_component_index=None,
         target_stakeholder=source_stakeholder,

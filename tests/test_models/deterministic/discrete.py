@@ -14,7 +14,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     Model,
@@ -28,7 +27,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
     UserParams,
 )
 from tests.test_models.deterministic.regression import (
@@ -109,30 +107,16 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Work until the age before `last_age`, then die."""
-    return ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
-
-
-def working_life_edges(
-    ages: AgeGrid,
-) -> dict[str, dict[str, tuple[UserAge, ...]] | Transition]:
-    """Keep working before the second-to-last age; die from every non-final age.
-
-    Where both edges leave an age, `working_life_transitions` chooses between them.
-    """
+def working_life_edges(ages: AgeGrid) -> dict[str, Transition]:
+    """Keep working before the second-to-last age; die from every non-final age."""
     stays = tuple(ages.exact_values[:-2])
-    dies = tuple(ages.exact_values[:-1])
-    if not stays:
-        return {"working_life": {"dead": dies}}
     return {
         "working_life": Transition(
-            targets={"working_life": stays, "dead": dies},
-            law=working_life_transitions(last_age=ages.exact_values[-1]),
+            targets={
+                "dead": tuple(ages.exact_values[:-1]),
+                **({"working_life": stays} if stays else {}),
+            },
+            law=DeterministicTransition(func=next_regime),
         )
     }
 
@@ -187,7 +171,6 @@ def get_params(
     interest_rate: float = 0.05,
     wage: float = 10.0,
 ) -> UserParams:
-    final_age_alive = 50 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
         "working_life": {
@@ -195,7 +178,5 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "labor_income": {"wage": wage},
         },
-        # The law reading `final_age_alive` exists only where some age has two
-        # outgoing edges, which takes at least three periods.
-        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
+        "final_age_alive": 50 + (n_periods - 2) * 10,
     }

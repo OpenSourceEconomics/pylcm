@@ -25,7 +25,7 @@ import pytest
 
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.regime_law import bind_regime_law
 from lcm import LinearAggregator, LinearExpectation
 from tests.test_models.ds_housing_keeper import (
     HOUSING_GRID,
@@ -36,7 +36,17 @@ from tests.test_models.ds_housing_keeper import (
     dead,
 )
 
-_KEEPER_LAWS = MappingProxyType({"keeper": UNBOUND_LAW, "dead": UNBOUND_LAW})
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
+
+_KEEPER_LAWS = MappingProxyType(
+    {"keeper": _NON_TERMINAL_LAW, "dead": _NON_TERMINAL_LAW}
+)
 
 
 def _finalized_keeper_regimes() -> MappingProxyType:

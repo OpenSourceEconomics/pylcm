@@ -45,9 +45,10 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_law import RegimeLaw
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
+from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
     AffineBreakpoint,
@@ -353,15 +354,20 @@ def project_solution_params(
         solution_param_projection(regimes) if projection is None else projection
     )
     projected: dict[RegimeName, MappingProxyType[str, object]] = {}
-    for regime_name, regime_params in flat_params.items():
-        realized_only = realized_only_by_regime[regime_name]
-        projected[regime_name] = MappingProxyType(
-            {
-                name: value
-                for name, value in regime_params.items()
-                if name not in realized_only
-            }
+    projected_edges: dict[RegimeName, FlatRegimeParams] = {}
+    # A source's law slots are read by its own transitions, so the source's
+    # realized-only names apply to its edge slots as well.
+    for path, leaves in flat_namespaces(flat_params):
+        realized_only = realized_only_by_regime[path[-1]]
+        kept = MappingProxyType(
+            {name: value for name, value in leaves.items() if name not in realized_only}
         )
+        if path[0] == EDGES:
+            projected_edges[path[1]] = kept
+        else:
+            projected[path[0]] = kept
+    if EDGES in flat_params:
+        projected[EDGES] = MappingProxyType(projected_edges)
     return cast("FlatParams", MappingProxyType(projected))
 
 
@@ -387,12 +393,14 @@ def fingerprint_solution_support(
             name: (
                 _grid_support(
                     regime=regime,
-                    regime_params=flat_params[name],
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
                     process_grid_resolver=process_grid_resolver,
                 ),
                 {
                     param_name: _param_shape_signature(value)
-                    for param_name, value in flat_params[name].items()
+                    for param_name, value in regime_kernel_params(
+                        flat_params, regime_name=name
+                    ).items()
                 },
             )
             for name, regime in regimes.items()
@@ -597,7 +605,7 @@ def fingerprint_model_programs(
         {
             name: _grid_support(
                 regime=regime,
-                regime_params=flat_params[name],
+                regime_params=regime_kernel_params(flat_params, regime_name=name),
                 process_grid_resolver=process_grid_resolver,
             )
             for name, regime in regimes.items()
@@ -744,12 +752,15 @@ _TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 
 # keyword-only-exempt: primary-argument=regime
 def _project_user_regime_declaration(
-    regime: object, *, law: RegimeLaw
+    # A dataclass or `SimpleNamespace` declaration; the branches below inspect it.
+    regime: object,
+    *,
+    law: RegimeLaw,
 ) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
 
-    The regime's law joins its fields: its `transition` first and its
-    `gated_edges` before `same_period_refs`.
+    The regime's law joins its fields as `transition` and `gated_edges`, read as
+    declared without interpreting them.
 
     A stored policy is priced against the solve-phase laws of motion and regime
     transition; the realized path after the action is chosen does not change
@@ -768,7 +779,13 @@ def _project_user_regime_declaration(
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
         raise TypeError(msg)
-    fields = _with_law_fields(fields=fields, law=law)
+    all_fields = (
+        *fields,
+        *(
+            (declaration.name, getattr(law, declaration.name))
+            for declaration in dataclasses.fields(law)
+        ),
+    )
     declaration_type = type(regime)
     return MappingProxyType(
         {
@@ -780,34 +797,11 @@ def _project_user_regime_declaration(
                         if name in _TRANSITION_SLOTS
                         else value
                     )
-                    for name, value in fields
+                    for name, value in all_fields
                     if name != "description"
                 }
             ),
         }
-    )
-
-
-def _with_law_fields(
-    *, fields: Iterable[tuple[str, object]], law: RegimeLaw
-) -> tuple[tuple[str, object], ...]:
-    """Place the law's two slots among a regime's own fields.
-
-    The law is read field by field, as the regime is, so the fingerprint hashes
-    the declaration as written without interpreting it.
-    """
-    own = [(name, value) for name, value in fields]
-    names = [name for name, _value in own]
-    at = names.index("same_period_refs") if "same_period_refs" in names else len(own)
-    law_fields = {
-        declaration.name: getattr(law, declaration.name)
-        for declaration in dataclasses.fields(law)
-    }
-    return (
-        ("transition", law_fields["transition"]),
-        *own[:at],
-        ("gated_edges", law_fields["gated_edges"]),
-        *own[at:],
     )
 
 

@@ -31,6 +31,11 @@ from _lcm.solution.action_streaming import (
     merge_partition_accumulators,
 )
 from lcm.typing import Float2D, ScalarFloat
+from tests.solution.test_action_streaming import (
+    count_primitive,
+    scan_lengths,
+    sin_Q_and_F,
+)
 
 _AXIS = "participants"
 
@@ -499,3 +504,50 @@ def test_partitioned_reduction_requires_an_action_product() -> None:
             n_partitions=2,
             axis_name=_AXIS,
         )
+
+
+def _partitioned_sin_jaxpr(
+    *, n_partitions: int, block_width: int, n_actions: int
+) -> object:
+    """Stage every participant's reduction of a Q that stages one `sin` per call."""
+    reduce_cell = build_partitioned_streaming_max_Q_over_a(
+        Q_and_F=sin_Q_and_F,
+        action_names=("choice",),
+        block_width=block_width,
+        n_partitions=n_partitions,
+        axis_name=_AXIS,
+    )
+    choice = jnp.arange(float(n_actions))
+    return jax.make_jaxpr(
+        jax.vmap(lambda _lane: reduce_cell(choice=choice), axis_name=_AXIS)
+    )(jnp.arange(n_partitions))
+
+
+# (n_partitions, block_width, n_actions): a two-block run with a padded last
+# block, and one block per participant.
+_STAGED_LAYOUTS = ((2, 3, 7), (2, 2, 4), (3, 2, 7))
+
+
+@pytest.mark.parametrize(("n_partitions", "block_width", "n_actions"), _STAGED_LAYOUTS)
+def test_partitioned_reduction_stages_q_and_f_once(
+    *, n_partitions: int, block_width: int, n_actions: int
+) -> None:
+    """Each participant evaluates Q_and_F in one place: the scan body."""
+    jaxpr = _partitioned_sin_jaxpr(
+        n_partitions=n_partitions, block_width=block_width, n_actions=n_actions
+    )
+    assert count_primitive(jaxpr=jaxpr, name="sin") == 1
+
+
+@pytest.mark.parametrize(("n_partitions", "block_width", "n_actions"), _STAGED_LAYOUTS)
+def test_partitioned_reduction_scans_only_its_own_run(
+    *, n_partitions: int, block_width: int, n_actions: int
+) -> None:
+    """Each participant scans exactly its longest-run number of blocks."""
+    layout = ActionPartitionLayout(
+        n_actions=n_actions, block_width=block_width, n_partitions=n_partitions
+    )
+    jaxpr = _partitioned_sin_jaxpr(
+        n_partitions=n_partitions, block_width=block_width, n_actions=n_actions
+    )
+    assert scan_lengths(jaxpr=jaxpr) == [layout.blocks_per_partition]

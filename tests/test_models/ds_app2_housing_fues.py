@@ -199,7 +199,7 @@ def _fail_if_too_few_housing_levels(*, n_housing: int) -> None:
         raise ValueError(msg)
 
 
-def build_model(  # noqa: C901
+def build_model(
     *,
     variant: Literal["dcegm", "brute"] = "dcegm",
     n_grid: int,
@@ -274,14 +274,6 @@ def build_model(  # noqa: C901
             for i in range(n_savings)
         )
     )
-
-    def housing_stock(housing: DiscreteState) -> FloatND:
-        """Held housing stock `H` of the current discrete housing state."""
-        return stock_levels[housing]
-
-    def chosen_stock(housing_choice: DiscreteAction) -> FloatND:
-        """Next-period housing stock `H'` implied by the discrete choice."""
-        return stock_levels[housing_choice]
 
     def serviced_housing(housing_choice: DiscreteAction) -> FloatND:
         """Serviced housing this period is the chosen next stock `H'`."""

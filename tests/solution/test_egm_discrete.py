@@ -20,6 +20,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     Model,
     StochasticTransition,
@@ -28,6 +29,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -36,14 +38,13 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
-    retirement_transitions,
-    working_life_transitions,
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
 )
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
-    dcegm_retirement_full,
     dcegm_working_life,
     get_full_model,
     get_full_params,
@@ -56,10 +57,12 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 N_PERIODS = 4
 
 
-def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Transition]:
+def _lifecycle_edges(
+    *, ages: AgeGrid, retirement_law: TransitionLaw
+) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age.
 
-    The worker chooses by `working_life_transitions`; the retiree follows
+    The worker chooses by `WORKING_LIFE_LAW`; the retiree follows
     `retirement_law`.
     """
     return {
@@ -69,7 +72,7 @@ def _lifecycle_edges(*, ages: AgeGrid, retirement_law: object) -> dict[str, Tran
                 "retirement": tuple(ages.exact_values[:-2]),
                 "dead": tuple(ages.exact_values[:-1]),
             },
-            law=working_life_transitions(last_age=ages.exact_values[-1]),
+            law=WORKING_LIFE_LAW,
         ),
         "retirement": Transition(
             targets={
@@ -92,10 +95,15 @@ def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
 # Retirement can only stay retired or die. Declaring this granularly (with
 # indicator probabilities) narrows reachability so the bare wealth law never
 # has to cover the skill-carrying working regime.
-RETIREMENT_TRANSITION = {
-    "retirement": StochasticTransition(func=_retirement_stay_prob),
-    "dead": StochasticTransition(func=_retirement_death_prob),
-}
+RETIREMENT_TRANSITION = ByAge(
+    cases={
+        (40, 50): {
+            "retirement": StochasticTransition(func=_retirement_stay_prob),
+            "dead": StochasticTransition(func=_retirement_death_prob),
+        },
+        60: {"dead": StochasticTransition(func=_retirement_death_prob)},
+    }
+)
 
 
 @categorical(ordered=False)
@@ -144,9 +152,9 @@ def _get_skill_model() -> Model:
             "labor_income": labor_income_by_skill,
         },
     )
-    retirement = dcegm_retirement_full.replace(
+    retirement = dcegm_retirement.replace(
         state_transitions={
-            "wealth": dcegm_retirement_full.state_transitions["wealth"],
+            "wealth": dcegm_retirement.state_transitions["wealth"],
         },
     )
     return Model(
@@ -166,16 +174,13 @@ def _get_skill_model() -> Model:
 def _get_must_retire_model() -> Model:
     """Full DC-EGM retirement model where a constraint forbids working."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (N_PERIODS - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     return Model(
-        edges=_lifecycle_edges(
-            ages=ages, retirement_law=retirement_transitions(last_age=last_age)
-        ),
+        edges=_lifecycle_edges(ages=ages, retirement_law=RETIREMENT_LAW),
         regimes={
             "working_life": dcegm_working_life.replace(
                 constraints={"must_retire": must_retire},
             ),
-            "retirement": dcegm_retirement_full,
+            "retirement": dcegm_retirement,
             "dead": base.dead,
         },
         ages=ages,
@@ -322,10 +327,17 @@ def test_nan_regime_transition_prob_surfaces_as_error():
         edges={
             "retirement": Transition(
                 targets={"retirement": 40, "dead": (40, 50)},
-                law={
-                    "retirement": StochasticTransition(func=_stay_prob_from_param),
-                    "dead": StochasticTransition(func=_death_prob_from_param),
-                },
+                law=ByAge(
+                    cases={
+                        40: {
+                            "retirement": StochasticTransition(
+                                func=_stay_prob_from_param
+                            ),
+                            "dead": StochasticTransition(func=_death_prob_from_param),
+                        },
+                        50: {"dead": StochasticTransition(func=_death_prob_from_param)},
+                    }
+                ),
             )
         },
         regimes={
@@ -340,10 +352,11 @@ def test_nan_regime_transition_prob_surfaces_as_error():
     # The granular transition replaces the age-based one, so its param goes
     # and the per-cell survival rate (set to NaN) arrives.
     del params["final_age_alive"]
-    params["retirement"] = {
-        **params.get("retirement", {}),
-        "retirement": {"next_regime": {"survival_rate": float("nan")}},
-        "dead": {"next_regime": {"survival_rate": float("nan")}},
+    params["edges"] = {
+        "retirement": {
+            "retirement": {"survival_rate": float("nan")},
+            "dead": {"survival_rate": float("nan")},
+        }
     }
 
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
@@ -375,7 +388,7 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
     lost = base.dead.replace(functions={"utility": _lost_utility})
     shared_regimes = {
         "working_life": base.working_life,
-        "retirement": dcegm_retirement_full,
+        "retirement": dcegm_retirement,
         "dead": base.dead,
     }
     with_lost = Model(
@@ -422,9 +435,9 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
         "working_life": dcegm_working_life.replace(
             constraints={"nothing_is_feasible": _nothing_is_feasible},
         ),
-        "retirement": dcegm_retirement_full.replace(
+        "retirement": dcegm_retirement.replace(
             state_transitions={
-                "wealth": dcegm_retirement_full.state_transitions["wealth"],
+                "wealth": dcegm_retirement.state_transitions["wealth"],
             },
         ),
         "dead": base.dead,

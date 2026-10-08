@@ -25,21 +25,17 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- `AcaBaseline` and `AcaBaselineDebugLog` keep the combined cold/warm timing and
+- `AcaBaseline` and `AcaBaselineDebugLog` use the combined cold/warm timing and
   CPU-memory measurement (`_gpu_mem.measure_combined`): one isolated subprocess
   builds once, runs one cold simulate (compilation time + CPU peak) and one warm
   simulate, and three cheap `track_*` methods read the shared result.
-- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` are separate ASV
-  classes wired to `_gpu_mem.GpuPeakMemProfile`. They run the exact three-phase
-  GPU-memory profile (automatic solve+simulate, ALL_PERSISTABLE solve+save,
-  load+supplied-solution simulate) sequentially in three fresh isolated
-  processes, in a producer independent of the timing subprocess: selecting only
-  timing no longer pays for the memory profile, and selecting only the memory
-  profile no longer pays for the timing subprocess. No reported phase peak is
-  summed or subtracted.
 - `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives the
-  debug configuration a separate combined subprocess; `AcaBaselineDebugLogGpuPeakMem`
-  likewise gets its own three-phase profile.
+  debug configuration a separate combined subprocess. The PR benchmark run
+  deselects it (see the `asv-run-and-pr-comment` pixi task); the main-branch run
+  measures it.
+- There is no ACA GPU-memory profile: peak GPU memory under the default policy
+  reflects the policy's budget rather than the code, and each profile costs a
+  full cold ACA run per phase.
 - XLA autotuning is disabled and preallocation is on in the measurement
   subprocess, and the model is built without an execution policy, so planning
   and admission follow the production path: aca-model's default policy derives
@@ -167,43 +163,6 @@ class AcaBaseline:
             log_path=self.log_path,
         )
 
-    def execute_gpu_memory_phase(
-        self,
-        *,
-        phase: str,
-        archive_path: pathlib.Path,
-    ) -> None:
-        """Run one exact solution-lifecycle phase in its dedicated child process."""
-        if phase == _gpu_mem.AUTOMATIC_SOLVE_SIMULATE:
-            self.execute_for_measurement()
-            return
-        if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
-            from lcm.solver_api import ResultRetention
-
-            solution = self.model.solve(
-                params=self.model_params,
-                log_level=self.log_level,
-                retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
-                log_path=self.log_path,
-            )
-            solution.save(path=archive_path)
-            return
-        if phase == _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE:
-            from lcm.persistence import load_solution
-
-            solution = load_solution(path=archive_path)
-            self.model.simulate(
-                params=self.model_params,
-                initial_conditions=self.initial_conditions,
-                seed=_SIMULATION_SEED,
-                solution=solution,
-                log_level=self.log_level,
-                log_path=self.log_path,
-            )
-            return
-        msg = f"Unknown GPU memory profile phase: {phase!r}."
-        raise ValueError(msg)
-
     def track_execution_time(self, cache: dict[str, float] | None = None) -> float:
         return self._measurements["execution_time"]
 
@@ -218,15 +177,6 @@ class AcaBaseline:
         return self._measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
-
-
-class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
-    """Three-phase solve/persistence/simulate GPU-memory profile for `AcaBaseline`."""
-
-    version = "2"
-    timeout = 14400
-    bench_module = "benchmarks.asv.bench_aca_baseline"
-    bench_class = "AcaBaseline"
 
 
 class AcaBaselineDebugLog(AcaBaseline):
@@ -252,12 +202,3 @@ class AcaBaselineDebugLog(AcaBaseline):
         # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
-
-
-class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
-    """Three-phase GPU-memory profile for `AcaBaselineDebugLog`."""
-
-    version = "2"
-    timeout = 14400
-    bench_module = "benchmarks.asv.bench_aca_baseline"
-    bench_class = "AcaBaselineDebugLog"

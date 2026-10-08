@@ -19,6 +19,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.gated_routing import simulation_gate_fold, simulation_gate_route
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.period_inputs import (
@@ -552,7 +553,9 @@ def test_a_real_dissolution_gate_uses_raw_copies_on_an_ordered_submesh() -> None
         period=0,
         next_regime_to_V_arr=values[1],
         base_state_action_spaces={
-            name: regime.solution.state_action_space(regime_params=params[name])
+            name: regime.solution.state_action_space(
+                regime_params=regime_kernel_params(params, regime_name=name)
+            )
             for name, regime in regimes.items()
         },
         edge_values=fold_values,
@@ -610,7 +613,7 @@ def test_a_real_dissolution_gate_uses_raw_copies_on_an_ordered_submesh() -> None
         own_stakeholder=cast("Int1D", arguments["roles"]),
         new_own_stakeholder=cast("Int1D", arguments["roles"]),
         subject_devices=subject_devices,
-    )
+    )[:3]
     states, routed_ids, _ = routed
     np.testing.assert_array_equal(
         routed_ids, [ids[target], ids["single_f"], ids[target]] * 2

@@ -101,7 +101,6 @@ def merge_model_slots(
 
     for regime_name, user_regime in user_regimes.items():
         replacements: dict[str, Mapping[str, object]] = {}
-        variable_names: set[StateOrActionName] = set()
         for slot_name in _BROADCASTABLE_SLOTS:
             regime_slot = dict(getattr(user_regime, slot_name))
             model_slot = dict(model_slots.get(slot_name, {}))
@@ -127,8 +126,6 @@ def merge_model_slots(
                     model_slot=model_slot,
                 )
             )
-            if slot_name in ("states", "actions"):
-                variable_names |= model_slot.keys() & regime_slot.keys()
             replacements[slot_name] = {**model_slot, **regime_slot}
         # A masked state's broadcast law is dropped with it.
         masked_states = {

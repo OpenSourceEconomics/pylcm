@@ -43,6 +43,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -567,7 +568,9 @@ def _compiled_solve_kernel_hlo(
             program=declaration,
             context=CoreBuildContext(
                 state_action_space=regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name]
+                    regime_params=regime_kernel_params(
+                        flat_params, regime_name=regime_name
+                    )
                 ),
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=MappingProxyType({}),

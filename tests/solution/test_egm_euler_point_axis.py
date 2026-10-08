@@ -21,6 +21,7 @@ from _lcm.execution.workspace_planning import workspace_width_candidates
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -149,10 +150,17 @@ def _model(width: int | None = None) -> Model:
                     "working": AgeRange(exclusive_stop=ages.exact_values[-2]),
                     "dead": AgeRange(exclusive_stop=ages.exact_values[-1]),
                 },
-                law={
-                    "working": StochasticTransition(func=stay_prob),
-                    "dead": StochasticTransition(func=death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=ages.exact_values[-2]): {
+                            "working": StochasticTransition(func=stay_prob),
+                            "dead": StochasticTransition(func=death_prob),
+                        },
+                        ages.exact_values[-2]: {
+                            "dead": StochasticTransition(func=death_prob)
+                        },
+                    }
+                ),
             )
         },
         regime_id_class=RegimeId,

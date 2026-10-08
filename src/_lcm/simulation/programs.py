@@ -8,6 +8,10 @@ serve:
 - `transition`: the laws of motion carrying each subject into the next period.
 - `route`: the regime-transition probabilities the realized draw reads.
 
+A hard-max singleton regime also publishes `action_values`, the dense decision
+that additionally returns the action values and feasibility it maximizes over.
+Only policy lookup dispatches it, so it compiles only when requested.
+
 Every family tiles the subject axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
 product as a reduced axis too, with the same canonical order and the same exact
@@ -40,12 +44,15 @@ from _lcm.execution.core_program import (
     ReducedAxis,
     ValueRead,
 )
+from _lcm.regime_building.max_Q_over_a import _HardMaxArgmaxQOverA
 from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
 )
 from _lcm.simulation.program_types import (
+    ACTION_FEASIBILITY,
     ACTION_INDEX,
+    ACTION_VALUES,
     DECISION_PROGRAM,
     DECISION_VALUE,
     GATE_FOLD_PROGRAM,
@@ -83,7 +90,7 @@ from _lcm.typing import (
     StateOrActionName,
 )
 from lcm.exceptions import ExecutionPlanningError
-from lcm.typing import FloatND, IntND
+from lcm.typing import BoolND, FloatND, IntND
 
 
 # Why a regime whose routing the host drives cedes its own width.
@@ -169,6 +176,35 @@ def build_simulation_programs(
         else {}
     )
 
+    # The dense decision with its action values, even where the decision
+    # streams: same reads and subject tiling, no reduced action axis. A
+    # taste-shock draw or a household argmax publishes no such pair.
+    action_value_bodies: dict[int, Callable[..., object]] = {}
+    action_values: dict[int, CoreProgram] = {}
+    is_hard_max_singleton = (
+        not context.has_taste_shocks and context.stakeholders is None
+    )
+    for period in decision if is_hard_max_singleton else ():
+        group = id(Q_and_F_functions[period])
+        if group not in action_value_bodies:
+            action_value_bodies[group] = _SubjectTiled(
+                func=_with_action_values(reducer=per_subject_decisions[period]),
+                subject_arg_names=_decision_subject_arg_names(context=context),
+            )
+        action_values[period] = dataclasses.replace(
+            decision[period],
+            function=action_value_bodies[group],
+            requirements=dataclasses.replace(
+                decision[period].requirements, reduced_axes=()
+            ),
+            output_roles=(
+                ACTION_INDEX,
+                DECISION_VALUE,
+                ACTION_VALUES,
+                ACTION_FEASIBILITY,
+            ),
+        )
+
     transition_bodies: dict[int, Callable[..., object]] = {}
     transition: dict[int, CoreProgram] = {}
     for period in active_periods:
@@ -225,6 +261,7 @@ def build_simulation_programs(
         transition=MappingProxyType(transition),
         route=MappingProxyType(route),
         type_local_decision=MappingProxyType(type_local_decision),
+        action_values=MappingProxyType(action_values),
     )
 
 
@@ -668,6 +705,53 @@ def _decision_body(
         enforce=False,
     )
     return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
+
+
+def _with_action_values(*, reducer: Callable[..., object]) -> Callable[..., object]:
+    """Return `reducer` extended by the `Q` and `F` it maximizes over.
+
+    `reducer` is the dense hard-max decision, a signature wrapper around one
+    `_HardMaxArgmaxQOverA`; the result takes the same arguments.
+    """
+    kernel = getattr(reducer, "__wrapped__", None)
+    if not isinstance(kernel, _HardMaxArgmaxQOverA):
+        msg = f"Expected a wrapped hard-max decision reducer, got {kernel!r}."
+        raise ExecutionPlanningError(msg)
+    return with_signature(
+        _DecisionWithActionValues(decision=reducer, Q_and_F=kernel.Q_and_F),
+        args=list(inspect.signature(reducer).parameters),
+        return_annotation="tuple[IntND, FloatND, FloatND, BoolND]",
+        enforce=False,
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _DecisionWithActionValues:
+    """The dense hard-max decision at one state cell, with its action values.
+
+    Returns the decision's own chosen flat index and value, followed by the raw
+    action values `Q` and feasibility `F` over the action product, from the
+    `Q_and_F` the decision maximizes. `Q` is unmasked: an infeasible entry holds
+    the value the action would have; the decision masks it with `F`.
+    """
+
+    __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_values"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
+
+    decision: Callable[..., object]
+    """The dense hard-max decision reducer."""
+
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]]
+    """The decision's own action value and feasibility over the action product."""
+
+    def __call__(
+        self,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> tuple[IntND, FloatND, FloatND, BoolND]:
+        """Return the chosen flat index, its value, and `Q` and `F`."""
+        index, value = cast("tuple[IntND, FloatND]", self.decision(**kwargs))
+        Q_arr, F_arr = self.Q_and_F(**kwargs)
+        return index, value, Q_arr, F_arr
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

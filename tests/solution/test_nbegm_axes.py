@@ -380,7 +380,7 @@ def test_planner_width_names_cannot_be_user_names(*, route: str, slot: str) -> N
 
 def test_interval_coordinates_do_not_replace_a_legal_user_state() -> None:
     """Materialization retains user data beside the distinct interval coordinates."""
-    name = "_lcm_interval_indices"
+    name = "lcm_interval_indices"
     grid = LinSpacedGrid(start=11.0, stop=13.0, n_points=3)
     Regime(states={name: grid})
     model, params = _small_model(route=INTERVAL_AXIS, arithmetic="ordinary", widths={})

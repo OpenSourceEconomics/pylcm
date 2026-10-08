@@ -1,9 +1,8 @@
 """Per-target stochastic regime transition laws.
 
 The granular form of a `Transition` law declares each target regime's
-transition probability as its own function. The source's edges in
-`Model(edges=...)` declare which targets are reachable; a target the law omits
-receives probability zero.
+transition probability as its own function. The law's keys at each source
+age name the source's destinations there.
 """
 
 from collections.abc import Mapping
@@ -15,9 +14,10 @@ import pytest
 
 import lcm
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
+    ByAge,
     LinSpacedGrid,
     Model,
     Phased,
@@ -67,12 +67,20 @@ def _prob_dead(age: int) -> ScalarFloat:
     return jnp.asarray(1.0 - _prob_work(age) - _prob_retired(age))
 
 
-def _granular_transition() -> dict[str, StochasticTransition]:
-    return {
-        "work": StochasticTransition(func=_prob_work),
-        "retired": StochasticTransition(func=_prob_retired),
-        "dead": StochasticTransition(func=_prob_dead),
-    }
+def _granular_transition() -> ByAge:
+    return ByAge(
+        cases={
+            0: {
+                "work": StochasticTransition(func=_prob_work),
+                "retired": StochasticTransition(func=_prob_retired),
+                "dead": StochasticTransition(func=_prob_dead),
+            },
+            1: {
+                "retired": StochasticTransition(func=_prob_retired),
+                "dead": StochasticTransition(func=_prob_dead),
+            },
+        }
+    )
 
 
 _WORK_EDGES = {"work": 0, "retired": (0, 1), "dead": (0, 1)}
@@ -92,20 +100,26 @@ def _build_regime(**overrides: Any) -> UserRegime:
 def _build_model(
     *,
     work: UserRegime,
-    work_law: Mapping[str, StochasticTransition] | None = None,
+    work_law: Mapping[str, StochasticTransition] | ByAge | None = None,
     work_edges: Mapping[str, AgeSelector] = _WORK_EDGES,
 ) -> Model:
     # `retired` outlives `work` by one age so that the mass `work` sends it in
     # its final transition lands on an active regime, and hands everything to
     # `dead` in its own final transition.
-    retired_law = {
-        "retired": StochasticTransition(
-            func=lambda age: jnp.where(age < 2, 0.5, 0.0),
-        ),
-        "dead": StochasticTransition(
-            func=lambda age: jnp.where(age < 2, 0.5, 1.0),
-        ),
-    }
+    retired_dead = StochasticTransition(
+        func=lambda age: jnp.where(age < 2, 0.5, 1.0),
+    )
+    retired_law = ByAge(
+        cases={
+            (0, 1): {
+                "retired": StochasticTransition(
+                    func=lambda age: jnp.where(age < 2, 0.5, 0.0),
+                ),
+                "dead": retired_dead,
+            },
+            2: {"dead": retired_dead},
+        }
+    )
     return Model(
         regimes={
             "work": work,
@@ -158,25 +172,30 @@ def test_template_has_per_target_regime_transition_keys() -> None:
 
     model = _build_model(
         work=_build_regime(),
-        work_law={
-            "work": StochasticTransition(
-                func=lambda age, hazard: (
-                    1.0 - _prob_dead_with_param(age=age, hazard=hazard)
-                )
-            ),
-            "dead": StochasticTransition(func=_prob_dead_with_param),
-        },
+        work_law=ByAge(
+            cases={
+                (0, 1): {
+                    "work": StochasticTransition(
+                        func=lambda age, hazard: (
+                            1.0 - _prob_dead_with_param(age=age, hazard=hazard)
+                        )
+                    ),
+                    "dead": StochasticTransition(func=_prob_dead_with_param),
+                },
+                2: {"dead": StochasticTransition(func=_prob_dead_with_param)},
+            }
+        ),
         work_edges={"work": (0, 1), "dead": (0, 1, 2)},
     )
     template = model.get_params_template()
-    assert "hazard" in template["work"]["dead"]["next_regime"]
-    assert "hazard" in template["work"]["work"]["next_regime"]
+    assert "hazard" in template["edges"]["work"]["dead"]
+    assert "hazard" in template["edges"]["work"]["work"]
 
 
 def test_plain_callable_cell_is_rejected() -> None:
     """Granular cells must be `StochasticTransition`-wrapped."""
     with pytest.raises(RegimeInitializationError, match=r"StochasticTransition"):
-        validate_regime(
+        validate_regime_law(
             _build_regime(),
             law=bind_regime_law({"work": lambda age: 1.0}),  # noqa: ARG005
         )
@@ -188,7 +207,7 @@ def test_empty_granular_dict_is_rejected() -> None:
     with pytest.raises(
         RegimeInitializationError, match=r"without outgoing edges.*is terminal"
     ):
-        validate_regime(_build_regime(), law=bind_regime_law({}))
+        validate_regime_law(_build_regime(), law=bind_regime_law({}))
 
 
 def test_unknown_target_in_granular_dict_raises() -> None:
@@ -200,7 +219,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
                 "work": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
                 "valhalla": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
             },
-            work_edges={"work": (0, 1), "dead": (0, 1, 2)},
+            work_edges={"work": (0, 1, 2), "valhalla": (0, 1, 2)},
         )
 
 
@@ -272,9 +291,9 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
             },
         ),
     )
-    template = model.get_params_template()["work"]
-    assert "perceived_mass" in template["dead"]["next_regime"]
-    assert "realized_mass" in template["retired"]["next_regime"]
+    template = model.get_params_template()["edges"]["work"]
+    assert "perceived_mass" in template["dead"]
+    assert "realized_mass" in template["retired"]
     params = {"discount_factor": 1.0, "perceived_mass": 1.0, "realized_mass": 1.0}
     if phase_local_handoffs:
         params |= {"perceived_scale": 1.0, "realized_scale": 1.0}
@@ -420,18 +439,23 @@ def test_granular_keys_narrow_reachability() -> None:
     work = _build_regime(state_transitions={"wealth": {"retired": _next_wealth}})
     model = _build_model(
         work=work,
-        work_law={
-            "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
-            "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
-        },
+        work_law=ByAge(
+            cases={
+                (0, 1): {
+                    "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
+                    "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
+                },
+                2: {"dead": StochasticTransition(func=lambda age: jnp.asarray(0.3))},  # noqa: ARG005
+            }
+        ),
         work_edges={"retired": (0, 1), "dead": (0, 1, 2)},
     )
     assert "work" in model.user_regimes
 
 
-def test_per_target_regime_transition_template_nests_under_target() -> None:
-    """Granular cells' params nest under the target in the template."""
+def test_per_target_regime_transition_leaves_no_target_branch_under_source() -> None:
+    """Granular cells add no target branch to the source regime's template."""
     work = _build_regime()
     model = _build_model(work=work)
     template = model.get_params_template()
-    assert "next_regime" in template["work"]["retired"]
+    assert not {"work", "retired", "dead"} & set(template["work"])

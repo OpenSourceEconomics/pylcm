@@ -342,7 +342,7 @@ def test_continuation_targets_are_not_derived_from_law_bundle_keys() -> None:
 
 @pytest.mark.parametrize(
     "fixed_params",
-    [{"probability": 0.0}, {"source": {"high": {"next_regime": {"probability": 0.0}}}}],
+    [{"probability": 0.0}, {"edges": {"source": {"high": {"probability": 0.0}}}}],
 )
 def test_fixed_zero_probability_removes_target_problem(fixed_params: dict) -> None:
     """A fixed zero cell creates neither a physical visit nor a value problem."""
@@ -589,6 +589,8 @@ def test_fixed_probability_phase_support_and_handoff_laws_are_independent() -> N
     state_law = source.state_transitions["wealth"]
     assert isinstance(transition, Phased)
     assert isinstance(state_law, Phased)
+    assert isinstance(transition.solve, Mapping)
+    assert isinstance(transition.simulate, Mapping)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}
     assert set(state_law.solve) == {"low"}
@@ -646,6 +648,8 @@ def test_shared_probability_cell_follows_each_phases_helper_dag() -> None:
     )
     transition = reduced.laws["source"].transition
     assert isinstance(transition, Phased)
+    assert isinstance(transition.solve, Mapping)
+    assert isinstance(transition.simulate, Mapping)
     assert set(transition.solve) == {"low"}
     assert set(transition.simulate) == {"high"}
     assert reduced.consumed_param_keys == frozenset({"probability"})

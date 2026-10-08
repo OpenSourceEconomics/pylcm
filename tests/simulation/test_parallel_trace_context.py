@@ -10,7 +10,7 @@ worker count, and every program is traced under the caller's settings.
 import contextvars
 import re
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import ExitStack, contextmanager
 from fractions import Fraction
 
@@ -201,7 +201,7 @@ def test_parallel_planning_under_scoped_promotion_matches_the_exact_reference(
 
 
 @contextmanager
-def _scoped_settings(*, setting: str) -> Iterator[tuple[object, object, object]]:
+def _scoped_settings(*, setting: str) -> Generator[tuple[object, object, object]]:
     """Scope JAX trace settings that differ from the process-wide ones.
 
     Yields the effective promotion, matmul precision and x64 inside the scope.

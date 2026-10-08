@@ -35,7 +35,7 @@ from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -173,7 +173,7 @@ def _rank_model(reference: np.ndarray) -> Model:
 
 
 def _rank_model_inputs() -> tuple[UserParams, UserInitialConditions]:
-    params = get_params(n_periods=2)
+    params = get_graph_only_params(n_periods=2)
     initial_conditions: UserInitialConditions = {
         "wealth": jnp.asarray([2.0]),
         "age": jnp.asarray([18.0]),

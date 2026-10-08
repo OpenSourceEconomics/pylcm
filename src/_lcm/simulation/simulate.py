@@ -45,6 +45,7 @@ from _lcm.engine import (
     placed_devices_for_ids,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
@@ -1275,7 +1276,10 @@ def _referenced_value_kwargs(
             {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
         )
         kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in regime.same_period_ref_regimes
+            }
         )
     # The same per-period set the AOT lowering consults, so a compiled
     # program's pytree and this call's arguments name the same channels — and
@@ -1290,7 +1294,10 @@ def _referenced_value_kwargs(
             {ref: landing_V[ref] for ref in edge_reference_regimes}
         )
         kwargs[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in edge_reference_regimes}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in edge_reference_regimes
+            }
         )
     return kwargs
 
@@ -1775,7 +1782,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             states=states[regime_name],
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            flat_params=flat_params[regime_name],
+            flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
             referenced_value_kwargs=referenced_value_kwargs,
             subject_ids_in_regime=subject_ids_in_regime,
         )
@@ -1788,7 +1795,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             sim_policy=sim_policy,
             states=states[regime_name],
             canonical_states=state_action_space.states,
-            flat_params=flat_params[regime_name],
+            flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
             period=period,
             age=age,
             n_subjects=n_chunk_subjects,
@@ -1829,7 +1836,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     taste_keys=taste_shock_kwargs,
                     next_values=next_regime_to_V_arr,
                     references=referenced_value_kwargs,
-                    params=flat_params[regime_name],
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period) if memory is None else np.int32(period),
                     age=age,
                 ),
@@ -1859,7 +1866,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 regime=regime,
                 sim_policy=sim_policy,
                 states=states[regime_name],
-                flat_params=flat_params[regime_name],
+                flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
                 period=period,
                 age=age,
                 canonical_states=state_action_space.states,
@@ -1911,7 +1918,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             states_per_regime=states,
             state_action_space=state_action_space,
             key=next_states_key,
@@ -1932,7 +1939,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             regime_names_to_ids=regime_names_to_ids,
             states_per_regime=states,
             new_subject_regime_ids=new_subject_regime_ids,

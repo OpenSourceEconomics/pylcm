@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -261,7 +261,7 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
     change, so a conditioner with a law of motion is refused.
     """
     with pytest.raises(RegimeInitializationError, match="conditioning state"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={
                     "risk_type": DiscreteGrid(category_class=RiskType),
@@ -522,6 +522,94 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
             solve=edges,
             simulate=edges,
         ),
+    )
+
+    assert set(model.user_regimes) == {
+        "safe_entry",
+        "moving_entry",
+        "folding",
+        "sideways",
+        "done",
+    }
+
+
+def _coarse_law_to_sideways() -> ScalarInt:
+    return PhasedSplitRegimeId.sideways
+
+
+def test_a_coarse_law_whose_edges_avoid_the_folding_regime_is_accepted() -> None:
+    """Which regimes a source reaches is read off its edges, not its law's form.
+
+    `moving_entry` changes `risk_type` and its law is one coarse callable, which
+    could name any regime code. Its edges lead only to `sideways` and `done`, so
+    no subject it moves arrives in `folding`, and the fold's row stays dated
+    correctly.
+    """
+    safe_entry = Regime(
+        states={
+            "risk_type": DiscreteGrid(category_class=RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    )
+    moving_entry = Regime(
+        states={
+            "risk_type": DiscreteGrid(category_class=RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={"risk_type": _next_risk_type},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    )
+    folding = Regime(
+        states={
+            "risk_type": DiscreteGrid(category_class=RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    )
+    sideways = Regime(
+        states={"risk_type": DiscreteGrid(category_class=RiskType)},
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": lambda work: jnp.asarray(work) * 0.0},
+    )
+    done = Regime(
+        functions={"utility": lambda: jnp.asarray(0.0)},
+    )
+
+    model = Model(
+        regimes={
+            "safe_entry": safe_entry,
+            "moving_entry": moving_entry,
+            "folding": folding,
+            "sideways": sideways,
+            "done": done,
+        },
+        ages=_THREE_AGES,
+        regime_id_class=PhasedSplitRegimeId,
+        initial_nodes={0: ("safe_entry", "moving_entry")},
+        edges={
+            "safe_entry": {"folding": 0},
+            "moving_entry": Transition(
+                targets={"sideways": 0, "done": 0},
+                law=DeterministicTransition(func=_coarse_law_to_sideways),
+            ),
+            "folding": {"done": 1},
+            "sideways": {"done": 1},
+        },
     )
 
     assert set(model.user_regimes) == {

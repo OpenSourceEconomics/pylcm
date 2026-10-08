@@ -18,7 +18,11 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -170,7 +174,7 @@ def test_transition_with_a_probability_mapping_declares_a_lottery() -> None:
         edges={
             "working": Transition(
                 targets=MORTAL_TARGETS,
-                law=ByAge(cases={(60, 61): PERCEIVED}),
+                law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
             ),
             "retired": RETIRED_EDGES,
         }
@@ -188,7 +192,8 @@ def test_transition_by_age_must_cover_every_age_with_several_edges() -> None:
         _model(
             edges={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={60: PERCEIVED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={60: StochasticTransition(func=_mortality_vector)}),
                 ),
                 "retired": RETIRED_EDGES,
             }
@@ -201,9 +206,13 @@ def test_several_edges_without_a_law_are_rejected() -> None:
         _model(edges={"working": MORTAL_TARGETS, "retired": RETIRED_EDGES})
 
 
-def test_a_law_on_a_source_with_one_edge_per_age_is_rejected() -> None:
-    """The graph is the law of a source with one destination at every age."""
-    with pytest.raises(ModelInitializationError, match="graph is its law"):
+def test_a_law_naming_a_destination_the_targets_omit_at_an_age_is_rejected() -> None:
+    """A regime-name law names its target at every source age; `targets` must agree.
+
+    `"dead"` is the retired regime's only supplied destination at age 64, but at
+    ages 60-63 the supplied targets lead back to retirement.
+    """
+    with pytest.raises(ModelInitializationError, match="supplied"):
         _model(
             edges={
                 "working": LAW_FREE_EDGES["working"],
@@ -212,19 +221,110 @@ def test_a_law_on_a_source_with_one_edge_per_age_is_rejected() -> None:
         )
 
 
+def _survive_before_62(age: float) -> FloatND:
+    return jnp.where(age < 62, 1.0, 0.0)
+
+
+def _die_from_62(age: float) -> FloatND:
+    return 1.0 - _survive_before_62(age)
+
+
+# One destination at every source age: working at 60 and 61, dead at 62.
+SINGLE_DESTINATION_TARGETS = {"working": (60, 61), "dead": 62}
+GRAPH_ONLY_EDGES = {
+    "working": SINGLE_DESTINATION_TARGETS,
+    "retired": RETIRED_EDGES,
+}
+
+
+def test_horizon_aware_law_at_single_destination_ages_solves_like_the_graph() -> None:
+    """A law putting unit mass on each age's only destination passes the debug check.
+
+    The law is evaluated at every source age, also where one edge leaves the
+    source, and there it reproduces the graph-only lifecycle's values exactly.
+    """
+    with_law = _model(
+        edges={
+            "working": Transition(
+                targets=SINGLE_DESTINATION_TARGETS,
+                law=ByAge(
+                    cases={
+                        (60, 61): {
+                            "working": StochasticTransition(func=_survive_before_62)
+                        },
+                        62: {"dead": StochasticTransition(func=_die_from_62)},
+                    }
+                ),
+            ),
+            "retired": RETIRED_EDGES,
+        }
+    )
+    got = with_law.solve(params=PARAMS, log_level="debug").values
+    expected = _model(edges=GRAPH_ONLY_EDGES).solve(params=PARAMS, log_level="off")
+    np.testing.assert_array_equal(
+        [np.asarray(got[period]["working"]) for period in (0, 1, 2)],
+        [np.asarray(expected.values[period]["working"]) for period in (0, 1, 2)],
+    )
+
+
+def test_per_target_law_naming_a_cell_the_targets_omit_is_rejected() -> None:
+    """A per-target law names both its cells at every age; `targets` must agree.
+
+    The supplied targets lead only back to work at ages 60 and 61 and only to
+    death at 62, while the law names both destinations at every age.
+    """
+    with pytest.raises(ModelInitializationError, match="supplied"):
+        _model(
+            edges={
+                "working": Transition(targets=SINGLE_DESTINATION_TARGETS, law=REALIZED),
+                "retired": RETIRED_EDGES,
+            }
+        )
+
+
+def _vector_ignoring_the_horizon() -> FloatND:
+    """Mass 0.9 on working and 0.1 on dead, in the order of `RegimeId`."""
+    return jnp.array([0.9, 0.0, 0.1])
+
+
+def test_vector_law_short_of_unit_mass_at_one_destination_names_the_cell() -> None:
+    """A vector law over all targets loses the mass of its target without an edge.
+
+    At ages 60 and 61 the only edge leads back to work, so the 0.1 the law puts
+    on death has no edge; at 62 its 0.9 on work has none. The debug check names
+    the cell, as it does for a per-target law.
+    """
+    model = _model(
+        edges={
+            "working": Transition(
+                targets=SINGLE_DESTINATION_TARGETS,
+                law=StochasticTransition(func=_vector_ignoring_the_horizon),
+            ),
+            "retired": RETIRED_EDGES,
+        }
+    )
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"(?s)\(age 6[012], 'working' -> '(dead|working)'\).*declares no edge",
+    ):
+        model.solve(params=PARAMS, log_level="debug")
+
+
 def test_phased_edges_solve_with_the_perceived_law() -> None:
     """Each phase's `Transition` carries that phase's law; solve uses the perceived."""
     phased = _model(
         edges=Phased(
             solve={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
                 ),
                 "retired": RETIRED_EDGES,
             },
             simulate={
                 "working": Transition(
-                    targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): REALIZED})
+                    targets=MORTAL_TARGETS,
+                    law=ByAge(cases={(60, 61): REALIZED, 62: "retired"}),
                 ),
                 "retired": RETIRED_EDGES,
             },
@@ -233,7 +333,8 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
     perceived = _model(
         edges={
             "working": Transition(
-                targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+                targets=MORTAL_TARGETS,
+                law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"}),
             ),
             "retired": RETIRED_EDGES,
         }
@@ -248,7 +349,7 @@ def test_phased_edges_solve_with_the_perceived_law() -> None:
 
 LOTTERY_EDGES = {
     "working": Transition(
-        targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED})
+        targets=MORTAL_TARGETS, law=ByAge(cases={(60, 61): PERCEIVED, 62: "retired"})
     ),
     "retired": RETIRED_EDGES,
 }

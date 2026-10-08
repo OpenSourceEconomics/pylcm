@@ -6,6 +6,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from lcm.transition import DeterministicTransition, StochasticTransition
+from lcm.typing import RegimeName
 
 
 @beartype(conf=REGIME_CONF)
@@ -13,7 +14,7 @@ from lcm.transition import DeterministicTransition, StochasticTransition
 class _SupportedDeterministicTransition(DeterministicTransition):
     """A deterministic kernel tagged with its graph-resolved support."""
 
-    targets: tuple[str, ...]
+    targets: tuple[RegimeName, ...]
 
 
 @beartype(conf=REGIME_CONF)
@@ -21,4 +22,4 @@ class _SupportedDeterministicTransition(DeterministicTransition):
 class _SupportedStochasticTransition(StochasticTransition):
     """A probability kernel tagged with its graph-resolved support."""
 
-    targets: tuple[str, ...]
+    targets: tuple[RegimeName, ...]

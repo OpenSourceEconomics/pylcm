@@ -11,8 +11,8 @@ drawn row.
 The exact preimages come from `_cliff_pullback_reference`, a rational-arithmetic
 reference that shares no code with the solver. The two-period value comes from
 the same module's closed form. The whole period kernel is also checked against
-the scalar direct oracle, which reads each node's cliffs off the solved child
-carry rather than re-evaluating the threshold declarations.
+the scalar direct oracle, which evaluates each node's threshold declarations on
+the child period's own grid rows, independently of the solved child carry.
 """
 
 import dataclasses
@@ -442,10 +442,10 @@ def test_solved_value_reaches_the_child_cliff_supremum(kind: int) -> None:
 def test_period_kernel_agrees_with_the_child_carry_oracle(
     liquid_law: Callable[..., object],
 ) -> None:
-    """Value, carry and consumption match the oracle reading the child carry rows.
+    """Value, carry and consumption match the oracle on the child period's rows.
 
-    The scalar oracle takes each node's cliffs from the solved child carry's
-    published breakpoint row rather than from the threshold declarations.
+    The scalar oracle evaluates each node's threshold declarations on the child
+    period's grid rows rather than reading the solved child carry's breakpoints.
     """
     model = _build_model(liquid_law=liquid_law, subsidy=kind_indexed_subsidy)
     kernel, context = ride_along_kernel(
@@ -571,9 +571,7 @@ def wage_seam() -> dict[str, Any]:
     model = nbegm_continuous_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=24, n_savings=16, n_consumption=24
     )
-    params = nbegm_continuous_ride_along_toy.build_params(
-        final_age_alive=2.0, return_liquid=0.0, income=0.0
-    )
+    params = nbegm_continuous_ride_along_toy.build_params(return_liquid=0.0, income=0.0)
     return _solved_seam(model=model, params=params)
 
 
@@ -615,7 +613,7 @@ def test_continuous_co_state_targets_both_rows_the_child_blends(
                 n_savings=16,
                 n_consumption=24,
             ),
-            nbegm_continuous_ride_along_toy.build_params(final_age_alive=2.0),
+            nbegm_continuous_ride_along_toy.build_params(),
         ),
     ],
     ids=["flipped_kind", "continuous_wage"],

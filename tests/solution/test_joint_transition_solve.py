@@ -16,6 +16,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
+    Gate,
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
@@ -25,7 +26,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -358,21 +358,19 @@ def _bdy_gate_always_open(V_target_f: FloatND) -> jnp.ndarray:
 
 
 def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
-    single_law = {
-        "couple": ValueDependentTransition(
-            probability=StochasticTransition(func=_bdy_certain_couple),
-            gate=_bdy_gate_always_open,
-            routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_terminal",
-                        projection={"wealth": _bdy_identity_wealth},
-                    ),
-                )
-            },
-        )
-    }
+    single_law = {"couple": StochasticTransition(func=_bdy_certain_couple)}
+    couple_gate = Gate(
+        predicate=_bdy_gate_always_open,
+        routes={
+            "f": StakeholderRoute(
+                target_stakeholder="f",
+                fallback=ProjectedRegimeValue(
+                    regime="single_terminal",
+                    projection={"wealth": _bdy_identity_wealth},
+                ),
+            )
+        },
+    )
     return Model(
         regimes={
             "single": Regime(
@@ -421,7 +419,9 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
         initial_nodes={0: "single"},
         edges={
             "single": Transition(
-                targets={"couple": 0, "single_terminal": 0}, law=single_law
+                targets={"couple": 0, "single_terminal": 0},
+                law=single_law,
+                gates={"couple": couple_gate},
             )
         },
     )
@@ -431,7 +431,6 @@ def _bdy_params() -> UserParams:
     return {
         "single": {
             "couple": {
-                "next_regime": {},
                 "partner_match": {"support": {}, "probabilities": {}},
                 "next_wealth": {},
                 "next_ybar_p": {},

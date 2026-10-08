@@ -78,8 +78,6 @@ def build_params(
     return_liquid: float = 0.03,
     income: float = 1.0,
     premium: float = 1.5,
-    # Unused: the model's edges fix the age at which `alive` dies.
-    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the buy-private one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}

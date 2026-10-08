@@ -13,9 +13,10 @@ result equals the one a fresh model returns.
 import copy
 import dataclasses
 import gc
+import logging
 import math
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any
@@ -56,7 +57,7 @@ def _solve(*, model: Model, params: dict) -> Any:
 
 
 @contextmanager
-def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int]]:
+def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Generator[dict[str, int]]:
     """Count calls of the builders a blueprint hit skips."""
     calls = dict.fromkeys(_EXPENSIVE_BUILDERS, 0)
     with monkeypatch.context() as patch:
@@ -76,7 +77,7 @@ def _counted_builders(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, int
 @contextmanager
 def _captured_plans(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[list[Any]]:
+) -> Generator[list[Any]]:
     """Capture the compiled-program plan of every solve inside the block."""
     plans: list[Any] = []
     original = bi._compile_all_functions
@@ -422,3 +423,67 @@ def test_pickling_a_model_drops_its_blueprints() -> None:
     assert len(restored._structural_blueprints) == 0
     _assert_values_identical(first=first, second=_solve(model=restored, params=params))
     assert len(restored._structural_blueprints) == 1
+
+
+def test_a_blueprint_holding_other_program_objects_is_rebuilt(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored blueprint whose programs are not the keyed objects is not bound.
+
+    The key names programs by identity, so an entry whose `programs` are equal
+    copies rather than the very objects of the current graph is treated as a
+    miss: the structure is resolved again and the entry is replaced.
+    """
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    _warm(model=model, params=params)
+    cache = model._structural_blueprints
+    ((key, stored),) = cache._entries.items()
+    copies = tuple(copy.copy(program) for program in stored.programs)
+    cache.put(key=key, blueprint=dataclasses.replace(stored, programs=copies))
+    with _counted_builders(monkeypatch) as calls:
+        _solve(model=model, params=params)
+    assert calls["materialize_core_program"] > 0, calls
+    assert not any(
+        new is old
+        for new, old in zip(cache._entries[key].programs, copies, strict=True)
+    )
+
+
+def _logged_outcomes(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the lookup outcome of every structural-blueprint debug line."""
+    prefix = "structural blueprint: "
+    return [
+        record.getMessage().removeprefix(prefix).split(" ")[0]
+        for record in caplog.records
+        if record.getMessage().startswith(prefix)
+    ]
+
+
+def test_the_debug_log_reports_a_miss_then_a_hit(
+    *, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A cold solve logs `miss` and the same-schema warm solve logs `hit`."""
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    with caplog.at_level(logging.DEBUG, logger="lcm"):
+        for _ in range(2):
+            result = model.solve(params=params, log_level="debug")
+            del result
+    assert _logged_outcomes(caplog) == ["miss", "hit"]
+
+
+def test_the_debug_log_reports_an_uncertified_graph_as_uncached(
+    *, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A solve whose programs yield no structural key logs `uncached`."""
+    monkeypatch.setattr(bi, "_structural_key", lambda **_: None)
+    model, params = _workload(
+        name="independent_types", execution_config=_config(blocked=True)
+    )
+    with caplog.at_level(logging.DEBUG, logger="lcm"):
+        result = model.solve(params=params, log_level="debug")
+        del result
+    assert _logged_outcomes(caplog) == ["uncached"]

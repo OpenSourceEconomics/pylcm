@@ -23,6 +23,7 @@ from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -185,10 +186,15 @@ def _model(*, execution_config: ExecutionConfig) -> Model:
         edges={
             "working": Transition(
                 targets={"working": 40, "dead": (40, 50)},
-                law={
-                    "working": StochasticTransition(func=stay_prob),
-                    "dead": StochasticTransition(func=death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        40: {
+                            "working": StochasticTransition(func=stay_prob),
+                            "dead": StochasticTransition(func=death_prob),
+                        },
+                        50: {"dead": StochasticTransition(func=death_prob)},
+                    }
+                ),
             )
         },
     )
@@ -219,11 +225,9 @@ def _captured_widths(
     model = _model(execution_config=execution_config)
     model.solve(
         params={
-            "working": {
-                "koopmans_aggregator": {"discount_factor": 0.95},
-                "final_age_alive": 50.0,
-            },
+            "working": {"koopmans_aggregator": {"discount_factor": 0.95}},
             "dead": {},
+            "edges": {"working": {"final_age_alive": 50.0}},
         },
         log_level="off",
     )

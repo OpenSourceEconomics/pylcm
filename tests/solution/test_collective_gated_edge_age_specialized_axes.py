@@ -30,8 +30,10 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -40,7 +42,6 @@ from lcm import (
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -270,6 +271,8 @@ def _build_gate_ref_model() -> Model:
         states={"principal": _ANNUITY_GRID},
         functions={"utility": _annuity_felicity_m},
     )
+    staying_put = StochasticTransition(func=_probability_of_staying_put)
+    leaving = StochasticTransition(func=_probability_of_leaving)
     return Model(
         regimes={
             "couple": couple,
@@ -289,11 +292,15 @@ def _build_gate_ref_model() -> Model:
                     "annuity_f": (0, 1),
                     "annuity_m": (0, 1),
                 },
-                law={
-                    "couple": StochasticTransition(func=_probability_of_staying_put),
-                    "account": ValueDependentTransition(
-                        probability=StochasticTransition(func=_probability_of_leaving),
-                        gate=_index_clears_the_hurdle,
+                law=ByAge(
+                    cases={
+                        0: {"couple": staying_put, "account": leaving},
+                        1: {"account": leaving},
+                    }
+                ),
+                gates={
+                    "account": Gate(
+                        predicate=_index_clears_the_hurdle,
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",
@@ -310,7 +317,7 @@ def _build_gate_ref_model() -> Model:
                                 ),
                             ),
                         },
-                        gate_references={
+                        references={
                             "index_value": ProjectedRegimeValue(
                                 regime="index",
                                 projection={"level": _level_from_balance},
@@ -389,6 +396,8 @@ def _build_dissolution_model() -> Model:
         states={"s": _ANNUITY_GRID},
         functions={"utility": _single_felicity_m},
     )
+    staying_put = StochasticTransition(func=_probability_of_staying_put)
+    leaving = StochasticTransition(func=_probability_of_leaving)
     return Model(
         regimes={
             "couple": couple,
@@ -408,11 +417,15 @@ def _build_dissolution_model() -> Model:
                     "single_f": (0, 1),
                     "single_m": (0, 1),
                 },
-                law={
-                    "couple": StochasticTransition(func=_probability_of_staying_put),
-                    "pair": ValueDependentTransition(
-                        probability=StochasticTransition(func=_probability_of_leaving),
-                        gate=_household_consents,
+                law=ByAge(
+                    cases={
+                        0: {"couple": staying_put, "pair": leaving},
+                        1: {"pair": leaving},
+                    }
+                ),
+                gates={
+                    "pair": Gate(
+                        predicate=_household_consents,
                         routes={
                             "f": StakeholderRoute(
                                 target_stakeholder="f",

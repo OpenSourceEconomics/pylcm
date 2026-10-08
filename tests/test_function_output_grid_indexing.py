@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -38,6 +38,14 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 
 @categorical(ordered=False)
@@ -88,7 +96,7 @@ def _finalized_regime(**kwargs: object) -> UserRegime:
     regime = UserRegime(**kwargs)  # ty: ignore[invalid-argument-type]
     return finalize_regimes(
         user_regimes={"regime": regime},
-        laws={"regime": UNBOUND_LAW},
+        laws={"regime": _NON_TERMINAL_LAW},
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),

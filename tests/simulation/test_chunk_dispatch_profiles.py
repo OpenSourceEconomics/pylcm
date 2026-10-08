@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.simulate as simulation
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.transitions import _advance_states_for_subjects
 from _lcm.solution.artifacts import OwnedSolutionView
@@ -140,7 +141,9 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
     flat_params = model._process_params(params)
     base_spaces = MappingProxyType(
         {
-            name: each.solution.state_action_space(regime_params=flat_params[name])
+            name: each.solution.state_action_space(
+                regime_params=regime_kernel_params(flat_params, regime_name=name)
+            )
             for name, each in regimes.items()
         }
     )

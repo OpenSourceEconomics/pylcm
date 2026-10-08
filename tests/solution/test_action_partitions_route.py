@@ -262,7 +262,7 @@ def test_partitioned_regimes_cap_the_action_width_so_every_device_owns_a_block(
     model = many_actions.get_model()
 
     ceilings = action_partition_width_ceilings(
-        user_regimes=model._engine_user_regimes,
+        user_regimes=model.user_regimes,
         action_partitions={"working": count},
         fixed_widths_by_regime=fixed,
     )

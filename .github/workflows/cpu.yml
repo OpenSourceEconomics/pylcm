@@ -113,7 +113,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -185,7 +185,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-${{ runner.os }}-general-${{ matrix.shard }}
           path: |
@@ -194,7 +194,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-general-${{ matrix.shard }}
           path: reports/coverage-general-${{ matrix.shard }}.xml
@@ -245,7 +245,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-gen32-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -306,7 +306,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp32-general-${{ matrix.shard }}
           path: |
@@ -343,8 +343,8 @@ jobs:
   # signal. This lane is mandatory on every PR push and gates `cpu`.
   #
   # `--dist load` rather than `loadfile`: these are source-only cases with no
-  # device or cache coupling, and the program module alone is a 27-minute atom
-  # under `loadfile`, over the 24-minute payload guardrail. Per-test
+  # device or cache coupling, and under `loadfile` the program module alone
+  # would be one indivisible atom that sets the lane's wall time. Per-test
   # distribution costs one module-scoped clean verification per worker (two),
   # not per test.
   tests-source-contract:
@@ -358,7 +358,7 @@ jobs:
       PYLCM_CI_RECEIPT: reports/ci-receipts
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -454,7 +454,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-source-contract
           path: |
@@ -468,7 +468,7 @@ jobs:
         # lanes against the manifest before any upload, so an incomplete run
         # cannot publish a partial coverage picture that looks like a drop.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-source-contract
           path: reports/coverage-source-contract.xml
@@ -495,7 +495,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-rest-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -566,7 +566,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-rest-slow
           path: |
@@ -575,7 +575,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-rest-slow
           path: reports/coverage-rest-slow.xml
@@ -613,7 +613,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-certified
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -690,7 +690,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp64-certified
           path: |
@@ -703,7 +703,7 @@ jobs:
         # lanes against the manifest before any upload, so an incomplete run
         # cannot publish a partial coverage picture that looks like a drop.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-certified
           path: reports/coverage-certified.xml
@@ -769,7 +769,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -835,7 +835,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-${{ runner.os }}-timing
           path: |
@@ -845,7 +845,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && runner.os == 'Linux' && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-timing
           path: reports/coverage-timing.xml
@@ -895,7 +895,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-four-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -1535,7 +1535,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-topology-four-device
           path: |
@@ -1544,7 +1544,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-topology-four-device
           path: reports/coverage-topology-four-device.xml
@@ -1591,7 +1591,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-eight-device-fp${{ matrix.precision }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2039,7 +2039,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: junit-cpu-fp${{ matrix.precision }}-topology-eight-device
           path: |
@@ -2048,7 +2048,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-topology-eight-device
           path: reports/coverage-topology-eight-device.xml
@@ -2096,7 +2096,7 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1.13.0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2155,7 +2155,7 @@ jobs:
         # with the suite's would put a failure and extra arms per precision into
         # the counts a healthy run reports.
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: exact-kernel-matrix-${{ runner.os }}
           path: |
@@ -2167,11 +2167,9 @@ jobs:
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
   # while balancing real cost rather than a hash. Both precisions take seven
-  # shards. Run 35078533997 measured 288.5 worker-minutes at fp64 and 285.4 at
-  # fp32, so a two-worker job carries 20.6 and 20.4 payload minutes at seven
-  # shards; fewer shards break the 24-minute payload guardrail and more buy
-  # nothing, because the heaviest indivisible file already costs 21.1 minutes at
-  # fp64 and 22.1 at fp32 and `--dist loadfile` cannot split it. Each job keeps
+  # shards, which keeps each job's predicted payload inside the 30-minute
+  # guardrail and close to the floor set by the heaviest indivisible file:
+  # `--dist loadfile` cannot split it, so more shards buy nothing. Each job keeps
   # two xdist workers: increasing that inside a 16 GB runner has exhausted
   # memory, whereas separate runners provide real capacity.
   tests-slow-solution:
@@ -2237,7 +2235,7 @@ jobs:
       PYLCM_CACHE_KEY: jax-sol-fp${{ matrix.precision }}-s${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2306,7 +2304,7 @@ jobs:
             -n 2 ${coverage_args[@]+"${coverage_args[@]}"}
       - name: Upload JUnit report and shard manifest
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: >-
             junit-cpu-fp${{ matrix.precision }}-solution-${{ matrix.shard }}
@@ -2317,7 +2315,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload this lane's coverage data
         if: always() && matrix.precision == 64
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-solution-${{ matrix.shard }}
           path: reports/coverage-solution-${{ matrix.shard }}.xml
@@ -2359,13 +2357,14 @@ jobs:
       - tests-topology-four-device
       - tests-topology-eight-device
       - tests-slow-solution
+      - tests-benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.0
         with:
           pixi-version: v0.81.0
           cache: true
@@ -2373,7 +2372,7 @@ jobs:
           activate-environment: true
           frozen: true
       - name: Download every lane's coverage data
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           pattern: coverage-*
           path: coverage-data
@@ -2391,6 +2390,87 @@ jobs:
           directory: coverage-data
           disable_search: false
           fail_ci_if_error: true
+  # The harness tests under `benchmarks/` (ASV wiring, GPU-memory measurement
+  # plumbing, PR-comment and publish tooling). They fake every device and model
+  # they touch, so they run on CPU. `tests/conftest.py` does not load for
+  # `benchmarks/`, so this lane carries no execution-policy flags. The scaling
+  # and discrete-control subprojects keep their own harnesses.
+  tests-benchmarks:
+    name: Run the benchmark harness tests (Linux, 3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.0
+        with:
+          pixi-version: v0.81.0
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: tests-cpu
+          activate-environment: true
+          frozen: true
+      - name: Probe or reinstall the installed native payload
+        shell: bash
+        run: |
+          mkdir -p reports
+          pylcm_native_report="reports/native.json"
+          set +e
+          pixi run -e tests-cpu python -m tests.ci.probe_native \
+            --report="$pylcm_native_report"
+          status=$?
+          set -e
+          if test "$status" -eq 2; then
+            pixi reinstall -e tests-cpu --locked pylcm
+            pixi run -e tests-cpu python -m tests.ci.probe_native \
+              --report="$pylcm_native_report"
+          elif test "$status" -ne 0; then
+            exit "$status"
+          fi
+      - name: Run the benchmark harness tests
+        shell: bash {0}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
+          pixi run -e tests-cpu pytest benchmarks \
+            --ignore=benchmarks/continuous_scaling \
+            --ignore=benchmarks/discrete_control \
+            --timeout=600 --timeout-method=thread -v -n 0 \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-benchmarks.xml \
+            --cov=./ --cov-report="xml:reports/coverage-benchmarks.xml" \
+          && check_population reports/junit-cpu-benchmarks.xml
+      - name: Upload the JUnit report
+        # `always()` so a failing run still publishes its report.
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: junit-cpu-benchmarks
+          path: reports/junit-*.xml
+          if-no-files-found: warn
+      - name: Upload this lane's coverage data
+        # Sent to Codecov only by the `coverage` combine stage.
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-benchmarks
+          path: reports/coverage-benchmarks.xml
+          if-no-files-found: error
   # One context for the whole matrix, so branch protection names `cpu` rather
   # than every lane -- adding a platform or a shard would otherwise silently
   # drop out of the required set until someone remembered to add it there too.
@@ -2409,6 +2489,7 @@ jobs:
       - tests-topology-eight-device
       - tests-exact-kernel
       - tests-slow-solution
+      - tests-benchmarks
       - coverage
     if: always()
     runs-on: ubuntu-latest
@@ -2436,6 +2517,7 @@ jobs:
           echo "topology-eight-device: ${{needs.tests-topology-eight-device.result}}"
           echo "exact-kernel: ${{needs.tests-exact-kernel.result}}"
           echo "slow-solution: ${{needs.tests-slow-solution.result}}"
+          echo "benchmarks: ${{needs.tests-benchmarks.result}}"
           echo "coverage: ${{needs.coverage.result}}"
           test "${{needs.tests.result}}" = "success"
           test "${{needs.tests-fp32.result}}" = "success"
@@ -2447,4 +2529,5 @@ jobs:
           test "${{needs.tests-topology-eight-device.result}}" = "success"
           test "${{needs.tests-exact-kernel.result}}" = "success"
           test "${{needs.tests-slow-solution.result}}" = "success"
+          test "${{needs.tests-benchmarks.result}}" = "success"
           test "${{needs.coverage.result}}" = "success"

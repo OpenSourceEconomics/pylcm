@@ -107,7 +107,7 @@ _PARAMS = {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-        "target": {"next_regime": {}, "next_shock": {}},
+        "target": {"next_shock": {}},
     },
     "target": {"utility": {}},
 }
@@ -219,7 +219,7 @@ def test_a_state_dependent_entry_outside_the_support_fails_loudly() -> None:
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -321,7 +321,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -381,7 +381,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-            "target": {"next_regime": {}, "next_shock": {}, "next_other": {}},
+            "target": {"next_shock": {}, "next_other": {}},
         },
         "target": {"utility": {}},
     }
@@ -443,7 +443,7 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-            "target": {"next_regime": {}, "next_shock": {}},
+            "target": {"next_shock": {}},
         },
         "target": {"utility": {}},
     }
@@ -521,7 +521,6 @@ def test_the_entry_representation_decides_the_action() -> None:
             "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "stay": {"utility": {}},
         "enter": {"utility": {}},

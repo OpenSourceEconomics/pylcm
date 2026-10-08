@@ -976,6 +976,8 @@ def _simulate_job(
         for address, leaf in _data_leaves(regime=regime, period=period, data=data)
     }
     devices = _selected_devices(model=model)
+    # One transfer for every leaf; a tuple keeps the addresses in their order.
+    host_leaves = jax.device_get(tuple(leaves.values()))
     return selection.retained, FragmentPanel(
         n_subjects=cast("int", plan.n_subjects),
         subject_batch_size=int(cast("int", result._subject_batch_size)),  # noqa: SLF001
@@ -986,8 +988,8 @@ def _simulate_job(
         ),
         leaves=MappingProxyType(
             {
-                address: np.asarray(jax.device_get(leaf))
-                for address, leaf in leaves.items()
+                address: np.asarray(leaf)
+                for address, leaf in zip(leaves, host_leaves, strict=True)
             }
         ),
         layouts=MappingProxyType(

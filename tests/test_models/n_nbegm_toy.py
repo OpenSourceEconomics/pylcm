@@ -59,6 +59,7 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 
 N_WEALTH = 12
@@ -263,6 +264,7 @@ def build_model(
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
     second_passive_state: bool = False,
     carried_state: bool = False,
+    fixed_params: UserParams | None = None,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -293,8 +295,7 @@ def build_model(
     to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
-    `regime_transition` is the law on the alive regime's outgoing edges; with
-    `n_periods == 2` the alive regime has one outgoing edge and takes no law.
+    `regime_transition` is the law on the alive regime's outgoing edges.
     `second_passive_state=True` gives the alive regime a second passive
     continuous stock, held fixed and carried by that regime alone, so its carry
     rows span two passive axes instead of one.
@@ -303,6 +304,9 @@ def build_model(
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
+    `fixed_params` overrides the fixed parameters, which otherwise fix the
+    regime law's `final_age_alive` to the last alive age; `{}` leaves it a free
+    parameter at `params["edges"]["alive"]["final_age_alive"]`.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
@@ -419,24 +423,22 @@ def build_model(
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
         functions={"utility": terminal_utility_function},
     )
-    dies = AgeRange(exclusive_stop=final_age_alive + 5)
-    has_law = n_periods > 2
+    stays = {"alive": AgeRange(exclusive_stop=final_age_alive)} if n_periods > 2 else {}
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 5, step="5Y"),
-        fixed_params={"final_age_alive": final_age_alive} if has_law else {},
+        fixed_params=(
+            {"final_age_alive": final_age_alive}
+            if fixed_params is None
+            else fixed_params
+        ),
         execution_config=execution_config,
         initial_nodes={20: ("alive", "dead")},
         edges={
             "alive": Transition(
-                targets={
-                    "alive": AgeRange(exclusive_stop=final_age_alive),
-                    "dead": dies,
-                },
+                targets={**stays, "dead": AgeRange(exclusive_stop=final_age_alive + 5)},
                 law=regime_transition,
             )
-            if has_law
-            else {"dead": dies}
         },
     )

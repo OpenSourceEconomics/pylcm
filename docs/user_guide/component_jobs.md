@@ -78,11 +78,13 @@ plan: ComponentJobPlan = plan_component_jobs(
 )
 ```
 
-The directory must be absent or empty. Supply exactly one of `assignment` and `n_jobs`;
-`n_jobs=3` partitions the grid codes into three contiguous groups, with larger groups
-first. An explicit assignment must cover every original code exactly once in nonempty
-jobs. `plan.codes` reports the full grid order and `plan.jobs` the code tuple for each
-zero-based job index.
+The directory must be absent or empty. The plan, fragments and failure records are
+created readable and writable by their owner only (mode `0600`), so the planner, every
+worker and the collector run as the same user. Supply exactly one of `assignment` and
+`n_jobs`; `n_jobs=3` partitions the grid codes into three contiguous groups, with larger
+groups first. An explicit assignment must cover every original code exactly once in
+nonempty jobs. `plan.codes` reports the full grid order and `plan.jobs` the code tuple
+for each zero-based job index.
 
 Give both `initial_conditions` and `seed` to solve and simulate, or omit both for a
 solve-only campaign. Every worker receives the **same full population in the same row

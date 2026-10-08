@@ -88,7 +88,47 @@ def cpu_suite_invocation_argvs(run_text: str) -> list[list[str]]:
     A `run:` block chains commands with backslash line continuations and `&&`.
     Joining continuations collapses each chained command onto one line, so
     splitting on `&&` recovers the individual commands the block actually runs.
+
+    The benchmark-harness invocation is not part of the CPU suite: it collects
+    `benchmarks/`, where `tests/conftest.py` and its execution-policy plugin do
+    not load. `benchmark_harness_invocation_argvs` returns it instead.
     """
+    return [
+        argv
+        for argv in _tests_cpu_pytest_argvs(run_text)
+        if not is_benchmark_harness_invocation(argv)
+    ]
+
+
+def benchmark_harness_invocation_argvs(run_text: str) -> list[list[str]]:
+    """Return the argv of every benchmark-harness pytest invocation in a block."""
+    return [
+        argv
+        for argv in _tests_cpu_pytest_argvs(run_text)
+        if is_benchmark_harness_invocation(argv)
+    ]
+
+
+def is_benchmark_harness_invocation(argv: list[str]) -> bool:
+    """Return whether `argv` collects only the `benchmarks/` harness tests.
+
+    Identified by its collection targets: at least one under `benchmarks`, none
+    under `tests`.
+    """
+    targets = [
+        argument
+        for argument in argv
+        if argument in {"tests", "benchmarks"}
+        or argument.startswith(("tests/", "benchmarks/"))
+    ]
+    return bool(targets) and all(
+        argument == "benchmarks" or argument.startswith("benchmarks/")
+        for argument in targets
+    )
+
+
+def _tests_cpu_pytest_argvs(run_text: str) -> list[list[str]]:
+    """Return the argv of every `tests-cpu` pytest invocation in one block."""
     normalized = run_text.replace("\\\n", " ")
     commands = [
         segment.strip()

@@ -45,6 +45,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -52,7 +53,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -207,7 +207,7 @@ def _route_three_households() -> MappingProxyType:
     own_stakeholder = jnp.full(
         n_households, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
     )
-    routed_states, _routed_ids, _routed_roles = route_gated_edges(
+    routed_states, _routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -228,6 +228,8 @@ def _route_three_households() -> MappingProxyType:
 
 def _simulate_three_households():
     """Solve and simulate the model whose `single_f` carries a career state."""
+    married = _make_laws(carrying_fallback=True)["married"]
+    assert isinstance(married, Transition)
     model = Model(
         regimes=_make_regimes(carrying_fallback=True),
         ages=_AGES,
@@ -236,7 +238,8 @@ def _simulate_three_households():
         edges={
             "married": Transition(
                 targets={"married_terminal": 0, "single_f": 0, "single_m": 0},
-                law=_make_laws(carrying_fallback=True)["married"],
+                law=married.law,
+                gates=married.gates,
             ),
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": 1},
@@ -386,12 +389,13 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
 def _make_laws(*, carrying_fallback: bool) -> dict[str, object]:
     """Build each household regime's transition law.
 
-    `married` dissolves through a gated edge whose wife's leg projects the
-    carried `career` state when `carrying_fallback` is set; each single regime
-    moves to its terminal with certainty; the terminal regimes have no law.
+    `married` is a `Transition` that dissolves through a gate whose wife's leg
+    projects the carried `career` state when `carrying_fallback` is set; each
+    single regime moves to its terminal with certainty; the terminal regimes
+    have no law.
 
     Returns:
-        Dict of regime names to regime laws.
+        Dict of regime names to regime laws, or to the `Transition` carrying it.
 
     """
     wife_projection = (
@@ -400,30 +404,34 @@ def _make_laws(*, carrying_fallback: bool) -> dict[str, object]:
         else {"wage": _identity_wage}
     )
     return {
-        "married": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f", projection=wife_projection
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
+        "married": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married_terminal": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "married_terminal": Gate(
+                    predicate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f", projection=wife_projection
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
+                )
+            },
         ),
         "married_terminal": None,
         "single_f": ByAge(

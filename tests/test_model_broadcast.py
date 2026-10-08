@@ -15,6 +15,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -57,18 +58,34 @@ def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _work_transition() -> dict[str, StochasticTransition]:
-    return {
-        "retired": StochasticTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
-    }
+def _work_transition() -> ByAge:
+    dead = StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0))
+    return ByAge(
+        cases={
+            0: {
+                "retired": StochasticTransition(
+                    func=lambda age: jnp.where(age >= 1, 0.0, 1.0)
+                ),
+                "dead": dead,
+            },
+            1: {"dead": dead},
+        }
+    )
 
 
-def _retired_transition() -> dict[str, StochasticTransition]:
-    return {
-        "retired": StochasticTransition(func=lambda age: jnp.where(age >= 1, 0.0, 1.0)),
-        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0)),
-    }
+def _retired_transition() -> ByAge:
+    dead = StochasticTransition(func=lambda age: jnp.where(age >= 1, 1.0, 0.0))
+    return ByAge(
+        cases={
+            0: {
+                "retired": StochasticTransition(
+                    func=lambda age: jnp.where(age >= 1, 0.0, 1.0)
+                ),
+                "dead": dead,
+            },
+            1: {"dead": dead},
+        }
+    )
 
 
 def _work_regime(**overrides: Any) -> UserRegime:

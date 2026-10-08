@@ -101,8 +101,10 @@ SCENARIOS = MappingProxyType(
 )
 
 # Target-checkout sources used by otherwise HEAD-owned workload definitions.  The
-# controller requires these files to be byte-identical across the pair.  Production
-# ``lcm`` and ``_lcm`` sources are intentionally absent: they are what is compared.
+# controller requires these files to be byte-identical across the pair, and admits
+# only a base checkout that streams no kernel (the F base); any other pair is
+# rejected before a worker runs.  Production ``lcm`` and ``_lcm`` sources are
+# intentionally absent: they are what is compared.
 TARGET_SCENARIO_SOURCES = (
     "src/lcm_examples/collective_household.py",
     "src/lcm_examples/mortality.py",
@@ -200,7 +202,6 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
     import lcm
     from lcm import (
         AgeGrid,
-        ByAge,
         DeterministicTransition,
         DiscreteGrid,
         LinSpacedGrid,
@@ -250,7 +251,8 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
             sharded_states=("permanent_type",),
         )
     else:
-        # The external harness also builds the historical pre-ExecutionConfig base.
+        # An admitted F base may predate `ExecutionConfig`; this branch builds it and
+        # is needed only while that pairing contract is kept.
         type_grid_kwargs["distributed"] = True
     permanent_type = DiscreteGrid(**type_grid_kwargs)
     ages = AgeGrid(start=0, inclusive_stop=5, step="Y")
@@ -279,11 +281,7 @@ def _build_distributed_co_map() -> tuple[Any, dict[str, Any]]:
                     "working": ages.exact_values[:-2],
                     "retired": ages.exact_values[:-1],
                 },
-                law=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
+                law=DeterministicTransition(func=next_regime),
             ),
         },
         **execution_kwargs,
@@ -296,7 +294,6 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
 
     from lcm import (
         AgeGrid,
-        ByAge,
         DeterministicTransition,
         LinSpacedGrid,
         Model,
@@ -362,11 +359,7 @@ def _build_folded_hard_max() -> tuple[Any, dict[str, Any]]:
                     "working": ages.exact_values[:-2],
                     "retired": ages.exact_values[:-1],
                 },
-                law=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1],
-                    law=DeterministicTransition(func=next_regime),
-                    then="retired",
-                ),
+                law=DeterministicTransition(func=next_regime),
             ),
         },
         **_gpu_mem.default_budget_execution_kwargs(),

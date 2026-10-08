@@ -27,7 +27,7 @@ from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building import schedules
-from _lcm.regime_law import UNBOUND_LAW, bind_regime_law
+from _lcm.regime_law import bind_regime_law
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
 from _lcm.utils.functools import _PositionalAdapter, allow_args
@@ -64,6 +64,14 @@ from tests.test_models.taste_shocks_toy import (
 from tests.test_models.taste_shocks_toy import (
     get_params as get_toy_params,
 )
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 _fingerprint_model_for_test = inspect.unwrap(fingerprints.fingerprint_model)
 
@@ -993,9 +1001,9 @@ def test_regime_description_is_not_mathematical_identity() -> None:
     reworded = dataclasses.replace(regime, description="second wording")
 
     assert fingerprints._semantic_fingerprint(
-        fingerprints._project_user_regime_declaration(regime, law=UNBOUND_LAW)
+        fingerprints._project_user_regime_declaration(regime, law=_NON_TERMINAL_LAW)
     ) == fingerprints._semantic_fingerprint(
-        fingerprints._project_user_regime_declaration(reworded, law=UNBOUND_LAW)
+        fingerprints._project_user_regime_declaration(reworded, law=_NON_TERMINAL_LAW)
     )
 
 
@@ -1713,8 +1721,10 @@ def _fingerprint_space(
     )
 
 
-_ALIVE_LAWS = MappingProxyType({"alive": UNBOUND_LAW})
-_ALIVE_AND_DEAD_LAWS = MappingProxyType({"alive": UNBOUND_LAW, "dead": UNBOUND_LAW})
+_ALIVE_LAWS = MappingProxyType({"alive": _NON_TERMINAL_LAW})
+_ALIVE_AND_DEAD_LAWS = MappingProxyType(
+    {"alive": _NON_TERMINAL_LAW, "dead": _NON_TERMINAL_LAW}
+)
 
 
 def _fingerprint_regime(

@@ -3478,13 +3478,16 @@ def _slice_draws(
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _ExpectationOverSliceDraws:
-    """Expect a target's value over every joint node, looping over the slice draws.
+    """Expect a target's value over every joint node, looping over slice-node blocks.
 
     The coordinate-moving draws stay on axes: the interpolator is product-mapped
-    over them, so one step of the loop reads the value at every coordinate node
-    for one joint node of the slice draws. Every intermediate — the read, its
-    weights, and the running sums — is one read wide, so the continuation never
-    holds an array spanning all joint nodes.
+    over them, so a read at one joint node of the slice draws yields the value at
+    every coordinate node. One step of the loop reads a block of slice nodes at
+    once, vectorised along a leading block axis, and folds the block into the
+    running sums. A block holds `_slice_block_size` slice nodes, a quarter of
+    them rounded up, so every intermediate — the reads, their weights, and the
+    running sums — is one block, about a quarter of the slice nodes, wide and the
+    continuation never holds an array spanning all joint nodes.
 
     Each read is weighted by its FULL joint probability before it is added into
     the running sum: the coordinate marginals, broadcast along the coordinate
@@ -3495,18 +3498,38 @@ class _ExpectationOverSliceDraws:
     numerator and mass keep the coordinate axis; both are summed over it once at
     the end and divided, without any further weighting.
 
-    All terms are put on the scale of the largest joint node, which a first,
-    weights-only loop finds; a second loop reads the values.
+    All terms are put on the common scale of every joint node, which
+    `_scale_of_the_largest_joint_node` reads off the marginals before the loop,
+    so the values are read in a single loop. The scale is fixed before any term
+    is formed, so each term is lowered onto it on its own and a term that lands
+    below the normal range rounds once, as the joint route's does; a loop
+    carrying a running scale would instead round partial sums whenever a later
+    block raised it. Where the largest node's probability is at least four
+    times the smallest normal number, both numerator and mass are held one
+    binade below that scale, which leaves their ratio unchanged and keeps the
+    largest node normal.
 
-    Finite-range invariant: at every coordinate node the running numerator is a
-    sum of terms `w v` whose weights are joint probabilities — raised by the
-    common scale only where the largest joint node lies below the normal range
-    — so its magnitude is bounded by that node's share of the probability times
-    the largest `|v|`, up to one rounding per term and addition. The final sum
-    over the coordinate axis is bounded the same way by the total mass. It can
-    leave the finite range only where the joint expectation itself lies within
-    that rounding of the largest finite value, the bound the joint contraction
-    has.
+    Finite-range invariant, over `n` joint nodes with unit roundoff `u` and
+    `n u < 1/3`, for weights that are probabilities:
+
+    - the accumulator cannot overflow. With the headroom binade each term is
+      `w_i v_i / 2` with `sum w_i <= 1 + n u`, so every partial sum, in any
+      order, is at most `(1 + u)**n (1 + n u) max|v| / 2 < max|v|`. Without
+      it the largest node lies below four times the smallest normal on the
+      common scale, so `sum w_i < 4 n tiny` and every partial sum is below
+      `16 n (1 + u)**n`, since `tiny` times the largest finite value is four;
+    - the published mean lies in the hull of the live reads. The quotient is
+      clamped to `[min v, max v]` over the nodes of nonzero weight, an interval
+      that contains the exact mean, so the clamp only moves the quotient
+      towards it. A quotient that rounds past the largest finite value at an
+      expectation within roundings of it is thereby returned as the largest
+      live read instead of an infinity.
+
+    A finite set of live reads therefore yields a finite mean no larger in
+    magnitude than the largest of them, and the regime probability applied
+    afterwards scales a finite number. A live infinite read widens the hull to
+    it and is published; opposite infinities and a live NaN stay NaN; a node of
+    zero weight leaves both the sums and the hull untouched.
     """
 
     interpolator: Callable[..., FloatND]
@@ -3517,6 +3540,8 @@ class _ExpectationOverSliceDraws:
     """The slice marginal-weight argument names, one per slice draw."""
     coordinate_weight_names: tuple[str, ...]
     """The coordinate marginal-weight argument names, in node-axis order."""
+    block_size: int | None = None
+    """Slice nodes contracted per loop step; `None` applies `_slice_block_size`."""
     interpolator_args: frozenset[str] = field(init=False)
     """Every argument the interpolator reads."""
 
@@ -3565,29 +3590,174 @@ class _ExpectationOverSliceDraws:
             for name in self.interpolator_args
             if name not in self.slice_draws
         }
-        first = jax.tree_util.tree_map(operator.itemgetter(0), slice_nodes)
-        lower_shift = functools.partial(
-            _lower_shift_at_slice_node, coordinate_factors=coordinate_factors
+        n_slice_nodes = slice_nodes[0][0].shape[0]
+        blocks, remainder = _blocks_of_slice_nodes(
+            nodes=slice_nodes,
+            block_size=min(
+                self.block_size or _slice_block_size(n_slice_nodes=n_slice_nodes),
+                n_slice_nodes,
+            ),
         )
-        common_shift, _ = jax.lax.scan(
-            lower_shift, lower_shift(None, first)[0], slice_nodes
+        first = jax.tree_util.tree_map(operator.itemgetter(0), blocks)
+        common_shift, largest_probability = _scale_of_the_largest_joint_node(
+            factors=(*coordinate_factors, *slice_nodes[1])
         )
-        add_node = functools.partial(
-            _add_slice_node,
-            interpolator=self.interpolator,
-            fixed=fixed,
-            slice_draws=self.slice_draws,
-            coordinate_factors=coordinate_factors,
-            common_shift=common_shift,
+        smallest_normal = jnp.finfo(largest_probability.dtype).tiny
+        headroom = (largest_probability >= 4 * smallest_normal).astype(jnp.int32)
+        add_block = functools.partial(
+            _fold_slice_block,
+            at_node=functools.partial(
+                _terms_at_slice_node,
+                interpolator=self.interpolator,
+                fixed=fixed,
+                slice_draws=self.slice_draws,
+                coordinate_factors=coordinate_factors,
+                common_shift=common_shift - headroom,
+            ),
+            folds=_SUM_FOLDS,
         )
-        # The sums start at zeros shaped like one step's terms, so they carry
-        # the type every term has — including how it varies across a mapped
-        # device axis. Only the terms' type is read; their values are discarded.
-        first_sums, _ = add_node(None, first)
-        (numerator, mass), _ = jax.lax.scan(
-            add_node, jax.tree_util.tree_map(jnp.zeros_like, first_sums), slice_nodes
+        # The running values start at the identities of their reductions,
+        # shaped like one step's own, so they carry the type every step has —
+        # including how it varies across a mapped device axis. Only that step's
+        # type is read; its values are discarded.
+        (numerator, mass, lowest, highest), _ = add_block(None, first)
+        sums, _ = jax.lax.scan(
+            add_block,
+            (
+                jnp.zeros_like(numerator),
+                jnp.zeros_like(mass),
+                jnp.full_like(lowest, jnp.inf),
+                jnp.full_like(highest, -jnp.inf),
+            ),
+            blocks,
         )
-        return jnp.sum(numerator) / jnp.sum(mass)
+        if remainder is not None:
+            sums, _ = add_block(sums, remainder)
+        numerator, mass, lowest, highest = sums
+        return jnp.clip(
+            jnp.sum(numerator) / jnp.sum(mass), jnp.min(lowest), jnp.max(highest)
+        )
+
+
+#: Per slice node, the code of every slice draw and its marginal weight.
+type _SliceNodes = tuple[tuple[IntND, ...], tuple[FloatND, ...]]
+
+#: Most loop steps one pass over the slice nodes takes.
+_MAX_SLICE_BLOCKS = 4
+
+
+def _slice_block_size(*, n_slice_nodes: int) -> int:
+    """Return how many slice nodes one loop step contracts.
+
+    A quarter of the slice nodes, rounded up. The block's reads are the largest
+    intermediate of the nested route, so it stays at about a quarter of the
+    joint route's, whose reads span every slice node at once, while each pass
+    over the slice nodes takes at most `_MAX_SLICE_BLOCKS` loop steps, which
+    keeps the per-step overhead and the loss of parallelism across slice nodes
+    small. The count is a static shape, so the block size is fixed at trace
+    time.
+    """
+    return -(-n_slice_nodes // _MAX_SLICE_BLOCKS)
+
+
+def _blocks_of_slice_nodes(
+    *, nodes: _SliceNodes, block_size: int
+) -> tuple[_SliceNodes, _SliceNodes | None]:
+    """Split the slice nodes into whole blocks and a shorter remainder block.
+
+    The whole blocks are stacked along a new leading axis for the loop; the
+    remainder, if any, is folded in after it. No placeholder node is added to
+    fill a block: a node of zero weight still has a scale, which is that of a
+    plain number, so a placeholder could lower the common scale of nodes that
+    all lie below the normal range.
+    """
+    n_nodes = nodes[0][0].shape[0]
+    n_blocks = n_nodes // block_size
+    split = n_blocks * block_size
+    blocks = jax.tree_util.tree_map(
+        lambda leaf: leaf[:split].reshape(n_blocks, block_size), nodes
+    )
+    if split == n_nodes:
+        return blocks, None
+    return blocks, jax.tree_util.tree_map(lambda leaf: leaf[split:], nodes)
+
+
+def _scale_of_the_largest_joint_node(
+    *, factors: tuple[FloatND, ...]
+) -> tuple[IntND, FloatND]:
+    """Return the common scale of every joint node, read off the marginals.
+
+    Alongside it, the largest probability of a joint node held without
+    scaling, which is zero where every node is scaled. Both equal the smallest
+    per-node scale and the largest unscaled per-node probability over all
+    joint nodes, for marginals that are probabilities:
+
+    - every joint node combines one entry of each marginal, so the node of
+      largest probability combines each marginal's largest entry;
+    - a node whose factors are all positive and finite is scaled by the
+      binades its product lies below the normal range, which shrinks as the
+      product grows, so that node carries the smallest such scale and, held
+      without scaling, the largest such probability;
+    - a node with a zero factor is held without scaling at probability zero,
+      so where any marginal has a zero entry the common scale is zero and the
+      largest unscaled probability is unchanged;
+    - a non-finite factor makes the published mean NaN on any scale.
+
+    Args:
+        factors: Every marginal's entries, one array per draw.
+
+    Returns:
+        Tuple of the common scale and the largest unscaled probability.
+
+    """
+    coefficient, shift = scaled_joint_weight(
+        jnp.stack([jnp.max(factor) for factor in factors])
+    )
+    has_a_zero = jnp.any(
+        jnp.stack([jnp.any(is_represented_zero(factor)) for factor in factors])
+    )
+    return (
+        jnp.where(has_a_zero, jnp.zeros_like(shift), shift),
+        jnp.where(shift == 0, coefficient, jnp.zeros_like(coefficient)),
+    )
+
+
+#: How each running value of the values loop is reduced over a block and joined
+#: with the running value: numerator, mass, and the smallest and largest read at
+#: a node of nonzero weight.
+_SUM_FOLDS = (
+    (jnp.sum, jnp.add),
+    (jnp.sum, jnp.add),
+    (jnp.min, jnp.minimum),
+    (jnp.max, jnp.maximum),
+)
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _fold_slice_block(
+    running: tuple[Any, ...] | None,
+    block: _SliceNodes,
+    *,
+    at_node: Callable[..., tuple[Any, ...]],
+    folds: tuple[tuple[Callable[..., Any], Callable[..., Any]], ...],
+) -> tuple[tuple[Any, ...], None]:
+    """Fold one block of slice nodes into the running reductions.
+
+    Every node of the block is evaluated at once along a leading block axis, and
+    each of its results is reduced over that axis before it joins the running
+    value. A `None` running value starts at the block's own.
+    """
+    per_node = jax.vmap(lambda node: at_node(node=node))(block)
+    reduced = tuple(
+        reduce(result, axis=0)
+        for (reduce, _), result in zip(folds, per_node, strict=True)
+    )
+    if running is None:
+        return reduced, None
+    return tuple(
+        join(old, new)
+        for (_, join), old, new in zip(folds, running, reduced, strict=True)
+    ), None
 
 
 def _joint_weights_at_slice_node(
@@ -3611,40 +3781,20 @@ def _joint_weights_at_slice_node(
     return jax.vmap(scaled_joint_weight, in_axes=1)(factors)
 
 
-# keyword-only-exempt: library-callback=jax.lax.scan
-def _lower_shift_at_slice_node(
-    smallest: IntND | None,
-    node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
+def _terms_at_slice_node(
     *,
-    coordinate_factors: tuple[FloatND, ...],
-) -> tuple[IntND, None]:
-    """Lower the running smallest scale to that of one slice node's joint nodes.
-
-    A `None` running value starts it at this slice node's smallest scale.
-    """
-    _, slice_factors = node
-    _, shifts = _joint_weights_at_slice_node(
-        coordinate_factors=coordinate_factors, slice_factors=slice_factors
-    )
-    lowest = jnp.min(shifts)
-    return (lowest if smallest is None else jnp.minimum(smallest, lowest)), None
-
-
-# keyword-only-exempt: library-callback=jax.lax.scan
-def _add_slice_node(
-    sums: tuple[FloatND, FloatND] | None,
-    node: tuple[tuple[IntND, ...], tuple[FloatND, ...]],
-    *,
+    node: _SliceNodes,
     interpolator: Callable[..., FloatND],
     fixed: Mapping[str, Any],
     slice_draws: tuple[TransitionFunctionName, ...],
     coordinate_factors: tuple[FloatND, ...],
     common_shift: IntND,
-) -> tuple[tuple[FloatND, FloatND], None]:
-    """Add one slice node's weighted reads and masses to the running sums.
+) -> tuple[FloatND, FloatND, FloatND, FloatND]:
+    """Return one slice node's weighted reads and masses on the common scale.
 
-    Both sums keep the flattened coordinate axis. A `None` running value starts
-    them at this slice node's terms.
+    Alongside the terms and the masses it returns each read at a node of
+    nonzero weight, as the bound of the smallest and of the largest read. All
+    four keep the flattened coordinate axis.
     """
     codes, slice_factors = node
     coefficients, shifts = _joint_weights_at_slice_node(
@@ -3669,10 +3819,13 @@ def _add_slice_node(
         shift=scale - on_the_weight,
     )
     mass = scaled_down_by_power_of_two(values=coefficients, shift=scale)
-    if sums is None:
-        return (term, mass), None
-    numerator, total = sums
-    return (numerator + term, total + mass), None
+    live = ~is_represented_zero(coefficients)
+    return (
+        term,
+        mass,
+        jnp.where(live, value, jnp.inf),
+        jnp.where(live, value, -jnp.inf),
+    )
 
 
 def _scalar_target_contribution(
@@ -3970,6 +4123,12 @@ class _OuterJointWeights:
         # probability, and it comes back with its own scale rather than as a
         # plain float, because a product below the normal range is not
         # something a float can carry through a fused region here.
+        if not kwargs:
+            # The empty product is the certain event. Building it from an
+            # empty factor array would close a zero-size array into the
+            # program, and the CPU compiler crashes on a zero-size operand of
+            # the `shard_map` that splits subjects over devices.
+            return jnp.ones(()), jnp.zeros((), dtype=jnp.int32)
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
 

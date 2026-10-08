@@ -24,6 +24,7 @@ from lcm import (
     AgeGrid,
     AgeRange,
     AgeSpecializedGrid,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -430,10 +431,17 @@ def _model(
                     "active": AgeRange(exclusive_stop=_N_PERIODS - 1),
                     "retired": AgeRange(exclusive_stop=_N_PERIODS),
                 },
-                law={
-                    "active": StochasticTransition(func=_stay_active),
-                    "retired": StochasticTransition(func=_enter_retirement),
-                },
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=_N_PERIODS - 1): {
+                            "active": StochasticTransition(func=_stay_active),
+                            "retired": StochasticTransition(func=_enter_retirement),
+                        },
+                        _N_PERIODS - 1: {
+                            "retired": StochasticTransition(func=_enter_retirement)
+                        },
+                    }
+                ),
             )
         },
     )

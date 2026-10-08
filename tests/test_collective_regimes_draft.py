@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -97,7 +97,7 @@ def test_declaring_non_terminal_stakeholders_constructs():
         },
     )
     law = bind_regime_law(_some_transition)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert regime.stakeholders == ("f", "m")
     assert not law.terminal
 

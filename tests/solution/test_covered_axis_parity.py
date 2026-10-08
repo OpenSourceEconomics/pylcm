@@ -89,10 +89,6 @@ _SIMULATION_PARAMS: dict[str, dict[str, float]] = {
 }
 _N_SUBJECTS = 400
 _SIMULATION_SEED = 1
-# The toy's survival law keeps an agent alive while `age + 1 < final_age_alive`.
-# Its two-period sizes have a single alive age, 0, so every agent must die into
-# age 1; its builder's default only fits three periods.
-_TWO_PERIOD_FINAL_AGE_ALIVE = 1.0
 _NON_FINITE_CLASSES: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "nan": np.isnan,
     "posinf": np.isposinf,
@@ -147,14 +143,7 @@ def _build(
             execution_config=execution,
             **sizes,
         )
-        survival = (
-            {}
-            if arm == _DEFAULT_SIZE
-            else {"final_age_alive": _TWO_PERIOD_FINAL_AGE_ALIVE}
-        )
-        params = nbegm_multi_discrete_toy.build_params(
-            n_actions=3, **survival, **overrides
-        )
+        params = nbegm_multi_discrete_toy.build_params(n_actions=3, **overrides)
     else:
         model = regression.get_model(
             n_periods=3,

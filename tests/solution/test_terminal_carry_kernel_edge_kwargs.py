@@ -33,6 +33,7 @@ from lcm import (
     AgeRange,
     ByAge,
     ConsumptionSavingsRegime,
+    Gate,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -41,7 +42,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.solvers import EGM, GridSearch
@@ -102,9 +102,7 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     model = Model(
         regimes=_make_mixed_regimes(),
         edges={
-            "mover": Transition(
-                targets={"moved_terminal": 0, "stay_terminal": 0}, law=_mover_law()
-            ),
+            "mover": _mover_transition(),
             "saver": {"saver_terminal": 0},
         },
         ages=AGES,
@@ -129,11 +127,7 @@ def test_gated_edge_source_solves_on_its_own():
     """
     model = Model(
         regimes=_make_gated_regimes(),
-        edges={
-            "mover": Transition(
-                targets={"moved_terminal": 0, "stay_terminal": 0}, law=_mover_law()
-            )
-        },
+        edges={"mover": _mover_transition()},
         ages=AGES,
         regime_id_class=GatedRegimeId,
         initial_nodes={0: "mover"},
@@ -148,31 +142,36 @@ def test_gated_edge_source_solves_on_its_own():
     )
 
 
-def _mover_law() -> ByAge:
+def _mover_transition() -> Transition:
     """Move at age 0 when the gate opens, else fall back to staying put."""
-    return ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "moved_terminal": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_move_gate,
-                    routes={
-                        "own": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="stay_terminal",
-                                projection={"wealth": _identity_wealth},
-                            ),
-                        )
-                    },
-                    gate_references={
-                        "V_stay_ref": ProjectedRegimeValue(
+    return Transition(
+        targets={"moved_terminal": 0, "stay_terminal": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "moved_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        gates={
+            "moved_terminal": Gate(
+                predicate=_move_gate,
+                routes={
+                    "own": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
                             projection={"wealth": _identity_wealth},
-                        )
-                    },
-                )
-            }
-        }
+                        ),
+                    )
+                },
+                references={
+                    "V_stay_ref": ProjectedRegimeValue(
+                        regime="stay_terminal",
+                        projection={"wealth": _identity_wealth},
+                    )
+                },
+            )
+        },
     )
 
 

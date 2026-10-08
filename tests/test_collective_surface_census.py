@@ -1,7 +1,7 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
 A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
-`ValueDependentTransition` can cover the feature at either of two altitudes.
+`Gate` can cover the feature at either of two altitudes.
 Most drive it through `Model`, so the public route the documentation describes
 is what runs. The rest call the engine directly — `process_regimes`, a bare
 `solve`, `route_gated_edges` — which is the right altitude for pinning a
@@ -30,9 +30,12 @@ _TESTS_ROOT = Path(__file__).parent
 #: cover incidentally: a compiled fold's argument provenance, a treedef, a
 #: projector's vmap, a guard that raises before a model could be built, or the
 #: decomposition a declaration takes apart into, which is a property of the
-#: `Regime` alone and so has no model in it to build.
+#: `Regime` alone and so has no model in it to build. `tests/conftest.py` is the
+#: shared helper those modules build their prepared structure with, standing in
+#: for the declarations a `Model` would hold.
 _ENGINE_LEVEL_MODULES = frozenset(
     {
+        "tests/conftest.py",
         "tests/regime_building/test_carried_state_through_gated_self_loop.py",
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
@@ -80,13 +83,13 @@ def _reaches_public_model(*, source: str) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary now: a regime says who its stakeholders are, what a
+#: There is one vocabulary: a regime says who its stakeholders are, what a
 #: value-reading constraint is, and where a value-dependent transition routes,
 #: each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
     "ValueDependentConstraint",
-    "ValueDependentTransition",
+    "Gate",
 )
 
 
@@ -177,7 +180,7 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("CollectiveUtility(utilities={})", True),
         ("lcm.CollectiveUtility(utilities={})", True),
         ("ValueDependentConstraint(predicate=p)", True),
-        ("ValueDependentTransition(gate=g)", True),
+        ("Gate(predicate=g)", True),
         ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("collective_utility = 1", False),
@@ -245,6 +248,7 @@ _ENGINE_CONSTRUCTORS = frozenset(
         "MockRegime",
         "_MockRegime",
         "build_pareto_weights",
+        "build_streaming_collective_max_Q_over_a",
         "get_max_Q_over_a",
         "get_streaming_max_Q_over_a",
     }

@@ -13,6 +13,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
@@ -34,6 +35,7 @@ from lcm.exceptions import (
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import EULER_POINT_AXIS, SAVINGS_POINT_AXIS, FUESEnvelope, GridSearch
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -41,7 +43,7 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from lcm_examples.iskhakov_et_al_2017 import working_life_transitions
+from lcm_examples.iskhakov_et_al_2017 import WORKING_LIFE_LAW
 from lcm_examples.mortality import (
     borrowing_constraint,
     dead,
@@ -61,7 +63,7 @@ RETIREMENT_TARGETS = {"retirement": 40, "dead": (40, 50)}
 RETIREMENT_EDGES = {
     "retirement": Transition(
         targets=RETIREMENT_TARGETS,
-        law=retirement_only.retirement_transitions(last_age=LAST_AGE),
+        law=retirement_only.RETIREMENT_LAW,
     )
 }
 
@@ -69,7 +71,7 @@ RETIREMENT_EDGES = {
 def _build_model(
     *,
     regime: UserRegime,
-    law: object = None,
+    law: TransitionLaw | None = None,
     config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the retirement/dead model; `law` replaces the retirement law."""
@@ -259,7 +261,7 @@ VALID = dcegm_variants.dcegm_retirement.replace(
         envelope=FUESEnvelope(),
     ),
 )
-PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement_full.replace(
+PORTABLE_DCEGM_RETIREMENT_FULL = dcegm_variants.dcegm_retirement.replace(
     solver=dataclasses.replace(
         dcegm_variants.DCEGM_SOLVER,
         envelope=FUESEnvelope(),
@@ -630,7 +632,7 @@ def _three_regime_model_with_brute_worker(
         edges={
             "working_life": Transition(
                 targets={"dead": dies, "working_life": stays, "retirement": stays},
-                law=working_life_transitions(last_age=ages.exact_values[-1]),
+                law=WORKING_LIFE_LAW,
             ),
             "retirement": Transition(
                 targets={
@@ -661,10 +663,14 @@ def test_granular_transition_excluding_brute_regime_passes():
     allowed in that direction).
     """
     model = _three_regime_model_with_brute_worker(
-        retirement_transition={
-            "retirement": StochasticTransition(func=_retirement_stay_prob),
-            "dead": StochasticTransition(func=_retirement_death_prob),
-        }
+        retirement_transition=ByAge.until(
+            stop_age_exclusive=LAST_AGE,
+            law={
+                "retirement": StochasticTransition(func=_retirement_stay_prob),
+                "dead": StochasticTransition(func=_retirement_death_prob),
+            },
+            then="dead",
+        )
     )
     assert model.n_periods == N_PERIODS
 
@@ -725,11 +731,11 @@ def test_non_dcegm_non_terminal_target_raises():
                         "retirement": (40,),
                         "dead": (40, 50),
                     },
-                    law=base.working_life_transitions(last_age=60),
+                    law=base.WORKING_LIFE_LAW,
                 ),
                 "retirement": Transition(
                     targets={"retirement": (40,), "dead": (40, 50)},
-                    law=base.retirement_transitions(last_age=60),
+                    law=base.RETIREMENT_LAW,
                 ),
             },
             regimes={

@@ -64,11 +64,6 @@ def next_wealth(savings: ContinuousState) -> ContinuousState:
     return savings
 
 
-def next_regime() -> ScalarInt:
-    """The examples contain one decision period followed by death."""
-    return RegimeId.dead
-
-
 ONE_MARGIN = LiquidMargin(
     state="wealth",
     action="consumption",
@@ -401,7 +396,6 @@ __all__ = [
     "new_illiquid",
     "next_illiquid",
     "next_liquid",
-    "next_regime",
     "next_wealth",
     "next_wealth_from_liquid_savings",
     "resources",

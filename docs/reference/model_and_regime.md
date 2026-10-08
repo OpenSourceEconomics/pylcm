@@ -30,8 +30,10 @@ starts are all terminal needs no other.
 
 `edges` declares every regime transition, structure and law. Each source maps to a plain
 `{target: source_ages}` mapping when every source age has one destination (the graph is
-the law), or to `Transition(targets={target: source_ages, ...}, law=...)` when some
-source age has several. A regime with no outgoing edges is terminal. See
+the law), or to `Transition(targets={target: source_ages, ...}, law=..., gates=...)`
+when some source age has several or a destination is gated. `targets` may be omitted
+when the law names its targets, and is then derived from it. A regime with no outgoing
+edges is terminal. See
 [Regime transitions and graph support](transitions.md#api-regime-transitions).
 
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
@@ -53,10 +55,10 @@ Public inspection attributes include:
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, immutable admissible age–regime pairs;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
-  pruning reasons and `laws`, each regime's law as the model binds it from its edges
+  pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
+  bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
   (`laws[name].terminal` is true for a regime without outgoing edges,
-  `laws[name].gated_edges` holds the edges its `ValueDependentTransition` cells
-  declare);
+  `laws[name].gated_edges` holds the edges its `Transition.gates` declare);
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -187,7 +189,7 @@ choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on a source regime with a `ValueDependentTransition`; together with a folded IID state
+on the source regime of a gated transition; together with a folded IID state
 (`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.
@@ -203,9 +205,12 @@ index under JIT.
 
 A free function argument becomes a model parameter unless another state, action, DAG
 function, context value, or fixed parameter supplies it. Values may be given at model,
-regime, or function level, but each parameter value has one unambiguous source. Start
-from `model.get_params_template()` rather than constructing a nested parameter mapping
-from memory.
+regime, or function level, but each parameter value has one unambiguous source.
+Parameters of callables declared in `Model(edges=...)` live under `params["edges"]` at
+their declaration path, and a regime-level value never reaches them; see
+[Edge parameter paths](transitions.md#api-edge-parameters). Start from
+`model.get_params_template()` rather than constructing a nested parameter mapping from
+memory.
 
 Workflow: [Defining models](../user_guide/defining_models.md) and
 [Parameters](../user_guide/parameters.md).

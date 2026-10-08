@@ -24,6 +24,7 @@ from typing import cast
 import jax.numpy as jnp
 
 from _lcm.engine import Regime
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, ParetoWeights
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
@@ -60,7 +61,7 @@ def check_solver_params(
             name: MappingProxyType(
                 {
                     **regime.resolved_fixed_params,
-                    **flat_params.get(name, MappingProxyType({})),
+                    **regime_kernel_params(flat_params, regime_name=name),
                 }
             )
             for name, regime in regimes.items()
@@ -105,7 +106,7 @@ def check_pareto_weights(
         regime_params = MappingProxyType(
             {
                 **regime.solution.resolved_fixed_params,
-                **flat_params.get(regime_name, MappingProxyType({})),
+                **regime_kernel_params(flat_params, regime_name=regime_name),
             }
         )
         _check_one_regimes_weights(

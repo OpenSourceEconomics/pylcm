@@ -35,9 +35,20 @@ and parameters and still bind.
 _Avoid_: absorbing regime (an absorbing regime may have actions), terminal regime
 
 **Edge**:
-A transition from a source regime to a target regime. The source's state laws
-toward that target are the edge's laws.
+A transition from a source regime to a target regime, declared with the model's
+edges.
 _Avoid_: arc, link, regime transition (that is the probability of taking an edge)
+
+**Regime-transition law**:
+The law that decides which of a source regime's outgoing edges a subject takes,
+together with any gates, gate references and route fallbacks declared with it. It
+belongs to the edges, and so do its parameters; the source regime owns neither.
+_Avoid_: next-regime function, edge law
+
+**Per-target state law**:
+A state law of a source regime that differs by target regime. It belongs to the
+source regime, not to the edge, even though it is evaluated only toward its target.
+_Avoid_: edge law, handoff law
 
 **Carried state**:
 A state a regime keeps in its state space, and so in its value function. A
@@ -46,9 +57,9 @@ _Avoid_: retained variable, kept state (in user-facing text)
 
 **Transition-local draw**:
 A next-period value of a random state (a process or a Markov state) that is drawn
-on an edge and consumed by that edge's laws, but not kept by the target, because
-the target does not carry the state. It is drawn from the source's law at the
-source's current value.
+on an edge and consumed by the source's state laws toward that target, but not kept
+by the target, because the target does not carry the state. It is drawn from the
+source's law at the source's current value.
 _Avoid_: dropped shock, ephemeral state
 
 **Age**:

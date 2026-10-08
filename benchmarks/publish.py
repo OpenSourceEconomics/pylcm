@@ -39,6 +39,17 @@ _RENAMED_BENCHMARKS = {
     for cls in ("CollectiveHouseholdSimulate", "ReferenceChainSolve")
 }
 
+# Benchmark classes removed from the suite whose stored results are dropped, so the
+# dashboard and the pushed-back results no longer carry them.
+_RETIRED_BENCHMARK_PREFIXES = tuple(
+    f"bench_aca_baseline.{cls}."
+    for cls in (
+        "AcaBaselineGpuPeakMem",
+        "AcaBaselineDebugLogGpuPeakMem",
+        "_AcaBaselineDebugLogGpuPeakMem",
+    )
+)
+
 
 def publish() -> None:
     """Publish benchmark results and dashboard to the org site."""
@@ -126,7 +137,8 @@ def _normalise_results(results_dir: Path) -> None:
       `machine.json`, with the RAM in stable whole gigabytes;
     - the version column of every result to null, which ASV treats as matching any
       version;
-    - the names in `_RENAMED_BENCHMARKS` to their current names.
+    - the names in `_RENAMED_BENCHMARKS` to their current names;
+    - the results of the classes in `_RETIRED_BENCHMARK_PREFIXES` are dropped.
 
     Nulling versions deliberately trades ASV's guard against mixing measurement
     semantics on one line for continuity: a version bump now shows as a step on the
@@ -151,6 +163,9 @@ def _normalise_results(results_dir: Path) -> None:
             for old, new in _RENAMED_BENCHMARKS.items():
                 if old in results:
                     results.setdefault(new, results.pop(old))
+            retired = [n for n in results if n.startswith(_RETIRED_BENCHMARK_PREFIXES)]
+            for name in retired:
+                del results[name]
             version_column = data["result_columns"].index("version")
             for entry in results.values():
                 if len(entry) > version_column:

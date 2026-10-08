@@ -7,14 +7,15 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -148,10 +149,10 @@ def _make_model(
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=gate,
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
+                gates={
+                    "target": Gate(
+                        predicate=gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -168,7 +169,7 @@ def _make_model(
                                 )
                             )
                         },
-                        gate_references={}
+                        references={}
                         if action_sensitive
                         else {
                             "V_reference": ProjectedRegimeValue(

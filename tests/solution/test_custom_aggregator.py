@@ -1,6 +1,6 @@
 """Test that a custom Koopmans aggregator can be used in a model."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
@@ -405,10 +405,7 @@ def test_h_consumes_continuous_state():
     independent of the argmax.
     """
     model = _make_model(custom_W=wealth_W)
-    common = {
-        "utility": {"disutility_of_work": 0.5},
-        "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-    }
+    common = {"utility": {"disutility_of_work": 0.5}}
     V_zero = model.solve(
         log_level="debug",
         params={
@@ -417,6 +414,7 @@ def test_h_consumes_continuous_state():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     V_pos = model.solve(
@@ -427,6 +425,7 @@ def test_h_consumes_continuous_state():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     lift_at_terminal = (
@@ -456,10 +455,7 @@ def test_h_consumes_continuous_action():
     `action_weight=0` baseline.
     """
     model = _make_model(custom_W=consumption_W)
-    common = {
-        "utility": {"disutility_of_work": 0.5},
-        "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-    }
+    common = {"utility": {"disutility_of_work": 0.5}}
     V_zero = model.solve(
         log_level="debug",
         params={
@@ -468,6 +464,7 @@ def test_h_consumes_continuous_action():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     V_pos = model.solve(
@@ -478,6 +475,7 @@ def test_h_consumes_continuous_action():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     non_terminal = [p for p in V_zero if p <= FINAL_AGE_ALIVE]
@@ -693,7 +691,7 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
 
 def _solve_with_aggregator_slot(
     *, koopmans_aggregator: object, aggregator_params: dict[str, float]
-) -> tuple[dict[str, str | dict[str, str | dict[str, str]]], FloatND]:
+) -> tuple[Mapping[str, object], FloatND]:
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(

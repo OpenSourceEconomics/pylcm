@@ -1,10 +1,11 @@
-"""A regime law naming a target that the graph gives no edge at that age.
+"""A per-target regime law names its destinations; supplied targets must agree.
 
 `A`'s age-0 law puts probability 0.5 on `A` and 0.5 on `B`. With the edge
-`(0, A -> B)` declared, the model solves: with a discount factor of one,
-`V_A(1) = 0.5 * 10 + 0.5 * 1 = 5.5` and `V_A(0) = 0.5 * 5.5 + 0.5 * 10 = 7.75`.
-Without that edge, the `B` cell has nowhere to go, the remaining mass is 0.5, and
-the error names the missing edge rather than the law.
+`(0, A -> B)` among the supplied targets, the model solves: with a discount
+factor of one, `V_A(1) = 0.5 * 10 + 0.5 * 1 = 5.5` and
+`V_A(0) = 0.5 * 5.5 + 0.5 * 10 = 7.75`. Supplied targets without that edge
+disagree with the law, and the model refuses them at construction, spelling
+both target sets.
 """
 
 import jax.numpy as jnp
@@ -19,7 +20,10 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+)
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -77,14 +81,13 @@ def test_declared_edge_solves_to_the_hand_computed_value() -> None:
     assert float(solution.value(period=0, regime="A")) == pytest.approx(7.75, abs=1e-6)
 
 
-def test_a_cell_without_an_edge_is_named_in_the_mass_error() -> None:
-    model = _model(a_to_b_ages=(1,))
-
+def test_targets_omitting_a_cell_of_the_law_are_refused() -> None:
     with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"(?s)do not sum to 1\.0.*at age 0.*'A' -> 'B'.*declares no edge",
+        ModelInitializationError,
+        match=r"supplied: \{'A': \[0\], 'B': \[1\], 'C': \[1\]\}; derived from "
+        r"the law and its gates: \{'A': \[0\], 'B': \[0, 1\], 'C': \[1\]\}",
     ):
-        model.solve(params={}, log_level="off")
+        _model(a_to_b_ages=(1,))
 
 
 def test_a_mass_error_without_dropped_cells_points_at_the_law() -> None:
@@ -95,21 +98,3 @@ def test_a_mass_error_without_dropped_cells_points_at_the_law() -> None:
 
     assert "Check the 'next_regime' function of the 'A' regime" in str(error.value)
     assert "edge" not in str(error.value)
-
-
-def test_simulate_names_the_cell_without_an_edge() -> None:
-    model = _model(a_to_b_ages=(1,))
-
-    with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"(?s)at age 0.*'A' -> 'B'.*declares no edge",
-    ):
-        model.simulate(
-            params={},
-            initial_conditions={
-                "age": jnp.zeros(2),
-                "regime_id": jnp.zeros(2, dtype=jnp.int32),
-            },
-            log_level="off",
-            seed=0,
-        )

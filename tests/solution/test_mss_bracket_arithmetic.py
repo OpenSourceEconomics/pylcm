@@ -24,6 +24,7 @@ from _lcm.egm.upper_envelope import get_bracket_finder, get_upper_envelope, mss
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -278,10 +279,14 @@ def _asset_row_model(*, arithmetic: ComparisonArithmetic | None) -> Model:
     """The asset-row model under an MSS arithmetic, or its brute-force twin."""
     is_dcegm = arithmetic is not None
     regime_type = ConsumptionSavingsRegime if is_dcegm else UserRegime
-    working_life_law = {
-        "working_life": StochasticTransition(func=stay_prob),
-        "dead": StochasticTransition(func=death_prob),
-    }
+    working_life_law = ByAge.until(
+        stop_age_exclusive=40 + (N_PERIODS - 1) * 10,
+        law={
+            "working_life": StochasticTransition(func=stay_prob),
+            "dead": StochasticTransition(func=death_prob),
+        },
+        then={"dead": StochasticTransition(func=death_prob)},
+    )
     working_life = regime_type(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},

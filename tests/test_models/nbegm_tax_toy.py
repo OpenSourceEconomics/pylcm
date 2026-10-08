@@ -112,8 +112,6 @@ def build_params(
     base_income: float = 2.0,
     tax_rate: float = 0.3,
     tax_exemption: float = 12.0,
-    # Unused: the model's edges fix the age at which `alive` dies.
-    final_age_alive: float = 3.0,  # noqa: ARG001
     budget_name: str = "resources",
 ) -> dict:
     """Get parameters for the tax-bracket one-asset toy."""

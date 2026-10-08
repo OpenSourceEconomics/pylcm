@@ -205,7 +205,7 @@ def test_nnbegm_rejects_variation_before_period_kernels(
         (
             {
                 # A third period gives the alive regime two outgoing edges at
-                # its first age, so the law is declared on the model's edges.
+                # its first age, so the law decides between them.
                 "n_periods": 3,
                 "regime_transition": Phased(
                     solve=n_nbegm_toy.next_regime,

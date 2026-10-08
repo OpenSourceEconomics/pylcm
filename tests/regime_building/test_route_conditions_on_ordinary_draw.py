@@ -57,11 +57,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -158,7 +159,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     new_subject_regime_ids = jnp.array([target_id, unrelated_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    routed_states, routed_ids, _routed_roles = route_gated_edges(
+    routed_states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -219,7 +220,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     new_subject_regime_ids = jnp.array([target_id, target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -277,10 +278,9 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
     declared in `transition` -- both orderings must yield the identical,
     order-independent routing.
     """
-    edges = {
-        "target_a": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+    gates = {
+        "target_a": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -289,9 +289,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
                 )
             },
         ),
-        "target_b": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=_gate_always_open,
+        "target_b": Gate(
+            predicate=_gate_always_open,
             routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
@@ -308,10 +307,16 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {name: edges[name] for name in edge_order}
-            }
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        name: StochasticTransition(func=_prob_half)
+                        for name in edge_order
+                    }
+                }
+            ),
+            gates={name: gates[name] for name in edge_order},
         ),
     )
     target_a = (
@@ -415,7 +420,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     new_subject_regime_ids = jnp.array([target_a_id, target_b_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

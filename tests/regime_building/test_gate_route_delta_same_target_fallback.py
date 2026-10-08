@@ -14,6 +14,8 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -21,7 +23,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.transition import StochasticTransition
@@ -80,10 +81,12 @@ def _same_target_fallback_model() -> Model:
         edges={
             "source": Transition(
                 targets={"target": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_always_true),
-                        gate=_always_closed,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_always_true)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_always_closed,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

@@ -1,8 +1,10 @@
 """Parameters and laws are lowered only for the problems the starts require.
 
 A `ByAge` case selected only at ages no required problem solves contributes no
-parameter, and a regime without any demanded pair reads no parameter at all.
-The values at the demanded pairs do not depend on which undemanded cases exist.
+runtime argument or kernel, and a regime without any demanded pair reads no
+parameter of its own branch. Every declared case keeps its parameter slots at
+`params["edges"][source]`. The values at the demanded pairs do not depend on
+which undemanded cases exist.
 """
 
 from collections.abc import Mapping
@@ -18,6 +20,7 @@ from lcm import (
     AgeRange,
     AgeSpecializedFunction,
     ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -25,7 +28,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -128,19 +130,15 @@ def _leaves(*, tree: Any, prefix: str = "") -> frozenset[str]:
     )
 
 
-def _param_names(*, model: Model, regime: str) -> frozenset[str]:
-    return frozenset(
-        path.rsplit("/", 1)[-1]
-        for path in _leaves(tree=model.get_params_template()[regime])
-        if path
-    )
+def _param_names(*, tree: Any) -> frozenset[str]:
+    return frozenset(path.rsplit("/", 1)[-1] for path in _leaves(tree=tree) if path)
 
 
 @pytest.mark.parametrize(
     ("initial_nodes", "regime", "expected"),
     [
-        ({25: "working"}, "working", {"discount_factor", "early_rate", "late_rate"}),
-        ({55: "working"}, "working", {"discount_factor", "late_rate"}),
+        ({25: "working"}, "working", {"discount_factor"}),
+        ({55: "working"}, "working", {"discount_factor"}),
         ({55: "working"}, "retirement", set()),
         ({45: "dead"}, "working", set()),
         ({55: "retirement"}, "retirement", {"discount_factor", "bonus"}),
@@ -150,11 +148,25 @@ def _param_names(*, model: Model, regime: str) -> frozenset[str]:
 def test_params_template_holds_only_the_parameters_demand_reads(
     *, initial_nodes: Any, regime: str, expected: set[str]
 ) -> None:
-    """A regime's template lists exactly the parameters its demanded laws read."""
-    assert (
-        _param_names(model=_model(initial_nodes=initial_nodes), regime=regime)
-        == expected
-    )
+    """A regime's own branch lists exactly the parameters its demanded problems read."""
+    template = _model(initial_nodes=initial_nodes).get_params_template()
+    assert _param_names(tree=template[regime]) == expected
+
+
+@pytest.mark.parametrize(
+    "initial_nodes",
+    [{25: "working"}, {55: "working"}, {45: "dead"}],
+    ids=["both-cases", "late-case-only", "terminal-root"],
+)
+def test_edge_template_holds_the_parameters_of_every_declared_case(
+    *, initial_nodes: Any
+) -> None:
+    """`working`'s edge branch lists both cases' rates whichever ages are demanded."""
+    template = _model(initial_nodes=initial_nodes).get_params_template()
+    assert _param_names(tree=template["edges"]["working"]) == {
+        "early_rate",
+        "late_rate",
+    }
 
 
 def test_late_root_values_equal_the_first_age_root_values_at_shared_pairs() -> None:
@@ -164,7 +176,8 @@ def test_late_root_values_equal_the_first_age_root_values_at_shared_pairs() -> N
         log_level="off",
     )
     late = _model(initial_nodes={55: "working"}).solve(
-        params={"discount_factor": 0.9, "late_rate": 0.8}, log_level="off"
+        params={"discount_factor": 0.9, "early_rate": 0.7, "late_rate": 0.8},
+        log_level="off",
     )
     for period in (3, 4):
         np.testing.assert_array_equal(
@@ -173,9 +186,9 @@ def test_late_root_values_equal_the_first_age_root_values_at_shared_pairs() -> N
         )
 
 
-def test_simulate_runs_on_a_late_root_with_only_the_demanded_parameters() -> None:
-    """A late start simulates with the late case's parameter alone."""
-    params = {"discount_factor": 0.9, "late_rate": 0.8}
+def test_simulate_runs_on_a_late_root() -> None:
+    """A late start simulates through ages 55 to 75 only."""
+    params = {"discount_factor": 0.9, "early_rate": 0.7, "late_rate": 0.8}
     model = _model(initial_nodes={55: "working"})
     result = model.simulate(
         params=params,
@@ -332,18 +345,16 @@ def _gated_fold_model(
     fallback_at_45: bool = False,
 ) -> Model:
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
-    target_law = {
-        "target": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_one),
-            gate=_gate,
-            routes={"only": StakeholderRoute(fallback=fallback)},
-            gate_references={
-                "V_reference": ProjectedRegimeValue(
-                    regime="reference", projection={"wealth": _identity}
-                )
-            },
-        )
-    }
+    target_law = {"target": StochasticTransition(func=_prob_one)}
+    target_gate = Gate(
+        predicate=_gate,
+        routes={"only": StakeholderRoute(fallback=fallback)},
+        references={
+            "V_reference": ProjectedRegimeValue(
+                regime="reference", projection={"wealth": _identity}
+            )
+        },
+    )
     terminal = Regime(
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
@@ -371,6 +382,7 @@ def _gated_fold_model(
                         **({45: "fallback"} if fallback_at_45 else {}),
                     }
                 ),
+                gates={"target": target_gate},
             )
         },
     )
@@ -403,9 +415,9 @@ def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     assert set(folds) == {1}
 
 
-def test_a_gate_fold_exists_only_where_the_selected_case_declares_it() -> None:
-    """A source solved at a later age whose case there declares no gate adds no
-    fold and requires no gate reference at the next age."""
+def test_a_gate_fold_exists_only_where_the_selected_case_reaches_the_target() -> None:
+    """A source solved at a later age whose case there does not reach the gated
+    target adds no fold and requires no gate reference at the next age."""
     model = _gated_fold_model(
         initial_nodes={40: "source", 45: "source", 50: "target"},
         fallback_at_45=True,

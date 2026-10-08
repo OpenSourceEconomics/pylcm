@@ -17,7 +17,7 @@ def test_action_partition_controls_are_complete_and_disjoint() -> None:
     assert len(population) == 29
     assert (
         hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
-        == "011688c988e1b107b5e63adc8cb13df4900bc84137531153bd2ab8743aeb9798"
+        == "cf858b9b0b747da0137c39fab58d7005555f2eda7aeecf471d43b4d3ad5c2ba3"
     )
     assert len(population) == direct_flow.EXPECTED_ACTION_PARTITION_MUTATION_COUNT
     for generator in (
@@ -32,6 +32,17 @@ def test_action_partition_controls_are_complete_and_disjoint() -> None:
         direct_flow.normal_process_mutation_specs,
     ):
         assert set(population).isdisjoint(generator(repo_root=root))
+
+
+def test_action_partition_expected_name_digest_matches_population() -> None:
+    """The self-test's pinned name digest is the digest of the live population."""
+    population = direct_flow.action_partition_mutation_specs(
+        repo_root=Path(__file__).parents[1]
+    )
+    assert (
+        hashlib.sha256(("\n".join(sorted(population)) + "\n").encode()).hexdigest()
+        == direct_flow.EXPECTED_ACTION_PARTITION_MUTATION_NAMES_SHA256
+    )
 
 
 def test_direct_flow_names_the_action_partitioned_route() -> None:

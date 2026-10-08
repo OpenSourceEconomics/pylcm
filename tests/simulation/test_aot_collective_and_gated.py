@@ -23,14 +23,15 @@ from _lcm.simulation.runtime import CompiledSimulationProgram
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -241,10 +242,12 @@ def _make_consent_model() -> Model:
         The model.
 
     """
-    single_law = {
-        "married_terminal": ValueDependentTransition(
-            probability=StochasticTransition(func=_certain_transition),
-            gate=_consent_gate,
+    single_law = ByAge(
+        cases={0: {"married_terminal": StochasticTransition(func=_certain_transition)}}
+    )
+    single_gates = {
+        "married_terminal": Gate(
+            predicate=_consent_gate,
             routes={
                 "f": StakeholderRoute(
                     target_stakeholder="f",
@@ -254,7 +257,7 @@ def _make_consent_model() -> Model:
                     ),
                 )
             },
-            gate_references={
+            references={
                 "V_single_ref": ProjectedRegimeValue(
                     regime="single_terminal",
                     projection={"education": _identity_education},
@@ -294,6 +297,7 @@ def _make_consent_model() -> Model:
             "single": Transition(
                 targets={"married_terminal": 0, "single_terminal": 0},
                 law=single_law,
+                gates=single_gates,
             )
         },
     )

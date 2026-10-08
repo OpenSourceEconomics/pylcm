@@ -7,8 +7,6 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -31,6 +29,9 @@ from tests.regime_building.test_collective_regime_simulate import DissolutionReg
 from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_regimes as make_dissolution_regimes,
 )
+from tests.regime_building.test_collective_regime_simulate import (
+    _married_dissolution_transition as married_dissolution_transition,
+)
 from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constraint_model,
@@ -39,9 +40,6 @@ from tests.simulation.initial_conditions._models import (
     make_state_only_constraint_model,
 )
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
-from tests.simulation.initial_conditions.test_own_stakeholder_required import (
-    MARRIED_DISSOLUTION_LAW,
-)
 
 _CONSTRAINT_PARAMS = {"discount_factor": 0.95, "final_age_alive": 1}
 
@@ -580,10 +578,7 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
         edges={
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=ByAge(cases={AgeRange(exclusive_stop=1): MARRIED_DISSOLUTION_LAW}),
-            ),
+            "married": married_dissolution_transition(),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1, 2)},

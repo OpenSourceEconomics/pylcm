@@ -60,12 +60,12 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -204,47 +204,55 @@ def _make_offer_regimes() -> dict[str, Regime]:
     }
 
 
-def _single_f_law() -> ByAge:
-    """The single's age-0 law: a consent-gated marriage offer.
+def _single_f_transition() -> Transition:
+    """The single's age-0 transition: a consent-gated marriage offer.
 
     The edge into `married_terminal` opens only where both partners consent;
     otherwise the single falls back to `single_f_terminal`.
     """
-    return ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "married_terminal": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_consent_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f_terminal",
-                                projection={"education": _identity_education},
-                            ),
-                        )
-                    },
-                    gate_references={
-                        "V_single_f_ref": ProjectedRegimeValue(
+    return Transition(
+        targets={"married_terminal": 0, "single_f_terminal": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        gates={
+            "married_terminal": Gate(
+                predicate=_consent_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"education": _identity_education},
                         ),
-                        "V_single_m_ref": ProjectedRegimeValue(
-                            regime="single_m_terminal",
-                            projection={"education": _spouse_type_as_education},
-                        ),
-                    },
-                )
-            }
-        }
+                    )
+                },
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f_terminal",
+                        projection={"education": _identity_education},
+                    ),
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m_terminal",
+                        projection={"education": _spouse_type_as_education},
+                    ),
+                },
+            )
+        },
     )
 
 
 def _offer_laws(regimes: dict[str, Regime]) -> RegimeLaws:
     """The offer regimes' laws, bound as a model would bind them."""
     return bind_laws(
-        {name: _single_f_law() if name == "single_f" else None for name in regimes}
+        {
+            name: _single_f_transition() if name == "single_f" else None
+            for name in regimes
+        }
     )
 
 
@@ -354,12 +362,7 @@ def test_stochastic_marriage_offer_matches_public_model_api():
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
         regimes=_make_offer_regimes(),
-        edges={
-            "single_f": Transition(
-                targets={"married_terminal": 0, "single_f_terminal": 0},
-                law=_single_f_law(),
-            )
-        },
+        edges={"single_f": _single_f_transition()},
         ages=ages,
         regime_id_class=OfferRegimeId,
         initial_nodes={ages.exact_values[0]: "single_f"},

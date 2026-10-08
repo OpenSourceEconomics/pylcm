@@ -15,6 +15,7 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -94,10 +95,17 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
                         "saving": AgeRange(exclusive_stop=_N_PERIODS - 2),
                         "done": AgeRange(exclusive_stop=_N_PERIODS - 1),
                     },
-                    law={
-                        "saving": StochasticTransition(func=prob_continue),
-                        "done": StochasticTransition(func=prob_stop),
-                    },
+                    law=ByAge(
+                        cases={
+                            AgeRange(exclusive_stop=_N_PERIODS - 2): {
+                                "saving": StochasticTransition(func=prob_continue),
+                                "done": StochasticTransition(func=prob_stop),
+                            },
+                            _N_PERIODS - 2: {
+                                "done": StochasticTransition(func=prob_stop)
+                            },
+                        }
+                    ),
                 )
             },
             regime_id_class=RegimeId,

@@ -18,7 +18,7 @@ import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_law import RegimeLaw, bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -36,6 +36,7 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError, RegimeInitializationError
 from lcm.persistence import load_solution
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 
 
@@ -129,7 +130,7 @@ def _build_regime(
     spec.update(overrides)
     regime = UserRegime(**spec)
     bound = bind_regime_law(law)
-    validate_regime(regime, law=bound)
+    validate_regime_law(regime, law=bound)
     return regime, bound
 
 
@@ -349,7 +350,7 @@ def test_carried_state_name_colliding_with_function_is_rejected() -> None:
 def test_terminal_regime_with_carried_state_is_rejected() -> None:
     """Terminal regimes have no next period to carry a state into."""
     with pytest.raises(RegimeInitializationError, match=r"[Tt]erminal"):
-        validate_regime(
+        validate_regime_law(
             UserRegime(
                 states={
                     "pension_wealth": Phased(
@@ -463,7 +464,7 @@ def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
-def _exit_at_62(*, law: object) -> dict[str, Transition]:
+def _exit_at_62(*, law: TransitionLaw) -> dict[str, Transition]:
     """Stay or die at 60 as `law` chooses; die at 62."""
     return {"working": Transition(targets={"working": 60, "dead": (60, 62)}, law=law)}
 

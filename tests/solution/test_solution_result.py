@@ -69,7 +69,7 @@ from tests.test_models.deterministic import base as deterministic_base
 from tests.test_models.deterministic.dcegm_variants import (
     get_full_model,
     get_full_params,
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 from tests.test_models.deterministic.regression import (
     RegimeId,
@@ -305,7 +305,7 @@ def test_flat_param_fingerprint_frames_marker_like_path_components() -> None:
 
 def test_model_solve_omits_policy_without_replay_route() -> None:
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
 
@@ -330,7 +330,7 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
 def test_model_rejects_a_present_inapplicable_artifact() -> None:
     """A false present payload cannot replace model authority's omission."""
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
     solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
         period=0,
@@ -394,7 +394,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
 
     monkeypatch.setattr(backward_induction.jax, "device_put", _reject_policy_host_copy)
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(params=params, log_level="off")
 
@@ -403,7 +403,7 @@ def test_solve_does_not_host_copy_policy_without_replay_route(
 
 def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(
         params=params,
@@ -422,7 +422,7 @@ def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
 
 def test_all_persistable_retains_model_verifiable_egm_continuation() -> None:
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve(
         params=params,
@@ -471,7 +471,7 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _with_diagnostics)
     model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
 
     enabled = model.solve(params=params, log_level="warning")
     disabled = model.solve(params=params, log_level="off")

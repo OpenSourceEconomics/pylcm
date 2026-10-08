@@ -13,6 +13,9 @@ from _lcm.solution.action_reduction import (
     CollectiveHardMaxReduction,
     CollectiveHardMaxResult,
 )
+from tests.solution._reduced_maximum_probe import (
+    count_equalities_with_a_reduced_maximum,
+)
 
 
 def _scalar_oracle(
@@ -354,3 +357,19 @@ def test_collective_hard_max_rejects_non_int32_global_action_ids():
             feasible=jnp.array([True, True]),
             action_ids=jnp.array([0.0, 1.0]),
         )
+
+
+def test_collective_hard_max_identity_is_not_matched_against_a_reduced_maximum():
+    """The household winner and its objective come out of one reduction."""
+    objectives = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
+    stakeholder_values = jnp.stack([objectives, objectives + 1.0], axis=-1)
+
+    jaxpr = jax.make_jaxpr(_partial)(
+        objectives=objectives,
+        stakeholder_values=stakeholder_values,
+        feasible=jnp.ones_like(objectives, dtype=bool),
+        action_ids=jnp.arange(4, dtype=jnp.int32),
+        block=(0, 1, 2, 3),
+    ).jaxpr
+
+    assert count_equalities_with_a_reduced_maximum(jaxpr) == 0

@@ -134,15 +134,20 @@ asv-preflight = "python -m benchmarks.preflight"
 asv-pr-comment = "python benchmarks/pr_comment.py"
 asv-publish = "python -m benchmarks.publish"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
+# `bench` is the ASV `--bench` regex; the default `.` selects every benchmark.
+asv-run = { args = [ { arg = "bench", default = "." } ], cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD) --bench "{{ bench }}"', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+# The PR run skips the ACA debug-log timing, which only the main-branch run measures;
+# the PR comparison table lists HEAD's benchmarks only, so it shows no row for it.
+asv-run-and-pr-comment = { depends-on = [
+  { task = "asv-run", args = [ "^(?!.*AcaBaselineDebugLog)" ] },
+  "asv-pr-comment"
+] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
-# execution keywords are rejected; omitted GPU policies derive an allocator budget.
+# ACA model on the edges-params API: law arguments live under params["edges"].
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "938c7339527cd65746501df09394181f1b6ba98b" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "591da5c42ea52d4c8c80f192647f971944fada92" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]

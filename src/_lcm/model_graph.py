@@ -1,18 +1,23 @@
 """Resolve explicit model topology and bind it to the numerical transition laws."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import cast
 
+from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
 from _lcm.regime_building.schedules import (
+    CaseLaw,
+    PhaseLaw,
+    ProbabilityCell,
     RegimeSchedules,
+    RegimeTransitionLaw,
+    Side,
     _Constant,
     _edge_support,
-    _fallbacks,
     _phase_side,
     resolve_demand,
     resolve_regime_schedules,
@@ -21,10 +26,17 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
-from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
-from _lcm.user_regime_validation import validate_regimes
+from _lcm.regime_law import (
+    RegimeLaw,
+    RegimeLaws,
+    bind_regime_law,
+)
+from _lcm.user_regime_validation import (
+    fail_if_a_joint_target_is_unreachable,
+    validate_regimes,
+)
 from lcm.ages import AgeGrid
-from lcm.collective import ValueDependentTransition
+from lcm.collective import Gate
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
@@ -33,9 +45,12 @@ from lcm.exceptions import (
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
+    AgeCaseLaw,
     AgeSelector,
     ByAge,
     DeterministicTransition,
+    ModelEdges,
+    PhaseEdges,
     StochasticTransition,
     Transition,
     _fail_if_invalid_age_selector,
@@ -47,6 +62,8 @@ type ResolvedEdges = MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, frozenset[UserAge]]
 ]
 type Edge = tuple[object, RegimeName, RegimeName]
+
+_PHASE_SIDES: tuple[Side, ...] = ("solve", "simulate")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -77,7 +94,7 @@ class ModelGraph:
     The law the solver and simulator evaluate: graph-bound, pruned of
     fixed-zero cells and lowered to the demanded periods. A regime is terminal
     (`laws[name].terminal`) when it has no outgoing edges, and the gated edges
-    of a source are those its law's `ValueDependentTransition` cells declare
+    of a source are those its `Transition.gates` declare
     (`laws[name].gated_edges`).
     """
 
@@ -110,6 +127,9 @@ class DroppedCells:
     """The source age."""
     targets: tuple[RegimeName, ...]
     """The law's targets that have no edge out of the source at that age."""
+    law_over_all_targets: bool
+    """Whether only a law over all targets reaches them: its vector is kept
+    whole, so only mass it puts on one of them is explained by the graph."""
 
 
 # Keyed by `(source, period)`.
@@ -138,20 +158,22 @@ class GraphPreparation:
     pruned_edges: MappingProxyType[str, MappingProxyType[Edge, str]]
     """Fixed-zero primary edges and their proof reason."""
     cells_without_edges: CellsWithoutEdges
-    """Law cells binding dropped because the graph declares no edge for them."""
+    """Law cells binding dropped, and targets of a law over all targets, without
+    an edge at the age."""
 
 
 @contextmanager
 def naming_cells_without_edges(
     cells_without_edges: CellsWithoutEdges,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Name the missing edges when a law's mass falls short because of them.
 
     A law cell toward a target the graph gives no edge at that age is dropped when
     the law is bound, so its probability mass is lost. The unit-mass check then
-    fails on the law, while the cause is the graph. When the failing source and
-    period have dropped cells, the error names each `(age, source -> target)` cell;
-    otherwise it is raised unchanged.
+    fails on the law, while the cause is the graph. A law over all targets keeps
+    its whole vector, and the check refuses the mass it puts on a target without
+    an edge there. When the failing source and period have such cells, the error
+    names each `(age, source -> target)` cell; otherwise it is raised unchanged.
     """
     try:
         yield
@@ -159,12 +181,23 @@ def naming_cells_without_edges(
         dropped = cells_without_edges.get(
             getattr(error, "unit_mass_violation", None)  # ty: ignore[invalid-argument-type]
         )
-        if dropped is None:
+        outside = getattr(error, "outside_target", None)
+        targets = (
+            ()
+            if dropped is None
+            else tuple(
+                target
+                for target in dropped.targets
+                if outside is None or target == outside
+            )
+        )
+        if dropped is None or not targets:
+            raise
+        if dropped.law_over_all_targets and outside is None:
             raise
         source = error.unit_mass_violation[0]  # ty: ignore[unresolved-attribute]
         cells = ", ".join(
-            f"(age {dropped.age}, '{source}' -> '{target}')"
-            for target in dropped.targets
+            f"(age {dropped.age}, '{source}' -> '{target}')" for target in targets
         )
         msg = (
             f"{error.mass_detail}\n"  # ty: ignore[unresolved-attribute]
@@ -225,36 +258,50 @@ def prepare_graph(
 
 def bind_edge_laws(
     *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
-) -> tuple[RegimeLaws, object]:
-    """Bind each regime's law from `Model(edges=...)` and strip laws off the edges.
+) -> tuple[RegimeLaws, GraphEdges]:
+    """Bind each regime's law from `Model(edges=...)` and resolve its support.
 
     Per phase, a source's law at each source age with outgoing edges is:
 
     - the only destination, where the age has exactly one outgoing edge and the
-      source is a plain `{target: selector}` mapping or its `Transition` law
+      source is a plain `{target: selector}` mapping or its `ByAge` law
       selects nothing there, as a probability-one cell where the other phase's
       law at that age is a per-target probability mapping;
-    - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise.
+    - the `Transition` law (its `ByAge` case, its `Phased` side), otherwise,
+      also at an age with one outgoing edge, where it must put unit mass on
+      that edge.
 
-    A source age with several outgoing edges and no law is rejected, and so is
-    a `Transition` on a source whose every age has at most one outgoing edge,
-    unless its law carries a `ValueDependentTransition` gate. A regime with no
-    outgoing edge in either phase is terminal. Each regime is validated against
-    its bound law.
+    A source age with several outgoing edges and no law is rejected. A regime
+    with no outgoing edge in either phase is terminal. Each regime is validated
+    against its bound law, and its joint kernels against the targets its edges
+    reach.
 
     Returns:
-        Each regime's bound law, and the edges in the law-free
-        `{source: {target: selector}}` form, `Phased` when the input was.
+        Each regime's bound law, and both phases' edges with their selectors
+        snapshotted as exact source ages.
     """
-    declared = (
+    # `_resolve_edges` refuses a phase that is not a mapping of sources.
+    declared = cast(
+        "dict[Side, PhaseEdges]",
         {"solve": edges.solve, "simulate": edges.simulate}
         if isinstance(edges, Phased)
-        else {"solve": edges, "simulate": edges}
+        else {"solve": edges, "simulate": edges},
     )
     structural = {
         side: (
             {
-                source: (decl.targets if isinstance(decl, Transition) else decl)
+                source: (
+                    _transition_targets(
+                        source=source,
+                        transition=decl,
+                        ages=ages,
+                        fallback_phases=(
+                            (side,) if isinstance(edges, Phased) else _PHASE_SIDES
+                        ),
+                    )
+                    if isinstance(decl, Transition)
+                    else decl
+                )
                 for source, decl in phase.items()
             }
             if isinstance(phase, Mapping)
@@ -262,15 +309,15 @@ def bind_edge_laws(
         )
         for side, phase in declared.items()
     }
-    resolved = {
+    resolved: dict[Side, ResolvedEdges] = {
         side: _resolve_edges(edges=structural[side], regimes=regimes, ages=ages)
-        for side in ("solve", "simulate")
+        for side in _PHASE_SIDES
     }
-    bound: dict[RegimeName, object] = {}
+    bound: dict[RegimeName, RegimeTransitionLaw] = {}
     for name in regimes:
-        laws_by_side = {}
-        for side in ("solve", "simulate"):
-            declaration = cast("Mapping[str, object]", declared[side]).get(name)
+        laws_by_side: dict[Side, dict[int, PhaseLaw]] = {}
+        for side in _PHASE_SIDES:
+            declaration = declared[side].get(name)
             if isinstance(declaration, Transition):
                 laws_by_side[side] = _transition_laws(
                     source=name,
@@ -287,14 +334,214 @@ def bind_edge_laws(
                     side=side,
                 )
         bound[name] = _combined_law(laws_by_side=laws_by_side, ages=ages)
-    law_free = (
-        Phased(solve=structural["solve"], simulate=structural["simulate"])
-        if isinstance(edges, Phased)
-        else structural["solve"]
+    laws = MappingProxyType(
+        {
+            name: bind_regime_law(
+                bound[name],
+                gated_edges=_declared_gated_edges(
+                    source=name, declared=declared, resolved=resolved
+                ),
+            )
+            for name in regimes
+        }
     )
-    laws = MappingProxyType({name: bind_regime_law(bound[name]) for name in regimes})
     validate_regimes(regimes=regimes, laws=laws)
-    return laws, law_free
+    fail_if_a_joint_target_is_unreachable(
+        user_regimes=regimes,
+        targets_by_regime={
+            name: frozenset(resolved["solve"].get(name, {}))
+            | frozenset(resolved["simulate"].get(name, {}))
+            for name in regimes
+        },
+    )
+    return laws, GraphEdges(solve=resolved["solve"], simulate=resolved["simulate"])
+
+
+def collect_declared_transitions(
+    edges: ModelEdges,
+) -> MappingProxyType[RegimeName, tuple[Transition, ...]]:
+    """Return each source's `Transition` declarations, one per phase of `edges`.
+
+    The declarations are returned as written — every `ByAge` case, both sides
+    of a `Phased` law, and the gates — before any age selects among them. A
+    source declared as a plain `{target: selector}` mapping declares no law and
+    has no entry. Called once `bind_edge_laws` has accepted `edges`, so every
+    law is a declaration form.
+
+    Args:
+        edges: The `Model(edges=...)` declaration, or a `Phased` pair of them.
+
+    Returns:
+        Per source regime, its `Transition` declarations.
+
+    """
+    phases = (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges,)
+    found: dict[RegimeName, list[Transition]] = {}
+    for phase in phases:
+        if not isinstance(phase, Mapping):
+            continue
+        for source, declaration in phase.items():
+            if isinstance(declaration, Transition):
+                found.setdefault(source, []).append(declaration)
+    return MappingProxyType({source: tuple(decls) for source, decls in found.items()})
+
+
+def _transition_targets(
+    *,
+    source: RegimeName,
+    transition: Transition,
+    ages: AgeGrid,
+    fallback_phases: tuple[Side, ...],
+) -> Mapping[RegimeName, AgeSelector]:
+    """Return a `Transition`'s destinations and their source-age selectors.
+
+    A law that names its targets supplies them: each case's keys at the
+    non-final ages the case covers, and each gate's route fallbacks at the ages
+    of the gated target. A `Transition` declared for one phase of a `Phased`
+    edges declaration reaches only that phase's fallbacks; one shared by both
+    phases reaches both. Supplied `targets` must then say the same at every
+    non-final age; a law over all targets uses the supplied ones.
+    """
+    derived = _derived_target_ages(
+        transition=transition, ages=ages, fallback_phases=fallback_phases
+    )
+    if derived is None:
+        # `Transition` requires `targets` for a law that names no target.
+        return cast("Mapping[RegimeName, AgeSelector]", transition.targets)
+    if transition.targets is not None:
+        # Keyed by `object`: a selector value of any type is looked up in it.
+        period_by_age: dict[object, int] = {
+            age: period for period, age in enumerate(ages.exact_values)
+        }
+        # No transition leaves the final age, so a selector that also selects
+        # it names the same destinations as one that stops before it.
+        final_age = ages.exact_values[-1]
+        supplied = {
+            target: _selected_source_ages(
+                selector=selector,
+                edge=f"'{source}' → '{target}'",
+                ages=ages,
+                period_by_age=period_by_age,
+            )
+            - {final_age}
+            for target, selector in transition.targets.items()
+        }
+        if supplied != derived:
+            raise ModelInitializationError(
+                f"`Transition.targets` of '{source}' disagree with the targets its "
+                f"law names. supplied: {_spelled_targets(supplied)}; derived from "
+                f"the law and its gates: {_spelled_targets(derived)}. Omit "
+                "`targets` to use the derived ones, or change the law so that it "
+                "names exactly the supplied destinations at their ages."
+            )
+    return {target: tuple(sorted(selected)) for target, selected in derived.items()}
+
+
+def _derived_target_ages(
+    *,
+    transition: Transition,
+    ages: AgeGrid,
+    fallback_phases: tuple[Side, ...],
+) -> dict[RegimeName, frozenset[UserAge]] | None:
+    """The source ages at which a law names each target; `None` if it names none."""
+    law = cast("CaseLaw | ByAge", transition.law)
+    sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
+    non_final = range(ages.n_periods - 1)
+    selected: dict[RegimeName, set[UserAge]] = {}
+    for side in sides:
+        by_period = (
+            side.resolve(ages).law_by_period
+            if isinstance(side, ByAge)
+            else dict.fromkeys(non_final, side)
+        )
+        for period, case in by_period.items():
+            if period not in non_final:
+                continue
+            names = _case_targets(cast("CaseLaw", case))
+            if names is None:
+                return None
+            for name in names:
+                selected.setdefault(name, set()).add(ages.exact_values[period])
+    for target, gate in transition.gates.items():
+        for route in gate.routes.values():
+            for fallback in {
+                (
+                    route.solve_fallback
+                    if phase == "solve"
+                    else route.simulate_fallback
+                ).regime
+                for phase in fallback_phases
+            }:
+                selected.setdefault(fallback, set()).update(selected.get(target, ()))
+    return {name: frozenset(found) for name, found in selected.items() if found}
+
+
+def _case_targets(case: CaseLaw) -> tuple[RegimeName, ...] | None:
+    """The targets one case of a law names, both phases; `None` if it names none."""
+    names: list[RegimeName] = []
+    for side in (case.solve, case.simulate) if isinstance(case, Phased) else (case,):
+        if isinstance(side, str):
+            names.append(side)
+        elif isinstance(side, Mapping):
+            names.extend(side)
+        else:
+            return None
+    return tuple(names)
+
+
+def _spelled_targets(targets: Mapping[RegimeName, frozenset[UserAge]]) -> str:
+    """Spell destinations and their source ages for an error message."""
+    return (
+        "{"
+        + ", ".join(
+            f"{target!r}: {sorted(selected)}"
+            for target, selected in sorted(targets.items())
+        )
+        + "}"
+    )
+
+
+def _declared_gated_edges(
+    *,
+    source: RegimeName,
+    declared: Mapping[Side, PhaseEdges],
+    resolved: Mapping[Side, ResolvedEdges],
+) -> dict[RegimeName, GatedEdge]:
+    """Return the gated edges a source declares, one per gated target.
+
+    A gate holds for its target in both phases. A target reached in both
+    phases is gated in both or in neither, and both gates are the same.
+    """
+    gates_by_side: dict[Side, Mapping[RegimeName, Gate]] = {}
+    for side in _PHASE_SIDES:
+        declaration = declared[side].get(source)
+        gates = declaration.gates if isinstance(declaration, Transition) else {}
+        reached = resolved[side].get(source, {})
+        unreached = sorted(set(gates) - set(reached))
+        if unreached:
+            raise ModelInitializationError(
+                f"'{source}' declares a gate on {unreached[0]!r}, which its "
+                f"{side} edges never reach. A gate belongs to a destination of "
+                "its own `Transition`."
+            )
+        gates_by_side[side] = gates
+    solve, simulate = gates_by_side["solve"], gates_by_side["simulate"]
+    for target in sorted(set(solve) | set(simulate)):
+        reached_in_both = target in resolved["solve"].get(
+            source, {}
+        ) and target in resolved["simulate"].get(source, {})
+        if reached_in_both and solve.get(target) != simulate.get(target):
+            raise ModelInitializationError(
+                f"The transition of '{source}' into {target!r} is gated differently "
+                "in the two phases. A gate is what the household consents to, so a "
+                "target reached in both phases carries one and the same `Gate` in "
+                "both, or none. A difference the model needs goes in a route's "
+                "`fallback`, which is `Phased` in its own right."
+            )
+    return {
+        target: gated_edge_from_gate(gate)
+        for target, gate in {**simulate, **solve}.items()
+    }
 
 
 def _targets_by_period(
@@ -315,10 +562,10 @@ def _single_destination_laws(
     source: RegimeName,
     resolved: Mapping[RegimeName, frozenset[UserAge]],
     ages: AgeGrid,
-    side: str,
-) -> dict[int, object]:
+    side: Side,
+) -> dict[int, PhaseLaw]:
     """Read a law-free source's law off its edges: the only destination per age."""
-    laws: dict[int, object] = {}
+    laws: dict[int, PhaseLaw] = {}
     for period, targets in _targets_by_period(resolved=resolved, ages=ages).items():
         if len(targets) > 1:
             raise ModelInitializationError(
@@ -337,31 +584,27 @@ def _transition_laws(
     transition: Transition,
     resolved: Mapping[RegimeName, frozenset[UserAge]],
     ages: AgeGrid,
-    side: str,
-) -> dict[int, object]:
+    side: Side,
+) -> dict[int, PhaseLaw]:
     """Select a `Transition`'s law at each source period with outgoing edges."""
     targets_by_period = _targets_by_period(resolved=resolved, ages=ages)
-    law = transition.law
+    law = cast("CaseLaw | ByAge", transition.law)
     if isinstance(law, Phased):
-        law = getattr(law, side)
-    if all(len(targets) <= 1 for targets in targets_by_period.values()) and not (
-        _carries_gate(law)
-    ):
-        raise ModelInitializationError(
-            f"Every source age of '{source}' has at most one outgoing {side} edge, "
-            f"so the graph is its law. Declare `edges['{source}']` as the plain "
-            "`{target: source_ages}` mapping instead of a `Transition`."
-        )
+        law = cast("PhaseLaw", getattr(law, side))
     selected = (
         law.resolve(ages).law_by_period
         if isinstance(law, ByAge)
         else dict.fromkeys(targets_by_period, law)
     )
-    laws: dict[int, object] = {}
+    laws: dict[int, PhaseLaw] = {}
     for period, targets in targets_by_period.items():
         if period in selected:
-            case = selected[period]
-            laws[period] = getattr(case, side) if isinstance(case, Phased) else case
+            case = cast("CaseLaw", selected[period])
+            laws[period] = (
+                cast("PhaseLaw", getattr(case, side))
+                if isinstance(case, Phased)
+                else case
+            )
         elif len(targets) == 1:
             laws[period] = targets[0]
         else:
@@ -373,21 +616,9 @@ def _transition_laws(
     return laws
 
 
-def _carries_gate(law: object) -> bool:
-    """Whether a law declares a `ValueDependentTransition` cell at any age."""
-    laws = law.laws if isinstance(law, ByAge) else (law,)
-    return any(
-        isinstance(cell, ValueDependentTransition)
-        for one in laws
-        for side in ((one.solve, one.simulate) if isinstance(one, Phased) else (one,))
-        if isinstance(side, Mapping)
-        for cell in side.values()
-    )
-
-
 def _combined_law(
-    *, laws_by_side: Mapping[str, Mapping[int, object]], ages: AgeGrid
-) -> object:
+    *, laws_by_side: Mapping[Side, Mapping[int, PhaseLaw]], ages: AgeGrid
+) -> RegimeTransitionLaw:
     """Combine per-phase, per-period laws into one regime law.
 
     `None` when neither phase has an outgoing edge (terminal). One law object
@@ -398,10 +629,10 @@ def _combined_law(
     periods = sorted(set(solve) | set(simulate))
     if not periods:
         return None
-    pairs: dict[tuple[int, int], object] = {}
-    combined: dict[int, object] = {}
+    pairs: dict[tuple[int, int], Phased[PhaseLaw, PhaseLaw]] = {}
+    combined: dict[int, CaseLaw] = {}
     for period in periods:
-        solve_law = solve.get(period, simulate.get(period))
+        solve_law = solve[period] if period in solve else simulate[period]
         simulate_law = simulate.get(period, solve_law)
         if solve_law is simulate_law or (
             isinstance(solve_law, str) and solve_law == simulate_law
@@ -424,7 +655,7 @@ def _combined_law(
     )
 
 
-def _lottery_if_paired(*, law: object, other: object) -> object:
+def _lottery_if_paired(*, law: PhaseLaw, other: PhaseLaw) -> PhaseLaw:
     """A lone edge as a probability-one cell when the other phase has a mapping.
 
     The graph is the law of a lone edge; across phases it takes the form of the
@@ -433,19 +664,6 @@ def _lottery_if_paired(*, law: object, other: object) -> object:
     if isinstance(law, str) and isinstance(other, Mapping):
         return MappingProxyType({law: StochasticTransition(func=_Constant(value=1.0))})
     return law
-
-
-def resolve_graph_edges(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
-) -> GraphEdges:
-    """Validate both phases and snapshot selectors as exact source ages."""
-    solve, simulate = (
-        (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges, edges)
-    )
-    return GraphEdges(
-        solve=_resolve_edges(edges=solve, regimes=regimes, ages=ages),
-        simulate=_resolve_edges(edges=simulate, regimes=regimes, ages=ages),
-    )
 
 
 def bind_graph_support(
@@ -468,7 +686,6 @@ def bind_graph_support(
             result[source] = source_law
             continue
         transition = source_law.transition
-        _fail_if_law_names_targets(transition=transition, source=source)
         kernels = (
             transition.resolve(ages).law_by_period
             if isinstance(transition, ByAge)
@@ -496,34 +713,49 @@ def bind_graph_support(
             kernel = kernels[period]
             sides: dict[str, object] = {}
             for side in ("solve", "simulate"):
-                law = getattr(kernel, side) if isinstance(kernel, Phased) else kernel
-                # Ordinary broadcast kernels must retain identity across phases.
-                # Gated cells additionally resolve phase-specific fallbacks.
-                phase_key = (
-                    side
-                    if isinstance(law, Mapping)
-                    and any(
-                        isinstance(cell, ValueDependentTransition)
-                        for cell in law.values()
-                    )
-                    else "shared"
+                law = cast(
+                    "PhaseLaw",
+                    getattr(kernel, side) if isinstance(kernel, Phased) else kernel,
                 )
+                fallbacks = _gate_fallbacks(
+                    gated_edges=source_law.gated_edges,
+                    targets=targets[side],
+                    side=side,
+                )
+                _fail_if_a_fallback_has_no_edge(
+                    fallbacks=fallbacks,
+                    targets=targets[side],
+                    source=source,
+                    age=age,
+                    side=side,
+                )
+                # Ordinary broadcast kernels must retain identity across phases.
+                # Gated targets additionally resolve phase-specific fallbacks.
+                phase_key = side if isinstance(law, Mapping) and fallbacks else "shared"
                 key = (id(law), targets[side], phase_key)
                 if key not in cache:
                     cache[key] = _bind_law(
                         law=law,
                         targets=targets[side],
+                        fallbacks=fallbacks,
                         source=source,
+                        regime_names=regime_names,
                         age=age,
                         side=side,
-                        regime_names=regime_names,
                     )
                 sides[side] = cache[key]
-                if isinstance(law, Mapping) and targets[side]:
+                if targets[side] and not isinstance(law, str):
+                    # A per-target law names its cells; a law over all targets
+                    # can reach every target of the source's edges.
+                    named = (
+                        law
+                        if isinstance(law, Mapping)
+                        else getattr(edges, side).get(source, {})
+                    )
                     missing = tuple(
                         target
                         for target in regime_names
-                        if target in law and target not in targets[side]
+                        if target in named and target not in targets[side]
                     )
                     if missing:
                         previous = dropped.get((source, period))
@@ -533,6 +765,10 @@ def bind_graph_support(
                                 dict.fromkeys(
                                     (*(previous.targets if previous else ()), *missing)
                                 )
+                            ),
+                            law_over_all_targets=(
+                                not isinstance(law, Mapping)
+                                and (previous is None or previous.law_over_all_targets)
                             ),
                         )
             cases.append(
@@ -545,14 +781,14 @@ def bind_graph_support(
             )
         # An undemanded source remains inspectable but supplies no local problem.
         bound = (
-            ByAge(cases=dict(cases))
+            ByAge(cases=cast("dict[AgeSelector, AgeCaseLaw]", dict(cases)))
             if cases
             else _SupportedStochasticTransition(
                 func=_Constant(value=(0.0,) * len(regime_names)),
                 targets=(),
             )
         )
-        result[source] = bind_regime_law(bound)
+        result[source] = bind_regime_law(bound, gated_edges=source_law.gated_edges)
     return MappingProxyType(result), MappingProxyType(dropped)
 
 
@@ -615,6 +851,15 @@ def _resolve_edges(
             raise ModelInitializationError(
                 f"Graph names unknown source regime {source!r}."
             )
+        if isinstance(destinations, Phased):
+            raise ModelInitializationError(
+                f"Graph source '{source}' maps to a `Phased` pair of transitions. "
+                "Phase the law inside one `Transition`, whose targets both phases "
+                f"share: `edges={{'{source}': Transition(targets={{...}}, "
+                "law=Phased(solve=..., simulate=...))}`. Destinations that differ "
+                "between the phases go in `Model(edges=Phased(solve={...}, "
+                "simulate={...}))`."
+            )
         if not isinstance(destinations, Mapping):
             raise ModelInitializationError(
                 f"Graph source '{source}' must map destinations "
@@ -665,22 +910,22 @@ def _selected_source_ages(
 
 def _bind_law(
     *,
-    law: object,
-    targets: tuple[str, ...],
+    law: PhaseLaw,
+    targets: tuple[RegimeName, ...],
+    fallbacks: tuple[RegimeName, ...],
     source: RegimeName,
-    age: object,
-    side: Literal["solve", "simulate"],
+    age: UserAge,
+    side: Side,
     regime_names: tuple[RegimeName, ...],
-) -> object:
+) -> PhaseLaw:
     if not targets:
         return _absent_law(law=law, n_regimes=len(regime_names))
     if isinstance(law, Mapping):
         return _bind_cells(
             law=law,
             targets=targets,
+            fallbacks=fallbacks,
             source=source,
-            age=age,
-            side=side,
             regime_names=regime_names,
         )
     if isinstance(law, StochasticTransition):
@@ -702,25 +947,6 @@ def _bind_law(
     raise ModelInitializationError(
         f"Invalid transition kernel {law!r} out of ({age}, '{source}')."
     )
-
-
-def _fail_if_law_names_targets(*, transition: object, source: RegimeName) -> None:
-    """Reject a regime law tagged with destinations; only the graph declares them."""
-    laws = transition.laws if isinstance(transition, ByAge) else (transition,)
-    for law in laws:
-        sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-        if any(
-            isinstance(
-                side,
-                _SupportedDeterministicTransition | _SupportedStochasticTransition,
-            )
-            for side in sides
-        ):
-            raise ModelInitializationError(
-                f"The regime law of '{source}' names its destinations. Declare "
-                "every regime transition in `Model(edges=...)`; the law supplies "
-                "only the numbers."
-            )
 
 
 def _fail_if_kernel_extends_graph(
@@ -746,7 +972,7 @@ def _fail_if_kernel_extends_graph(
                     )
 
 
-def _absent_law(*, law: object, n_regimes: int) -> object:
+def _absent_law(*, law: PhaseLaw, n_regimes: int) -> PhaseLaw:
     """Preserve kernel grammar for a phase with no source-age support."""
     if isinstance(law, Mapping | str):
         return law
@@ -759,21 +985,23 @@ def _absent_law(*, law: object, n_regimes: int) -> object:
 
 def _bind_cells(
     *,
-    law: Mapping[str, object],
-    targets: tuple[str, ...],
+    law: Mapping[RegimeName, ProbabilityCell],
+    targets: tuple[RegimeName, ...],
+    fallbacks: tuple[RegimeName, ...],
     source: RegimeName,
-    age: object,
-    side: Literal["solve", "simulate"],
     regime_names: tuple[RegimeName, ...],
-) -> MappingProxyType[str, object]:
-    """Select scalar cells and represent omitted probabilities as exact zeros."""
+) -> MappingProxyType[RegimeName, ProbabilityCell]:
+    """Select scalar cells and represent omitted probabilities as exact zeros.
+
+    A gate fallback without a cell of its own is reached by routing, not by the
+    law, so it gets no zero cell.
+    """
     unknown = set(law) - set(regime_names)
     if unknown:
         raise ModelInitializationError(
             f"Transition kernel of '{source}' names unknown regimes {sorted(unknown)}."
         )
     cells = {target: law[target] for target in targets if target in law}
-    fallbacks = _fallbacks(law=cells, side=side)
     cells.update(
         {
             target: StochasticTransition(func=_Constant(value=0.0))
@@ -781,10 +1009,38 @@ def _bind_cells(
             if target not in cells and target not in fallbacks
         }
     )
-    undeclared_fallbacks = set(fallbacks) - set(targets)
-    if undeclared_fallbacks:
+    return MappingProxyType(cells)
+
+
+def _gate_fallbacks(
+    *,
+    gated_edges: Mapping[RegimeName, GatedEdge],
+    targets: tuple[RegimeName, ...],
+    side: Side,
+) -> tuple[RegimeName, ...]:
+    """The gate-closed regimes of the gated targets among `targets`, for one side."""
+    return tuple(
+        dict.fromkeys(
+            (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
+            for target, edge in gated_edges.items()
+            if target in targets
+            for leg in edge.legs.values()
+        )
+    )
+
+
+def _fail_if_a_fallback_has_no_edge(
+    *,
+    fallbacks: tuple[RegimeName, ...],
+    targets: tuple[RegimeName, ...],
+    source: RegimeName,
+    age: UserAge,
+    side: Side,
+) -> None:
+    """Reject a gated target whose fallback the graph gives no edge at that age."""
+    undeclared = sorted(set(fallbacks) - set(targets))
+    if undeclared:
         raise ModelInitializationError(
             f"Graph edges out of ({age}, '{source}') in {side} omit gated "
-            f"fallback destinations {sorted(undeclared_fallbacks)}."
+            f"fallback destinations {undeclared}."
         )
-    return MappingProxyType(cells)

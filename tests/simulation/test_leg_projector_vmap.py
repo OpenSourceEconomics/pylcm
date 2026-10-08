@@ -45,11 +45,12 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -176,25 +177,27 @@ def _laws() -> RegimeLaws:
     """The regimes' laws, bound as `Model(edges=...)` would bind them."""
     return bind_laws(
         {
-            "src": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=_gate_dissolves_everywhere,
-                            routes={
-                                "own": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={
-                                            "settlement": _settlement_from_health
-                                        },
-                                    )
-                                )
-                            },
-                        )
+            "src": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "target": StochasticTransition(func=_prob_one)
+                        }
                     }
-                }
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate_dissolves_everywhere,
+                        routes={
+                            "own": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"settlement": _settlement_from_health},
+                                )
+                            )
+                        },
+                    )
+                },
             ),
             "target": None,
             "fallback": None,
@@ -369,7 +372,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
             ),
         }
     )
-    states, _routed_ids, _routed_roles = route_gated_edges(
+    states, _routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -417,7 +420,7 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
             ),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,

@@ -6,6 +6,7 @@ import pytest
 from _lcm.regime_building.processing import _merge_ordered_categories
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
@@ -20,6 +21,7 @@ from lcm.exceptions import (
     ModelInitializationError,
 )
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -104,7 +106,9 @@ _WORKING_RETIRED_EDGES = {
 }
 
 
-def _a_to_b_edges(*, law_a: object, law_b: object) -> dict[str, Transition]:
+def _a_to_b_edges(
+    *, law_a: TransitionLaw, law_b: TransitionLaw
+) -> dict[str, Transition]:
     return {
         "regime_a": Transition(
             targets={"dead": (0, 1, 2), "regime_b": (0, 1, 2), "regime_a": (0, 1)},
@@ -884,13 +888,22 @@ def test_incomplete_per_target_unreachable_target() -> None:
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
     )
-    law_a = {
-        "regime_a": StochasticTransition(func=lambda age: jnp.where(age < 1, 1.0, 0.0)),
-        "regime_b": StochasticTransition(
-            func=lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
-        ),
-        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
-    }
+    a_to_b = StochasticTransition(
+        func=lambda age: jnp.where((age >= 1) & (age < 2), 1.0, 0.0)
+    )
+    a_to_dead = StochasticTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0))
+    law_a = ByAge(
+        cases={
+            (0, 1): {
+                "regime_a": StochasticTransition(
+                    func=lambda age: jnp.where(age < 1, 1.0, 0.0)
+                ),
+                "regime_b": a_to_b,
+                "dead": a_to_dead,
+            },
+            2: {"regime_b": a_to_b, "dead": a_to_dead},
+        }
+    )
 
     regime_b = UserRegime(
         states={
@@ -911,13 +924,21 @@ def test_incomplete_per_target_unreachable_target() -> None:
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
     )
-    law_b = {
-        "regime_b": StochasticTransition(func=lambda age: jnp.where(age < 2, 1.0, 0.0)),
-        "regime_c": StochasticTransition(
-            func=lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
-        ),
-        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 3, 1.0, 0.0)),
-    }
+    b_to_dead = StochasticTransition(func=lambda age: jnp.where(age >= 3, 1.0, 0.0))
+    law_b = ByAge(
+        cases={
+            (0, 1, 2): {
+                "regime_b": StochasticTransition(
+                    func=lambda age: jnp.where(age < 2, 1.0, 0.0)
+                ),
+                "regime_c": StochasticTransition(
+                    func=lambda age: jnp.where((age >= 2) & (age < 3), 1.0, 0.0)
+                ),
+                "dead": b_to_dead,
+            },
+            3: {"dead": b_to_dead},
+        }
+    )
 
     regime_c = UserRegime(
         states={

@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -236,20 +237,18 @@ def _reduce_block(
     any_feasible = jnp.any(feasible, axis=-1)
     any_feasible_nan = jnp.any(feasible_nan, axis=-1)
 
-    comparable = jnp.where(feasible & ~feasible_nan, objectives, -jnp.inf)
-    best_non_nan = jnp.max(comparable, axis=-1, initial=-jnp.inf)
+    comparable = feasible & ~feasible_nan
+    best_non_nan, best_global_action_id = max_and_smallest_id(
+        values=jnp.where(comparable, objectives, -jnp.inf),
+        ids=jnp.where(comparable, action_ids, NO_ID),
+        initial=-jnp.inf,
+    )
     best_objective = jnp.where(
         any_feasible_nan,
         jnp.full_like(best_non_nan, jnp.nan),
         best_non_nan,
     )
-    winner = feasible & (objectives == best_non_nan[..., jnp.newaxis])
-    id_sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
-    best_global_action_id = jnp.min(
-        jnp.where(winner, action_ids, id_sentinel),
-        axis=-1,
-        initial=id_sentinel,
-    )
+    winner = comparable & (action_ids == best_global_action_id[..., jnp.newaxis])
     best_global_action_id = jnp.where(any_feasible_nan, 0, best_global_action_id)
     winner_position = jnp.asarray(
         jnp.argmax(

@@ -16,7 +16,6 @@ from jax import numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -138,11 +137,7 @@ def create_model(
         **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
     )
 
-    alive_law = ByAge.until(
-        stop_age_exclusive=final_age_alive + 10,
-        law=DeterministicTransition(func=next_regime),
-        then=DeterministicTransition(func=next_regime),
-    )
+    alive_law = DeterministicTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": wealth_grid,
@@ -173,13 +168,7 @@ def create_model(
         ),
     }
     return Model(
-        edges={
-            "alive": (
-                Transition(targets=alive_targets, law=alive_law)
-                if len(alive_targets) > 1
-                else alive_targets
-            )
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},

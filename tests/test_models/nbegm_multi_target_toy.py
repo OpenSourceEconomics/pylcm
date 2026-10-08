@@ -211,21 +211,20 @@ def build_model(
     dies = tuple(ages.exact_values[:-1])
     stays = tuple(ages.exact_values[:-2])
     to_dead = StochasticTransition(func=prob_to_dead)
-    living_edges = (
-        Transition(
-            targets={"dead": dies, "alive_a": stays, "alive_b": stays},
-            law=ByAge.until(
-                stop_age_exclusive=final_age,
-                law={
-                    "alive_a": StochasticTransition(func=prob_to_alive_a),
-                    "alive_b": StochasticTransition(func=prob_to_alive_b),
-                    "dead": to_dead,
-                },
-                then={"dead": to_dead},
-            ),
-        )
-        if stays
-        else {"dead": dies}
+    living_edges = Transition(
+        targets={
+            "dead": dies,
+            **({"alive_a": stays, "alive_b": stays} if stays else {}),
+        },
+        law=ByAge.until(
+            stop_age_exclusive=final_age,
+            law={
+                "alive_a": StochasticTransition(func=prob_to_alive_a),
+                "alive_b": StochasticTransition(func=prob_to_alive_b),
+                "dead": to_dead,
+            },
+            then={"dead": to_dead},
+        ),
     )
     return Model(
         edges={"alive_a": living_edges, "alive_b": living_edges},
@@ -268,11 +267,14 @@ def build_params(
             "alive_a": {"next_liquid": budget},
             "alive_b": {"next_liquid": budget},
             "dead": {"next_liquid": budget},
-            "final_age_alive": final_age_alive,
         }
 
     return {
         "alive_a": living(base_a),
         "alive_b": living(base_b),
         "dead": {"utility": {"crra": crra}},
+        "edges": {
+            "alive_a": {"final_age_alive": final_age_alive},
+            "alive_b": {"final_age_alive": final_age_alive},
+        },
     }

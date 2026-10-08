@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import _lcm.simulation.simulate as simulate_module
+from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from lcm import (
@@ -43,7 +44,7 @@ from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     DCEGM_SOLVER,
     dcegm_retirement,
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 
 _DISCOUNT_FACTOR = 0.98
@@ -118,7 +119,9 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     pointwise could not be compared with the grid winner.
     """
     model = _bonus_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     regime = model._regimes["retirement"]
@@ -126,7 +129,9 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     age = jnp.asarray(model.ages.period_to_age(period))
     wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
 
-    flat_params = model._process_params(params)["retirement"]
+    flat_params = regime_kernel_params(
+        model._process_params(params), regime_name="retirement"
+    )
     # The flat argmax index is unravelled against the canonical action order
     # (discrete actions first), so the grid mapping must follow that order.
     action_names = regime.solution.state_action_space(
@@ -194,7 +199,9 @@ def test_off_grid_replacement_never_scores_below_the_grid_pair():
     return a pair the finite-grid decision would have beaten.
     """
     model = _bonus_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=_DISCOUNT_FACTOR
+    )
     off_grid_wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
     n_subjects = off_grid_wealth.shape[0]
 

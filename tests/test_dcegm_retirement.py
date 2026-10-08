@@ -17,9 +17,10 @@ import numpy as np
 import pytest
 
 from _lcm.config import TEST_DATA
-from lcm import AgeGrid, Model, StochasticTransition, Transition
+from lcm import AgeGrid, ByAge, Model, StochasticTransition, Transition
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import FloatND
+from lcm_examples.iskhakov_et_al_2017 import get_edges
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import base, dcegm_variants
 from tests.test_models.deterministic.dcegm_variants import (
@@ -106,21 +107,25 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
 
     mixed = Model(
         edges={
-            **dcegm_variants.lifecycle_edges(ages=ages),
+            **get_edges(ages=ages),
             "retirement": Transition(
                 targets={
                     "retirement": tuple(ages.exact_values[:-2]),
                     "dead": tuple(ages.exact_values[:-1]),
                 },
-                law={
-                    "retirement": StochasticTransition(func=_retirement_stay_prob),
-                    "dead": StochasticTransition(func=_retirement_death_prob),
-                },
+                law=ByAge.until(
+                    stop_age_exclusive=ages.exact_values[-1],
+                    law={
+                        "retirement": StochasticTransition(func=_retirement_stay_prob),
+                        "dead": StochasticTransition(func=_retirement_death_prob),
+                    },
+                    then="dead",
+                ),
             ),
         },
         regimes={
             "working_life": base.working_life,
-            "retirement": dcegm_variants.dcegm_retirement_full,
+            "retirement": dcegm_variants.dcegm_retirement,
             "dead": base.dead,
         },
         ages=ages,
@@ -152,7 +157,7 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
 
     brute = Model(
-        edges=dcegm_variants.lifecycle_edges(ages=ages),
+        edges=get_edges(ages=ages),
         regimes={
             "working_life": base.working_life.replace(taste_shocks=shocks),
             "retirement": base.retirement,
@@ -163,12 +168,12 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
         initial_nodes={ages.exact_values[0]: ("working_life", "retirement")},
     )
     dcegm = Model(
-        edges=dcegm_variants.lifecycle_edges(ages=ages),
+        edges=get_edges(ages=ages),
         regimes={
             "working_life": dcegm_variants.dcegm_working_life.replace(
                 taste_shocks=shocks
             ),
-            "retirement": dcegm_variants.dcegm_retirement_full,
+            "retirement": dcegm_variants.dcegm_retirement,
             "dead": base.dead,
         },
         ages=ages,

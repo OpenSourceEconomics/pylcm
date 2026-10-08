@@ -26,6 +26,8 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    ByAge,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -33,7 +35,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
@@ -147,21 +148,27 @@ def _build_model() -> Model:
         The model, which `{"discount_factor": 0.5}` solves.
 
     """
-    saver_law = {
-        "saver": StochasticTransition(func=_probability_of_staying_put),
-        "account": ValueDependentTransition(
-            probability=StochasticTransition(func=_probability_of_opening_the_account),
-            gate=_account_value_clears_the_floor,
-            routes={
-                "only": StakeholderRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="annuity",
-                        projection={"principal": _principal_from_balance},
-                    )
-                )
+    opening = StochasticTransition(func=_probability_of_opening_the_account)
+    saver_law = ByAge(
+        cases={
+            0: {
+                "saver": StochasticTransition(func=_probability_of_staying_put),
+                "account": opening,
             },
-        ),
-    }
+            1: {"account": opening},
+        }
+    )
+    account_gate = Gate(
+        predicate=_account_value_clears_the_floor,
+        routes={
+            "only": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
+                    regime="annuity",
+                    projection={"principal": _principal_from_balance},
+                )
+            )
+        },
+    )
     saver = Regime(
         state_transitions={"balance": {"account": _entry_balance}},
         functions={"utility": _saver_utility},
@@ -187,6 +194,7 @@ def _build_model() -> Model:
             "saver": Transition(
                 targets={"saver": 0, "account": (0, 1), "annuity": (0, 1)},
                 law=saver_law,
+                gates={"account": account_gate},
             )
         },
     )

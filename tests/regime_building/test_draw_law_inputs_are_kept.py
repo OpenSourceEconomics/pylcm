@@ -13,7 +13,7 @@ inputs. Every case holds at both float precisions, eager and compiled.
 """
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Literal
 
 import jax
@@ -125,7 +125,7 @@ _TRANSFORMS = [
 
 
 @contextlib.contextmanager
-def _precision(bits: int) -> Iterator[None]:
+def _precision(bits: int) -> Generator[None]:
     """Build and solve at `bits`-bit floats, restoring the suite's setting."""
     previous = jax.config.jax_enable_x64
     jax.config.update("jax_enable_x64", bits == 64)

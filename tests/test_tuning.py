@@ -36,7 +36,7 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -119,7 +119,7 @@ def _evaluate(
 ) -> TunedSettings:
     return evaluate_execution_settings(
         build_model=build_model,
-        params=get_params(n_periods=_N_PERIODS),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
         baseline=_BASELINE,
         candidates=candidates,
         budget_seconds=budget_seconds,
@@ -381,7 +381,7 @@ def test_tuned_settings_key_carries_the_parameter_shape_signature(
 def test_tuned_settings_key_is_parameter_value_free() -> None:
     """Two parameter draws of the same shape share one key."""
     record = _evaluate(candidates=(_CEILING_ABOVE_EVERY_CELL_COUNT,))
-    params = get_params(n_periods=_N_PERIODS, disutility_of_work=0.123)
+    params = get_graph_only_params(n_periods=_N_PERIODS, disutility_of_work=0.123)
     redrawn = evaluate_execution_settings(
         build_model=_unperturbed,
         params=params,

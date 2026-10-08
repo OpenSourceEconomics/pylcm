@@ -26,7 +26,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.grids import Grid
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.reachability import EdgeStatus, PhaseReachability
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import (
@@ -115,10 +115,6 @@ def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
         candidate_targets_by_source=MappingProxyType({"default": ("default",)}),
         targets_by_period=tuple(
             MappingProxyType({"default": ("default",)})
-            for _period in range(n_periods - 1)
-        ),
-        edge_status_by_period=tuple(
-            MappingProxyType({("default", "default"): EdgeStatus.CONDITIONAL})
             for _period in range(n_periods - 1)
         ),
     )

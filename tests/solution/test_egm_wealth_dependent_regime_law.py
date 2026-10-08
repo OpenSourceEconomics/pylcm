@@ -1,10 +1,9 @@
 """A regime law that reads the liquid state keeps its mass on the one-row EGM kernel.
 
-The one-row EGM kernel needs one active target per source age. A source with one
-outgoing edge at every age takes the graph as its law, so a wealth-reading law is
-not declarable there. With a second edge whose probability is a fixed zero, the
-same wealth-reading law is declarable, its support stays one target per age, and
-it publishes the values of the graph-only lifecycle.
+The one-row EGM kernel needs one active target per source age. A wealth-reading
+law on a source with one outgoing edge at every age, or with a second edge whose
+probability is a fixed zero, keeps that support and publishes the values of the
+graph-only lifecycle.
 """
 
 import jax.numpy as jnp
@@ -22,7 +21,6 @@ from lcm import (
     Transition,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
-from lcm.exceptions import ModelInitializationError
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.solution import test_egm_solver as egm_toy
@@ -174,11 +172,20 @@ def test_one_row_wealth_law_matches_the_graph_only_lifecycle() -> None:
 
 
 @pytest.mark.parametrize("law", [_DETERMINISTIC_LAW, _PER_TARGET_LAW])
-def test_wealth_law_on_one_destination_egm_source_is_rejected(law: str) -> None:
-    """A wealth-reading law on a source with one destination per age is rejected.
+def test_wealth_law_on_one_destination_egm_source_matches_the_graph_only_lifecycle(
+    law: str,
+) -> None:
+    """A wealth-reading law on a source with one destination per age keeps its mass.
 
-    The graph alone fixes the one-row EGM kernel's single target, so `Model`
-    asks for the plain `{target: source_ages}` mapping instead.
+    The law is evaluated at every source age and sends every node to that age's
+    only destination, so the one-row EGM kernel publishes the values of the
+    lifecycle whose graph alone is the law, within 8 ULP.
     """
-    with pytest.raises(ModelInitializationError, match="graph is its law"):
-        _build_wealth_law_model(law=law)
+    graph_only = _build_model(
+        edges={"saving": {"saving": (0, 1), "done": 2}}, reads_last_age=False
+    )
+    np.testing.assert_array_max_ulp(
+        _saving_values(_build_wealth_law_model(law=law)),
+        _saving_values(graph_only),
+        maxulp=8,
+    )

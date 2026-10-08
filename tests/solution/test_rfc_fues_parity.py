@@ -30,17 +30,17 @@ from lcm import (
     StochasticTransition,
     Transition,
 )
+from lcm.transition import TransitionLaw
 from lcm.typing import BoolND, DiscreteAction
 from lcm_examples.iskhakov_et_al_2017 import (
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
     dead,
-    retirement_transitions,
-    working_life_transitions,
 )
 from tests.envelope_configs import envelope_config
 from tests.test_models.deterministic import base, retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
-    dcegm_retirement_full,
     dcegm_working_life,
     get_full_params,
     get_retirement_only_params,
@@ -55,7 +55,7 @@ _PARITY_RTOL = 1e-3
 
 
 def _lifecycle_edges(
-    *, ages: AgeGrid, working_life_law: object, retirement_law: object
+    *, ages: AgeGrid, working_life_law: TransitionLaw, retirement_law: TransitionLaw
 ) -> dict[str, Transition]:
     """Keep work and retirement before the final death-only source age."""
     return {
@@ -111,18 +111,15 @@ def _retirement_only_model(*, envelope, n_periods):
 
 def _full_model(*, envelope, n_periods):
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
-    last_age = ages.exact_values[-1]
     return Model(
         edges=_lifecycle_edges(
             ages=ages,
-            working_life_law=working_life_transitions(last_age=last_age),
-            retirement_law=retirement_transitions(last_age=last_age),
+            working_life_law=WORKING_LIFE_LAW,
+            retirement_law=RETIREMENT_LAW,
         ),
         regimes={
             "working_life": _with_backend(regime=dcegm_working_life, envelope=envelope),
-            "retirement": _with_backend(
-                regime=dcegm_retirement_full, envelope=envelope
-            ),
+            "retirement": _with_backend(regime=dcegm_retirement, envelope=envelope),
             "dead": base.dead,
         },
         ages=ages,
@@ -198,7 +195,7 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
         return Model(
             edges=_lifecycle_edges(
                 ages=ages,
-                working_life_law=working_life_transitions(last_age=70),
+                working_life_law=WORKING_LIFE_LAW,
                 retirement_law=retirement_law,
             ),
             regimes={
@@ -208,10 +205,10 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
                 ),
                 "retirement": _with_backend(
-                    regime=dcegm_retirement_full, envelope=envelope
+                    regime=dcegm_retirement, envelope=envelope
                 ).replace(
                     state_transitions={
-                        "wealth": dcegm_retirement_full.state_transitions["wealth"],
+                        "wealth": dcegm_retirement.state_transitions["wealth"],
                     },
                 ),
                 "dead": base.dead,

@@ -11,12 +11,12 @@ from lcm import Model, Transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
     RegimeId,
     dead,
     retirement,
-    retirement_transitions,
     working_life,
-    working_life_transitions,
 )
 
 
@@ -130,7 +130,6 @@ def test_model_with_quarterly_steps():
     """Test that solve/simulate works with quarterly (Q) step size."""
     # Quarterly steps: 18.0, 18.25, 18.5, 18.75, 19.0 (5 periods)
     ages = AgeGrid(start=18, inclusive_stop=19, step="Q")
-    last_age = ages.exact_values[-1]
     final_age_alive = 18.75
     assert ages.n_periods == 5
     assert ages.step_size == 0.25
@@ -151,14 +150,14 @@ def test_model_with_quarterly_steps():
                     "retirement": ages.exact_values[:-2],
                     "dead": ages.exact_values[:-1],
                 },
-                law=working_life_transitions(last_age=last_age),
+                law=WORKING_LIFE_LAW,
             ),
             "retirement": Transition(
                 targets={
                     "retirement": ages.exact_values[:-2],
                     "dead": ages.exact_values[:-1],
                 },
-                law=retirement_transitions(last_age=last_age),
+                law=RETIREMENT_LAW,
             ),
         },
     )
@@ -293,7 +292,6 @@ def test_integer_get_periods_where_passes_int():
 def test_model_with_integer_ages():
     """Test that solve/simulate works with integer ages."""
     ages = AgeGrid(start=40, inclusive_stop=70, step="10Y")
-    last_age = ages.exact_values[-1]
 
     model = Model(
         regimes={
@@ -311,14 +309,14 @@ def test_model_with_integer_ages():
                     "retirement": ages.exact_values[:-2],
                     "dead": ages.exact_values[:-1],
                 },
-                law=working_life_transitions(last_age=last_age),
+                law=WORKING_LIFE_LAW,
             ),
             "retirement": Transition(
                 targets={
                     "retirement": ages.exact_values[:-2],
                     "dead": ages.exact_values[:-1],
                 },
-                law=retirement_transitions(last_age=last_age),
+                law=RETIREMENT_LAW,
             ),
         },
     )

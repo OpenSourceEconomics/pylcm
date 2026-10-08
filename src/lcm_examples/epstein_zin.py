@@ -38,7 +38,6 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    ByAge,
     CertaintyEquivalent,
     CESAggregator,
     DiscreteGrid,
@@ -166,11 +165,7 @@ def get_model(
         stop=CONSUMPTION_GRID.stop,
         n_points=n_consumption_points,
     )
-    alive_law = ByAge.until(
-        stop_age_exclusive=last_age,
-        law=StochasticTransition(func=next_regime),
-        then=StochasticTransition(func=next_regime),
-    )
+    alive_law = StochasticTransition(func=next_regime)
     alive = Regime(
         states={
             "wealth": wealth_grid,
@@ -199,13 +194,7 @@ def get_model(
         ),
     }
     return Model(
-        edges={
-            "alive": (
-                Transition(targets=alive_targets, law=alive_law)
-                if len(alive_targets) > 1
-                else alive_targets
-            )
-        },
+        edges={"alive": Transition(targets=alive_targets, law=alive_law)},
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=last_age, step="Y"),
         regime_id_class=EZRegimeId,
@@ -252,9 +241,9 @@ def get_params(
                 ),
             },
             "next_wealth": {"income": income, "health_cost": health_cost},
-            "next_regime": {"survival_probs": jnp.array(survival_probs)},
         },
         "dead": {"utility": {"bequest_scale": bequest_scale}},
+        "edges": {"alive": {"survival_probs": jnp.array(survival_probs)}},
     }
     if risk_aversion is not None:
         params["alive"]["certainty_equivalent"] = {"risk_aversion": risk_aversion}

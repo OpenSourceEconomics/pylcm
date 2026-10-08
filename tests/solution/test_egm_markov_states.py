@@ -25,6 +25,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -398,17 +399,27 @@ def _cross_grid_markov_model(solver: str) -> Model:
         edges={
             "early": Transition(
                 targets={"late": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "late": StochasticTransition(func=to_live_prob),
-                    "dead": StochasticTransition(func=to_dead_prob),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "late": StochasticTransition(func=to_live_prob),
+                            "dead": StochasticTransition(func=to_dead_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=to_dead_prob)},
+                    }
+                ),
             ),
             "late": Transition(
                 targets={"late": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "late": StochasticTransition(func=to_live_prob),
-                    "dead": StochasticTransition(func=to_dead_prob),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "late": StochasticTransition(func=to_live_prob),
+                            "dead": StochasticTransition(func=to_dead_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=to_dead_prob)},
+                    }
+                ),
             ),
         },
         regime_id_class=CrossGridRegimeId,
