@@ -254,6 +254,65 @@ _ADMISSION_SCRIPT = textwrap.dedent(
 )
 
 
+_ALIGNED_SCRIPT = textwrap.dedent(
+    """
+    import json
+    import sys
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from lcm import ExecutionConfig
+    from tests.test_models.deterministic.regression import get_model, get_params
+
+    n_devices = int(sys.argv[1])
+    return_action_values = sys.argv[2] == "1"
+    assert jax.device_count() == n_devices, jax.devices()
+
+    model = get_model(
+        n_periods=5,
+        execution_config=ExecutionConfig(
+            devices=(0,),
+            sharded_states=(),
+            simulation_sharding="subjects",
+            device_memory_bytes=2**30,
+        ),
+    )
+    params = get_params(n_periods=5)
+    solution = model.solve(params=params, log_level="off")
+    next_values = [np.asarray(solution.values[3]["working_life"])]
+    puts = []
+    place = jax.device_put
+
+
+    def _recorded(x, *args, **kwargs):
+        if isinstance(x, jax.Array) and any(
+            x.shape == value.shape and np.array_equal(np.asarray(x), value)
+            for value in next_values
+        ):
+            puts.append(x.shape)
+        return place(x, *args, **kwargs)
+
+
+    jax.device_put = _recorded
+    wealth = model.state_grid(
+        params=params, regime_name="working_life", state_name="wealth"
+    )
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=2,
+        regime_name="working_life",
+        states={"wealth": jnp.asarray(wealth[:2])},
+        return_action_values=return_action_values,
+    )
+    outputs = {"rows": len(np.asarray(got.value)), "value_copies": len(puts)}
+    print("LOOKUP-ROWS", json.dumps(outputs))
+    """
+)
+
+
 def _lookup_on_devices(
     *,
     n_devices: int,
@@ -371,3 +430,16 @@ def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
         "at_boundary": "copied",
         "beyond_boundary": {"outcome": "refused", "entered": True, "value_copies": 0},
     }
+
+
+@pytest.mark.parametrize("return_action_values", [False, True])
+def test_budgeted_lookup_reads_values_in_place_on_one_device(
+    *, return_action_values: bool
+) -> None:
+    """On one device the solved values are read where they are, without a copy."""
+    got = _lookup_on_devices(
+        n_devices=1,
+        return_action_values=return_action_values,
+        script=_ALIGNED_SCRIPT,
+    )
+    assert got == {"rows": 2, "value_copies": 0}
