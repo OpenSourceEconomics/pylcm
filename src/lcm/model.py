@@ -3577,6 +3577,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
+        return_action_values: bool = False,
     ) -> PolicyLookup:
         """Return the optimal actions and value at given states of one regime-period.
 
@@ -3597,10 +3598,15 @@ class Model:
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
+            return_action_values: Whether to also return the action values `Q`
+                and their feasibility `F` over the (possibly restricted) action
+                grid, from the same decision program. Not supported for a
+                collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row.
+            (possibly restricted) action grid, one entry per state row; with
+            `return_action_values`, also `Q` and `F`.
 
         """
         self._sealed_bindings.fail_if_moved()
@@ -3617,6 +3623,12 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
+        if return_action_values and regime.stakeholders is not None:
+            msg = (
+                "Policy lookup returns action values for singleton regimes only; "
+                f"{regime_name!r} is a collective regime."
+            )
+            raise InvalidSimulationInputError(msg)
         allocations = self._open_entry_allocations(
             params=params, inputs=(states, action_grids), solution=solution
         )
@@ -3629,6 +3641,7 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
+                return_action_values=return_action_values,
             )
         finally:
             if allocations is not None:
@@ -3644,6 +3657,7 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
+        return_action_values: bool,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
@@ -3751,12 +3765,16 @@ class Model:
                 ),
             )
             executor = unit
-        indices, value = cast(
-            "tuple[IntND, FloatND]",
+        outputs = cast(
+            "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=_with_action_extents(
-                    program=programs.decision[period],
-                    extents=tuple(len(grids[n]) for n in space.action_names),
+                program=(
+                    programs.action_values[period]
+                    if return_action_values
+                    else _with_action_extents(
+                        program=programs.decision[period],
+                        extents=tuple(len(grids[n]) for n in space.action_names),
+                    )
                 ),
                 period=period,
                 n_subjects=n_rows,
@@ -3778,6 +3796,8 @@ class Model:
                 ),
             ),
         )
+        indices, value = outputs[:2]
+        Q, F = outputs[2:] if return_action_values else (None, None)
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -3794,7 +3814,7 @@ class Model:
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
                         allocations=allocations,
-                        call_roots=(states, space.states, grids, indices, value),
+                        call_roots=(states, space.states, grids, outputs),
                     ),
                     budget_devices=unit.budget_devices,
                     budget_bytes=allocations.budget_bytes,
@@ -3802,7 +3822,7 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
-        return PolicyLookup(actions=actions, value=value)
+        return PolicyLookup(actions=actions, value=value, Q=Q, F=F)
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.

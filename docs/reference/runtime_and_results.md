@@ -640,7 +640,7 @@ preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
 
 ## `PolicyLookup`
 
-`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None)`
+`Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, return_action_values=False)`
 evaluates the decision that simulate takes at caller-supplied states of one demanded
 period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
 name to the chosen grid values, and `value`, the maximised value at each state.
@@ -648,6 +648,13 @@ Continuous states off the grid extrapolate as in simulate; discrete states and
 restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
 axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
 grid nodes after runtime parameters.
+
+With `return_action_values=True`, the lookup also fills `Q` and `F` from the same
+decision program: the action values and their feasibility over the (possibly restricted)
+action grid, with one leading row per state and one axis per action in the order of
+`actions`. `Q` is raw: an infeasible entry holds the value the action would have, which
+can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. Both are
+`None` by default. Collective regimes refuse the option.
 
 (api-simulation-result)=
 
