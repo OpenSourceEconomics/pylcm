@@ -402,7 +402,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "13d279a7740c003d0524acd1c1f5753989b1b36a134722d148cf96b60353aa27",
     SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "8b469563cffecfa38d84e0ddda8b298284ee3bda56f7e73a7578b3e9cf30aaae",
+    ARGMAX_SOURCE: "c5e9944ed3732ca48549266c3814c53bd7797def059306a652174bada51307d0",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
     PROCESSING_SOURCE: "b41aeb3cd6a76565b9a072c43954519e476248720e18faf91857eb8f45b7742f",
@@ -6343,6 +6343,8 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
         pair_max = _definition(tree=tree, name="max_and_smallest_id")
         pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
+        pair_reduce = _definition(tree=tree, name="_paired_max")
+        pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -6388,12 +6390,29 @@ _max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
 _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
 return _argmax, _max
 """
-    expected_pair_max = r"""return jax.lax.reduce(
+    expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
+if jnp.issubdtype(values.dtype, jnp.floating):
+    return _paired_max_with_tangent(values, ids, initial_arr)
+return _paired_max(values, ids, initial_arr)
+"""
+    expected_pair_reduce = r"""return jax.lax.reduce(
     (values, ids),
-    (jnp.asarray(initial, dtype=values.dtype), jnp.asarray(NO_ID, dtype=jnp.int32)),
+    (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
     _larger_value_then_smaller_id,
     (values.ndim - 1,),
 )
+"""
+    expected_pair_jvp = r"""values, ids, initial = primals
+values_dot = tangents[0]
+best, best_id = _paired_max(values, ids, initial)
+attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+count = jnp.sum(attains, axis=-1)
+best_dot = jnp.where(
+    count > 0,
+    jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1),
+    jnp.zeros_like(best),
+)
+return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
 """
     expected_pair_order = r"""left_value, left_id = left
 right_value, right_id = right
@@ -6413,8 +6432,50 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
-    if pair_max.decorator_list or pair_order.decorator_list:
+    if (
+        pair_max.decorator_list
+        or pair_order.decorator_list
+        or pair_reduce.decorator_list
+        or pair_jvp.decorator_list
+    ):
         errors.append("argmax reducer: decorators are not allowlisted")
+    if not _positional_signature(
+        node=pair_reduce, names=("values", "ids", "initial")
+    ) or not _body_matches(node=pair_reduce, expected_source=expected_pair_reduce):
+        errors.append("argmax reducer: the paired primal is not one exact `lax.reduce`")
+    if not _positional_signature(
+        node=pair_jvp, names=("primals", "tangents")
+    ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
+        errors.append(
+            "argmax reducer: the paired max's tangent is not the tie-averaged "
+            "max tangent"
+        )
+    tangent_wiring = [
+        statement
+        for statement in tree.body
+        if (
+            isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+            and "_paired_max_with_tangent" in _assigned_names(statement)
+        )
+        or (
+            isinstance(statement, ast.Expr)
+            and _expression_matches(
+                node=statement.value,
+                source="_paired_max_with_tangent.defjvp(_paired_max_jvp)",
+            )
+        )
+    ]
+    if not (
+        len(tangent_wiring) == 2
+        and isinstance(tangent_wiring[0], ast.Assign)
+        and _expression_matches(
+            node=tangent_wiring[0].value, source="jax.custom_jvp(_paired_max)"
+        )
+        and isinstance(tangent_wiring[1], ast.Expr)
+    ):
+        errors.append(
+            "argmax reducer: the paired primal is not wrapped with its tangent rule"
+        )
     if not _keyword_only_signature(
         node=pair_max, names=("values", "ids", "initial")
     ) or not _body_matches(node=pair_max, expected_source=expected_pair_max):
@@ -6453,6 +6514,8 @@ return a.transpose((*front_axes, *axes))
             "argmax_and_max",
             "max_and_smallest_id",
             "_larger_value_then_smaller_id",
+            "_paired_max",
+            "_paired_max_jvp",
             "_move_axes_to_back",
             "_flatten_last_n_axes",
         }
