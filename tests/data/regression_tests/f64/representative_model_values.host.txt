@@ -1,0 +1,1 @@
+Linux x86_64 avx avx2 fma sse4_1 sse4_2
