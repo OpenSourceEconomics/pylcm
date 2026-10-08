@@ -188,16 +188,55 @@ def test_gate_fallback_is_checked_at_the_ages_its_gated_target_is_reached():
     }
 
 
-def test_supplied_target_entered_before_it_is_active_is_refused():
-    """`retired` is active only from age 2, so supplying it out of age 0 disagrees."""
+def test_supplied_target_entered_before_it_is_active_fails_structurally():
+    """`retired` is active only from age 2, so no problem exists to enter at age 1.
+
+    The edge out of age 0 cannot fire, so the targets comparison leaves it to the
+    structural check, which names the missing problem.
+    """
     with pytest.raises(
-        ModelInitializationError, match=r"(?s)'alive'.*supplied.*derived"
+        ModelInitializationError,
+        match=(
+            r"requires 'retired' at age 1, where `edges` declares no edge out of "
+            r"'retired' at that age"
+        ),
     ):
         _model_with_edges(
             edges={
                 "alive": Transition(
                     targets={"alive": (0,), "retired": (0, 1), "dead": (0, 1)},
                     law=_retirement_law("plain"),
+                ),
+                "retired": {"dead": (2,)},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("retired_ages", "problem"),
+    [
+        ((0, 1), r"requires 'retired' at age 1"),
+        ((1,), r"out of \(0, 'alive'\) in solve omit gated fallback destinations"),
+    ],
+)
+def test_gate_fallback_entered_before_it_is_active_fails_structurally(
+    *, retired_ages, problem
+):
+    """A fallback active only from age 2 has no problem to enter at age 1.
+
+    The gate into the couple can refuse out of age 0, so the structural check
+    names the missing problem: the fallback's, or the edge `targets` omits.
+    """
+    with pytest.raises(ModelInitializationError, match=problem):
+        _model_with_edges(
+            edges={
+                "alive": Transition(
+                    targets={"couple": (0, 1), "dead": (0, 1), "retired": retired_ages},
+                    law={
+                        "couple": StochasticTransition(func=_survive),
+                        "dead": StochasticTransition(func=_die),
+                    },
+                    gates={"couple": _consent_gate(fallback="retired")},
                 ),
                 "retired": {"dead": (2,)},
             }
