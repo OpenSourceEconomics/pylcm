@@ -41,10 +41,12 @@ def collect_stochastic_state_transitions(
     no stochastic state transitions (incl. terminal regimes).
 
     Known limitation, and not specific to `Phased` laws: the runtime numerical
-    checks call a law with arguments drawn from grids and params, so a law that
-    reads a named helper cannot be invoked and is skipped with a warning by
-    `validate_state_transitions_all_periods`. Closing that needs the validator to
-    evaluate the compiled sub-DAG rather than the raw function.
+    checks call a law with arguments drawn from grids and params. A law reading
+    a derived categorical is evaluated over all of that categorical's declared
+    codes. A law reading any other named helper cannot be invoked and is skipped
+    with a warning by `validate_state_transitions_all_periods`. Closing that
+    needs the validator to evaluate the compiled sub-DAG rather than the raw
+    function.
 
     Args:
         user_regime: User-facing regime to inspect.
@@ -171,6 +173,13 @@ def _add_stochastic_entry(
         n_outcomes=n_outcomes,
         indexing_params=indexing_params,
         phase=phase,
+        derived_categorical_codes=MappingProxyType(
+            {
+                name: grid.to_jax()
+                for name, grid in user_regime.derived_categoricals.items()
+                if name in inspect.signature(func).parameters
+            }
+        ),
     )
 
 

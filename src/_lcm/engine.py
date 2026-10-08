@@ -1221,6 +1221,14 @@ class _StochasticStateTransition:
     which case the AST subscript-order check is permissively skipped.
     """
 
+    derived_categorical_codes: MappingProxyType[str, IntND] = MappingProxyType({})
+    """Every declared code of each derived categorical the function reads.
+
+    The validator sweeps these codes as extra grid axes. They are a superset of
+    the codes the regime functions reach, which is sufficient for the
+    pointwise checks on the law's output.
+    """
+
     phase: Literal["solve", "simulate"] | None = None
     """Phase this kernel belongs to; `None` for a phase-invariant law.
 
@@ -1349,6 +1357,20 @@ class Regime:
     so a consumer reads them off the edge it is already holding rather than
     re-pairing parallel mappings by target name or by leg position.
     """
+
+    @property
+    def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:
+        """Return the code arrays every stochastic law keeps for validation.
+
+        One entry per law, target and phase that reads a derived categorical.
+        These are the retained owners themselves, so a residency inventory charges
+        their storage for the model's lifetime without allocating anything.
+        """
+        return tuple(
+            code
+            for transition in self.stochastic_state_transitions.values()
+            for code in transition.derived_categorical_codes.values()
+        )
 
 
 @dataclasses.dataclass(frozen=True)
