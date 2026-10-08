@@ -3815,7 +3815,9 @@ class Model:
                 allocations.operations.dispatch(
                     function=_lookup_values_from_indices,
                     arguments={"flat_indices": indices, "grids": lookup_grids},
-                    subject_arg_names=("flat_indices",),
+                    # The one row of a stateless query is not divisible across
+                    # subject devices, so it is decoded replicated.
+                    subject_arg_names=("flat_indices",) if space.states else (),
                     devices=unit.runtime.subject_devices,
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
