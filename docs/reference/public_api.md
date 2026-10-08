@@ -15,6 +15,7 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.InitialNode`](../user_guide/period_time.md)                                                    | Explicit age or period start                      |
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
@@ -63,12 +64,17 @@ documentation and tests.
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)          | Shared-draw joint law              |
 | [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)             | Numerical laws by exact source age |
 | [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)          | Half-open age interval             |
+| [`lcm.ByPeriod`](transitions.md#api-dated-regime-transitions)          | Numerical laws by source period    |
+| [`lcm.PeriodRange`](transitions.md#api-dated-regime-transitions)       | Half-open period interval          |
+| [`lcm.Periods`](transitions.md#api-dated-regime-transitions)           | Explicit source periods            |
 | [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)  | Deterministic transition wrapper   |
 | [`lcm.deterministic_transition`](transitions.md#api-state-transitions) | Deterministic transition decorator |
 | [`lcm.stochastic_transition`](transitions.md#api-state-transitions)    | Stochastic transition decorator    |
 | [`lcm.fixed_transition`](transitions.md#api-state-transitions)         | Identity law                       |
 | [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)  | Age-varying function               |
 | [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)      | Age-varying grid                   |
+| [`lcm.PeriodSpecializedFunction`](../user_guide/period_time.md)        | Period-varying function            |
+| [`lcm.PeriodSpecializedGrid`](../user_guide/period_time.md)            | Period-varying grid                |
 | [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)         | Solve/simulate variants            |
 | [`lcm.Condition`](conditions.md)                                       | Structured Boolean expression      |
 | [`lcm.ref`](conditions.md#api-condition-syntax)                        | Named reference                    |
@@ -78,6 +84,14 @@ documentation and tests.
 | [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)               | Reviewed smooth-helper attestation |
 | [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)   | Schedule breakpoint                |
 | [`lcm.piecewise_affine`](piecewise_affine.md)                          | Piecewise-affine schedule          |
+
+## Temporal parameters
+
+| Public name                                                          | Canonical documentation       |
+| -------------------------------------------------------------------- | ----------------------------- |
+| [`lcm.TimeVarying`](../user_guide/period_time.md)                    | Labelled temporal values      |
+| [`lcm.time_varying_params`](../user_guide/period_time.md)            | Managed temporal selection    |
+| [`lcm.UnlabelledTimeParameterWarning`](../user_guide/period_time.md) | Unchecked manual time mapping |
 
 ## Preferences, results, and persistence
 
@@ -124,6 +138,9 @@ surfaces remain outside that top-level namespace:
 | [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                                                | User mapping parameter leaf                       |
 | [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                                               | Sequence parameter leaf                           |
 | [`lcm.params.as_leaf`](../user_guide/parameters.md)                                                        | Explicit parameter-leaf wrapper                   |
+| [`lcm.params.TimeVarying`](../user_guide/period_time.md)                                                   | Labelled temporal values                          |
+| [`lcm.params.time_varying_params`](../user_guide/period_time.md)                                           | Managed temporal selection                        |
+| [`lcm.params.UnlabelledTimeParameterWarning`](../user_guide/period_time.md)                                | Unchecked manual time mapping                     |
 | [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)                                 | Koopmans-form base contract                       |
 | [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)                             | Solution result retention                         |
 | [`lcm.solver_api.LoadState`](runtime_and_results.md#api-solution-result)                                   | Per-entry materialization state                   |

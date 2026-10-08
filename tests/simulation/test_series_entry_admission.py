@@ -10,7 +10,7 @@ import pytest
 
 from _lcm import pandas_utils
 from lcm import ExecutionConfig
-from lcm.exceptions import ExecutionPlanningError
+from lcm.exceptions import ExecutionPlanningError, InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from tests.simulation.test_entry_allocations import _owner
 from tests.simulation.test_pandas_entry_admission import _NoDirectPandasUploads
@@ -27,7 +27,7 @@ def test_series_uploads_use_the_entry_writer(
     fits: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Index scattering and wrapper traversal admit every completed array."""
+    """Completed arrays are admitted; missing required rows fail before allocation."""
     model = get_model(3)
     series = _build_partner_probs_series(model)
     key = "next_partner__probs_array"
@@ -52,12 +52,16 @@ def test_series_uploads_use_the_entry_writer(
         declared_transitions=model._declared_transitions,
         declared_vocabulary=model._declared_edge_vocabulary,
     )
-    expected = convert()
     owner = _owner(budget=2**20 if fits else 1)
-    monkeypatch.setattr(
-        pandas_utils, "jnp", _NoDirectPandasUploads(original=pandas_utils.jnp)
-    )
     try:
+        if form == "empty":
+            with pytest.raises(InvalidParamsError, match="missing required age"):
+                convert(array_writer=owner)
+            return
+        expected = convert()
+        monkeypatch.setattr(
+            pandas_utils, "jnp", _NoDirectPandasUploads(original=pandas_utils.jnp)
+        )
         if fits:
             actual = convert(array_writer=owner)
             expected_leaves, expected_tree = jax.tree.flatten(expected)

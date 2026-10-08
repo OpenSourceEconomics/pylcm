@@ -116,12 +116,14 @@ consumers. Supply a separate parameter name when they need different axis meanin
 ## Manual indexing
 
 Labelled Series also work with the existing manual `table[period]` route. **Do not use
-`table[age]`: arrays are stored in period order, so an age is not an array position.**
-Known direct uses are rejected.
+`table[age]` on these inputs: labelled arrays are normalized to period order, so an age
+is not an array position.** Known direct uses are rejected.
 
 In an age model, a known time-indexed raw array emits `UnlabelledTimeParameterWarning`,
-independently of logging settings. In a period model, that input is rejected. Use
-managed temporal selection or supply a labelled Series.
+independently of logging settings, including an explicit `table[age - start_age]`
+mapping. The raw array's indexing convention remains the author's responsibility. In a
+period model, that input is rejected. Use managed temporal selection or supply a
+labelled Series.
 
 Source inspection cannot prove the meaning of arbitrary helpers, closures or indexing
 arithmetic. Managed selection removes the time axis before the consumer sees the value;

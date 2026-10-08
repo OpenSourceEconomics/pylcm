@@ -965,11 +965,6 @@ def _check_raw_time_array(
     )
     if not {"age", "period"}.intersection(indices):
         return
-    if "age" in indices:
-        raise InvalidParamsError(
-            f"{name}: table[age] cannot index an array stored by period. "
-            "Use managed selection or table[period]."
-        )
     if coordinate_kind(ages) == "period":
         raise InvalidParamsError(
             f"{name}: unlabelled temporal array; use a labelled Series "
@@ -1002,11 +997,9 @@ def array_from_series(
     Inspect `func` to determine indexing dimensions (states, actions,
     period) and scatter the labeled Series into an N-dimensional array.
 
-    The Series MultiIndex must use `"age"` (with actual age values) for the
-    age/period dimension, not `"period"`.
-
-    Missing grid points are filled with NaN. Extra ages outside the model's
-    `AgeGrid` are silently dropped.
+    The Series time level must match the model: `"age"` with actual age labels,
+    or `"period"` with integer positions. Extra time coordinates are silently
+    dropped; missing required temporal or categorical cells raise an error.
 
     Derived categoricals are read from
     `user_regimes[regime_name].derived_categoricals` when `regime_name` is

@@ -194,6 +194,17 @@ def test_labelled_manual_period_array() -> None:
     np.testing.assert_allclose(result.values[0]["work"], 4)
 
 
+def test_labelled_manual_age_index_is_rejected() -> None:
+    model = _model(age=True, flow=_wrong_age)
+    with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"table\[age\]"):
+        model.solve(
+            params={
+                "wage": pd.Series([1.0, 2.0], index=pd.Index([40, 41], name="age"))
+            },
+            log_level="off",
+        )
+
+
 def test_time_varying_values_remain_differentiable_leaves() -> None:
     def total(values: FloatND) -> FloatND:
         aligned = align_time_varying(
