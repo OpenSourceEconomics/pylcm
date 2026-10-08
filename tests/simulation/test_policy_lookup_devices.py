@@ -2,7 +2,8 @@
 
 An empty query stands for one row, and one row cannot be split across devices.
 A stateful query reads the next period's values wherever the solve left them,
-and gives its rows however many of them each subject device holds.
+gives its rows however many of them each subject device holds, and admits
+copying the values under a memory budget before it copies them.
 Each device count runs in its own subprocess with forced host devices, so the
 witness does not depend on the ambient topology.
 """
@@ -14,6 +15,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import jax
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -130,6 +132,128 @@ _STATEFUL_SCRIPT = textwrap.dedent(
 )
 
 
+_ADMISSION_SCRIPT = textwrap.dedent(
+    """
+    import json
+    import sys
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    import lcm.model
+    from lcm import ExecutionConfig, LinSpacedGrid
+    from lcm.exceptions import ExecutionPlanningError
+    from tests.test_models.deterministic.regression import get_model, get_params
+
+    n_devices = int(sys.argv[1])
+    return_action_values = sys.argv[2] == "1"
+    assert jax.device_count() == n_devices, jax.devices()
+    budget = 2**22
+    first, second = jax.devices()[:2]
+
+    grid = LinSpacedGrid(start=1, stop=3, n_points=3)
+    model = get_model(
+        n_periods=3,
+        wealth_grid=grid,
+        consumption_grid=grid,
+        execution_config=ExecutionConfig(
+            devices=tuple(device.id for device in jax.devices()),
+            sharded_states=(),
+            simulation_sharding="subjects",
+            device_memory_bytes=budget,
+            device_memory_headroom_fraction=0.0,
+        ),
+    )
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="off")
+    next_values = [
+        np.asarray(value) for value in solution.values[1].values() if value.ndim
+    ]
+    assert next_values
+    assert solution.values[1]["working_life"].devices() == {first}
+
+
+    class _Copied(Exception):
+        pass
+
+
+    entered = []
+    copies = []
+    stop_at_copy = []
+    place = jax.device_put
+    lookup = lcm.model.Model._lookup_policy
+
+
+    def _entered(self, **kwargs):
+        entered.append(True)
+        return lookup(self, **kwargs)
+
+
+    def _recorded(x, *args, **kwargs):
+        if isinstance(x, jax.Array) and any(
+            x.shape == value.shape and np.array_equal(np.asarray(x), value)
+            for value in next_values
+        ):
+            copies.append(x.shape)
+            if stop_at_copy:
+                raise _Copied
+        return place(x, *args, **kwargs)
+
+
+    lcm.model.Model._lookup_policy = _entered
+    jax.device_put = _recorded
+    dtype = jnp.zeros(()).dtype
+
+
+    def run(n_actions, *, stop):
+        entered.clear()
+        copies.clear()
+        stop_at_copy[:] = [True] if stop else []
+        action_grids = {"consumption": place(jnp.ones(n_actions, dtype=dtype), second)}
+        states = {"wealth": place(jnp.asarray([2.0, 3.0], dtype=dtype), first)}
+        try:
+            with jax.default_device(first):
+                model.lookup_policy(
+                    params=params,
+                    solution=solution,
+                    period=0,
+                    regime_name="working_life",
+                    states=states,
+                    action_grids=action_grids,
+                    return_action_values=return_action_values,
+                )
+        except _Copied:
+            outcome = "copied"
+        except ExecutionPlanningError:
+            outcome = "refused"
+        else:
+            outcome = "returned"
+        return {
+            "outcome": outcome,
+            "entered": bool(entered),
+            "value_copies": len(copies),
+        }
+
+
+    assert run(1, stop=True)["outcome"] == "copied"
+    low, high = 1, budget // dtype.itemsize
+    while low < high:
+        middle = (low + high + 1) // 2
+        if run(middle, stop=True)["outcome"] == "copied":
+            low = middle
+        else:
+            high = middle - 1
+    outputs = {
+        "small_grid": run(1, stop=False)["outcome"],
+        "at_boundary": run(low, stop=True)["outcome"],
+        "beyond_boundary": run(low + 1, stop=False),
+    }
+    print("LOOKUP-ROWS", json.dumps(outputs))
+    """
+)
+
+
 def _lookup_on_devices(
     *,
     n_devices: int,
@@ -141,6 +265,7 @@ def _lookup_on_devices(
         **os.environ,
         "XLA_FLAGS": f"--xla_force_host_platform_device_count={n_devices}",
         "JAX_PLATFORMS": "cpu",
+        "JAX_ENABLE_X64": str(int(jax.config.read("jax_enable_x64"))),
     }
     result = subprocess.run(  # noqa: S603
         [
@@ -222,3 +347,27 @@ def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
         extra_args=("default", "3"),
     )
     assert got == expected
+
+
+@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("n_devices", [2, 8])
+def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
+    *, n_devices: int, return_action_values: bool
+) -> None:
+    """Admission refuses the next-period value copy before any copy is made.
+
+    Growing a replacement action grid on the second device fills its budget.
+    Up to some length the lookup admits copying the next-period values onto the
+    subject devices; one action more, the call is admitted at entry but refuses
+    with no value copied. A one-point grid returns rows.
+    """
+    got = _lookup_on_devices(
+        n_devices=n_devices,
+        return_action_values=return_action_values,
+        script=_ADMISSION_SCRIPT,
+    )
+    assert got == {
+        "small_grid": "returned",
+        "at_boundary": "copied",
+        "beyond_boundary": {"outcome": "refused", "entered": True, "value_copies": 0},
+    }
