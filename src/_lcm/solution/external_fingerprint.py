@@ -3,8 +3,10 @@
 The semantic walk separates installed implementations from constructed model data:
 
 - Reviewed exports of dags, flatten-dict, ttsim and NumPy-groupies are sealed by their
-  executable code, defaults and the versions of both numerical backend stacks and
-  of pint, from which ttsim derives its time-conversion factors.
+  executable code, defaults and operation-specific implementation dependencies.
+  Every required distribution must be installed at its reviewed non-editable release.
+  Aggregation covers the selected NumPy-groupies backend and its compiler libraries;
+  time conversion covers Pint's interpretation of the captured period factors.
   A function must resolve by identity at its installed source location and carry
   no closure or instance state beyond typing caches. Generated functions and
   GETTSIM policy bodies retain the full recursive walk.
@@ -40,6 +42,7 @@ import sys
 import types
 from enum import Enum
 from functools import cache, partial
+from types import MappingProxyType
 from typing import Any, cast
 
 import jax
@@ -119,12 +122,12 @@ def external_parameter_record(value: object) -> tuple[object, ...] | None:
             fields,
             arrays,
             operation.__code__,
-            jax.__version__,
+            _require_operation_versions(operation="ttsim-JAX-parameter"),
         )
     return None
 
 
-def external_backend_binding(value: object) -> tuple[str, str] | None:
+def external_backend_binding(value: object) -> tuple[object, ...] | None:
     """Identify JAX bound to a reviewed TTSIM policy declaration or its forwarder.
 
     ttsim binds its backend into the final column callable: the policy declaration
@@ -144,7 +147,11 @@ def external_backend_binding(value: object) -> tuple[str, str] | None:
         and not _is_broadcast_wrapper(value.func)
     ):
         return None
-    return "jax.numpy", jax.__version__
+    return (
+        "jax.numpy",
+        jax.__version__,
+        _require_operation_versions(operation="ttsim-JAX-backend"),
+    )
 
 
 def is_external_declaration(value: object) -> bool:
@@ -295,15 +302,23 @@ def external_policy_record_version(value: object) -> str | None:
     if isinstance(value, type) or not dataclasses.is_dataclass(value):
         return None
     value_type = type(value)
-    if not cast("Any", value_type).__dataclass_params__.frozen:
+    if (
+        not value_type.__module__.startswith("gettsim.germany.")
+        or not cast("Any", value_type).__dataclass_params__.frozen
+    ):
         return None
     origin = _resolved_source(value=value_type)
     if origin is None:
         origin = _reloaded_record_source(value_type)
+    if origin is None:
+        return None
     root, version = _installed_package(
         distribution_name="gettsim", package="gettsim/germany"
     )
-    if origin is None or root is None or not origin.is_relative_to(root):
+    if root is None:
+        _require_supported_version(distribution="gettsim", version=version)
+        return None
+    if not origin.is_relative_to(root):
         return None
     _require_supported_version(distribution="gettsim", version=version)
     return version
@@ -322,19 +337,18 @@ def external_function_versions(value: object) -> tuple[tuple[str, str], ...] | N
     ):
         return None
     source = _resolved_source(value=value)
-    root, _version = _installed_package(distribution_name=distribution, package=package)
-    if source is None or root is None or not source.is_relative_to(root):
+    root, version = _installed_package(distribution_name=distribution, package=package)
+    if source is None or pathlib.Path(value.__code__.co_filename).resolve() != source:
         return None
-    if pathlib.Path(value.__code__.co_filename).resolve() != source:
+    if root is None:
+        _require_supported_version(distribution=distribution, version=version)
+        return None
+    if not source.is_relative_to(root):
         return None
     operation = f"{value.__module__}.{value.__qualname__}"
     if operation not in _SUPPORTED_OPERATIONS:
         raise TypeError(f"Unreviewed external operation {operation}.")
-    _require_supported_version(
-        distribution=distribution,
-        version=_installed_package(distribution_name=distribution, package=package)[1],
-    )
-    return _infrastructure_versions()
+    return _require_operation_versions(operation=operation)
 
 
 def unwrap_beartype_guard(function: object) -> object:
@@ -359,6 +373,10 @@ def unwrap_beartype_guard(function: object) -> object:
 
 def _require_supported_version(*, distribution: str, version: str) -> None:
     """Reject integrations whose implementation contract has not been reviewed."""
+    if version == "absent":
+        raise TypeError(
+            f"Missing {distribution} installation required for durable identity."
+        )
     if version != _SUPPORTED_VERSIONS[distribution]:
         raise TypeError(
             f"Unsupported {distribution} version {version!r} for durable identity."
@@ -484,6 +502,8 @@ def _capture_ttsim_contract() -> _TTSimContract | None:
         distribution_name="ttsim-backend", package="ttsim"
     )
     if root is None:
+        if "ttsim" in sys.modules:
+            _require_supported_version(distribution="ttsim-backend", version=version)
         return None
     _require_supported_version(distribution="ttsim-backend", version=version)
     columns = importlib.import_module("ttsim.tt.column_objects_param_function")
@@ -649,24 +669,37 @@ def _installed_package(
 
 
 @cache
-def _infrastructure_versions() -> tuple[tuple[str, str], ...]:
-    """Seal graph construction and both numerical backend implementations."""
+def _require_operation_versions(*, operation: str) -> tuple[tuple[str, str], ...]:
+    """Admit and seal only the dependencies of a reviewed implementation.
+
+    Aggregation exports include both backend branches. NumPy-groupies selects
+    its Numba implementation at import when available, so that selection also
+    requires the reviewed compiler releases. Its NumPy fallback keeps Numba
+    optional. Generated code and captured model data retain the recursive walk.
+    """
     names = (
-        "dags",
-        "flatten-dict",
-        "ttsim-backend",
-        "numpy-groupies",
-        "numpy",
-        "jax",
-        "jaxlib",
-        "numba",
-        "llvmlite",
-        "pint",
+        _OPERATION_DISTRIBUTIONS[operation]
+        if operation in _OPERATION_DISTRIBUTIONS
+        else _ADAPTER_DISTRIBUTIONS[operation]
     )
-    return tuple(
+    if "numpy-groupies" in names:
+        version = _installed_package(distribution_name="numpy-groupies", package="")[1]
+        _require_supported_version(distribution="numpy-groupies", version=version)
+        groupies = importlib.import_module("numpy_groupies")
+        selected = getattr(groupies.aggregate, "__module__", None)
+        if selected == "numpy_groupies.aggregate_numba":
+            names = (*names, "numba", "llvmlite")
+        elif selected != "numpy_groupies.aggregate_numpy":
+            raise TypeError(
+                "Unsupported numpy-groupies implementation for durable identity."
+            )
+    versions = tuple(
         (name, _installed_package(distribution_name=name, package="")[1])
         for name in names
     )
+    for name, version in versions:
+        _require_supported_version(distribution=name, version=version)
+    return versions
 
 
 _INFRASTRUCTURE_PACKAGES = {
@@ -675,31 +708,66 @@ _INFRASTRUCTURE_PACKAGES = {
     "ttsim": "ttsim-backend",
     "numpy_groupies": "numpy-groupies",
 }
-_SUPPORTED_VERSIONS = {
-    "dags": "0.6.0",
-    "flatten-dict": "0.5.0",
-    "gettsim": "1.3.1",
-    "numpy-groupies": "0.11.3",
-    "ttsim-backend": "1.3.2",
-}
-_SUPPORTED_OPERATIONS = frozenset(
+_SUPPORTED_VERSIONS = MappingProxyType(
     {
-        "dags.tree.tree_utils.flatten_to_qnames",
-        "ttsim.tt.aggregation.grouped_any",
-        "ttsim.tt.aggregation.grouped_count",
-        "ttsim.tt.aggregation.grouped_min",
-        "ttsim.tt.aggregation.grouped_sum",
-        "ttsim.tt.aggregation.sum_by_p_id",
-        "ttsim.tt.column_objects_param_function.ColumnFunction.__call__",
-        "ttsim.tt.column_objects_param_function.reorder_ids",
-        "ttsim.tt.piecewise_polynomial.piecewise_polynomial",
-        "ttsim.tt.shared.join",
-        "ttsim.time_converters.m_to_y",
-        "ttsim.time_converters.per_m_to_per_y",
-        "ttsim.time_converters.per_w_to_per_y",
-        "ttsim.time_converters.per_y_to_per_m",
-        "ttsim.time_converters.y_to_m",
-        "ttsim.tt.units.cast_ttsim_unit",
+        "dags": "0.6.0",
+        "flatten-dict": "0.5.0",
+        "gettsim": "1.3.1",
+        "numpy-groupies": "0.12.3",
+        "ttsim-backend": "1.3.2",
+        "numpy": "2.4.6",
+        "jax": "0.11.2",
+        "jaxlib": "0.11.2",
+        "numba": "0.68.0",
+        "llvmlite": "0.50.0",
+        "pint": "0.26.1",
+    }
+)
+_NUMERICAL_BACKEND_DISTRIBUTIONS = ("ttsim-backend", "numpy", "jax", "jaxlib")
+_OPERATION_DISTRIBUTIONS = MappingProxyType(
+    {
+        "dags.tree.tree_utils.flatten_to_qnames": ("dags", "flatten-dict"),
+        **{
+            f"ttsim.tt.aggregation.{name}": (
+                *_NUMERICAL_BACKEND_DISTRIBUTIONS,
+                "numpy-groupies",
+            )
+            for name in (
+                "grouped_any",
+                "grouped_count",
+                "grouped_min",
+                "grouped_sum",
+                "sum_by_p_id",
+            )
+        },
+        "ttsim.tt.column_objects_param_function.ColumnFunction.__call__": (
+            "ttsim-backend",
+        ),
+        "ttsim.tt.column_objects_param_function.reorder_ids": (
+            _NUMERICAL_BACKEND_DISTRIBUTIONS
+        ),
+        "ttsim.tt.piecewise_polynomial.piecewise_polynomial": (
+            _NUMERICAL_BACKEND_DISTRIBUTIONS
+        ),
+        "ttsim.tt.shared.join": _NUMERICAL_BACKEND_DISTRIBUTIONS,
+        **{
+            f"ttsim.time_converters.{name}": ("ttsim-backend", "pint")
+            for name in (
+                "m_to_y",
+                "per_m_to_per_y",
+                "per_w_to_per_y",
+                "per_y_to_per_m",
+                "y_to_m",
+            )
+        },
+        "ttsim.tt.units.cast_ttsim_unit": ("ttsim-backend",),
+    }
+)
+_SUPPORTED_OPERATIONS = frozenset(_OPERATION_DISTRIBUTIONS)
+_ADAPTER_DISTRIBUTIONS = MappingProxyType(
+    {
+        "ttsim-JAX-parameter": _NUMERICAL_BACKEND_DISTRIBUTIONS,
+        "ttsim-JAX-backend": _NUMERICAL_BACKEND_DISTRIBUTIONS,
     }
 )
 _TYPED_FORWARDER_FILENAME = "<ttsim-typed-wrapper>"

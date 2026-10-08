@@ -2005,11 +2005,15 @@ def test_materialization_refuses_jax_dtype_narrowing(tmp_path: Path) -> None:
         restored.value(period=0, regime=_REGIME)
 
 
-def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
+@pytest.mark.parametrize("conversion_error", [TypeError, ValueError])
+def test_jax_conversion_failure_is_normalized_and_keeps_value_unloaded(
+    *,
     tmp_path: Path,
+    conversion_error: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Normalize a JAX conversion failure without caching a partial value."""
-    array = np.asarray([1.0, 2.0], dtype=np.longdouble)
+    """A failed conversion leaves saved values available for a successful retry."""
+    array = np.asarray([1.0, 2.0], dtype=np.float32)
     solution = SolutionResult(
         values=ValueStore({(0, _REGIME): array}),
         metadata=SolutionMetadata(
@@ -2030,12 +2034,23 @@ def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     )
     path = save_solution(
         solution=solution,
-        path=tmp_path / "longdouble.lcm",
+        path=tmp_path / "conversion-failure.lcm",
     )
     restored = load_solution(path=path)
 
     values = cast("ValueStore", restored.values)
     assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
-    with pytest.raises(IncompatibleSolutionError, match="cannot materialize"):
-        restored.value(period=0, regime=_REGIME)
+
+    def fail_conversion(value: np.ndarray) -> jax.Array:
+        np.testing.assert_array_equal(value, array)
+        raise conversion_error("The array cannot be converted.")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(jnp, "asarray", fail_conversion)
+        for _ in range(2):
+            with pytest.raises(IncompatibleSolutionError, match="cannot materialize"):
+                restored.value(period=0, regime=_REGIME)
+            assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
     assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+    np.testing.assert_array_equal(restored.value(period=0, regime=_REGIME), array)
+    assert values.load_state(period=0, regime=_REGIME) is LoadState.LOADED

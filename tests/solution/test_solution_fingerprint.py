@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 from functools import partial
-from types import MappingProxyType, ModuleType, SimpleNamespace
+from types import FunctionType, MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import dags.exceptions as dags_exceptions
@@ -592,6 +592,7 @@ def _uses_np_exp(value: float):
 
 
 _NUMPY_LINSPACE_ALIAS = np.linspace
+_CAPTURED_NUMPY_OPERATION: Callable = np.sum
 
 
 def _uses_np_linspace() -> np.ndarray:
@@ -2172,11 +2173,103 @@ def test_numpy_public_numerical_functions_have_durable_identity(
     assert first == second
 
 
-@pytest.mark.parametrize("function", [np.load, np.loadtxt, np.save])
-def test_numpy_file_operations_have_no_durable_identity(function: Callable) -> None:
-    """File inputs must be captured before model construction."""
+@pytest.mark.parametrize(
+    "name",
+    [
+        "load",
+        "loadtxt",
+        "genfromtxt",
+        "fromfile",
+        "fromregex",
+        "save",
+        "savetxt",
+        "savez",
+        "savez_compressed",
+    ],
+)
+@pytest.mark.parametrize("form", ["direct", "global", "default", "closure", "partial"])
+def test_numpy_file_operations_have_no_durable_identity(
+    *, name: str, form: str
+) -> None:
+    """Each captured file operation is rejected before any file is accessed."""
     with pytest.raises(TypeError, match="durably fingerprint"):
-        fingerprints._semantic_fingerprint(_dependency_closure(function))
+        fingerprints._semantic_fingerprint(
+            _capture_numpy_operation(operation=getattr(np, name), form=form)
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "array2string",
+        "array_repr",
+        "array_str",
+        "datetime_as_string",
+        "shares_memory",
+        "may_share_memory",
+        "seterr",
+        "show_config",
+        "from_dlpack",
+        "frompyfunc",
+    ],
+)
+@pytest.mark.parametrize("form", ["direct", "global", "default", "closure", "partial"])
+def test_numpy_process_and_formatting_operations_have_no_durable_identity(
+    *, name: str, form: str
+) -> None:
+    """Formatting and process-state operations have no numerical model contract."""
+    with pytest.raises(TypeError, match="durably fingerprint"):
+        fingerprints._semantic_fingerprint(
+            _capture_numpy_operation(operation=getattr(np, name), form=form)
+        )
+
+
+@pytest.mark.parametrize("name", ["sum", "linspace", "issubdtype"])
+@pytest.mark.parametrize("form", ["direct", "global", "default", "closure", "partial"])
+def test_numpy_numerical_capture_forms_have_repeatable_identity(
+    *, name: str, form: str
+) -> None:
+    """Numerical exports keep the same identity under equivalent captures."""
+    first = _capture_numpy_operation(operation=getattr(np, name), form=form)
+    second = _capture_numpy_operation(operation=getattr(np, name), form=form)
+    assert fingerprints._semantic_fingerprint(first) == (
+        fingerprints._semantic_fingerprint(second)
+    )
+
+
+def _capture_numpy_operation(*, operation: Callable, form: str) -> object:
+    """Represent a NumPy dependency without invoking the operation."""
+    if form == "direct":
+        return operation
+    if form == "global":
+
+        def global_policy(value: object) -> object:
+            return _CAPTURED_NUMPY_OPERATION(value)
+
+        return FunctionType(
+            global_policy.__code__,
+            {"__name__": __name__, "_CAPTURED_NUMPY_OPERATION": operation},
+        )
+    if form == "default":
+
+        def default_policy(*, value: object, operation: Callable = operation) -> object:
+            return operation(value)
+
+        return default_policy
+    if form == "closure":
+
+        def closure_policy(value: object) -> object:
+            return operation(value)
+
+        return closure_policy
+    if form == "partial":
+        return partial(_apply_numpy_operation, operation=operation)
+    raise AssertionError(form)
+
+
+def _apply_numpy_operation(*, value: object, operation: Callable) -> object:
+    """Invoke the captured operation when a numerical policy is evaluated."""
+    return operation(value)
 
 
 def test_entire_jax_backend_is_not_a_general_terminal_value() -> None:

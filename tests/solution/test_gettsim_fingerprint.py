@@ -29,7 +29,7 @@ from lcm import (
     fixed_transition,
     load_solution,
 )
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidSimulationInputError, ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import ScalarFloat, ScalarInt
 
@@ -44,6 +44,186 @@ _UNIT = tt.TTSIMUnit.DIMENSIONLESS
 _UNIT_NAMESPACE = tt.TTSIMUnit
 FloatColumn = pytest.importorskip("ttsim.typing").FloatColumn
 IntColumn = pytest.importorskip("ttsim.typing").IntColumn
+
+_BACKEND_DEPENDENCIES = ("ttsim-backend", "numpy", "jax", "jaxlib")
+_OPERATION_DEPENDENCIES = (
+    ("dags.tree.tree_utils.flatten_to_qnames", ("dags", "flatten-dict")),
+    *(
+        (
+            f"ttsim.tt.aggregation.{name}",
+            (*_BACKEND_DEPENDENCIES, "numpy-groupies", "numba", "llvmlite"),
+        )
+        for name in (
+            "grouped_any",
+            "grouped_count",
+            "grouped_min",
+            "grouped_sum",
+            "sum_by_p_id",
+        )
+    ),
+    (
+        "ttsim.tt.column_objects_param_function.ColumnFunction.__call__",
+        ("ttsim-backend",),
+    ),
+    ("ttsim.tt.column_objects_param_function.reorder_ids", _BACKEND_DEPENDENCIES),
+    ("ttsim.tt.piecewise_polynomial.piecewise_polynomial", _BACKEND_DEPENDENCIES),
+    ("ttsim.tt.shared.join", _BACKEND_DEPENDENCIES),
+    *(
+        (f"ttsim.time_converters.{name}", ("ttsim-backend", "pint"))
+        for name in (
+            "m_to_y",
+            "per_m_to_per_y",
+            "per_w_to_per_y",
+            "per_y_to_per_m",
+            "y_to_m",
+        )
+    ),
+    ("ttsim.tt.units.cast_ttsim_unit", ("ttsim-backend",)),
+)
+
+
+@pytest.mark.parametrize(
+    ("operation", "dependency"),
+    [
+        (operation, dependency)
+        for operation, dependencies in _OPERATION_DEPENDENCIES
+        for dependency in dependencies
+    ],
+)
+@pytest.mark.parametrize("defect", ["unsupported", "editable", "missing"])
+def test_external_operation_rejects_unreviewed_dependency(
+    *, operation: str, dependency: str, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each installed implementation requires its reviewed dependency closure."""
+    function = _resolve_external_operation(operation)
+    _replace_installation_metadata(
+        dependency=dependency, defect=defect, monkeypatch=monkeypatch
+    )
+    _clear_external_metadata_caches()
+    try:
+        with pytest.raises(TypeError, match=f"{dependency}.*durable identity"):
+            _semantic_fingerprint(function)
+    finally:
+        _clear_external_metadata_caches()
+
+
+@pytest.mark.parametrize("kind", ["lookup", "polynomial", "backend"])
+@pytest.mark.parametrize("dependency", ["numpy", "jax", "jaxlib"])
+@pytest.mark.parametrize("defect", ["unsupported", "editable", "missing"])
+def test_jax_parameter_and_backend_require_reviewed_implementation(
+    *, kind: str, dependency: str, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JAX carrier and backend bindings require reviewed numerical libraries."""
+    if kind == "lookup":
+        value = param_objects.ConsecutiveIntLookupTableParamValue(
+            xnp=jnp,
+            values_to_look_up=jnp.array([1.0]),
+            bases_to_subtract=jnp.array([0]),
+        )
+    elif kind == "polynomial":
+        value = param_objects.PiecewisePolynomialParamValue(
+            thresholds=jnp.array([0.0, 1.0]),
+            intercepts=jnp.array([1.0]),
+            coefficients=jnp.array([[2.0]]),
+        )
+    else:
+
+        def policy(*, value: FloatColumn, xnp: ModuleType) -> FloatColumn:
+            return xnp.sqrt(value)
+
+        declaration = tt.policy_function(
+            vectorization_strategy="not_required", unit=_UNIT
+        )(policy)
+        value = partial(declaration, xnp=jnp)
+    _replace_installation_metadata(
+        dependency=dependency, defect=defect, monkeypatch=monkeypatch
+    )
+    _clear_external_metadata_caches()
+    try:
+        with pytest.raises(TypeError, match=f"{dependency}.*durable identity"):
+            _semantic_fingerprint(value)
+    finally:
+        _clear_external_metadata_caches()
+
+
+@pytest.mark.parametrize("defect", ["unsupported", "editable", "missing"])
+def test_policy_record_requires_reviewed_package_metadata(
+    *, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine policy record requires an installed reviewed policy package."""
+    record = _wohngeld_record()
+    _replace_installation_metadata(
+        dependency="gettsim", defect=defect, monkeypatch=monkeypatch
+    )
+    _clear_external_metadata_caches()
+    try:
+        with pytest.raises(TypeError, match=r"gettsim.*durable identity"):
+            _semantic_fingerprint(record)
+    finally:
+        _clear_external_metadata_caches()
+
+
+def test_standalone_flattening_keeps_ttsim_optional() -> None:
+    """Standalone DAG flattening needs no optional tax-transfer libraries."""
+    script = """
+import importlib.metadata
+import sys
+original = importlib.metadata.distribution
+optional = {"gettsim", "ttsim-backend", "numpy-groupies", "numba", "llvmlite", "pint"}
+def distribution(name):
+    if name in optional:
+        raise importlib.metadata.PackageNotFoundError(name)
+    return original(name)
+importlib.metadata.distribution = distribution
+import dags.tree as dt
+from _lcm.solution.fingerprint import _semantic_fingerprint
+assert "ttsim" not in sys.modules
+assert dt.flatten_to_qnames({"outer": {"inner": 3}}) == {"outer__inner": 3}
+first = _semantic_fingerprint(dt.flatten_to_qnames)
+assert first == _semantic_fingerprint(dt.flatten_to_qnames)
+assert "ttsim" not in sys.modules
+print("standalone-flattening-supported")
+"""
+    output = subprocess.check_output(  # noqa: S603, fixed interpreter and literal script
+        [sys.executable, "-c", script],
+        text=True,
+        timeout=120,
+    )
+    assert output.strip() == "standalone-flattening-supported"
+
+
+def test_grouped_count_keeps_numpy_fallback_without_numba() -> None:
+    """The reviewed NumPy aggregation fallback works without compiler libraries."""
+    script = """
+import builtins
+import importlib.metadata
+original_import = builtins.__import__
+original_distribution = importlib.metadata.distribution
+def guarded_import(name, *args, **kwargs):
+    if name.split(".", 1)[0] in {"numba", "llvmlite"}:
+        raise ImportError(name)
+    return original_import(name, *args, **kwargs)
+def distribution(name):
+    if name in {"numba", "llvmlite"}:
+        raise importlib.metadata.PackageNotFoundError(name)
+    return original_distribution(name)
+builtins.__import__ = guarded_import
+importlib.metadata.distribution = distribution
+import numpy as np
+import numpy_groupies as npg
+from ttsim.tt.aggregation import grouped_count
+from _lcm.solution.fingerprint import _semantic_fingerprint
+assert npg.aggregate.__module__ == "numpy_groupies.aggregate_numpy"
+np.testing.assert_array_equal(grouped_count(np.array([0, 0, 1]), 2, "numpy"), [2, 2, 1])
+assert _semantic_fingerprint(grouped_count) == _semantic_fingerprint(grouped_count)
+print("numpy-fallback-supported")
+"""
+    output = subprocess.check_output(  # noqa: S603, fixed interpreter and literal script
+        [sys.executable, "-c", script],
+        text=True,
+        timeout=120,
+    )
+    assert output.strip() == "numpy-fallback-supported"
 
 
 def test_generated_gettsim_graph_has_repeatable_semantic_identity() -> None:
@@ -244,6 +424,33 @@ def test_installed_policy_parameter_records_bind_nested_tables() -> None:
         function, params=policy.BasisformelParamValues(2.0, table, table, table)
     )
     assert _semantic_fingerprint(baseline) != _semantic_fingerprint(changed)
+
+
+def test_generated_model_rejects_unreviewed_aggregation_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Model construction rejects an unreviewed aggregation implementation."""
+    original = importlib.metadata.distribution
+
+    def distribution(name: str) -> object:
+        installed = original(name)
+        if name != "numpy-groupies":
+            return installed
+        return SimpleNamespace(
+            version="0.0.0+unreviewed",
+            locate_file=installed.locate_file,
+            read_text=installed.read_text,
+        )
+
+    monkeypatch.setattr(importlib.metadata, "distribution", distribution)
+    _clear_external_metadata_caches()
+    try:
+        with pytest.raises(
+            ModelInitializationError, match="Unsupported numpy-groupies version"
+        ):
+            _build_lcm_model()
+    finally:
+        _clear_external_metadata_caches()
 
 
 def test_unsupported_ttsim_release_has_no_durable_identity(
@@ -775,6 +982,62 @@ def test_policy_record_imitating_a_reexecuted_module_is_not_a_policy_record() ->
         *(getattr(sample, field.name) for field in dataclasses.fields(genuine))
     )
     assert external_fingerprint.external_policy_record_version(record) is None
+
+
+def _clear_external_metadata_caches() -> None:
+    """Refresh installed-package observations between metadata boundary controls."""
+    for value in vars(external_fingerprint).values():
+        clear = getattr(value, "cache_clear", None)
+        if callable(clear):
+            clear()
+
+
+def _resolve_external_operation(operation: str) -> object:
+    """Resolve an exported function or class method at its installed location."""
+    parts = operation.split(".")
+    for stop in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:stop])
+        try:
+            value = importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name is None or not (
+                error.name == module_name or module_name.startswith(error.name + ".")
+            ):
+                raise
+            continue
+        for name in parts[stop:]:
+            value = getattr(value, name)
+        return value
+    raise AssertionError(f"No installed export {operation}.")
+
+
+def _replace_installation_metadata(
+    *, dependency: str, defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Substitute metadata at the installed-distribution boundary."""
+    original = importlib.metadata.distribution
+
+    def distribution(name: str) -> object:
+        if name == dependency and defect == "missing":
+            raise importlib.metadata.PackageNotFoundError(name)
+        installed = original(name)
+        if name != dependency:
+            return installed
+
+        def read_text(filename: str) -> str | None:
+            if filename == "direct_url.json" and defect == "editable":
+                return '{"dir_info":{"editable":true}}'
+            return installed.read_text(filename)
+
+        return SimpleNamespace(
+            version="0.0.0+unreviewed"
+            if defect == "unsupported"
+            else installed.version,
+            locate_file=installed.locate_file,
+            read_text=read_text,
+        )
+
+    monkeypatch.setattr(importlib.metadata, "distribution", distribution)
 
 
 def _wohngeld_record() -> object:

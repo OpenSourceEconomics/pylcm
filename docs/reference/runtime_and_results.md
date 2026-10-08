@@ -460,20 +460,41 @@ adapter recognizes the reviewed TTSIM declaration and unit classes, lookup and
 polynomial carriers, foreign-key, aggregation and quantity-kind enums, the rounding
 wrapper convention, and the generated column-typed forwarder. TTSIM's import-time
 beartype guards are transparent only where beartype regenerates them. Fixed graph
-operations have an explicit registry with tested implementation versions. A new opaque
-carrier, wrapper convention, library operation, or dependency version needs a reviewed
-adapter change before it can receive durable identity.
+operations have an explicit registry. Each operation requires its reviewed
+implementation dependencies to be installed at their supported releases with
+non-editable metadata. Missing, unsupported and editable required dependencies raise an
+explanatory error at model construction. A new opaque carrier, wrapper convention,
+library operation, or dependency version needs a reviewed adapter change before it can
+receive durable identity.
+
+The implementation contract uses these releases:
+
+| Implementation                     | Reviewed releases                            |
+| ---------------------------------- | -------------------------------------------- |
+| DAG flattening                     | `dags` 0.6.0, `flatten-dict` 0.5.0           |
+| Policy declarations                | `gettsim` 1.3.1, `ttsim-backend` 1.3.2       |
+| Array backends                     | `numpy` 2.4.6, `jax` 0.11.2, `jaxlib` 0.11.2 |
+| Aggregation                        | `numpy-groupies` 0.12.3                      |
+| Selected Numba aggregation backend | `numba` 0.68.0, `llvmlite` 0.50.0            |
+| Time-conversion factors            | `pint` 0.26.1                                |
+
+Standalone DAG flattening keeps the tax-transfer libraries optional. Aggregation admits
+the reviewed NumPy fallback when Numba is unavailable at import; an already selected
+Numba backend requires both compiler distributions. Time conversion requires Pint
+because its unit definitions determine the period factors.
 
 The supported operation registry covers selected `dags` tree flattening, TTSIM grouping
 and person-ID aggregation, piecewise polynomial evaluation, monthly/yearly time
-conversion, and the unit re-tag that is the identity at run time. The NumPy contract
-covers selected numerical functions; file loading and saving inside a model callable are
-outside it. Load external data before constructing the model and capture the resulting
-supported numerical value. Keep captured code, data, and library implementations stable
-while using the model. A binding seal detects rebinding of recorded globals and closure
-cells. In-place mutation of their contents remains undetected. After changing a
-generated policy or its dependencies, rebuild the affected generated and JIT callables
-as well as the model.
+conversion, and the unit re-tag that is the identity at run time. Public NumPy root
+exports use an explicit numerical inventory covering array operations, value
+calculations, shapes and dtypes. File operations, formatting, process state controls and
+external protocol adapters in that namespace are rejected across direct references,
+globals, defaults, closures and partials. Load external data before constructing the
+model and capture the resulting supported numerical value. Keep captured code, data, and
+library implementations stable while using the model. A binding seal detects rebinding
+of recorded globals and closure cells. In-place mutation of their contents remains
+undetected. After changing a generated policy or its dependencies, rebuild the affected
+generated and JIT callables as well as the model.
 
 ### Ephemeral model identity
 
