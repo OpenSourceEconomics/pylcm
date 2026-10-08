@@ -190,6 +190,13 @@ class _ChildRead:
     composed resources gradients without contributing a savings derivative.
     """
 
+    age_values: FloatND | IntND
+    """The model's age grid, indexed by period.
+
+    The child is next period's regime, so the `age` and `period` its resources
+    function reads are the child's: period `period + 1` and its age.
+    """
+
     resources_is_simple: bool
     """Whether the resources function reads only the child's Euler state.
 
@@ -587,6 +594,7 @@ def build_continuation_plan(
     compute_regime_transition_probs: RegimeTransitionFunction,
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    age_values: FloatND | IntND,
     risk_aversion_param_name: str | None = None,
 ) -> ContinuationPlan:
     """Assemble a `ContinuationPlan` from the regime's continuation statics.
@@ -610,6 +618,7 @@ def build_continuation_plan(
         stateful_targets=stateful_targets,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        age_values=age_values,
     )
     return ContinuationPlan(
         stateful_targets=stateful_targets,
@@ -854,9 +863,9 @@ class _ChildCarryReader:
         # `age` / `period` (e.g. a capital-income return rate); bind them from
         # the combo pool once. They are constant in the savings node, so they
         # ride through the composed gradients as constants.
-        resources_param_kwargs = {
-            name: combo_pool[name] for name in read.resources_param_names
-        }
+        resources_param_kwargs = child_resources_params(
+            read=read, combo_pool=combo_pool
+        )
         queries_and_gradients = _RowQueriesAndGradients(
             read=read,
             child_euler_state=_ChildEulerState(
@@ -1509,7 +1518,7 @@ def _accumulate_ez_partials_block(
 
 def euler_draw_nodes(
     *, read: _ChildRead, combo_pool: Mapping[str, Any]
-) -> dict[TransitionFunctionName, FloatND]:
+) -> dict[TransitionFunctionName, FloatND | IntND]:
     """Node values of each draw the child's Euler-state law reads.
 
     A draw of a stochastic state the child carries takes that state's nodes; a
@@ -1533,6 +1542,27 @@ def euler_draw_nodes(
             )
         }
     return {name: nodes[name] for name in sorted(read.euler_draw_names)}
+
+
+def child_resources_params(
+    *, read: _ChildRead, combo_pool: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The params, `age` and `period` the child's resources function reads.
+
+    Params are the combo pool's. The child is next period's regime, and its carry
+    rows were built in resources evaluated at its own period and age, so `period`
+    is the source's plus one and `age` is the age grid at that period.
+    """
+    child_period = combo_pool["period"] + 1 if "period" in combo_pool else None
+    child_time = (
+        {"period": child_period, "age": read.age_values[child_period]}
+        if child_period is not None
+        else {}
+    )
+    return {
+        name: child_time[name] if name in child_time else combo_pool[name]
+        for name in read.resources_param_names
+    }
 
 
 def _local_support_values(support: FloatND | IntND) -> FloatND | IntND:
@@ -2228,6 +2258,7 @@ def _build_child_reads(
     stateful_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    age_values: FloatND | IntND,
 ) -> MappingProxyType[RegimeName, _ChildRead]:
     """Build the per-carry-target statics of the EGM kernel's child reads.
 
@@ -2399,6 +2430,7 @@ def _build_child_reads(
             resources_func=resources_func,
             resources_arg_names=resources_arg_names,
             resources_param_names=resources_param_names,
+            age_values=age_values,
             resources_is_simple=(resources_arg_names - resources_param_names)
             <= {euler_state_name},
             discrete_state_names=discrete_state_names,

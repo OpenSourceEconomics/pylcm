@@ -64,6 +64,10 @@ PENSION_RATE = 0.5
 # skill grid's 0.25 node spacing, so working lands off-grid.
 SKILL_GAIN = 0.4
 
+# Transfer paid per decade of age after 40 — the age dependence of the child's
+# resources space, so the child's resources must be read at the child's age.
+AGE_TRANSFER = 10.0
+
 # Upper bound of the skill grid; the skill transition clamps here.
 SKILL_MAX = 1.5
 
@@ -120,6 +124,17 @@ def resources_with_bonus_and_pension(
     return wealth + jnp.where(is_working, WORK_BONUS, 0.0) + PENSION_RATE * skill
 
 
+def age_transfer(*, age: FloatND) -> FloatND:
+    """A transfer that grows by `AGE_TRANSFER` every decade after age 40."""
+    return AGE_TRANSFER * (age - 40.0) / 10.0
+
+
+def resources_with_bonus_and_age_transfer(
+    *, wealth: ContinuousState, is_working: BoolND, age_transfer: FloatND
+) -> FloatND:
+    return wealth + jnp.where(is_working, WORK_BONUS, 0.0) + age_transfer
+
+
 def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
@@ -162,6 +177,30 @@ def next_wealth_brute_bonus_and_pension(
     bonus = jnp.where(is_working, WORK_BONUS, 0.0)
     pension = PENSION_RATE * skill
     return (1 + interest_rate) * (wealth + bonus + pension - consumption) + labor_income
+
+
+def next_wealth_brute_bonus_and_age_transfer(
+    *,
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    is_working: BoolND,
+    age_transfer: FloatND,
+    labor_income: FloatND,
+    interest_rate: float,
+) -> ContinuousState:
+    bonus = jnp.where(is_working, WORK_BONUS, 0.0)
+    cash = wealth + bonus + age_transfer
+    return (1 + interest_rate) * (cash - consumption) + labor_income
+
+
+def budget_constraint_bonus_and_age_transfer(
+    *,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    is_working: BoolND,
+    age_transfer: FloatND,
+) -> BoolND:
+    return consumption <= wealth + jnp.where(is_working, WORK_BONUS, 0.0) + age_transfer
 
 
 def budget_constraint_bonus(
@@ -257,6 +296,55 @@ def _get_model(variant: str) -> Model:
                 "utility": utility,
                 "labor_income": labor_income,
                 "is_working": is_working,
+            },
+        )
+    elif variant == "dcegm_bonus_age":
+        working = ConsumptionSavingsRegime(
+            regime_transitions=until_exit(
+                last_age,
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
+                exits=("dead",),
+            ),
+            actions=actions,
+            states={"wealth": WEALTH_GRID},
+            state_transitions={"wealth": next_wealth_from_savings},
+            functions={
+                "utility": utility,
+                "labor_income": labor_income,
+                "is_working": is_working,
+                "age_transfer": age_transfer,
+                "resources": resources_with_bonus_and_age_transfer,
+                "savings": savings,
+                "inverse_marginal_utility": inverse_marginal_utility,
+            },
+            solver=DCEGM_SOLVER,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+    elif variant == "brute_bonus_age":
+        working = UserRegime(
+            regime_transitions=until_exit(
+                last_age,
+                law=_SupportedDeterministicTransition(
+                    func=next_regime, targets=("working_life", "dead")
+                ),
+                exits=("dead",),
+            ),
+            actions=actions,
+            states={"wealth": WEALTH_GRID},
+            state_transitions={"wealth": next_wealth_brute_bonus_and_age_transfer},
+            constraints={"budget_constraint": budget_constraint_bonus_and_age_transfer},
+            functions={
+                "utility": utility,
+                "labor_income": labor_income,
+                "is_working": is_working,
+                "age_transfer": age_transfer,
             },
         )
     elif variant == "dcegm_bonus_pension":
@@ -387,6 +475,34 @@ def test_action_and_passive_dependent_resources_match_dense_brute_force():
         np.testing.assert_allclose(
             dcegm_V[N_BRUTE_UNSTABLE_NODES:, :],
             brute_V[N_BRUTE_UNSTABLE_NODES:, :],
+            atol=1e-2,
+            rtol=1e-3,
+            err_msg=f"period={period}",
+        )
+
+
+def test_age_dependent_resources_match_dense_brute_force():
+    """A transfer growing with age in resources matches dense brute force.
+
+    The child's resources read `age`, so the parent's carry read must evaluate
+    them at the child's age — the age at which the child's carry rows were built
+    — not at the parent's.
+    """
+    params = _get_params()
+    dcegm_solution = (
+        _get_model("dcegm_bonus_age").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _get_model("brute_bonus_age").solve(params=params, log_level="debug").values
+    )
+
+    for period in sorted(brute_solution)[:-1]:
+        brute_V = np.asarray(brute_solution[period]["working_life"])
+        dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
+        assert brute_V.shape == dcegm_V.shape == (80,)
+        np.testing.assert_allclose(
+            dcegm_V[N_BRUTE_UNSTABLE_NODES:],
+            brute_V[N_BRUTE_UNSTABLE_NODES:],
             atol=1e-2,
             rtol=1e-3,
             err_msg=f"period={period}",

@@ -168,12 +168,34 @@ class AgeGridSchedule:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PeriodRegimes:
+    """Every regime declaration as it stands at each period.
+
+    A period-`t` EGM kernel reads its targets' resources DAG at `t + 1`; an
+    `AgeSpecializedFunction` is a different callable at every age, so the
+    target's representative-age declaration is not the one the child solved.
+    """
+
+    by_period: MappingProxyType[int, MappingProxyType[RegimeName, FinalizedUserRegime]]
+    """Per period, every regime with its age markers resolved at that period.
+
+    A regime that declares no marker, or is inactive at the period, keeps its
+    representative declaration.
+    """
+
+    function_signatures: MappingProxyType[int, MappingProxyType[RegimeName, Hashable]]
+    """Per period, the user-declared `AgeSpecializedFunction.signature(age)`
+    values of each regime declaring a function marker, active at the period."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgeNormalizationResult:
     """Output of `normalize_age_specialization`."""
 
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
     grid_schedule: AgeGridSchedule | None
+    period_regimes: PeriodRegimes | None
 
 
 def resolve_periodized_node(*, node: object, period: int) -> object:
@@ -716,27 +738,46 @@ def _resolve_grid_marker(
 
 
 def _representative_function(
-    *, value: object, function_cache: dict[int, _ResolvedFunctionMarker]
+    *,
+    value: object,
+    function_cache: dict[int, _ResolvedFunctionMarker],
+    period: int | None = None,
 ) -> object:
     """Replace an age-function marker (bare or inside `Phased`) by its concrete.
 
-    Returns the first-active-period concrete callable for a marker, a `Phased`
-    with its variants likewise replaced, or the value unchanged.
+    Returns the marker's concrete callable for `period` — the first-active-period
+    one when `period` is `None` — a `Phased` with its variants likewise replaced,
+    or the value unchanged. Periods that share a signature share one callable:
+    the one built at the earliest period of that signature group, the same rule
+    `PeriodizedEconFunction` resolves by. A marker only the simulate slice reads
+    is resolved only at the periods a subject can occupy; elsewhere no solve
+    reads it, and it keeps its representative.
     """
     if isinstance(value, AgeSpecializedFunction):
-        return function_cache[id(value)].representative
+        resolved = function_cache[id(value)]
+        if period is None:
+            return resolved.representative
+        if period not in resolved.signature_by_period:
+            return resolved.representative
+        signature = resolved.signature_by_period[period]
+        group_period = min(
+            other
+            for other, other_signature in resolved.signature_by_period.items()
+            if other_signature == signature
+        )
+        return resolved.concrete_by_period[group_period]
     if isinstance(value, Phased):
         return Phased(
             solve=cast(
                 "UserFunction",
                 _representative_function(
-                    value=value.solve, function_cache=function_cache
+                    value=value.solve, function_cache=function_cache, period=period
                 ),
             ),
             simulate=cast(
                 "UserFunction",
                 _representative_function(
-                    value=value.simulate, function_cache=function_cache
+                    value=value.simulate, function_cache=function_cache, period=period
                 ),
             ),
         )
@@ -748,28 +789,42 @@ def _representative_regime(
     user_regime: FinalizedUserRegime,
     function_cache: dict[int, _ResolvedFunctionMarker],
     grid_cache: dict[int, _ResolvedGridMarker],
+    period: int | None = None,
 ) -> FinalizedUserRegime:
-    """Rebuild one regime with every age marker replaced by its representative.
+    """Rebuild one regime with every age marker replaced by its concrete object.
 
     The returned regime has no public age markers: functions/constraints markers
-    become first-active concrete callables, and `AgeSpecializedGrid` states become
-    the concrete representative-age grid. It is the input to parameter-template
+    become concrete callables, and `AgeSpecializedGrid` states become concrete
+    grids, both at `period` (an active period of the regime).
+
+    With `period=None` they are the first-active callables and the
+    representative-age grids. That regime is the input to parameter-template
     creation, variable/grid discovery, the base state-action space, published
     function sets, and age-invariant validation.
     """
     functions = {
-        name: _representative_function(value=value, function_cache=function_cache)
+        name: _representative_function(
+            value=value, function_cache=function_cache, period=period
+        )
         for name, value in user_regime.functions.items()
     }
     constraints = {
-        name: _representative_function(value=value, function_cache=function_cache)
+        name: _representative_function(
+            value=value, function_cache=function_cache, period=period
+        )
         for name, value in user_regime.constraints.items()
     }
     states = {
         name: (
-            grid_cache[id(spec)].representative
+            (
+                grid_cache[id(spec)].representative
+                if period is None
+                else grid_cache[id(spec)].concrete_by_period[period].grid
+            )
             if isinstance(spec, AgeSpecializedGrid)
-            else _representative_function(value=spec, function_cache=function_cache)
+            else _representative_function(
+                value=spec, function_cache=function_cache, period=period
+            )
         )
         for name, spec in user_regime.states.items()
     }
@@ -969,6 +1024,8 @@ def normalize_age_specialization(
     ] = {}
     specialized_states_by_regime: dict[RegimeName, frozenset[StateName]] = {}
     any_grid = False
+    regimes_at_period: dict[int, dict[RegimeName, FinalizedUserRegime]] = {}
+    signatures_at_period: dict[int, dict[RegimeName, Hashable]] = {}
 
     for regime_name, user_regime in user_regimes.items():
         spec = phased_specs[regime_name]
@@ -1018,6 +1075,20 @@ def normalize_age_specialization(
             function_cache=function_cache,
             grid_cache=grid_cache,
         )
+        for period in active_periods:
+            regimes_at_period.setdefault(period, {})[regime_name] = (
+                _representative_regime(
+                    user_regime=user_regime,
+                    function_cache=function_cache,
+                    grid_cache=grid_cache,
+                    period=period,
+                )
+            )
+            if function_cache:
+                signatures_at_period.setdefault(period, {})[regime_name] = tuple(
+                    resolved.signature_by_period.get(period)
+                    for resolved in function_cache.values()
+                )
         rewritten_specs[regime_name] = PhasedRegimeSpec(
             solution=_rewrite_phase_slice(
                 phase_slice=spec.solution,
@@ -1070,8 +1141,28 @@ def normalize_age_specialization(
         else None
     )
 
+    period_regimes = (
+        PeriodRegimes(
+            by_period=MappingProxyType(
+                {
+                    period: MappingProxyType(representative | resolved)
+                    for period, resolved in regimes_at_period.items()
+                }
+            ),
+            function_signatures=MappingProxyType(
+                {
+                    period: MappingProxyType(signatures)
+                    for period, signatures in signatures_at_period.items()
+                }
+            ),
+        )
+        if regimes_at_period
+        else None
+    )
+
     return AgeNormalizationResult(
         representative_user_regimes=MappingProxyType(representative),
         phased_specs=MappingProxyType(rewritten_specs),
         grid_schedule=grid_schedule,
+        period_regimes=period_regimes,
     )

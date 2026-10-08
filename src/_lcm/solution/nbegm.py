@@ -939,16 +939,6 @@ class NBEGM(OneMarginSolver):
                     statics.n_published_jumps > 0
                     and context.regime_name in plan.child_reads
                 )
-                if cliff_candidates:
-                    child_read = plan.child_reads[context.regime_name]
-                    _fail_if_cliffs_move_with_euler_draws(
-                        sources=group_spec.sources,
-                        euler_draw_names=child_read.euler_draw_names,
-                        stochastic_state_names=frozenset(
-                            child_read.stochastic_state_names
-                        ),
-                        regime_name=context.regime_name,
-                    )
                 envelope_build = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
                     schedule_spec=group_spec,
@@ -4693,61 +4683,6 @@ def _sorted_thresholds(*, raw: Float1D, order_sensitive: bool) -> Float1D:
     return jnp.where(ascending, jnp.sort(a=raw), jnp.nan)
 
 
-def _fail_if_cliffs_move_with_euler_draws(
-    *,
-    sources: tuple[_NBEGMSource, ...],
-    euler_draw_names: frozenset[str],
-    stochastic_state_names: frozenset[str],
-    regime_name: RegimeName,
-) -> None:
-    """Reject save-to-cliff candidates whose child cliffs vary across child nodes.
-
-    The save-to-cliff candidates invert the regime's own liquid law at every node
-    of the draws it reads, against the jump breakpoints of the source cell. The
-    expectation runs over every stochastic state the child carries, so when the
-    liquid law reads any draw and a jump's threshold is indexed by, or its
-    schedule variable reads (directly or through derived functions), any of
-    those states, child rows carry breakpoints the source cell's do not
-    represent. A state carried by a fixed law is one node and keeps the source
-    cell's breakpoints.
-
-    Args:
-        sources: The regime's breakpoint sources.
-        euler_draw_names: The draws the regime's own liquid law reads.
-        stochastic_state_names: The stochastic states the regime's child carries
-            as node axes.
-        regime_name: Name of the regime, for the message.
-
-    Raises:
-        RegimeInitializationError: If the liquid law reads a draw and a jump
-            breakpoint depends on a stochastic state of the child.
-
-    """
-    if not euler_draw_names:
-        return
-    varying = stochastic_state_names | {
-        name.removeprefix("next_") for name in euler_draw_names
-    }
-    draws = ", ".join(f"'{name}'" for name in sorted(euler_draw_names))
-    for source in sources:
-        if source.kind != "jump":
-            continue
-        for state in (source.threshold_index_state, *source.derived_state_names):
-            if state in varying:
-                msg = (
-                    f"Regime '{regime_name}' has a jump breakpoint "
-                    f"'{source.threshold_param_name}' that varies with the "
-                    f"stochastic state '{state}', and its liquid law reads the "
-                    f"draw {draws}. NBEGM save-to-cliff candidates for a liquid "
-                    "law reading a draw, when the child cliff breakpoints vary "
-                    "across the child's stochastic nodes, are not supported yet. "
-                    "Make the liquid law independent of the draw, make the "
-                    f"breakpoint independent of '{state}', or use GridSearch() "
-                    "for this regime."
-                )
-                raise RegimeInitializationError(msg)
-
-
 def _fail_if_single_liquid_schedules_unsupported(
     *,
     schedules: tuple[Any, ...],
@@ -5190,8 +5125,9 @@ def _build_nbegm_continuation_plan(
         if _aggregates_nonlinearly(context.certainty_equivalent)
         else None
     )
+    # A target's resources map is the child's own, read at its period `t + 1`.
     return build_continuation_plan(
-        user_regimes=context.user_regimes,
+        user_regimes=context.user_regimes_at(period=period + 1),
         functions=context.functions,
         transitions=context.transitions,
         transition_plans=context.transition_plans,
@@ -5200,6 +5136,7 @@ def _build_nbegm_continuation_plan(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=v_interpolation_info,
+        age_values=context.ages.values,
         risk_aversion_param_name=risk_aversion_param_name,
     )
 
@@ -5834,10 +5771,8 @@ def _cliff_savings_targets(
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
     regime_name: RegimeName,
     statics: _NBEGMRideAlongStatics,
-    kwargs: dict[str, Any],
-    cell: dict[str, Any],
+    child_carry: EGMCarry,
     combo_pool: dict[str, Any],
-    liquid_grid: Float1D,
     savings_grid: Float1D,
     dtype: Any,  # noqa: ANN401
     midpoints: Float1D | None = None,
@@ -5846,28 +5781,37 @@ def _cliff_savings_targets(
 
     A child value jump creates a legitimate one-sided optimum — save to just
     inside the cliff's owning side — that generically falls strictly between
-    savings nodes. Per ride cell this recovers the cell's jump preimages in
-    the child's liquid space, inverts the affine savings-form liquid law, and
-    returns one target a few float margins inside each side of every jump
-    (`2 * n_jumps` entries). Targets outside the savings grid's span, or under
-    a non-increasing liquid law, are NaN — the envelope's point-candidate
-    family treats NaN entries as dead. A liquid law reading a draw maps savings
-    to liquid separately at every node of the draws it reads, so each node
-    contributes its own preimages (`2 * n_jumps` per node).
-    """
-    from _lcm.egm.continuation import euler_draw_nodes  # noqa: PLC0415
+    savings nodes. The cliffs are the jump preimages the child carry publishes
+    per row, so they are the child period's own: evaluated at the child's age
+    and period, with its functions and its state values. Each target inverts the
+    affine savings-form liquid law against one row's jumps and sits a few float
+    margins inside each side of every jump (`2 * n_jumps` entries per row).
+    Targets outside the savings grid's span, or under a non-increasing liquid
+    law, are NaN — the envelope's point-candidate family treats NaN entries as
+    dead.
 
+    The child row is the one the continuation reads, axis by axis:
+    - a deterministic discrete state selects the row of its next-state code;
+    - a stochastic state whose node the jumps or the liquid law read contributes
+      one row per node; one whose node neither reads selects its first node,
+      whose jumps every node shares;
+    - a passive continuous state the jumps read contributes both rows of the
+      grid segment its next value is blended from, since the blended child value
+      jumps at each row's cliffs; one the jumps do not read selects the lower;
+    - a co-mapped state is already sliced from the carry.
+
+    A local draw the liquid law reads contributes one target set per node.
+    """
     read = continuation_plan.child_reads[regime_name]
-    breakpoints, jump_positions = _nbegm_cell_breakpoints(
-        statics=statics, kwargs=kwargs, cell=cell, liquid_grid=liquid_grid, dtype=dtype
-    )
+    if child_carry.breakpoints is None:
+        return jnp.zeros((0,), dtype=dtype)
     targets_for_pool = functools.partial(
         _cliff_targets_for_pool,
-        next_state_func=read.euler_state_func,
-        next_state_key=read.next_state_key,
-        draw_nodes=functools.partial(euler_draw_nodes, read=read),
+        read=read,
+        breakpoints=child_carry.breakpoints,
+        jump_states=_jump_breakpoint_states(statics=statics),
+        co_map_state_names=frozenset(statics.co_map_state_names),
         post_decision_name=continuation_plan.post_decision_name,
-        jumps=jnp.stack([breakpoints[position] for position in jump_positions]),
         savings_grid=savings_grid,
         dtype=dtype,
     )
@@ -5899,48 +5843,114 @@ def _cliff_targets_at_midpoint(
     return targets_for_pool(pool={**combo_pool, liquid_name: midpoint})
 
 
+def _jump_breakpoint_states(*, statics: _NBEGMRideAlongStatics) -> frozenset[str]:
+    """The ride-along states a jump threshold is indexed by or its variable reads."""
+    return frozenset(
+        name
+        for source in statics.sources
+        if source.kind == "jump"
+        for name in (source.threshold_index_state, *source.derived_state_names)
+        if name is not None
+    )
+
+
 def _cliff_targets_for_pool(
     *,
     pool: dict[str, Any],
-    next_state_func: Callable[..., Any],
-    next_state_key: str,
-    draw_nodes: Callable[..., Mapping[str, FloatND]],
+    read: Any,  # noqa: ANN401  # `_ChildRead`; import-cycle-safe
+    breakpoints: FloatND,
+    jump_states: frozenset[str],
+    co_map_state_names: frozenset[str],
     post_decision_name: str,
-    jumps: Float1D,
     savings_grid: Float1D,
     dtype: Any,  # noqa: ANN401
 ) -> FloatND:
-    """One-sided savings targets of every jump under one combo pool.
+    """One-sided savings targets of every child row's jumps under one combo pool.
 
-    Inverts the affine savings-form liquid law read off the pool at savings
-    zero and one; a target outside the savings grid's span, or under a
-    non-increasing law, is NaN. A law reading draws is inverted at every node
-    combination of those draws, and the targets of all nodes are concatenated.
+    Every next state but the liquid one is savings-independent, so the child's
+    row indices are read off the draw-free laws at savings zero. Each node axis
+    (see `_cliff_savings_targets`) is enumerated jointly; at each node the liquid
+    law, with the draws it reads bound, is inverted against the jumps of the row
+    the node reaches, and the targets of all nodes are concatenated.
+
+    Raises:
+        ValueError: If the child carry's breakpoint rows are not indexed by the
+            child's state axes followed by one jump axis.
+
     """
-    nodes = draw_nodes(combo_pool=pool)
-    if not nodes:
+    from _lcm.egm.continuation import euler_draw_nodes  # noqa: PLC0415
+    from _lcm.egm.interp import locate_on_grid  # noqa: PLC0415
+
+    next_states = read.next_state_func(
+        **pool, **{post_decision_name: jnp.asarray(0.0, dtype=dtype)}
+    )
+    law_draws = euler_draw_nodes(read=read, combo_pool=pool)
+    # Per carry axis: a fixed row index, or the name of the node axis supplying it.
+    row: list[Any] = []
+    node_axes: dict[str, Any] = {}
+    stochastic_positions = dict(
+        zip(
+            read.stochastic_state_names,
+            range(len(read.stochastic_state_names)),
+            strict=True,
+        )
+    )
+    for name, is_stochastic in zip(
+        read.discrete_state_names, read.stochastic_flags, strict=True
+    ):
+        if name in co_map_state_names:
+            continue
+        if not is_stochastic:
+            row.append(jnp.asarray(next_states[f"next_{name}"], dtype=jnp.int32))
+            continue
+        draw = f"next_{name}"
+        if name in jump_states or draw in law_draws:
+            n_nodes = read.stochastic_node_values[stochastic_positions[name]].shape[0]
+            node_axes[draw] = jnp.arange(n_nodes, dtype=jnp.int32)
+            row.append(draw)
+        else:
+            row.append(jnp.int32(0))
+    for name, grid in zip(read.passive_state_names, read.passive_grids, strict=True):
+        key = f"next_{name}"
+        value = next_states[key] if key in next_states else pool[key]
+        lower, upper, _ = locate_on_grid(x_query=value, grid=grid)
+        if name in jump_states:
+            node_axes[f"segment_{name}"] = jnp.stack([lower, upper])
+            row.append(f"segment_{name}")
+        else:
+            row.append(lower)
+    local_draws = {
+        name: values for name, values in law_draws.items() if name not in node_axes
+    }
+    if breakpoints.ndim != len(row) + 1:
+        msg = (
+            f"The child carry publishes breakpoints of shape {breakpoints.shape}, "
+            f"but its rows are indexed by {len(row)} state axes."
+        )
+        raise ValueError(msg)
+
+    def targets_at(node: Mapping[str, Any]) -> FloatND:
+        draws = {
+            name: law_draws[name][node[name]] if name in node_axes else node[name]
+            for name in law_draws
+        }
+        index = tuple(node[axis] if isinstance(axis, str) else axis for axis in row)
         return _cliff_targets_at_node(
-            pool=pool,
-            next_state_func=next_state_func,
-            next_state_key=next_state_key,
-            post_decision_name=post_decision_name,
-            jumps=jumps,
-            savings_grid=savings_grid,
-            dtype=dtype,
-        )
-    mesh = jnp.meshgrid(*nodes.values(), indexing="ij")
-    flat_nodes = {name: grid.ravel() for name, grid in zip(nodes, mesh, strict=True)}
-    return jax.vmap(
-        lambda draws: _cliff_targets_at_node(
             pool={**pool, **draws},
-            next_state_func=next_state_func,
-            next_state_key=next_state_key,
+            next_state_func=read.euler_state_func,
+            next_state_key=read.next_state_key,
             post_decision_name=post_decision_name,
-            jumps=jumps,
+            jumps=breakpoints[index],
             savings_grid=savings_grid,
             dtype=dtype,
         )
-    )(flat_nodes).reshape(-1)
+
+    axes = {**node_axes, **local_draws}
+    if not axes:
+        return targets_at({})
+    mesh = jnp.meshgrid(*axes.values(), indexing="ij")
+    flat = {name: grid.ravel() for name, grid in zip(axes, mesh, strict=True)}
+    return jax.vmap(targets_at)(flat).reshape(-1)
 
 
 def _cliff_targets_at_node(
@@ -6841,9 +6851,7 @@ class _NBEGMCellContinuation:
         )
         midpoints = interval_midpoints(liquid_grid=self.liquid, breakpoints=breakpoints)
         cliff_targets = (
-            self._cliff_targets_for(
-                cell=cell, combo_pool=combo_pool, midpoints=midpoints
-            )
+            self._cliff_targets_for(combo_pool=combo_pool, midpoints=midpoints)
             if self.cliff_candidates
             else None
         )
@@ -6888,9 +6896,7 @@ class _NBEGMCellContinuation:
                 liquid_grid=self.liquid, breakpoints=breakpoints
             )
             cliff_targets = (
-                self._cliff_targets_for(
-                    cell=cell, combo_pool=combo_pool, midpoints=midpoints
-                )
+                self._cliff_targets_for(combo_pool=combo_pool, midpoints=midpoints)
                 if self.cliff_candidates
                 else None
             )
@@ -6915,7 +6921,7 @@ class _NBEGMCellContinuation:
             co_map_state_names=statics.co_map_state_names,
         )
         cliff_targets = (
-            self._cliff_targets_for(cell=cell, combo_pool=combo_pool, midpoints=None)
+            self._cliff_targets_for(combo_pool=combo_pool, midpoints=None)
             if self.cliff_candidates
             else None
         )
@@ -6933,7 +6939,6 @@ class _NBEGMCellContinuation:
     def _cliff_targets_for(
         self,
         *,
-        cell: dict[str, Any],
         combo_pool: dict[str, Any],
         midpoints: Float1D | None,
     ) -> FloatND:
@@ -6948,10 +6953,8 @@ class _NBEGMCellContinuation:
             continuation_plan=self.continuation_plan,
             regime_name=self.regime_name,
             statics=self.statics,
-            kwargs=self.kwargs,
-            cell=cell,
+            child_carry=self.carry[self.regime_name],
             combo_pool=combo_pool,
-            liquid_grid=self.liquid,
             savings_grid=self.savings_grid,
             dtype=self.dtype,
             midpoints=midpoints,

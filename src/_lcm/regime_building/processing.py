@@ -113,6 +113,7 @@ from _lcm.regime_building.age_normalization import (
     AgeGridSchedule,
     PeriodizedEconFunction,
     PeriodizedUserFunction,
+    PeriodRegimes,
     assert_continuation_grids_agree,
     continuation_group_key,
     continuation_info_lookup,
@@ -306,6 +307,9 @@ class PreparedModelStructure:
     grid_schedule: AgeGridSchedule | None
     """Concrete period grids for age-specialized states."""
 
+    period_regimes: PeriodRegimes | None
+    """Every regime's declaration resolved at each period, or `None`."""
+
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
@@ -367,6 +371,7 @@ def prepare_model_structure(
         representative_user_regimes=age_normalization.representative_user_regimes,
         phased_specs=phased_specs,
         grid_schedule=age_normalization.grid_schedule,
+        period_regimes=age_normalization.period_regimes,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
@@ -728,6 +733,7 @@ def process_regimes(
         enable_jit=enable_jit,
         fold_only_regimes=fold_only_regimes,
         grid_schedule=grid_schedule,
+        period_regimes=prepared_structure.period_regimes,
         period_to_regime_v_interp=period_to_regime_v_interp,
         phased_specs=phased_specs,
         placement=placement,
@@ -902,6 +908,9 @@ class _CanonicalRegimeBuilder:
 
     grid_schedule: AgeGridSchedule | None
     """Concrete period grids for age-specialized states, or `None`."""
+
+    period_regimes: PeriodRegimes | None
+    """Every regime's declaration resolved at each period, or `None`."""
 
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -1105,6 +1114,7 @@ class _CanonicalRegimeBuilder:
                 regime_to_v_interpolation_info=self.regime_to_v_interpolation_info,
                 period_to_regime_v_interp=self.period_to_regime_v_interp,
                 grid_schedule=self.grid_schedule,
+                period_regimes=self.period_regimes,
                 state_action_space=self.state_action_spaces[regime_name],
                 submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
                 axis_widths=self._widths_for(regime_name=regime_name),
@@ -2760,26 +2770,34 @@ def _period_to_state_nodes(
 
 
 def _period_to_regime_grid_signature(
-    *, grid_schedule: AgeGridSchedule | None
+    *, grid_schedule: AgeGridSchedule | None, period_regimes: PeriodRegimes | None
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None:
-    """Return every regime's user-declared grid signature, per period.
+    """Return every regime's user-declared age-specialization signature, per period.
 
-    `None` for an age-invariant model, so its solvers group periods exactly as
-    they did before.
+    A regime's entry is its grid signature; a regime declaring an
+    `AgeSpecializedFunction` pairs it with its function signatures, so a kernel
+    reading that regime's DAG at the period never shares a program across
+    periods whose functions differ. `None` for an age-invariant model, so its
+    solvers group periods exactly as they did before.
     """
-    if grid_schedule is None:
+    if grid_schedule is None and period_regimes is None:
         return None
+    grids = {} if grid_schedule is None else grid_schedule.by_period
+    functions = {} if period_regimes is None else period_regimes.function_signatures
+    by_period: dict[int, dict[RegimeName, Hashable]] = {}
+    for period, regimes in grids.items():
+        for regime_name in regimes:
+            by_period.setdefault(period, {})[regime_name] = cast(
+                "AgeGridSchedule", grid_schedule
+            ).grid_signature(period=period, regime_name=regime_name)
+    for period, signatures in functions.items():
+        for regime_name, signature in signatures.items():
+            at_period = by_period.setdefault(period, {})
+            at_period[regime_name] = (at_period.get(regime_name, ()), signature)
     return MappingProxyType(
         {
-            period: MappingProxyType(
-                {
-                    regime_name: grid_schedule.grid_signature(
-                        period=period, regime_name=regime_name
-                    )
-                    for regime_name in by_regime
-                }
-            )
-            for period, by_regime in grid_schedule.by_period.items()
+            period: MappingProxyType(signatures)
+            for period, signatures in by_period.items()
         }
     )
 
@@ -3216,6 +3234,7 @@ def _build_solution_phase(  # noqa: PLR0915
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
     grid_schedule: AgeGridSchedule | None = None,
+    period_regimes: PeriodRegimes | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
     axis_widths: MappingProxyType[str, int],
@@ -3550,7 +3569,10 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
         period_to_regime_grid_signature=_period_to_regime_grid_signature(
-            grid_schedule=grid_schedule
+            grid_schedule=grid_schedule, period_regimes=period_regimes
+        ),
+        period_to_user_regimes=(
+            None if period_regimes is None else period_regimes.by_period
         ),
         regimes_to_active_periods=regimes_to_active_periods,
         flat_param_names=flat_param_names,

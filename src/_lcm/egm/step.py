@@ -236,6 +236,10 @@ def build_egm_step_functions(
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None,
+    period_to_user_regimes: (
+        MappingProxyType[int, Mapping[RegimeName, UserRegime]] | None
+    ) = None,
+    age_values: FloatND | IntND,
 ) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
@@ -279,8 +283,12 @@ def build_egm_step_functions(
             V-interpolation info per regime, or `None` for an age-invariant
             model. A period-`t` kernel reads its targets' entries at `t + 1`.
         period_to_regime_grid_signature: Immutable mapping of period to each
-            regime's user-declared grid signature, or `None` for an
-            age-invariant model. Folded into the kernel-sharing group key.
+            regime's user-declared age-specialization signature, or `None` for
+            an age-invariant model. Folded into the kernel-sharing group key.
+        period_to_user_regimes: Immutable mapping of period to every regime's
+            declaration with its age markers resolved at that period, or `None`
+            for an age-invariant model. A period-`t` kernel reads its carry
+            targets' resources maps from their declarations at `t + 1`.
 
     Returns:
         The per-period kernel mapping, the regime's all-finite carry template
@@ -444,9 +452,17 @@ def build_egm_step_functions(
         )
         if unsupported is not None:
             raise ModelInitializationError(unsupported)
+        # A target's resources map is the child's own at `t + 1`: its age
+        # markers resolve there, and the group key holds the targets'
+        # signatures at `t + 1`, so the representative period stands for all.
+        child_user_regimes = (
+            user_regimes
+            if period_to_user_regimes is None
+            else period_to_user_regimes.get(representative_period + 1, user_regimes)
+        )
         kernel = _get_egm_step(
             solver=solver,
-            user_regimes=user_regimes,
+            user_regimes=child_user_regimes,
             functions=group_functions,
             koopmans_aggregator=koopmans_aggregator,
             constraints=group_constraints,
@@ -465,6 +481,7 @@ def build_egm_step_functions(
             has_taste_shocks=has_taste_shocks,
             regime_to_v_interpolation_info=group_v_interp,
             asset_row_mode=asset_row_mode,
+            age_values=age_values,
         )
         built[group_key] = kernel
         # Each group owns a distinct numerical core and its child mesh. A
@@ -547,6 +564,7 @@ def _get_egm_step(
     has_taste_shocks: bool,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     asset_row_mode: bool,
+    age_values: FloatND | IntND,
 ) -> EGMStepFunction:
     """Build the EGM kernel for one continuation-target configuration.
 
@@ -583,6 +601,7 @@ def _get_egm_step(
         own_discrete_action_values=own_discrete_action_values,
         euler_axis_in_V=euler_axis_in_V,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        age_values=age_values,
     )
 
     return _EGMStep(
@@ -950,6 +969,7 @@ def _build_kernel_pieces(
     own_discrete_action_values: MappingProxyType[ActionName, Any],
     euler_axis_in_V: int,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    age_values: FloatND | IntND,
 ) -> _EgmKernelPieces:
     """Assemble the build-time statics of the EGM kernel."""
     savings_nodes = jnp.asarray(
@@ -966,6 +986,7 @@ def _build_kernel_pieces(
         compute_regime_transition_probs=compute_regime_transition_probs,
         post_decision_name=solver.post_decision_function,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        age_values=age_values,
     )
     return _EgmKernelPieces(
         euler_state_name=solver.continuous_state,
