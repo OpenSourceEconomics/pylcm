@@ -503,7 +503,8 @@ result.n_subjects  # 1000
 - `arrays/` — orbax checkpoint of the per-subject `raw_results` tree and `flat_params`.
 - `V_arr/` — orbax checkpoint of the solution value-function arrays; orbax streams
   sharded leaves shard by shard rather than gathering them onto one device.
-- `metadata.pkl` — `cloudpickle` of regimes, ages, and the parameter scaffold.
+- `metadata.pkl` — `cloudpickle` of regimes, the age or period clock, and the parameter
+  scaffold.
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
@@ -511,10 +512,11 @@ result.n_subjects  # 1000
 Two keywords select what that Feather table holds; neither affects the other three
 artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
 `to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, age, period, `V_arr`), a list of target names bakes those DAG outputs in, and
-`"all"` includes every available target --- which can grow the file by an order of
-magnitude on a model with many DAG leaves. `df_use_labels=True` (the default) stores
-discrete variables as pandas `Categorical` labels; `False` stores integer codes.
+regime, period, `V_arr`, and age for age models), a list of target names bakes those DAG
+outputs in, and `"all"` includes every available target --- which can grow the file by
+an order of magnitude on a model with many DAG leaves. `df_use_labels=True` (the
+default) stores discrete variables as pandas `Categorical` labels; `False` stores
+integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.

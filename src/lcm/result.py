@@ -266,7 +266,7 @@ class SimulationResult:
           single-device leaf in place, a sharded leaf shard by shard), so
           a near-device-cap leaf does not need a second contiguous device
           buffer at save time.
-        - `metadata.pkl` — cloudpickle of regimes, ages, pre-computed
+        - `metadata.pkl` — cloudpickle of regimes, the age or period clock, pre-computed
           result metadata, the parameter scaffold, and the per-regime
           chunk specs needed to reassemble on `load`.
         - `simulated_data.arrow` — a feather dump of

@@ -58,7 +58,8 @@ type ScalarInt = Int32[Scalar, ""]
 type ScalarFloat = Float[Scalar, ""]
 type ScalarBool = Bool[Scalar, ""]
 
-type Period = ScalarInt
+# Keep equivalent period annotations identical when DAGs reconcile their names.
+Period = ScalarInt
 type Age = ScalarInt | ScalarFloat
 
 # `jax.lax.fori_loop` body index. BOTH forms are admitted deliberately: with

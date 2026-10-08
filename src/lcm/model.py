@@ -535,7 +535,7 @@ class Model:
     """Description of the model."""
 
     ages: AgeGrid | None
-    """Age grid for the model."""
+    """Age grid, or None when the horizon is declared with n_periods."""
 
     n_periods: int
     """Number of periods in the model."""
@@ -566,7 +566,7 @@ class Model:
     """Static solution and simulation regime graphs."""
 
     initial_nodes: frozenset[tuple[object, RegimeName]] | frozenset[InitialNode]
-    """Exact admissible starting age-regime pairs."""
+    """Exact admissible starts in the model's age or period coordinates."""
 
     @property
     def graph(self) -> ModelGraph:
@@ -640,22 +640,25 @@ class Model:
                 instances. Stored as `self.user_regimes` after merging in
                 any model-level `derived_categoricals`; the canonical processed
                 form is exposed as `self._regimes`.
-            ages: Age grid for the model.
+            ages: Age grid for the model. Supply exactly one of `ages` and
+                `n_periods`.
+            n_periods: Positive number of computational periods, indexed from
+                zero. This mode has no age grid.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_nodes: The admissible starting age-regime pairs, as a
-                nonempty sequence or set of `(age, regime)` pairs. A mapping
-                from age selectors to regime names also selects admissible
-                pairs. Published as the exact pairs in `self.initial_nodes`,
-                which this argument accepts back. Required: there is no
-                default starting universe.
-            edges: Mapping from source regime to destination regime to source-age
-                selector. A bare mapping broadcasts to both phases; `Phased`
+            initial_nodes: Nonempty admissible starts. Age models accept
+                `(age, regime)` pairs or a mapping from age selectors to regime
+                names. Period models require `InitialNode(period=..., regime=...)`
+                entries. Published as exact starts in `self.initial_nodes`, which
+                this argument accepts back. There is no default starting universe.
+            edges: Mapping from source regime to destination regime to a source-time
+                selector. Period models require explicit `Periods` or `PeriodRange`
+                selectors. A bare mapping broadcasts to both phases; `Phased`
                 declares perceived solve and realized simulation topology separately.
-                The edge lands at the next grid age. A source with several
-                destinations at some age maps to `Transition(targets=..., law=...)`,
+                The edge lands at the next period. A source with several
+                destinations at some time maps to `Transition(targets=..., law=...)`,
                 whose law chooses among them; a regime with no outgoing edges is
                 terminal. Kept as declared, laws included, in `self.edges`, which
                 this argument accepts back; stored as an immutable, validated

@@ -20,6 +20,7 @@ from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.typing import (
     BoolND,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     Period,
     ScalarInt,
@@ -732,6 +733,70 @@ def _joint_support(*, scale: FloatND) -> FloatND:
 
 def _joint_probabilities(*, probability: FloatND) -> FloatND:
     return jnp.array([probability, 1.0 - probability])
+
+
+def _next_clock_scalar(period: ScalarInt) -> DiscreteState:
+    return period
+
+
+def _next_clock_period(period: Period) -> DiscreteState:
+    return period
+
+
+def _clock_value(*, outcome: DiscreteState, clock: DiscreteState) -> FloatND:
+    return 10.0 * outcome + clock
+
+
+@pytest.mark.parametrize("next_clock", [_next_clock_scalar, _next_clock_period])
+def test_managed_lottery_composes_with_explicit_period(
+    next_clock: UserFunction,
+) -> None:
+    """Managed draws and explicit period laws share their source period."""
+    model = lcm.Model(
+        n_periods=3,
+        regimes={
+            "work": lcm.Regime(
+                functions={"utility": _zero},
+                state_transitions={
+                    "outcome": {
+                        "done": lcm.StochasticTransition(
+                            func=lcm.time_varying_params("probability")(
+                                _joint_probabilities
+                            )
+                        )
+                    },
+                    "clock": {"done": next_clock},
+                },
+            ),
+            "done": lcm.Regime(
+                functions={"utility": _clock_value},
+                states={
+                    "outcome": lcm.DiscreteGrid(category_class=Option),
+                    "clock": lcm.DiscreteGrid(category_class=Option),
+                },
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=(lcm.InitialNode(period=1, regime="work"),),
+        edges={"work": {"done": lcm.Periods(values=(1,))}},
+        fixed_params={"discount_factor": 0.5},
+    )
+    result = model.simulate(
+        params={
+            "probability": lcm.TimeVarying(values=jnp.array([1.0, 0.0]), periods=(0, 1))
+        },
+        initial_conditions={
+            "period": jnp.array([1]),
+            "regime_id": jnp.array([RegimeId.work]),
+        },
+        seed=3,
+        log_level="off",
+    )
+    frame = result.to_dataframe(use_labels=False)
+    np.testing.assert_array_equal(frame["period"], [1, 2])
+    np.testing.assert_allclose(frame["value"], [5.5, 11.0])
+    np.testing.assert_array_equal(frame.loc[frame["period"] == 2, "outcome"], [1])
+    np.testing.assert_array_equal(frame.loc[frame["period"] == 2, "clock"], [1])
 
 
 def _joint_output(*, match: FloatND, shift: FloatND) -> FloatND:
