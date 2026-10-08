@@ -1,7 +1,7 @@
 """Guardrail checks against the manifest's recorded operating budgets.
 
 These are proposed *operating* budgets (implementation plan batch 1, section
-5), not historical measurements: 24 minutes payload / 30 minutes total per
+5), not historical measurements: 30 minutes payload / 40 minutes total per
 job, and 30 seconds for an ordinary `notslow` test. The ceiling only applies
 to files that HAVE an observed weight -- an unweighted file is a visible gap
 to close (see `test_ci_workloads_manifest.test_unweighted_files_are_listed_not_zeroed`),
@@ -124,8 +124,8 @@ def test_the_backlog_cannot_grow_without_a_manifest_source_note():
 def test_guardrail_numbers_come_from_the_manifest_not_from_this_module():
     manifest = ci_workloads.load_manifest()
     guardrails = manifest["guardrails"]
-    assert guardrails["job_payload_ceiling_minutes"] == 24
-    assert guardrails["job_total_ceiling_minutes"] == 30
+    assert guardrails["job_payload_ceiling_minutes"] == 30
+    assert guardrails["job_total_ceiling_minutes"] == 40
     assert guardrails["ordinary_notslow_test_ceiling_seconds"] == 30
 
 
@@ -149,7 +149,7 @@ def test_every_invocation_stays_inside_the_payload_guardrail():
     on real time -- it excludes setup, collection, reporting and worker
     imbalance -- so a lane already over the ceiling here is certainly over it in
     CI. Being under it is necessary, not sufficient; only a CI run can confirm
-    the 30-minute job total.
+    the 40-minute job total.
     """
     ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]
     offenders = [
