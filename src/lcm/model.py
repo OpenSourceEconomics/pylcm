@@ -3635,6 +3635,11 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
+            states = canonicalize_initial_conditions(
+                initial_conditions=states,
+                regimes=MappingProxyType({regime_name: regime}),
+                array_writer=allocations,
+            )
             return self._lookup_policy(
                 params=params,
                 solution=solution,
