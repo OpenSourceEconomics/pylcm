@@ -27,7 +27,11 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+)
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
 DISCOUNT_FACTOR = 0.5
@@ -56,6 +60,10 @@ def fallback_utility() -> FloatND:
     return jnp.asarray(0.5)
 
 
+def fallback_utility_of_w(w: ContinuousState) -> FloatND:
+    return 0.25 * (1.0 + w)
+
+
 def next_y_value(next_y: ContinuousState) -> FloatND:
     return next_y
 
@@ -76,6 +84,10 @@ def always(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
+def always_through_h(*, age: FloatND, h: FloatND) -> FloatND:
+    return jnp.ones_like(age, dtype=float) + 0.0 * h
+
+
 def gate_with_threshold_h(*, V_target: FloatND, h: float) -> BoolND:
     return V_target >= h
 
@@ -84,18 +96,40 @@ def gate_reading_next_y(*, V_target: FloatND, next_y: FloatND) -> BoolND:
     return V_target >= next_y
 
 
+def gate_with_fixed_threshold(V_target: FloatND) -> BoolND:
+    return V_target >= 0.75
+
+
+def gate_against_reference(*, V_target: FloatND, V_fallback: FloatND) -> BoolND:
+    return V_target >= V_fallback
+
+
+def project_h(h: FloatND) -> FloatND:
+    return jnp.asarray(h)
+
+
+def project_next_y(next_y: FloatND) -> FloatND:
+    return next_y
+
+
 def build_model(
     *,
     helper_name: str,
     helper_depth: int,
     gate: Callable[..., BoolND] = gate_with_threshold_h,
+    reference_projection: Callable[..., FloatND] | None = None,
+    route_projection: Callable[..., FloatND] | None = None,
+    law: Callable[..., FloatND] = always,
     target_functions: Mapping[str, Callable[..., FloatND]] | None = None,
 ) -> Model:
     """Source `src` moves `z` through a helper reading `next_y`; age 1 is gated.
 
     `src@0 -> src@1 -> target@2`, with the gate's fallback `fallback@2`. Both
     endpoints are terminal; the target declares no state and no function `h`.
+    A projection, if given, projects onto the fallback's state `w`: as the gate
+    reference `V_fallback`, or as the route's fallback.
     """
+    projects = reference_projection is not None or route_projection is not None
     functions = {
         "utility": source_utility,
         helper_name: next_y_value if helper_depth == 1 else through_inner_h,
@@ -120,7 +154,11 @@ def build_model(
             "target": Regime(
                 functions={"utility": target_utility, **(target_functions or {})}
             ),
-            "fallback": Regime(functions={"utility": fallback_utility}),
+            "fallback": (
+                Regime(states={"w": grid}, functions={"utility": fallback_utility_of_w})
+                if projects
+                else Regime(functions={"utility": fallback_utility})
+            ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
@@ -130,16 +168,31 @@ def build_model(
                 law=ByAge(
                     cases={
                         0: "src",
-                        1: {"target": StochasticTransition(func=always)},
+                        1: {"target": StochasticTransition(func=law)},
                     }
                 ),
                 gates={
                     "target": Gate(
                         predicate=gate,
+                        references=(
+                            {}
+                            if reference_projection is None
+                            else {
+                                "V_fallback": ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"w": reference_projection},
+                                )
+                            }
+                        ),
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={}
+                                    regime="fallback",
+                                    projection=(
+                                        {"w": route_projection or project_h}
+                                        if projects
+                                        else {}
+                                    ),
                                 )
                             )
                         },
@@ -234,4 +287,73 @@ def test_gate_reading_a_function_of_its_target_is_refused():
             helper_name="source_helper",
             helper_depth=1,
             target_functions={"h": target_h},
+        )
+
+
+@pytest.mark.parametrize(("helper_name", "helper_depth"), HELPER_CASES)
+@pytest.mark.parametrize(
+    ("role", "leaf"),
+    [
+        pytest.param(
+            "reference",
+            {
+                ("src", "target", "references", "V_fallback", "w", "h"),
+                ("src", "target", "routes", "only", "fallback", "w", "h"),
+            },
+            id="reference-projection",
+        ),
+        pytest.param(
+            "route",
+            {("src", "target", "routes", "only", "fallback", "w", "h")},
+            id="route-projection",
+        ),
+    ],
+)
+def test_projection_argument_is_a_free_parameter_whatever_the_source_calls_a_helper(
+    *, helper_name, helper_depth, role, leaf
+):
+    """A projection runs on the target too; its `h` is its own parameter."""
+    model = build_model(
+        helper_name=helper_name,
+        helper_depth=helper_depth,
+        gate=gate_against_reference
+        if role == "reference"
+        else gate_with_fixed_threshold,
+        reference_projection=project_h if role == "reference" else None,
+        route_projection=project_h,
+    )
+    assert leaf_paths(tree=model.get_params_template()["edges"]) == leaf
+
+
+@pytest.mark.parametrize("role", ["reference", "route"])
+def test_projection_reading_a_next_name_directly_is_refused(role):
+    with pytest.raises(InvalidNameError, match="next_y"):
+        build_model(
+            helper_name="source_helper",
+            helper_depth=1,
+            gate=(
+                gate_against_reference
+                if role == "reference"
+                else gate_with_fixed_threshold
+            ),
+            reference_projection=project_next_y if role == "reference" else None,
+            route_projection=project_next_y if role == "route" else project_h,
+        )
+
+
+def test_edge_law_reading_a_next_name_through_a_source_helper_is_refused():
+    """The law runs on the source, before any target law; it may not reach `next_y`."""
+    with pytest.raises(InvalidNameError, match="next_y"):
+        build_model(helper_name="h", helper_depth=1, law=always_through_h)
+
+
+def test_gate_parameter_beside_an_unknown_leaf_is_refused():
+    model = build_model(helper_name="source_helper", helper_depth=1)
+    with pytest.raises(InvalidParamsError, match="extra"):
+        model.solve(
+            params={
+                "discount_factor": DISCOUNT_FACTOR,
+                "edges": {"src": {"target": {"predicate": {"h": 0.5, "extra": 1.0}}}},
+            },
+            log_level="off",
         )
