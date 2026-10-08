@@ -1,4 +1,5 @@
 import functools
+import platform
 from collections.abc import Mapping
 
 import jax
@@ -244,6 +245,8 @@ def test_model_with_different_grid_types(grid_type: str):
 # is the command that regenerates it.
 _STORED_MODEL_VALUES = _PRECISION_DIR / "representative_model_values.npz"
 _TOLERANCE = 1e-10 if X64_ENABLED else 1e-5
+# `platform.machine()` of the CPUs the archive was produced on, lower-cased.
+_ARCHIVE_MACHINES = frozenset({"x86_64", "amd64"})
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
@@ -261,13 +264,18 @@ def test_representative_outputs_have_the_stored_dtypes_and_shapes(name: str):
 
 
 @pytest.mark.skipif(
-    jax.default_backend() != "cpu", reason="The stored outputs are CPU results."
+    jax.default_backend() != "cpu"
+    or platform.machine().lower() not in _ARCHIVE_MACHINES,
+    reason="The stored bytes are x86-64 CPU results; elsewhere the float outputs "
+    "are compared within tolerance.",
 )
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
 def test_representative_outputs_equal_their_stored_bytes(name: str):
     """Each output equals its stored array byte for byte.
 
-    Signed zeros, NaN payloads and discrete labels included.
+    Signed zeros, NaN payloads and discrete labels included. The last bits of a
+    float output depend on the CPU architecture XLA compiles for, so the bytes
+    are compared only on the architecture the archive was produced on.
     """
     assert _bytes(_outputs(name)) == _bytes(_stored_outputs(name))
 
