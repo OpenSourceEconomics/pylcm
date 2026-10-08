@@ -21,8 +21,14 @@ from tests.regime_building.test_nonterminal_collective_solve import (
 )
 from tests.test_models.deterministic.regression import (
     DEFAULT_CONSUMPTION_GRID,
+    DEFAULT_WEALTH_GRID,
+    START_AGE,
+    RegimeId,
+    dead,
     get_model,
     get_params,
+    working_life,
+    working_life_edges,
 )
 
 N_PERIODS = 5
@@ -214,3 +220,56 @@ def test_budgeted_lookup_returns_the_feasibility_of_each_action():
     np.testing.assert_array_equal(
         np.asarray(got.F), np.array([[[True, True, False], [True, True, False]]])
     )
+
+
+def test_action_values_bind_the_models_fixed_params(solved):
+    """Parameters fixed at model build reach the action values like the decision.
+
+    Fixing `disutility_of_work` at its runtime value leaves `Q`, `F`, the
+    actions and the value equal to those of the model that takes it at runtime.
+    """
+    _, params, _ = solved
+    ages = AgeGrid(start=START_AGE, inclusive_stop=START_AGE + N_PERIODS - 1, step="Y")
+    fixed_model = Model(
+        regimes={
+            "working_life": working_life.replace(
+                states={"wealth": DEFAULT_WEALTH_GRID},
+                actions={
+                    "labor_supply": DiscreteGrid(category_class=LaborSupply),
+                    "consumption": DEFAULT_CONSUMPTION_GRID,
+                },
+            ),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+        initial_nodes={START_AGE: "working_life"},
+        edges=working_life_edges(ages),
+        fixed_params={"working_life": {"utility": {"disutility_of_work": 0.5}}},
+    )
+    fixed_params = {
+        **params,
+        "working_life": {"next_wealth": params["working_life"]["next_wealth"]},
+    }
+    fixed_solution = fixed_model.solve(params=fixed_params, log_level="off")
+    states = {"wealth": jnp.array([5.0, 20.0, 40.0, 70.0])}
+    got = fixed_model.lookup_policy(
+        params=fixed_params,
+        solution=fixed_solution,
+        period=LAST_ALIVE_PERIOD,
+        regime_name="working_life",
+        states=states,
+        return_action_values=True,
+    )
+    expected = lookup(
+        solved=solved,
+        period=LAST_ALIVE_PERIOD,
+        states=states,
+        return_action_values=True,
+    )
+    np.testing.assert_array_equal(flatten_lookup(got), flatten_lookup(expected))
+
+
+def flatten_lookup(got):
+    """`Q`, `F` and the value of a lookup, raveled into one array."""
+    return np.concatenate([np.asarray(x).ravel() for x in (got.Q, got.F, got.value)])
