@@ -37,6 +37,7 @@ from _lcm.execution.execution_plan import (
     visible_device_ids,
     visible_device_pool_limits,
 )
+from _lcm.execution.footprint import layout_footprint
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
@@ -127,6 +128,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    require_transfer_headroom,
     resolve_budget_devices,
     union_buffer_footprints,
 )
@@ -142,6 +144,7 @@ from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.time_inputs import lower_initial_time
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -3683,7 +3686,29 @@ class Model:
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
-            return self._lookup_policy(
+            states = canonicalize_initial_conditions(
+                initial_conditions=states,
+                regimes=MappingProxyType({regime_name: regime}),
+                array_writer=allocations,
+            )
+            n_rows = len(next(iter(states.values()))) if states else 0
+            if states:
+                # Rows split evenly over the subject devices, as simulated
+                # subjects do: the last row is repeated and trimmed afterwards.
+                n_devices = len(self._execution.device_ids)
+                alignment = (
+                    n_devices if self._distributes_subjects() and n_devices > 1 else 1
+                )
+                if allocations is None:
+                    states, _ = pad_initial_conditions_to_multiple(
+                        initial_conditions=states, multiple=alignment
+                    )
+                else:
+                    states, _ = allocations.pad(
+                        initial_conditions=states, multiple=alignment
+                    )
+                    allocations.publish(stage="initial", tree=states)
+            lookup = self._lookup_policy(
                 params=params,
                 solution=solution,
                 period=period,
@@ -3692,6 +3717,16 @@ class Model:
                 action_grids=action_grids,
                 allocations=allocations,
                 return_action_values=return_action_values,
+            )
+            if not states or len(next(iter(states.values()))) == n_rows:
+                return lookup
+            return PolicyLookup(
+                actions=MappingProxyType(
+                    {name: each[:n_rows] for name, each in lookup.actions.items()}
+                ),
+                value=lookup.value[:n_rows],
+                Q=None if lookup.Q is None else lookup.Q[:n_rows],
+                F=None if lookup.F is None else lookup.F[:n_rows],
             )
         finally:
             if allocations is not None:
@@ -3798,14 +3833,30 @@ class Model:
             source_regime_name=regime_name,
             source_period=period,
         )
+        references = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=V_arrs,
+            flat_params=flat_params,
+            period=period,
+        )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if isinstance(executor, SimulationRuntime):
+            # The solve may leave a regime's values on any of its devices; the
+            # decision reads them replicated over the subject devices, as in
+            # simulation.
+            next_V, references = _place_lookup_values(
+                values=(next_V, references),
+                runtime=executor,
+                allocations=allocations,
+                call_roots=(states, space.states, grids),
+            )
         unit = None
         if allocations is not None and isinstance(executor, SimulationRuntime):
             call_live = functools.partial(
                 _lookup_live_footprint,
                 allocations=allocations,
-                call_roots=(states, space.states, grids),
+                call_roots=(states, space.states, grids, next_V, references),
             )
             unit = SimulationUnitExecutor(
                 runtime=executor,
@@ -3834,12 +3885,7 @@ class Model:
                     continuous_actions={n: grids[n] for n in space.continuous_actions},
                     taste_keys={},
                     next_values=next_V,
-                    references=_referenced_value_kwargs(
-                        regime=regime,
-                        period_to_regime_to_V_arr=V_arrs,
-                        flat_params=flat_params,
-                        period=period,
-                    ),
+                    references=references,
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self._time.values[period],  # noqa: PD011
@@ -4599,6 +4645,100 @@ def _fail_if_a_sharded_state_is_pruned(
             "devices. Drop the name, or make some regime use the state."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _place_lookup_values[T](
+    *,
+    values: T,
+    runtime: SimulationRuntime,
+    allocations: SimulationEntryAllocations | None,
+    call_roots: object,
+) -> T:
+    """Copy a lookup's values to their subject-device layout, admitted if budgeted.
+
+    A budgeted call admits the copies against its entry owner's inventory and
+    its own arrays before the first copy is made.
+    """
+    budget = runtime.execution.device_memory_bytes
+    if allocations is not None and budget is not None:
+        live = _lookup_live_footprint(
+            allocations=allocations, call_roots=(call_roots, values)
+        )
+        _require_value_placement_headroom(
+            values=values,
+            devices=runtime.subject_devices,
+            live=live,
+            budget_bytes=budget,
+            budget_note=runtime.execution.device_memory_cap_note(),
+        )
+    return _place_values_on_subject_devices(
+        values=values, devices=runtime.subject_devices
+    )
+
+
+def _place_values_on_subject_devices[T](
+    *, values: T, devices: tuple[jax.Device, ...]
+) -> T:
+    """Copy every value array to the replicated layout its subject devices read.
+
+    A value already in that layout is returned as is, without a copy.
+    """
+
+    def place(leaf: object) -> object:
+        if not isinstance(leaf, jax.Array):
+            return leaf
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            return leaf
+        return jax.device_put(leaf, required)
+
+    placed = jax.tree.map(place, values)
+    jax.block_until_ready(placed)
+    return placed
+
+
+def _require_value_placement_headroom(
+    *,
+    values: object,
+    devices: tuple[jax.Device, ...],
+    live: DeviceBufferFootprint,
+    budget_bytes: int,
+    budget_note: str,
+) -> None:
+    """Refuse value copies whose payload and transfer scratch exceed the budget.
+
+    Each value not yet in its replicated read layout costs that layout's payload
+    on every subject device, plus the same amount of transfer scratch on its
+    source and destination devices. `live` holds the inputs, the solution and
+    the call's own arrays, which all stay owned while the copies are made.
+    """
+    destination_bytes: dict[jax.Device, int] = {}
+    scratch_bytes: dict[jax.Device, int] = {}
+    for leaf in jax.tree.leaves(values):
+        if not isinstance(leaf, jax.Array):
+            continue
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            continue
+        byte_count = layout_footprint(
+            sharding=required, shape=tuple(leaf.shape), item_bytes=leaf.dtype.itemsize
+        ).bytes_per_device
+        for device in required.device_set:
+            destination_bytes[device] = destination_bytes.get(device, 0) + byte_count
+        for device in leaf.sharding.device_set | required.device_set:
+            scratch_bytes[device] = scratch_bytes.get(device, 0) + byte_count
+    require_transfer_headroom(
+        live=live,
+        destination_bytes=destination_bytes,
+        scratch_bytes=scratch_bytes,
+        budget_bytes=budget_bytes,
+        devices=resolve_budget_devices(execution_devices=devices, live=live),
+        budget_note=budget_note,
+    )
 
 
 def _lookup_live_footprint(
