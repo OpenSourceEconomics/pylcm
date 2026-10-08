@@ -3640,7 +3640,24 @@ class Model:
                 regimes=MappingProxyType({regime_name: regime}),
                 array_writer=allocations,
             )
-            return self._lookup_policy(
+            n_rows = len(next(iter(states.values()))) if states else 0
+            if states:
+                # Rows split evenly over the subject devices, as simulated
+                # subjects do: the last row is repeated and trimmed afterwards.
+                n_devices = len(self._execution.device_ids)
+                alignment = (
+                    n_devices if self._distributes_subjects() and n_devices > 1 else 1
+                )
+                if allocations is None:
+                    states, _ = pad_initial_conditions_to_multiple(
+                        initial_conditions=states, multiple=alignment
+                    )
+                else:
+                    states, _ = allocations.pad(
+                        initial_conditions=states, multiple=alignment
+                    )
+                    allocations.publish(stage="initial", tree=states)
+            lookup = self._lookup_policy(
                 params=params,
                 solution=solution,
                 period=period,
@@ -3649,6 +3666,16 @@ class Model:
                 action_grids=action_grids,
                 allocations=allocations,
                 return_action_values=return_action_values,
+            )
+            if not states or len(next(iter(states.values()))) == n_rows:
+                return lookup
+            return PolicyLookup(
+                actions=MappingProxyType(
+                    {name: each[:n_rows] for name, each in lookup.actions.items()}
+                ),
+                value=lookup.value[:n_rows],
+                Q=None if lookup.Q is None else lookup.Q[:n_rows],
+                F=None if lookup.F is None else lookup.F[:n_rows],
             )
         finally:
             if allocations is not None:

@@ -1,7 +1,8 @@
 """A policy lookup gives the same rows however many devices the model has.
 
 An empty query stands for one row, and one row cannot be split across devices.
-A stateful query reads the next period's values wherever the solve left them.
+A stateful query reads the next period's values wherever the solve left them,
+and gives its rows however many of them each subject device holds.
 Each device count runs in its own subprocess with forced host devices, so the
 witness does not depend on the ambient topology.
 """
@@ -74,22 +75,45 @@ _STATEFUL_SCRIPT = textwrap.dedent(
 
     from tests.test_models.deterministic.regression import get_model, get_params
 
+    from lcm import ExecutionConfig
+
     n_devices = int(sys.argv[1])
     return_action_values = sys.argv[2] == "1"
+    execution = sys.argv[3]
+    n_rows = int(sys.argv[4])
     assert jax.device_count() == n_devices, jax.devices()
 
-    model = get_model(n_periods=5)
+    execution_config = {
+        "default": None,
+        "subjects": ExecutionConfig(
+            devices=tuple(device.id for device in jax.devices()),
+            sharded_states=(),
+            simulation_sharding="subjects",
+        ),
+        "subjects-budgeted": ExecutionConfig(
+            devices=tuple(device.id for device in jax.devices()),
+            sharded_states=(),
+            simulation_sharding="subjects",
+            device_memory_bytes=2**30,
+        ),
+    }[execution]
+    model = (
+        get_model(n_periods=5)
+        if execution_config is None
+        else get_model(n_periods=5, execution_config=execution_config)
+    )
     params = get_params(n_periods=5)
     solution = model.solve(params=params, log_level="off")
     wealth = model.state_grid(
         params=params, regime_name="working_life", state_name="wealth"
     )
+    assert len(wealth) >= n_rows
     got = model.lookup_policy(
         params=params,
         solution=solution,
         period=3,
         regime_name="working_life",
-        states={"wealth": jnp.asarray(wealth[:2])},
+        states={"wealth": jnp.asarray(wealth[:n_rows])},
         return_action_values=return_action_values,
     )
     outputs = {
@@ -107,7 +131,11 @@ _STATEFUL_SCRIPT = textwrap.dedent(
 
 
 def _lookup_on_devices(
-    *, n_devices: int, return_action_values: bool, script: str = _SCRIPT
+    *,
+    n_devices: int,
+    return_action_values: bool,
+    script: str = _SCRIPT,
+    extra_args: tuple[str, ...] = (),
 ) -> dict:
     env = {
         **os.environ,
@@ -115,7 +143,14 @@ def _lookup_on_devices(
         "JAX_PLATFORMS": "cpu",
     }
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", script, str(n_devices), str(int(return_action_values))],
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(n_devices),
+            str(int(return_action_values)),
+            *extra_args,
+        ],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
@@ -156,10 +191,34 @@ def test_stateful_lookup_on_several_devices_matches_one_device(
         n_devices=n_devices,
         return_action_values=return_action_values,
         script=_STATEFUL_SCRIPT,
+        extra_args=("default", "2"),
     )
     expected = _lookup_on_devices(
         n_devices=1,
         return_action_values=return_action_values,
         script=_STATEFUL_SCRIPT,
+        extra_args=("default", "2"),
+    )
+    assert got == expected
+
+
+@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("execution", ["subjects", "subjects-budgeted"])
+@pytest.mark.parametrize("n_devices", [2, 8])
+def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
+    *, n_devices: int, execution: str, return_action_values: bool
+) -> None:
+    """Three rows split over the subject devices give the three one-device rows."""
+    got = _lookup_on_devices(
+        n_devices=n_devices,
+        return_action_values=return_action_values,
+        script=_STATEFUL_SCRIPT,
+        extra_args=(execution, "3"),
+    )
+    expected = _lookup_on_devices(
+        n_devices=1,
+        return_action_values=return_action_values,
+        script=_STATEFUL_SCRIPT,
+        extra_args=("default", "3"),
     )
     assert got == expected
