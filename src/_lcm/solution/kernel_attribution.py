@@ -27,8 +27,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from _lcm.engine import StateActionSpace
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import RegimeName
-from lcm.ages import AgeGrid
 
 _ENV_VAR = "LCM_LOG_KERNEL_ATTRIBUTION"
 
@@ -42,7 +42,7 @@ def log_executed_kernel(
     *,
     regime_name: RegimeName,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     state_action_space: StateActionSpace,
     core_keys: tuple[str, ...],
     logger: logging.Logger,
@@ -67,9 +67,9 @@ def log_executed_kernel(
 
     logger.log(
         _level(logger=logger),
-        "  [attr] %s age %s period %d: branches=%d actions=(%s) states=(%s) cores=(%s)",
+        "  [attr] %s%s period %d: branches=%d actions=(%s) states=(%s) cores=(%s)",
         regime_name,
-        ages.values[period].item(),
+        f" age {ages.values[period].item()}" if coordinate_kind(ages) == "age" else "",
         period,
         branches,
         _render(cardinalities),

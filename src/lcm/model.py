@@ -53,7 +53,6 @@ from _lcm.model_processing import (
 )
 from _lcm.pandas_utils import (
     convert_series_in_params,
-    has_series,
     initial_conditions_from_dataframe,
 )
 from _lcm.params.edges import regime_kernel_params
@@ -140,6 +139,7 @@ from _lcm.simulation.simulate import (
     simulate,
 )
 from _lcm.simulation.subject_groups import group_sizes, grouped_extent
+from _lcm.simulation.time_inputs import lower_initial_time
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.solution.artifacts import (
@@ -212,6 +212,8 @@ from _lcm.solution.result_snapshot import (
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.structural_blueprints import StructuralBlueprintCache
 from _lcm.solution.validate_V import contains_nan
+from _lcm.time import ModelTime
+from _lcm.time_validation import validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
     ActionName,
@@ -290,7 +292,8 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges, PhaseEdges, Transition
+from lcm.time import InitialNode
+from lcm.transition import ModelEdges, Periods, PhaseEdges, Transition
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -528,7 +531,7 @@ class Model:
     description: str | None = None
     """Description of the model."""
 
-    ages: AgeGrid
+    ages: AgeGrid | None
     """Age grid for the model."""
 
     n_periods: int
@@ -559,7 +562,7 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
-    initial_nodes: frozenset[tuple[object, RegimeName]]
+    initial_nodes: frozenset[tuple[object, RegimeName]] | frozenset[InitialNode]
     """Exact admissible starting age-regime pairs."""
 
     @property
@@ -607,7 +610,8 @@ class Model:
         self,
         *,
         description: str = "",
-        ages: AgeGrid,
+        ages: AgeGrid | None = None,
+        n_periods: int | None = None,
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type,
         enable_jit: bool = True,
@@ -688,12 +692,15 @@ class Model:
         """
         self.description = description
         self.ages = ages
-        self.n_periods = ages.n_periods
+        self._time = ModelTime.from_inputs(ages=ages, n_periods=n_periods)
+        self.n_periods = self._time.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
         self._edges = cast("ModelEdges", edges)
-        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        laws, graph_edges = bind_edge_laws(
+            edges=edges, regimes=regimes, ages=self._time
+        )
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
         self._declared_transitions = collect_declared_transitions(self._edges)
@@ -748,7 +755,7 @@ class Model:
         # through pruning, validation and model-structure preparation; only
         # demanded laws are lowered to the engine's period-independent form.
         resolved_initial_nodes = resolve_initial_nodes(
-            initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
+            initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=self._time
         )
         regime_names_to_ids = {
             name: int(code)
@@ -767,6 +774,7 @@ class Model:
             laws=laws,
             model_slots=model_slots,
         )
+        validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
@@ -777,7 +785,7 @@ class Model:
             regimes=merged_regimes,
             laws=laws,
             edges=graph_edges,
-            ages=ages,
+            ages=self._time,
             initial_nodes=resolved_initial_nodes,
             fixed_params=self.fixed_params,
         )
@@ -816,7 +824,7 @@ class Model:
             laws=laws,
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
-            ages=ages,
+            ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
         )
         finalized_regimes = finalize_regimes(
@@ -854,7 +862,7 @@ class Model:
             laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
-            ages=self.ages,
+            ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             removed_edge_reads=prepared_graph.removed_edge_reads,
@@ -904,7 +912,7 @@ class Model:
         prepared_structure = prepare_model_structure(
             user_regimes=self.user_regimes,
             laws=laws,
-            ages=self.ages,
+            ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
@@ -915,11 +923,11 @@ class Model:
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
             nodes=frozenset(
-                (self.ages.exact_values[period], name)
+                (self._time.exact_values[period], name)
                 for period, name in schedules.valued_nodes
             ),
             visited_nodes=frozenset(
-                (self.ages.exact_values[period], name)
+                (self._time.exact_values[period], name)
                 for period, name in schedules.visited_nodes
             ),
         )
@@ -929,10 +937,19 @@ class Model:
             reachability=self.reachability,
             pruned_edges=prepared_graph.pruned_edges,
             laws=laws,
+            coordinate_kind=self._time.kind,
         )
-        self.initial_nodes = resolved_initial_nodes
+        self._resolved_initial_nodes = resolved_initial_nodes
+        self.initial_nodes = (
+            frozenset(
+                InitialNode(period=cast("int", period), regime=name)
+                for period, name in resolved_initial_nodes
+            )
+            if self.ages is None
+            else resolved_initial_nodes
+        )
         self._regimes, self._params_template = build_regimes_and_template(
-            ages=self.ages,
+            ages=self._time,
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
@@ -941,6 +958,7 @@ class Model:
                 params_consumed_by_binder | prepared_graph.consumed_param_keys
             ),
             prepared_structure=prepared_structure,
+            phase_transitions=self.declared_transitions,
             execution=self._execution,
         )
         self._regimes = admit_invariant_blocking(
@@ -948,8 +966,8 @@ class Model:
             regimes=self._regimes,
             laws=laws,
             reachability=self.reachability,
-            initial_nodes=self.initial_nodes,
-            ages=self.ages,
+            initial_nodes=self._resolved_initial_nodes,
+            ages=self._time,
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
             schedule=self._execution.invariant_block_schedule,
@@ -1037,7 +1055,16 @@ class Model:
                             else dataclasses.replace(
                                 declaration,
                                 targets={
-                                    target: tuple(sorted(source_ages))
+                                    target: (
+                                        Periods(
+                                            values=cast(
+                                                "tuple[int, ...]",
+                                                tuple(sorted(source_ages)),
+                                            )
+                                        )
+                                        if self.ages is None
+                                        else tuple(sorted(source_ages))
+                                    )
                                     for target, source_ages in graph_edges[phase][
                                         source
                                     ].items()
@@ -1071,7 +1098,7 @@ class Model:
         recorder = BindingRecorder()
         try:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
-                ages=self.ages,
+                ages=self._time,
                 regimes=self._regimes,
                 user_regimes=self.user_regimes,
                 laws=self._graph.laws,
@@ -1132,6 +1159,16 @@ class Model:
         callables read.
         """
         self.__dict__.update(state)
+        if "_time" not in state:
+            if not isinstance(self.ages, AgeGrid):
+                raise ModelInitializationError(
+                    "Saved model archive has no age grid to restore its clock. "
+                    "Rebuild this model with an explicit time coordinate."
+                )
+            self._time = ModelTime.from_inputs(ages=self.ages, n_periods=None)
+            self._resolved_initial_nodes = cast(
+                "frozenset[tuple[object, RegimeName]]", self.initial_nodes
+            )
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._simulate_runtime_regimes = {}
@@ -1174,7 +1211,7 @@ class Model:
         authority = build_solution_authority(
             regimes=self._regimes,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
             process_grid_resolver=process_grid_resolver,
         )
         with self._declared_authority_lock:
@@ -1201,7 +1238,7 @@ class Model:
     ) -> str:
         """Digest the durable model identity under these parameters."""
         return fingerprint_model(
-            ages=self.ages,
+            ages=self._time,
             regimes=self._regimes,
             user_regimes=self.user_regimes,
             laws=self._graph.laws,
@@ -1220,7 +1257,7 @@ class Model:
     ) -> str:
         """Digest the model facts every lowered solve program depends on."""
         return fingerprint_model_programs(
-            ages=self.ages,
+            ages=self._time,
             regimes=self._regimes,
             user_regimes=self.user_regimes,
             laws=self._graph.laws,
@@ -1263,7 +1300,7 @@ class Model:
         Args:
             params: Parameters the cores are materialized against.
             regime_name: Regime whose period kernel is compiled.
-            period: Index of the period in `self.ages`.
+            period: Index of the period in the model horizon.
             axis_widths: Width per execution axis, for the model as a whole.
                 An axis a core declares and this mapping names takes that
                 width; one the mapping omits takes the bootstrap width the
@@ -1278,7 +1315,7 @@ class Model:
         return compile_declared_period_cores(
             regimes=self._regimes,
             flat_params=self._process_params(params),
-            ages=self.ages,
+            ages=self._time,
             regime_name=regime_name,
             period=period,
             axis_widths=axis_widths,
@@ -1349,7 +1386,7 @@ class Model:
                     validate_transitions(
                         regimes=self._regimes,
                         flat_params=flat_params,
-                        ages=self.ages,
+                        ages=self._time,
                         logger=log,
                         process_grid_resolver=None,
                     )
@@ -1407,7 +1444,7 @@ class Model:
             directory=Path(directory),
             flat_params=flat_params,
             regimes=self._regimes,
-            ages=self.ages,
+            ages=self._time,
             execution=self._execution,
             enable_jit=self.enable_jit,
             source_identity=source_identity,
@@ -1458,7 +1495,7 @@ class Model:
         validate_transitions(
             regimes=self._regimes,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
             logger=log,
             process_grid_resolver=None,
         )
@@ -1473,14 +1510,14 @@ class Model:
         check_pareto_weights(
             regimes=self._regimes,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
             process_grid_resolver=None,
         )
         return lower_period_candidate(
             candidate=candidate,
             regimes=self._regimes,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
             execution=self._execution,
             retention=retention,
             persistable_artifact_refs=preparation.persistable_artifact_refs,
@@ -1674,7 +1711,7 @@ class Model:
             check_pareto_weights(
                 regimes=self._regimes,
                 flat_params=flat_params,
-                ages=self.ages,
+                ages=self._time,
                 process_grid_resolver=process_grid_resolver,
             )
         (state_name,) = self._execution.invariant_block_widths
@@ -1689,7 +1726,7 @@ class Model:
             solve=functools.partial(
                 solve,
                 flat_params=flat_params,
-                ages=self.ages,
+                ages=self._time,
                 program_fingerprint=preparation.program_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
@@ -1756,13 +1793,13 @@ class Model:
             check_pareto_weights(
                 regimes=self._regimes,
                 flat_params=flat_params,
-                ages=self.ages,
+                ages=self._time,
                 process_grid_resolver=process_grid_resolver,
             )
         try:
             internal_result = solve(
                 flat_params=flat_params,
-                ages=self.ages,
+                ages=self._time,
                 regimes=self._regimes,
                 program_fingerprint=program_fingerprint,
                 logger=log,
@@ -1845,7 +1882,7 @@ class Model:
             original_inputs=entry_inputs,
             solution=solution,
             model_roots=(
-                self.ages.values,  # noqa: PD011
+                self._time.values,  # noqa: PD011
                 self.regime_names_to_ids,
                 tuple(
                     (
@@ -3086,6 +3123,9 @@ class Model:
         """
         self._sealed_bindings.fail_if_moved()
         _fail_if_invalid_taste_shock_seed(taste_shock_seed=taste_shock_seed)
+        initial_conditions = lower_initial_time(
+            initial_conditions=initial_conditions, ages=self._time
+        )
         log = get_logger(log_level=log_level)
         call_id = new_call_id()
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
@@ -3141,7 +3181,7 @@ class Model:
                         validate_regime_selection(
                             regimes=self._regimes,
                             flat_params=flat_params,
-                            ages=self.ages,
+                            ages=self._time,
                             process_grid_resolver=process_grid_resolver,
                             memory=selection_memory,
                         )
@@ -3188,6 +3228,7 @@ class Model:
                         user_regimes=self.user_regimes,
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
+                        ages=self._time,
                     )
                 if entry_allocations is not None:
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -3195,6 +3236,7 @@ class Model:
                     initial_conditions=initial_conditions,
                     regimes=self._regimes,
                     array_writer=entry_allocations,
+                    ages=self._time,
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
@@ -3240,7 +3282,7 @@ class Model:
                     regimes=self._regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                     flat_params=flat_params,
-                    ages=self.ages,
+                    ages=self._time,
                     logger=log,
                     execution=self._execution,
                     retained_footprint=(
@@ -3381,7 +3423,7 @@ class Model:
                         values=period_to_regime_to_V_arr,
                         flags=period_to_regime_to_dissolution_flags,
                         policies=period_to_regime_to_sim_policy,
-                        ages=self.ages,
+                        ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
                         original_population=original_n_subjects,
@@ -3428,7 +3470,7 @@ class Model:
                 ),
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
-                ages=self.ages,
+                ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
                 taste_shock_seed=taste_shock_seed,
@@ -3470,7 +3512,14 @@ class Model:
                     _save_simulate_snapshot(
                         model=self,
                         params=params,
-                        initial_conditions=initial_conditions,
+                        initial_conditions={
+                            (
+                                "period"
+                                if name == "age" and self.ages is None
+                                else name
+                            ): value
+                            for name, value in initial_conditions.items()
+                        },
                         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                         result=result,
                         log_path=Path(log_path),
@@ -3741,7 +3790,7 @@ class Model:
             next_period_values=V_arrs.get(period + 1, MappingProxyType({})),
             required_targets=(
                 ()
-                if period == self.ages.n_periods - 1
+                if period == self.n_periods - 1
                 else regime.solution.reachability.targets(
                     period=period, source=regime_name
                 )
@@ -3793,7 +3842,7 @@ class Model:
                     ),
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
-                    age=self.ages.values[period],  # noqa: PD011
+                    age=self._time.values[period],  # noqa: PD011
                 ),
             ),
         )
@@ -3945,7 +3994,7 @@ class Model:
             regimes=self._regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
         )
 
     @beartype(conf=PARAMS_CONF)
@@ -3993,7 +4042,7 @@ class Model:
             regimes=self._regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
-            ages=self.ages,
+            ages=self._time,
         )
 
     def _canonical_feasibility_inputs(
@@ -4004,6 +4053,9 @@ class Model:
     ) -> tuple[InitialConditions, FlatParams]:
         """Canonicalize public feasibility inputs without allocation accounting."""
         self._sealed_bindings.fail_if_moved()
+        initial_conditions = lower_initial_time(
+            initial_conditions=initial_conditions, ages=self._time
+        )
         self._fail_if_declared_entry_is_not_permitted(
             initial_conditions=initial_conditions
         )
@@ -4019,9 +4071,12 @@ class Model:
                 df=initial_conditions,
                 user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
+                ages=self._time,
             )
         canonical = canonicalize_initial_conditions(
-            initial_conditions=initial_conditions, regimes=self._regimes
+            initial_conditions=initial_conditions,
+            regimes=self._regimes,
+            ages=self._time,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
@@ -4082,14 +4137,14 @@ class Model:
         if codes is None or ages is None:
             return
         code_values = np.ravel(np.asarray(codes))
-        age_values = np.ravel(np.asarray(ages, dtype=np.float64))
+        age_values = np.ravel(np.asarray(ages))
         if code_values.size != age_values.size:
             return
         ids_to_names = {
             int(code): name for name, code in self.regime_names_to_ids.items()
         }
         periods, on_grid = resolve_initial_periods(
-            ages=self.ages, initial_ages=age_values
+            ages=self._time, initial_ages=age_values
         )
         pairs = {
             (period, ids_to_names[code])
@@ -4099,13 +4154,15 @@ class Model:
             if code in ids_to_names and admissible
         }
         period_by_age: dict[object, int] = {
-            age: p for p, age in enumerate(self.ages.exact_values)
+            age: p for p, age in enumerate(self._time.exact_values)
         }
-        permitted = {(period_by_age[age], name) for age, name in self.initial_nodes}
+        permitted = {
+            (period_by_age[age], name) for age, name in self._resolved_initial_nodes
+        }
         refused = sorted(pairs - permitted)
         if refused:
             details = "\n".join(
-                f"  ({self.ages.exact_values[period]}, '{name}') is not an "
+                f"  ({self._time.exact_values[period]}, '{name}') is not an "
                 "admissible entry"
                 for period, name in refused
             )
@@ -4162,7 +4219,7 @@ class Model:
             return
         with naming_cells_without_edges(self._cells_without_edges):
             validate_regime_selection(
-                regimes=self._regimes, flat_params=flat_params, ages=self.ages
+                regimes=self._regimes, flat_params=flat_params, ages=self._time
             )
         self._validated_selection_params.add(digest)
 
@@ -4187,17 +4244,33 @@ class Model:
             template=self._params_template,
             required=True,
         )
-        if has_series(flat_params):
-            flat_params = convert_series_in_params(
-                flat_params=flat_params,
-                ages=self.ages,
-                user_regimes=self.user_regimes,
-                laws=self._graph.laws,
-                regime_names_to_ids=self.regime_names_to_ids,
-                array_writer=array_writer,
-                declared_transitions=self._declared_transitions,
-                declared_vocabulary=self._declared_edge_vocabulary,
-            )
+        flat_params = convert_series_in_params(
+            flat_params=flat_params,
+            ages=self._time,
+            user_regimes=self.user_regimes,
+            laws=self._graph.laws,
+            regime_names_to_ids=self.regime_names_to_ids,
+            array_writer=array_writer,
+            declared_transitions=self._declared_transitions,
+            phase_transitions=self.declared_transitions,
+            declared_vocabulary=self._declared_edge_vocabulary,
+            reachability=self.reachability,
+            required_periods_by_regime={
+                name: tuple(
+                    sorted(
+                        set(regime.active_periods)
+                        | {
+                            period
+                            for period, active in enumerate(
+                                regime.simulation.reachability.active_regimes_by_period
+                            )
+                            if name in active
+                        }
+                    )
+                )
+                for name, regime in self._regimes.items()
+            },
+        )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves
             # before canonicalization can allocate another numeric payload.

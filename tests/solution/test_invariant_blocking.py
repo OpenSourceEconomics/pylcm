@@ -195,6 +195,7 @@ def _sector_params(*, typed_terminal: bool, scale: float = 1.0) -> dict:
 
 def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     model = independent_types.get_model()
+    assert model.ages is not None
     return Model(
         regimes=model.user_regimes,
         edges=model.edges,

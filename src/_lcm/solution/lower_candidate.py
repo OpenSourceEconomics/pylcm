@@ -28,8 +28,8 @@ from _lcm.solution.lowering_descriptors import (
     capture_lowering_identity,
     describe_lowering_value,
 )
+from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.solver_api import ArtifactRef, ResultRetention
@@ -41,7 +41,7 @@ def lower_period_candidate(
     candidate: PeriodCandidate,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
-    ages: AgeGrid,
+    ages: TimeAxis,
     execution: ResolvedExecution,
     retention: ResultRetention,
     persistable_artifact_refs: frozenset[ArtifactRef],

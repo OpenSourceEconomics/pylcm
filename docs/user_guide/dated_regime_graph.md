@@ -4,6 +4,12 @@ title: Age-indexed regime graphs
 
 # Age-indexed regime graphs
 
+The examples on this page use `Model(ages=...)`. For `Model(n_periods=...)`, declare
+starts with `InitialNode(period=..., regime=...)`, source selectors with `PeriodRange`
+or `Periods`, and transition schedules with `ByPeriod`. Their edges still land in the
+next computational slot. See [Periods and temporal parameters](period_time.md) for the
+explicit period forms and coordinate validation.
+
 A model declares its admissible initial nodes and its graph. `Model` requires
 `initial_nodes` and `edges`. `Model(edges=...)` is the only place regime transitions are
 declared, structure and law alike: a source with one destination per age needs no law,

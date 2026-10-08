@@ -142,6 +142,15 @@ not depend on the horizon or on fixed-zero pruning. See
 
 ### Age-indexed laws
 
+For a period model, the corresponding declaration is
+`ByPeriod(cases={selector: law, ...}, default=...)`. Case selectors are integer periods,
+tuples or ranges of integers, `Periods(values=...)`, or
+`PeriodRange(start=..., exclusive_stop=...)`. `ByPeriod.until` takes
+`start_period_inclusive` and `stop_period_exclusive`; the last selected source period
+uses `then`. Plain graph edge selectors require `Periods` or `PeriodRange`. Age and
+period declarations cannot be mixed. See
+[Periods and temporal parameters](../user_guide/period_time.md).
+
 `ByAge(cases={selector: law, ...}, default=...)` selects complete numerical laws by
 source age inside a `Transition`. Its selectors are exact ages, tuples, integer ranges,
 or half-open `AgeRange(start=..., exclusive_stop=...)` intervals. `ByAge.until` uses

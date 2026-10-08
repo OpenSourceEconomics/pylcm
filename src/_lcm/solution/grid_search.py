@@ -79,6 +79,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import CELL_AXIS
+from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
@@ -88,7 +89,6 @@ from _lcm.typing import (
     StateName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
@@ -709,7 +709,7 @@ class _GridSearchArgumentBuilder:
             "Mapping[RegimeName, FloatND]", context.next_regime_to_V_arr
         )
         flat_params = cast("FlatParams", context.flat_params)
-        ages = cast("AgeGrid", context.ages)
+        ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -881,7 +881,7 @@ class _GridSearchPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,

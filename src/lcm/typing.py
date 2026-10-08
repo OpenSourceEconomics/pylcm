@@ -25,7 +25,12 @@ import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 
-from lcm.params import UserMappingLeaf, UserSequenceLeaf
+# Any model dtype; use only for genuinely dtype-polymorphic slots. Parameter
+# wrappers import this alias, so define it before importing them below.
+type ValueND = Shaped[Array, "..."]
+
+from lcm.params import TimeVarying, UserMappingLeaf, UserSequenceLeaf  # noqa: E402
+from lcm.time import InitialNode  # noqa: E402
 
 if TYPE_CHECKING:
     # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
@@ -40,11 +45,6 @@ type DiscreteAction = Int32[Array, "..."]
 type FloatND = Float[Array, "..."]
 type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
-
-# Any model value, whatever its dtype: a continuous state or action is float, a
-# discrete one an integer code, a flag a boolean. Use it only where a slot is
-# genuinely dtype-polymorphic -- a slot that means one of them takes that alias.
-type ValueND = Shaped[Array, "..."]
 
 type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
@@ -97,8 +97,8 @@ type UserAge = int | Fraction
 # `ByAge`-style age selectors to a regime name or a sequence of names, or a
 # sequence or set of exact `(age, regime)` pairs.
 type InitialNodes = (
-    Sequence[tuple[object, str]]
-    | AbstractSet[tuple[object, str]]
+    Sequence[tuple[object, str] | InitialNode]
+    | AbstractSet[tuple[object, str] | InitialNode]
     | Mapping[object, str | Sequence[str]]
 )
 
@@ -132,6 +132,7 @@ type _UserParamsLeaf = (
     | BoolND
     | np.ndarray
     | pd.Series
+    | TimeVarying
     | UserMappingLeaf
     | UserSequenceLeaf
 )

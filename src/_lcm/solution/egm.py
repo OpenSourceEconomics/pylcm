@@ -65,6 +65,7 @@ from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
 )
+from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
     EconFunctionArg,
@@ -74,7 +75,6 @@ from _lcm.typing import (
     RegimeTransitionFunction,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -821,7 +821,7 @@ class _EGMArgumentBuilder:
                     liquid=state_action_space.states[self.liquid_state],
                     flat_params=flat_params,
                     period=context.period,
-                    ages=cast("AgeGrid", context.ages),
+                    ages=cast("TimeAxis", context.ages),
                 ),
                 **union_free_params(
                     flat_params=flat_params,
@@ -832,7 +832,7 @@ class _EGMArgumentBuilder:
         )
 
     def _retains_regime_mass(
-        self, *, liquid: Float1D, flat_params: FlatParams, period: int, ages: AgeGrid
+        self, *, liquid: Float1D, flat_params: FlatParams, period: int, ages: TimeAxis
     ) -> BoolND:
         """Whether the continuation target carries the regime's whole mass.
 
@@ -1047,7 +1047,7 @@ class _EGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
         """Run the compiled `main` program and publish its typed continuation."""

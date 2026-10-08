@@ -69,6 +69,7 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
+from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     EGMStepFunction,
@@ -76,7 +77,6 @@ from _lcm.typing import (
     RegimeName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
     ModelInitializationError,
@@ -923,7 +923,7 @@ class _DCEGMArgumentBuilder:
         """Return the exact kwargs shared by lowering and the runtime call."""
         state_action_space = cast("StateActionSpace", context.state_action_space)
         flat_params = cast("FlatParams", context.flat_params)
-        ages = cast("AgeGrid", context.ages)
+        ages = cast("TimeAxis", context.ages)
         return MappingProxyType(
             {
                 **dict(state_action_space.states),
@@ -1022,7 +1022,7 @@ class _DCEGMPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
         """Run the selected output variant and publish its typed artifacts."""

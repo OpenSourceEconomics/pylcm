@@ -48,14 +48,17 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import RegimeName
-from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
+from lcm.time import InitialNode
 from lcm.transition import (
     AgeRange,
     ByAge,
     DeterministicTransition,
+    PeriodRange,
+    Periods,
     StochasticTransition,
     _fail_if_invalid_age_selector,
     _select_periods,
@@ -201,7 +204,7 @@ def resolve_regime_schedules(
     # `RegimeLaw` values; `_lcm.regime_law` imports this module, so it cannot be
     # imported here.
     laws: Mapping[RegimeName, Any],
-    ages: AgeGrid,
+    ages: TimeAxis,
     source_ages_by_phase: Mapping[str, Mapping[str, Mapping[str, frozenset[object]]]]
     | None = None,
 ) -> RegimeSchedules:
@@ -230,7 +233,7 @@ def resolve_regime_schedules(
         if isinstance(transition, ByAge):
             law_by_period = {
                 period: law
-                for period, law in transition.resolve(ages).law_by_period.items()
+                for period, law in transition.resolve(ages=ages).law_by_period.items()
                 if period < ages.n_periods - 1
             }
         else:
@@ -446,7 +449,7 @@ def resolve_demand(
     initial_nodes: frozenset[tuple[object, RegimeName]],
     same_period_refs_by_regime: Mapping[RegimeName, tuple[RegimeName, ...]],
     terminal_regimes: frozenset[RegimeName],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> RegimeSchedules:
     """Restrict `schedules` to the problems the starts require.
 
@@ -617,7 +620,7 @@ def _restricted(
 
 
 def _unavailable_message(
-    *, requester: str, name: RegimeName, period: int, side: str, ages: AgeGrid
+    *, requester: str, name: RegimeName, period: int, side: str, ages: TimeAxis
 ) -> str:
     """Name why a required pair has no problem.
 
@@ -665,7 +668,7 @@ def resolve_initial_nodes(
     *,
     initial_nodes: object,
     regime_names: Sequence[RegimeName],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> frozenset[tuple[object, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
@@ -676,7 +679,9 @@ def resolve_initial_nodes(
     are unioned. The result depends on the declaration and clock, never on
     solve coverage.
     """
-    entries = _initial_node_entries(initial_nodes)
+    entries = _initial_node_entries(
+        initial_nodes=initial_nodes, kind=coordinate_kind(ages)
+    )
     period_by_age: dict[object, int] = {
         age: period for period, age in enumerate(ages.exact_values)
     }
@@ -707,7 +712,9 @@ def resolve_initial_nodes(
 _INITIAL_NODE_ARITY = 2
 
 
-def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
+def _initial_node_entries(
+    *, initial_nodes: object, kind: str = "age"
+) -> list[tuple[object, object]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
     if isinstance(initial_nodes, Sequence | AbstractSet) and not isinstance(
         initial_nodes, str
@@ -716,28 +723,17 @@ def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
             raise ModelInitializationError(
                 "`initial_nodes` must name at least one starting pair."
             )
-        entries = []
-        for pair in initial_nodes:
-            if (
-                not isinstance(pair, Sequence)
-                or isinstance(pair, str)
-                or len(pair) != _INITIAL_NODE_ARITY
-            ):
-                raise ModelInitializationError(
-                    f"`initial_nodes` must contain (age, regime) pairs; got {pair!r}."
-                )
-            age, name = pair
-            if isinstance(age, AgeRange | tuple | range):
-                raise ModelInitializationError(
-                    f"`initial_nodes` pairs require an exact age; got {age!r}."
-                )
-            if not isinstance(name, str):
-                raise ModelInitializationError(
-                    f"`initial_nodes` pair must name one regime; got {pair!r}."
-                )
-            entries.append((age, name))
+        entries = [_initial_node_pair(pair=pair, kind=kind) for pair in initial_nodes]
     elif isinstance(initial_nodes, Mapping) and initial_nodes:
         entries = list(initial_nodes.items())
+        if any(
+            isinstance(selector, PeriodRange | Periods) != (kind == "period")
+            for selector, _ in entries
+        ):
+            raise ModelInitializationError(
+                "Initial-node mappings must use the model's coordinate kind; "
+                "use PeriodRange or Periods for a period model."
+            )
     else:
         raise ModelInitializationError(
             "`initial_nodes` must be a nonempty mapping from age selectors to "
@@ -745,6 +741,39 @@ def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
             f"{initial_nodes!r}."
         )
     return entries
+
+
+def _initial_node_pair(*, pair: object, kind: str) -> tuple[object, object]:
+    """Normalize one named coordinate or legacy exact age pair."""
+    if isinstance(pair, InitialNode):
+        coordinate = pair.period if kind == "period" else pair.age
+        if coordinate is None:
+            raise ModelInitializationError(
+                f"InitialNode must specify {kind} for this model."
+            )
+        return coordinate, pair.regime
+    if kind == "period":
+        raise ModelInitializationError(
+            "Period models require InitialNode(period=..., regime=...)."
+        )
+    if (
+        not isinstance(pair, Sequence)
+        or isinstance(pair, str)
+        or len(pair) != _INITIAL_NODE_ARITY
+    ):
+        raise ModelInitializationError(
+            f"`initial_nodes` must contain (age, regime) pairs; got {pair!r}."
+        )
+    age, name = pair
+    if isinstance(age, AgeRange | tuple | range):
+        raise ModelInitializationError(
+            f"`initial_nodes` pairs require an exact age; got {age!r}."
+        )
+    if not isinstance(name, str):
+        raise ModelInitializationError(
+            f"`initial_nodes` pair must name one regime; got {pair!r}."
+        )
+    return age, name
 
 
 def _entry_names(value: object) -> tuple[str, ...]:
@@ -995,7 +1024,7 @@ def _edge_support(
     law: object,
     source: RegimeName,
     period: int,
-    ages: AgeGrid,
+    ages: TimeAxis,
     regime_names: tuple[RegimeName, ...],
     source_ages: Mapping[str, Mapping[str, frozenset[object]]] | None,
 ) -> tuple[str, ...]:

@@ -145,6 +145,7 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
 def test_convert_series_heterogeneous_grids() -> None:
     """convert_series_in_params handles per-regime grid lookup."""
     model = make_heterogeneous_health_model()
+    assert model.ages is not None
     ages = model.ages.exact_values
     sr = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index(ages, name="age"))
     # Should not raise despite heterogeneous health grids
@@ -192,6 +193,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         initial_nodes={25: "a"},
         edges={"a": {"dead": AgeRange(exclusive_stop=75)}},
     )
+    assert m.ages is not None
     ages = m.ages.exact_values
     sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
     # Should not raise KeyError on continuous state 'wealth'
@@ -318,6 +320,7 @@ def test_array_from_series_transition_basic_round_trip():
     arr = _make_partner_probs_array()
     series = _array_to_series(arr=arr, model=model)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -339,6 +342,7 @@ def test_array_from_series_transition_reordered_levels():
     # Reorder levels: put next_partner first, then partner, work, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -362,6 +366,7 @@ def test_array_from_series_transition_wrong_level_names_raises():
         ["age", "labor_supply", "partner", "wrong_name"]
     )
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
@@ -384,6 +389,7 @@ def test_array_from_series_transition_invalid_label_raises():
     new_index = series.index.set_levels(["single", "INVALID"], level="partner")
     series.index = new_index
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
@@ -406,6 +412,7 @@ def test_array_from_series_transition_period_level_raises():
     )
     series = pd.Series([1.0], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="age"):
         array_from_series(
             sr=series,
@@ -428,6 +435,7 @@ def test_array_from_series_transition_duplicate_level_names_raises():
     )
     series = pd.Series([1.0], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="duplicate"):
         array_from_series(
             sr=series,
@@ -441,8 +449,8 @@ def test_array_from_series_transition_duplicate_level_names_raises():
         )
 
 
-def test_array_from_series_transition_invalid_age_dropped():
-    """Age values not on the model's AgeGrid are silently dropped (all NaN)."""
+def test_array_from_series_surplus_ages_do_not_supply_missing_rows():
+    """Discarding surplus rows still leaves required coordinates missing."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr=arr, model=model)
@@ -451,24 +459,24 @@ def test_array_from_series_transition_invalid_age_dropped():
         [999.0], level="age"
     )
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
-    result = array_from_series(
-        sr=series,
-        func=func,
-        param_name="probs_array",
-        func_name="next_partner",
-        user_regimes=model.user_regimes,
-        ages=model.ages,
-        regime_names_to_ids=model.regime_names_to_ids,
-        regime_name="working_life",
-    )
-    # All ages are invalid, so all positions should be NaN
-    assert jnp.all(jnp.isnan(result))
+    assert model.ages is not None
+    with pytest.raises(InvalidParamsError, match="missing required"):
+        array_from_series(
+            sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
+            user_regimes=model.user_regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
+            regime_name="working_life",
+        )
 
 
-def test_array_from_series_transition_sparse_input_fills_nan():
-    """Unfilled positions should be NaN, not zero."""
+def test_array_from_series_transition_sparse_input_is_rejected():
+    """Missing required time-category cells cannot become numerical placeholders."""
     model = get_stochastic_model(3)
-    # Provide data for only the first age — other ages should be NaN
+    # Provide only two of the required time-category cells.
     index = pd.MultiIndex.from_tuples(
         [
             (40.0, "work", "single", "single"),
@@ -478,22 +486,18 @@ def test_array_from_series_transition_sparse_input_fills_nan():
     )
     series = pd.Series([0.3, 0.7], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
-    result = array_from_series(
-        sr=series,
-        func=func,
-        param_name="probs_array",
-        func_name="next_partner",
-        user_regimes=model.user_regimes,
-        ages=model.ages,
-        regime_names_to_ids=model.regime_names_to_ids,
-        regime_name="working_life",
-    )
-    # age=40 (period 0), work (0), single (0) → provided
-    np.testing.assert_allclose(result[0, 0, 0], jnp.array([0.3, 0.7]), atol=1e-7)
-    # age=50 (period 1) → all NaN
-    assert jnp.all(jnp.isnan(result[1]))
-    # age=60 (period 2) → all NaN
-    assert jnp.all(jnp.isnan(result[2]))
+    assert model.ages is not None
+    with pytest.raises(InvalidParamsError, match="missing required"):
+        array_from_series(
+            sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
+            user_regimes=model.user_regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
+            regime_name="working_life",
+        )
 
 
 def _make_regime_probs_array():
@@ -550,6 +554,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
         template=model._params_template,
         required=False,
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -572,6 +577,7 @@ def test_array_from_series_regime_transition_basic_round_trip():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     func = _alive_regime_law()
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -592,6 +598,7 @@ def test_array_from_series_regime_transition_reordered_levels():
     series = _regime_array_to_series(arr=arr, model=model)
     series = series.reorder_levels(["next_regime", "health", "age"])
     func = _alive_regime_law()
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -612,6 +619,7 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
     series = _regime_array_to_series(arr=arr, model=model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
     func = _alive_regime_law()
+    assert model.ages is not None
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
@@ -633,6 +641,7 @@ def test_array_from_series_regime_transition_invalid_label_raises():
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
     func = _alive_regime_law()
+    assert model.ages is not None
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
@@ -650,6 +659,7 @@ def _build_partner_probs_series(model: Model) -> pd.Series:
     """Build a 4D Series with age x labor_supply x partner x next_partner MultiIndex."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
+    assert model.ages is not None
     ages = model.ages.values
 
     records = []
@@ -678,6 +688,7 @@ def test_array_from_series_fully_qualified() -> None:
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -700,6 +711,7 @@ def test_array_from_series_scalar_param() -> None:
     # a state or action, so wage has no indexing params.
     series = pd.Series([10.0])
     func = model.user_regimes["working_life"].get_all_functions()["labor_income"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -736,6 +748,7 @@ def test_array_from_series_extra_ages_dropped() -> None:
     )
     series = pd.Series([r[1] for r in records], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -751,8 +764,8 @@ def test_array_from_series_extra_ages_dropped() -> None:
     assert float(result[0, 0, 0, 0]) == pytest.approx(9.0)
 
 
-def test_array_from_series_missing_ages_filled_with_nan() -> None:
-    """Missing grid ages produce NaN instead of raising."""
+def test_array_from_series_missing_required_ages_are_rejected() -> None:
+    """Missing required grid ages raise before array construction."""
     model = get_stochastic_model(3)
     # Only provide data for age=40, not 50 or 60
     records = []
@@ -769,22 +782,18 @@ def test_array_from_series_missing_ages_filled_with_nan() -> None:
     )
     series = pd.Series([r[1] for r in records], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
-    result = array_from_series(
-        sr=series,
-        func=func,
-        param_name="probs_array",
-        func_name="next_partner",
-        user_regimes=model.user_regimes,
-        ages=model.ages,
-        regime_names_to_ids=model.regime_names_to_ids,
-        regime_name="working_life",
-    )
-    assert result.shape == (3, 2, 2, 2)
-    # age=40 (period 0) filled
-    assert not jnp.any(jnp.isnan(result[0]))
-    # age=50, age=60 all NaN
-    assert jnp.all(jnp.isnan(result[1]))
-    assert jnp.all(jnp.isnan(result[2]))
+    assert model.ages is not None
+    with pytest.raises(InvalidParamsError, match="missing required"):
+        array_from_series(
+            sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
+            user_regimes=model.user_regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
+            regime_name="working_life",
+        )
 
 
 def test_array_from_series_reordered_levels() -> None:
@@ -794,6 +803,7 @@ def test_array_from_series_reordered_levels() -> None:
     # Reorder: next_partner, partner, labor_supply, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])  # ty: ignore[invalid-argument-type]
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     result = array_from_series(
         sr=series,
         func=func,
@@ -817,6 +827,7 @@ def test_array_from_series_invalid_label_raises() -> None:
     )
     series = pd.Series([1.0], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
@@ -839,6 +850,7 @@ def test_array_from_series_wrong_level_names_raises() -> None:
     )
     series = pd.Series([1.0], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
@@ -862,6 +874,7 @@ def test_array_from_series_integer_labels_rejected() -> None:
     )
     series = pd.Series([0.5, 0.5], index=index)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
+    assert model.ages is not None
     with pytest.raises(ValueError, match="non-string labels"):
         array_from_series(
             sr=series,
@@ -887,6 +900,7 @@ def test_convert_series_function_level_series() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -910,6 +924,7 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -936,6 +951,7 @@ def test_convert_series_regime_level_series() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -967,6 +983,7 @@ def test_convert_series_mixed_dict() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1000,6 +1017,7 @@ def test_convert_series_mapping_leaf() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1031,6 +1049,7 @@ def test_convert_series_nested_mapping_leaf() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1077,6 +1096,7 @@ def test_convert_series_with_derived_categoricals() -> None:
     labor_grid = DiscreteGrid(category_class=LaborSupply)
 
     # Build a Series indexed by age x labor_supply x partner x next_partner
+    assert model.ages is not None
     ages = model.ages.values
     records = []
     val = 1.0
@@ -1213,6 +1233,7 @@ def test_convert_series_per_target_transition() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1313,6 +1334,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result_both = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1357,6 +1379,7 @@ def test_convert_series_runtime_grid_param() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1380,6 +1403,7 @@ def test_convert_series_sequence_leaf_traversal() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1504,6 +1528,7 @@ def test_convert_series_cross_grid_transition() -> None:
     internal = broadcast_to_template(
         params=params, template=model.get_params_template(), required=False
     )
+    assert model.ages is not None
     result = convert_series_in_params(
         flat_params=internal,
         user_regimes=model.user_regimes,
@@ -1516,7 +1541,7 @@ def test_convert_series_cross_grid_transition() -> None:
 
     arr = result["pre65"]["post65__next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
-    # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
+    # The final period is unread by this transition and needs no observation.
     assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
 
 

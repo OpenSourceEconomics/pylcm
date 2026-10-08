@@ -466,6 +466,7 @@ def test_an_undemanded_case_is_never_lowered(monkeypatch: pytest.MonkeyPatch) ->
 def test_a_regime_with_edges_only_at_unrequired_ages_builds_while_unrequired() -> None:
     """An edge out of a regime no start reaches is unused, not an error."""
     model = _model(initial_nodes={25: "working"}, retirement_exit_ages=(65,))
+    assert model.ages is not None
     assert model.reachability.nodes.isdisjoint(
         {(age, "retirement") for age in model.ages.exact_values}
     )

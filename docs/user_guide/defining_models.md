@@ -4,8 +4,9 @@ title: Defining Models
 
 # Defining Models
 
-A `Model` ties together regimes, an age grid, and a regime ID class into a solvable
-lifecycle model.
+A `Model` ties together regimes, a finite horizon, and a regime ID class. Define its
+horizon with exactly one of `ages=AgeGrid(...)` or `n_periods=...`; see
+[Periods and temporal parameters](period_time.md).
 
 > **Choose the solver-facing regime first.** The general `Regime` used below is the
 > `GridSearch` baseline. A model intended for EGM should start with
@@ -30,8 +31,8 @@ model = Model(
 )
 ```
 
-All arguments are keyword-only. The five required arguments are `regimes`, `ages`,
-`regime_id_class`, `edges` and `initial_nodes`. `edges` maps source regimes to
+All arguments are keyword-only. Supply `regimes`, `regime_id_class`, `edges` and
+`initial_nodes`, plus exactly one horizon declaration. `edges` maps source regimes to
 destinations and their source-age selectors, and declares every regime transition. A
 source with one destination at each source age needs nothing more: the graph is its law.
 A source with several destinations at some age is declared as

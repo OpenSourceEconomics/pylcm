@@ -173,6 +173,7 @@ def reference_additive_norms(
             key: value[subject]
             for key, value in (dict(raw.states) | dict(raw.actions)).items()
         }
+        assert model.ages is not None
         cell |= {"period": jnp.int32(period), "age": model.ages.values[period]}
         cell |= bound
         key = (name, period)

@@ -4,7 +4,7 @@ from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
@@ -31,11 +31,11 @@ from _lcm.regime_law import (
     RegimeLaws,
     bind_regime_law,
 )
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
-from lcm.ages import AgeGrid
 from lcm.collective import Gate
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
@@ -48,8 +48,11 @@ from lcm.transition import (
     AgeCaseLaw,
     AgeSelector,
     ByAge,
+    ByPeriod,
     DeterministicTransition,
     ModelEdges,
+    PeriodRange,
+    Periods,
     PhaseEdges,
     StochasticTransition,
     Transition,
@@ -97,6 +100,9 @@ class ModelGraph:
     of a source are those its `Transition.gates` declare
     (`laws[name].gated_edges`).
     """
+
+    coordinate_kind: Literal["age", "period"] = "age"
+    """Meaning of the first coordinate in nodes and edges."""
 
     @property
     def solution(self) -> PhaseReachability:
@@ -214,7 +220,7 @@ def prepare_graph(
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     edges: GraphEdges,
-    ages: AgeGrid,
+    ages: TimeAxis,
     initial_nodes: frozenset[tuple[object, RegimeName]],
     fixed_params: UserParams,
 ) -> GraphPreparation:
@@ -256,8 +262,32 @@ def prepare_graph(
     )
 
 
+def _validate_graph_coordinate_kind(*, edges: object, ages: TimeAxis) -> None:
+    """Refuse ambiguous or mixed public selectors before graph lowering."""
+    phases = (edges.solve, edges.simulate) if isinstance(edges, Phased) else (edges,)
+    for phase in phases:
+        if not isinstance(phase, Mapping):
+            continue  # The graph grammar reports malformed containers.
+        for source, declaration in phase.items():
+            selectors = (
+                declaration.targets
+                if isinstance(declaration, Transition)
+                else declaration
+            )
+            if not isinstance(selectors, Mapping):
+                continue
+            for selector in selectors.values():
+                is_period = isinstance(selector, PeriodRange | Periods)
+                if is_period != (coordinate_kind(ages) == "period"):
+                    raise ModelInitializationError(
+                        f"Graph source {source!r} uses the wrong time coordinate: "
+                        "period models require PeriodRange or Periods; age models "
+                        "require age selectors."
+                    )
+
+
 def bind_edge_laws(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
+    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: TimeAxis
 ) -> tuple[RegimeLaws, GraphEdges]:
     """Bind each regime's law from `Model(edges=...)` and resolve its support.
 
@@ -280,6 +310,7 @@ def bind_edge_laws(
         Each regime's bound law, and both phases' edges with their selectors
         snapshotted as exact source ages.
     """
+    _validate_graph_coordinate_kind(edges=edges, ages=ages)
     # `_resolve_edges` refuses a phase that is not a mapping of sources.
     declared = cast(
         "dict[Side, PhaseEdges]",
@@ -390,7 +421,7 @@ def _transition_targets(
     *,
     source: RegimeName,
     transition: Transition,
-    ages: AgeGrid,
+    ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
 ) -> Mapping[RegimeName, AgeSelector]:
     """Return a `Transition`'s destinations and their source-age selectors.
@@ -440,7 +471,7 @@ def _transition_targets(
 def _derived_target_ages(
     *,
     transition: Transition,
-    ages: AgeGrid,
+    ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
 ) -> dict[RegimeName, frozenset[UserAge]] | None:
     """The source ages at which a law names each target; `None` if it names none."""
@@ -450,7 +481,7 @@ def _derived_target_ages(
     selected: dict[RegimeName, set[UserAge]] = {}
     for side in sides:
         by_period = (
-            side.resolve(ages).law_by_period
+            side.resolve(ages=ages).law_by_period
             if isinstance(side, ByAge)
             else dict.fromkeys(non_final, side)
         )
@@ -545,7 +576,7 @@ def _declared_gated_edges(
 
 
 def _targets_by_period(
-    *, resolved: Mapping[RegimeName, frozenset[UserAge]], ages: AgeGrid
+    *, resolved: Mapping[RegimeName, frozenset[UserAge]], ages: TimeAxis
 ) -> dict[int, tuple[RegimeName, ...]]:
     """Return the destinations of each non-final source period that has any."""
     targets = {
@@ -561,7 +592,7 @@ def _single_destination_laws(
     *,
     source: RegimeName,
     resolved: Mapping[RegimeName, frozenset[UserAge]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     side: Side,
 ) -> dict[int, PhaseLaw]:
     """Read a law-free source's law off its edges: the only destination per age."""
@@ -583,7 +614,7 @@ def _transition_laws(
     source: RegimeName,
     transition: Transition,
     resolved: Mapping[RegimeName, frozenset[UserAge]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     side: Side,
 ) -> dict[int, PhaseLaw]:
     """Select a `Transition`'s law at each source period with outgoing edges."""
@@ -592,7 +623,7 @@ def _transition_laws(
     if isinstance(law, Phased):
         law = cast("PhaseLaw", getattr(law, side))
     selected = (
-        law.resolve(ages).law_by_period
+        law.resolve(ages=ages).law_by_period
         if isinstance(law, ByAge)
         else dict.fromkeys(targets_by_period, law)
     )
@@ -617,7 +648,7 @@ def _transition_laws(
 
 
 def _combined_law(
-    *, laws_by_side: Mapping[Side, Mapping[int, PhaseLaw]], ages: AgeGrid
+    *, laws_by_side: Mapping[Side, Mapping[int, PhaseLaw]], ages: TimeAxis
 ) -> RegimeTransitionLaw:
     """Combine per-phase, per-period laws into one regime law.
 
@@ -650,7 +681,8 @@ def _combined_law(
     first = laws[0]
     if all(law is first or (isinstance(first, str) and law == first) for law in laws):
         return first
-    return ByAge(
+    schedule_type = ByPeriod if coordinate_kind(ages) == "period" else ByAge
+    return schedule_type(
         cases={ages.exact_values[period]: law for period, law in combined.items()}
     )
 
@@ -667,7 +699,7 @@ def _lottery_if_paired(*, law: PhaseLaw, other: PhaseLaw) -> PhaseLaw:
 
 
 def bind_graph_support(
-    *, laws: RegimeLaws, edges: GraphEdges, ages: AgeGrid
+    *, laws: RegimeLaws, edges: GraphEdges, ages: TimeAxis
 ) -> tuple[RegimeLaws, CellsWithoutEdges]:
     """Bind graph-selected probability cells and selector support per source age.
 
@@ -687,7 +719,7 @@ def bind_graph_support(
             continue
         transition = source_law.transition
         kernels = (
-            transition.resolve(ages).law_by_period
+            transition.resolve(ages=ages).law_by_period
             if isinstance(transition, ByAge)
             else dict.fromkeys(range(ages.n_periods), transition)
         )
@@ -780,8 +812,9 @@ def bind_graph_support(
                 )
             )
         # An undemanded source remains inspectable but supplies no local problem.
+        schedule_type = ByPeriod if coordinate_kind(ages) == "period" else ByAge
         bound = (
-            ByAge(cases=cast("dict[AgeSelector, AgeCaseLaw]", dict(cases)))
+            schedule_type(cases=cast("dict[AgeSelector, AgeCaseLaw]", dict(cases)))
             if cases
             else _SupportedStochasticTransition(
                 func=_Constant(value=(0.0,) * len(regime_names)),
@@ -797,7 +830,7 @@ def fixed_zero_edge_reasons(
     bound: RegimeLaws,
     edges: GraphEdges,
     after: RegimeSchedules,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> MappingProxyType[str, MappingProxyType[Edge, str]]:
     """Record only support removed by the fixed-probability proof stage.
 
@@ -815,7 +848,7 @@ def fixed_zero_edge_reasons(
             if not isinstance(transition, ByAge):
                 continue
             kept = after.support_by_phase[phase].get(source, {})
-            for period, law in transition.resolve(ages).law_by_period.items():
+            for period, law in transition.resolve(ages=ages).law_by_period.items():
                 removed |= {
                     (ages.exact_values[period], source, target): (
                         "fixed_zero_probability"
@@ -835,7 +868,7 @@ def fixed_zero_edge_reasons(
 
 
 def _resolve_edges(
-    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: AgeGrid
+    *, edges: object, regimes: Mapping[RegimeName, Regime], ages: TimeAxis
 ) -> ResolvedEdges:
     if not isinstance(edges, Mapping):
         raise ModelInitializationError(
@@ -885,7 +918,7 @@ def _selected_source_ages(
     *,
     selector: object,
     edge: str,
-    ages: AgeGrid,
+    ages: TimeAxis,
     period_by_age: Mapping[object, int],
 ) -> frozenset[UserAge]:
     """Resolve one edge's selector to the source ages at which it can fire."""

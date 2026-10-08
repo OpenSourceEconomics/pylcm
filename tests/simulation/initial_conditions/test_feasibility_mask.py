@@ -128,6 +128,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
     )
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     validate_initial_conditions(
         initial_conditions={
             "age": jnp.array([2.0]),
@@ -149,6 +150,7 @@ def test_constraint_checked_for_starting_regime() -> None:
     )
     _alive = model.regime_names_to_ids["alive"]
 
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
         validate_initial_conditions(
             initial_conditions={
@@ -175,6 +177,7 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
     _alive = model.regime_names_to_ids["alive"]
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
         validate_initial_conditions(
             initial_conditions={
@@ -197,6 +200,7 @@ def test_action_free_regime_state_only_constraint_rejects_violating_subject() ->
     )
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
         validate_initial_conditions(
             initial_conditions={
@@ -224,6 +228,7 @@ def test_action_free_regime_state_only_constraint_accepts_satisfying_subjects() 
         "regime_id": jnp.array([_dead, _dead]),
     }
 
+    assert model.ages is not None
     validate_initial_conditions(
         initial_conditions=initial,
         regimes=model._regimes,
@@ -303,6 +308,7 @@ def test_feasibility_mask_marks_each_subject_in_caller_order() -> None:
     )
     _working_life = model.regime_names_to_ids["working_life"]
 
+    assert model.ages is not None
     mask = initial_conditions_feasibility_mask(
         initial_conditions={
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
@@ -327,6 +333,7 @@ def test_feasibility_mask_scatters_regime_verdicts_into_interleaved_rows() -> No
     _alive = model.regime_names_to_ids["alive"]
     _dead = model.regime_names_to_ids["dead"]
 
+    assert model.ages is not None
     mask = initial_conditions_feasibility_mask(
         initial_conditions={
             "age": jnp.array([0.0, 2.0, 1.0, 2.0]),

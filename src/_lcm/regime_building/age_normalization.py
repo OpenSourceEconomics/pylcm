@@ -54,8 +54,8 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.time import TimeAxis, specialization_coordinate_at
 from _lcm.typing import EconFunction, FunctionName, RegimeName, StateName
-from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
@@ -609,7 +609,7 @@ def _resolve_function_marker(
     regime_name: RegimeName,
     marker: AgeSpecializedFunction,
     active_periods: tuple[int, ...],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> _ResolvedFunctionMarker:
     """Build one function marker's concrete callables over its active periods.
 
@@ -622,7 +622,7 @@ def _resolve_function_marker(
     first_params: frozenset[str] | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = float(ages.period_to_age(period))
+        age = specialization_coordinate_at(ages=ages, period=period)
         concrete = marker.build(age)
         params = frozenset(inspect.signature(concrete).parameters)
         if first_params is None:
@@ -676,7 +676,7 @@ def _resolve_grid_marker(
     state_name: StateName,
     marker: AgeSpecializedGrid,
     active_periods: tuple[int, ...],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> _ResolvedGridMarker:
     """Build one grid marker's concrete grids over its active periods, validated.
 
@@ -688,7 +688,7 @@ def _resolve_grid_marker(
     first_traits: _GridTraits | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = float(ages.period_to_age(period))
+        age = specialization_coordinate_at(ages=ages, period=period)
         grid = marker.build(age)
         if not isinstance(grid, ContinuousGrid) or isinstance(
             grid, _ContinuousStochasticProcess
@@ -989,7 +989,7 @@ def normalize_age_specialization(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     phased_specs: Mapping[RegimeName, PhasedRegimeSpec],
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> AgeNormalizationResult:

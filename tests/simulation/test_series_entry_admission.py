@@ -41,6 +41,7 @@ def test_series_uploads_use_the_entry_writer(
         value = UserMappingLeaf({"inner": UserMappingLeaf({"table": series})})
     elif form == "sequence":
         value = UserSequenceLeaf((series, series.copy()))
+    assert model.ages is not None
     convert = partial(
         pandas_utils.convert_series_in_params,
         flat_params={"working_life": {key: value}},

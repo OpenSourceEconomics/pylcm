@@ -475,6 +475,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
     flat_params = model._process_params({"discount_factor": 1.0})
     logger = get_logger(log_level="debug")
 
+    assert model.ages is not None
     with pytest.raises(InvalidStateTransitionProbabilitiesError):
         validate_state_transitions_all_periods(
             regimes=model._regimes,

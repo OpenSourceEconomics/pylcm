@@ -32,8 +32,8 @@ from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.simulation.subject_groups import SubjectGroupingRoute
 from _lcm.solution.backward_induction import _value_axis_names
 from _lcm.solution.grid_search import GridSearch
+from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
-from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import InvariantBlockSchedule
 
@@ -226,7 +226,7 @@ def admit_invariant_blocking(
     regimes: Mapping[RegimeName, Regime],
     reachability: ModelReachability,
     initial_nodes: frozenset[tuple[object, RegimeName]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     fixed_component_splits: Mapping[StateName, FixedComponentSplit],
     block_widths: Mapping[StateName, int],
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,

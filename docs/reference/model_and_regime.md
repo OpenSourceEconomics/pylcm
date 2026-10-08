@@ -23,10 +23,17 @@ model = lcm.Model(
 )
 ```
 
-Required arguments are `ages`, `regimes`, `edges`, `initial_nodes`, and
-`regime_id_class`, a class created with `@categorical(ordered=False)` whose fields match
-the regime names. A model must contain at least one terminal regime; a model whose
-starts are all terminal needs no other.
+Required arguments are exactly one of `ages` and `n_periods`, plus `regimes`, `edges`,
+`initial_nodes`, and `regime_id_class`, a class created with
+`@categorical(ordered=False)` whose fields match the regime names. A model must contain
+at least one terminal regime; a model whose starts are all terminal needs no other.
+
+`n_periods` is a positive integer excluding booleans and counts every computational
+slot, including an explicitly represented terminal slot. In this mode `model.ages` is
+`None`, graph selectors use `PeriodRange` or `Periods`, starts use
+`InitialNode(period=..., regime=...)`, and simulation inputs carry a `period` column.
+The model does not assign an age or elapsed duration to a period. See
+[Periods and temporal parameters](../user_guide/period_time.md).
 
 `edges` declares every regime transition, structure and law. Each source maps to a plain
 `{target: source_ages}` mapping when every source age has one destination (the graph is
@@ -53,12 +60,14 @@ Public inspection attributes include:
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
 - `edges`, the edges exactly as declared, `Transition` laws included;
-- `initial_nodes`, immutable admissible age–regime pairs;
+- `initial_nodes`, immutable admissible age–regime pairs in age mode, or explicit
+  `InitialNode` objects in period mode;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
   pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
   bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
   (`laws[name].terminal` is true for a regime without outgoing edges,
   `laws[name].gated_edges` holds the edges its `Transition.gates` declare);
+- `graph.coordinate_kind`, the meaning of the first coordinate in graph nodes and edges;
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 

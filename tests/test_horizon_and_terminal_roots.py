@@ -111,6 +111,7 @@ def _life_model(
 
 def _solved_pairs(*, model: Model, params: dict) -> frozenset[tuple[Any, str]]:
     values = model.solve(params=params, log_level="off").values
+    assert model.ages is not None
     return frozenset(
         (model.ages.exact_values[period], name)
         for period, by_regime in values.items()

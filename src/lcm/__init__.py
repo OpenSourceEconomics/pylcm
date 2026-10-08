@@ -168,13 +168,24 @@ from lcm.processes import (  # noqa: E402
 from lcm.regime import Regime  # noqa: E402
 from lcm.result import PolicyLookup, SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
+from lcm.temporal import (  # noqa: E402
+    TimeVarying,
+    UnlabelledTimeParameterWarning,
+    time_varying_params,
+)
+from lcm.time import InitialNode  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeRange,
     AgeSpecializedFunction,
     AgeSpecializedGrid,
     ByAge,
+    ByPeriod,
     DeterministicTransition,
     JointTransition,
+    PeriodRange,
+    Periods,
+    PeriodSpecializedFunction,
+    PeriodSpecializedGrid,
     StochasticTransition,
     Transition,
     deterministic_transition,
@@ -212,6 +223,7 @@ __all__ = [
     "AgeSpecializedFunction",
     "AgeSpecializedGrid",
     "ByAge",
+    "ByPeriod",
     "CESAggregator",
     "CertaintyEquivalent",
     "CollectiveUtility",
@@ -223,6 +235,7 @@ __all__ = [
     "ExtremeValueTasteShocks",
     "Gate",
     "GridBreakpoint",
+    "InitialNode",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",
     "JointTransition",
@@ -241,6 +254,10 @@ __all__ = [
     "OuterContinuousMargin",
     "ParetoObjective",
     "PeriodCandidate",
+    "PeriodRange",
+    "PeriodSpecializedFunction",
+    "PeriodSpecializedGrid",
+    "Periods",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
@@ -258,8 +275,10 @@ __all__ = [
     "StochasticTransition",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
+    "TimeVarying",
     "Transition",
     "UniformIIDProcess",
+    "UnlabelledTimeParameterWarning",
     "ValueDependentConstraint",
     "__version__",
     "affine_breakpoint",
@@ -282,4 +301,5 @@ __all__ = [
     "save_solution",
     "smooth_helper",
     "stochastic_transition",
+    "time_varying_params",
 ]

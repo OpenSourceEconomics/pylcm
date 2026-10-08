@@ -219,6 +219,7 @@ from _lcm.solution.shipped_solvers import (
     fail_if_solver_is_not_shipped,
 )
 from _lcm.state_action_space import create_state_action_space
+from _lcm.time import TimeAxis, coordinate_at
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
@@ -267,7 +268,6 @@ from _lcm.variables import (
     get_grids,
     simulate_variables_from_regime,
 )
-from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidRegimeTransitionProbabilitiesError,
@@ -346,7 +346,7 @@ def prepare_model_structure(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     laws: RegimeLaws,
-    ages: AgeGrid,
+    ages: TimeAxis,
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, tuple[RegimeName, ...]]]
@@ -404,7 +404,7 @@ def prepare_model_structure(
 def process_regimes(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    ages: AgeGrid,
+    ages: TimeAxis,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     prepared_structure: PreparedModelStructure,
@@ -935,7 +935,7 @@ class _CanonicalRegimeBuilder:
     `process_regimes` call that constructed it.
     """
 
-    ages: AgeGrid
+    ages: TimeAxis
     """The AgeGrid for the model."""
 
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]]
@@ -1442,7 +1442,7 @@ def _fail_if_declaring_kernels_carry_an_engine_produced_continuation(
 
 
 def _gated_continuation_specs(
-    *, canonical_regimes: Mapping[RegimeName, Regime], ages: AgeGrid
+    *, canonical_regimes: Mapping[RegimeName, Regime], ages: TimeAxis
 ) -> MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, GatedContinuationSchedule]
 ]:
@@ -1470,7 +1470,7 @@ def _gated_continuation_specs(
         edge.
     """
     target_ages = jnp.asarray(
-        [ages.period_to_age(period) for period in range(ages.n_periods)],
+        [coordinate_at(ages=ages, period=period) for period in range(ages.n_periods)],
         dtype=float,
     )
     return MappingProxyType(
@@ -2900,7 +2900,7 @@ def _state_handoff_errors(
     phase_name: PhaseName,
     phase_reachability: PhaseReachability,
     specs: Mapping[RegimeName, PhasedRegimeSpec],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> list[str]:
     """Return errors for target states without a valid retained-edge handoff."""
     phase_slices: dict[RegimeName, RegimePhaseSpec] = {
@@ -3032,7 +3032,7 @@ def _runtime_param_entry_error(
     *,
     phase_name: PhaseName,
     phase_reachability: PhaseReachability,
-    ages: AgeGrid,
+    ages: TimeAxis,
     period: int,
     source: RegimeName,
     target: RegimeName,
@@ -3084,7 +3084,7 @@ def _runtime_param_entry_error(
     )
 
 
-def _display_age(*, ages: AgeGrid, period: int) -> float:
+def _display_age(*, ages: TimeAxis, period: int) -> float:
     """Return period's age as a decimal float, never a raw `Fraction`."""
     return float(ages.exact_values[period])
 
@@ -3296,7 +3296,7 @@ def _build_solution_phase(  # noqa: PLR0915
     submesh_device_ids: tuple[int, ...],
     axis_widths: MappingProxyType[str, int],
     sharded_state_names: frozenset[StateName],
-    ages: AgeGrid,
+    ages: TimeAxis,
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None,
     solver: Solver,
@@ -4053,7 +4053,7 @@ class _TerminalCarryPeriodKernel:
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
-        ages: AgeGrid,
+        ages: TimeAxis,
         logger: logging.Logger,
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
@@ -4372,7 +4372,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     ) = None,
     grid_schedule: AgeGridSchedule | None = None,
     state_action_space: StateActionSpace,
-    ages: AgeGrid,
+    ages: TimeAxis,
     enable_jit: bool,
     solve_functions: EconFunctionsMapping,
     solve_transitions: TransitionFunctionsMapping,

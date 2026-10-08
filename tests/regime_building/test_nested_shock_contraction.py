@@ -594,6 +594,7 @@ def _traced_pointwise_Q(
     regime = model._regimes["alive"]
     flat_params = model._process_params(params)["alive"]
     next_regime_to_V_arr = MappingProxyType(dict(solution.values[1]))
+    assert model.ages is not None
     age = jnp.asarray(model.ages.period_to_age(0))
     Q_and_F = regime.simulation.Q_and_F[0]
     arguments = inspect.signature(Q_and_F).parameters

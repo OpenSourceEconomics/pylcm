@@ -24,6 +24,9 @@ declared in `Model(edges=...)` sit under one more root, `"edges"`; see
 [Edge parameters](#edge-parameters). Use the template as a starting point to see what
 values you need to provide.
 
+For profiles indexed by age or period, use explicit temporal declarations and labelled
+values; see [Periods and temporal parameters](period_time.md#temporal-parameters).
+
 Only *free* parameters appear in the template — arguments that are states, actions, or
 outputs of other functions in the DAG are resolved automatically and do not show up
 here.

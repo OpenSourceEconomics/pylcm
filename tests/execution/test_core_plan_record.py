@@ -89,6 +89,7 @@ class _PlanRecords(logging.Handler):
 
 def _model(*, execution_config: ExecutionConfig) -> Model:
     model = tiny.get_model()
+    assert model.ages is not None
     return Model(
         regimes=model.user_regimes,
         ages=model.ages,

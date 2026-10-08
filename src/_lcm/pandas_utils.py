@@ -2,6 +2,7 @@
 
 import functools
 import inspect
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -16,11 +17,23 @@ from jax import Array
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.params.edges import EDGES
-from _lcm.params.regime_template import EdgeVocabulary, iter_transition_callables
+from _lcm.params.regime_template import (
+    EdgeVocabulary,
+    iter_edge_callables,
+    iter_transition_callables,
+)
+from _lcm.params.temporal import (
+    align_time_varying,
+    temporal_parameter_names,
+    time_gather_indices,
+    validate_temporal_variants,
+)
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.reachability import ModelReachability
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
+from _lcm.time import TimeAxis, coordinate_kind
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -29,15 +42,25 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StateName,
 )
-from _lcm.utils.ast_inspection import _get_func_indexing_params
+from _lcm.utils.ast_inspection import _get_func_indexing_params, time_index_names
 from _lcm.utils.namespace import ParamsQnameDepth
-from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError
-from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.params import (
+    TimeVarying,
+    UnlabelledTimeParameterWarning,
+    UserMappingLeaf,
+    UserSequenceLeaf,
+)
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition, Transition
-from lcm.typing import Float1D, FloatND, Int1D, ReferenceName, UserFunction
+from lcm.transition import (
+    AgeSpecializedGrid,
+    ByAge,
+    JointTransition,
+    Transition,
+    _select_periods,
+)
+from lcm.typing import Float1D, FloatND, Int1D, Phase, ReferenceName, UserFunction
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
@@ -66,6 +89,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     array_writer: CanonicalArrayWriter | None = None,
+    ages: TimeAxis | None = None,
 ) -> InitialConditions:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
@@ -127,7 +151,12 @@ def initial_conditions_from_dataframe(  # noqa: C901
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
-        col: np.full(n_subjects, np.nan) for col in state_cols
+        col: (
+            np.zeros(n_subjects, dtype=np.int32)
+            if col == "age" and ages is not None and coordinate_kind(ages) == "period"
+            else np.full(n_subjects, np.nan)
+        )
+        for col in state_cols
     }
     discrete_state_names: set[StateName] = set()
 
@@ -164,7 +193,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
                     regime_name=str(regime_name),
                 )
             else:
-                result_arrays[col][idx] = values.to_numpy(dtype=float)
+                result_arrays[col][idx] = values.to_numpy(
+                    dtype=result_arrays[col].dtype
+                )
 
     # Replace remaining NaN in discrete columns with an explicit int sentinel
     # before casting to int32. This avoids platform-undefined NaN→int behavior
@@ -180,7 +211,14 @@ def initial_conditions_from_dataframe(  # noqa: C901
         col: _write_pandas_array(
             value=arr,
             dtype=np.dtype(
-                jnp.int32 if col in discrete_state_names else canonical_float_dtype()
+                jnp.int32
+                if col in discrete_state_names
+                or (
+                    col == "age"
+                    and ages is not None
+                    and coordinate_kind(ages) == "period"
+                )
+                else canonical_float_dtype()
             ),
             name=f"initial_conditions.{col}",
             array_writer=array_writer,
@@ -289,13 +327,16 @@ def _map_discrete_labels(
 def convert_series_in_params(
     *,
     flat_params: Mapping[RegimeName, Mapping[str, object]],
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
     declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
     declared_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     array_writer: CanonicalArrayWriter | None = None,
+    required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    reachability: ModelReachability | None = None,
+    phase_transitions: Mapping[Phase, Mapping[RegimeName, Transition]] | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
@@ -327,6 +368,8 @@ def convert_series_in_params(
             any; its discrete grids label the levels of a pruned variable.
         array_writer: Optional owner admitting each Series upload and retaining
             completed leaves while the parameter mapping is assembled.
+        phase_transitions: Declarations retaining their owning phase, including
+            inferred targets, for phase-specific temporal coverage.
 
     Returns:
         Immutable mapping with the same structure, Series replaced by JAX
@@ -349,6 +392,17 @@ def convert_series_in_params(
                             declared_vocabulary=declared_vocabulary,
                             regime_names_to_ids=regime_names_to_ids,
                             array_writer=array_writer,
+                            required_periods_by_regime=required_periods_by_regime,
+                            reachability=reachability,
+                            declarations_by_phase=(
+                                None
+                                if phase_transitions is None
+                                else {
+                                    phase: declarations[source]
+                                    for phase, declarations in phase_transitions.items()
+                                    if source in declarations
+                                }
+                            ),
                         )
                     )
                     for source, leaves in regime_params.items()
@@ -356,7 +410,18 @@ def convert_series_in_params(
             )
             continue
         user_regime = user_regimes[regime_name]
-        all_funcs = dict(user_regime.get_all_functions(law=laws[regime_name]))
+        solve_funcs = user_regime.get_all_functions(
+            phase="solve", law=laws[regime_name]
+        )
+        simulate_funcs = user_regime.get_all_functions(
+            phase="simulate", law=laws[regime_name]
+        )
+        all_funcs: dict[str, object] = {**solve_funcs, **simulate_funcs}
+        for name in solve_funcs.keys() & simulate_funcs.keys():
+            if solve_funcs[name] is not simulate_funcs[name]:
+                all_funcs[name] = Phased(
+                    solve=solve_funcs[name], simulate=simulate_funcs[name]
+                )
         # The Koopmans aggregator is not a regime function; its params live
         # under a pseudo-function key of the same name. Under `Phased` the two
         # variants declare different parameters and the template carries their
@@ -378,7 +443,7 @@ def convert_series_in_params(
             # Scalars and already-materialized arrays need no source inspection;
             # resolving every value would make an unrelated Series elsewhere in
             # the params tree turn a valid nested joint scalar into a KeyError.
-            if not _value_contains_series(value):
+            if not _needs_param_preflight(value):
                 converted_regime[func_param] = value
                 continue
 
@@ -414,6 +479,16 @@ def convert_series_in_params(
                 regime_name=regime_name,
                 declared_categoricals=declared_vocabulary[regime_name].categoricals,
                 array_writer=array_writer,
+                required_periods=_regime_param_periods(
+                    parts=parts,
+                    func_name=resolved_func_name,
+                    regime_name=regime_name,
+                    ages=ages,
+                    required_periods_by_regime=required_periods_by_regime,
+                    reachability=reachability,
+                    user_regime=user_regime,
+                    phase_functions={"solve": solve_funcs, "simulate": simulate_funcs},
+                ),
             )
         result[regime_name] = converted_regime
     return cast(
@@ -428,11 +503,14 @@ def _convert_edge_params(
     # User leaves, keyed by slot path; the values are heterogeneous.
     leaves: Mapping[str, object],
     declared_transitions: tuple[Transition, ...],
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
     declared_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     regime_names_to_ids: RegimeNamesToIds,
     array_writer: CanonicalArrayWriter | None,
+    required_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    reachability: ModelReachability | None = None,
+    declarations_by_phase: Mapping[Phase, Transition] | None = None,
 ) -> dict[str, object]:
     """Convert the Series leaves of one source's `edges` slots.
 
@@ -465,7 +543,7 @@ def _convert_edge_params(
     # User leaves (scalars, arrays, Series, mapping and sequence leaves).
     converted: dict[str, object] = {}
     for key, value in leaves.items():
-        if not _value_contains_series(value):
+        if not _needs_param_preflight(value):
             converted[key] = value
             continue
         path = tree_path_from_qname(key)
@@ -493,29 +571,191 @@ def _convert_edge_params(
             regime_name=regime_name,
             declared_categoricals=declared_vocabulary[regime_name].categoricals,
             array_writer=array_writer,
+            required_periods=_edge_param_periods(
+                declarations=declared_transitions,
+                declarations_by_phase=declarations_by_phase,
+                reachability=reachability,
+                source=source,
+                slot=slot,
+                param_name=param_name,
+                ages=ages,
+                source_periods=(
+                    tuple(range(ages.n_periods - 1))
+                    if required_periods_by_regime is None
+                    else required_periods_by_regime.get(source, ())
+                ),
+            ),
         )
     return converted
 
 
-def _value_contains_series(value: object) -> bool:
-    """Return whether one parameter value contains a pandas Series leaf."""
-    if isinstance(value, pd.Series):
-        return True
-    if isinstance(value, UserMappingLeaf):
-        return any(_value_contains_series(item) for item in value.data.values())
-    if isinstance(value, UserSequenceLeaf):
-        return any(_value_contains_series(item) for item in value.data)
-    if isinstance(value, Mapping):
-        return any(_value_contains_series(item) for item in value.values())
-    return False
+def _regime_param_periods(
+    *,
+    parts: tuple[str, ...],
+    func_name: str,
+    regime_name: str,
+    ages: TimeAxis,
+    required_periods_by_regime: Mapping[str, tuple[int, ...]] | None,
+    reachability: ModelReachability | None,
+    user_regime: UserRegime,
+    phase_functions: Mapping[Phase, Mapping[str, object]],
+) -> tuple[int, ...]:
+    """Require only slots where a declaring phase can read this parameter."""
+    periods = (
+        tuple(range(ages.n_periods))
+        if required_periods_by_regime is None
+        else required_periods_by_regime.get(regime_name, ())
+    )
+    is_transition = (
+        func_name.startswith("next_")
+        or len(parts) >= ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
+    )
+    if is_transition:
+        periods = tuple(period for period in periods if period < ages.n_periods - 1)
+    if reachability is None:
+        return periods
+    required: set[int] = set()
+    for phase, functions in phase_functions.items():
+        aggregator = user_regime.get_koopmans_aggregator(phase=phase)
+        consumer, _ = _resolve_param_consumer(
+            parts=parts,
+            param_name=parts[-1],
+            user_regime=user_regime,
+            all_funcs=functions,
+            aggregator_variants=() if aggregator is None else (aggregator,),
+            phase=phase,
+        )
+        if consumer is None or parts[-1] not in inspect.signature(consumer).parameters:
+            continue
+        graph = reachability.solution if phase == "solve" else reachability.simulation
+        required.update(
+            period
+            for period in periods
+            if regime_name in graph.active_regimes_by_period[period]
+            and (
+                not is_transition
+                or len(parts) < ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
+                or graph.has_edge(period=period, source=regime_name, target=parts[0])
+            )
+        )
+    return tuple(sorted(required))
 
 
-def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...]:
-    """Return both phase variants of one joint declaration, or its bare value."""
+def _edge_param_periods(
+    *,
+    declarations: tuple[Transition, ...],
+    slot: tuple[str, ...],
+    param_name: str,
+    ages: TimeAxis,
+    source_periods: tuple[int, ...],
+    declarations_by_phase: Mapping[Phase, Transition] | None,
+    reachability: ModelReachability | None,
+    source: RegimeName,
+) -> tuple[int, ...]:
+    """Read scheduled laws at their source, and gate functions at their target."""
+    required: set[int] = set()
+    period_by_age: dict[object, int] = {
+        age: period for period, age in enumerate(ages.exact_values)
+    }
+    variants: tuple[tuple[Phase | None, Transition], ...] = (
+        tuple((None, declaration) for declaration in declarations)
+        if declarations_by_phase is None
+        else tuple(declarations_by_phase.items())
+    )
+    for phase, declaration in variants:
+        periods = source_periods
+        if phase is not None and reachability is not None:
+            graph = (
+                reachability.solution if phase == "solve" else reachability.simulation
+            )
+            periods = tuple(
+                period
+                for period in periods
+                if source in graph.active_regimes_by_period[period]
+            )
+        selected = (
+            declaration.law.resolve(ages=ages).law_by_period
+            if isinstance(declaration.law, ByAge)
+            else dict.fromkeys(periods, declaration.law)
+        )
+        targets = (
+            None
+            if declaration.targets is None
+            else {
+                target: _select_periods(
+                    selector=selector, ages=ages, period_by_age=period_by_age
+                )
+                for target, selector in declaration.targets.items()
+            }
+        )
+        is_gate = len(slot) > 1 and slot[0] in declaration.gates
+        for period in periods:
+            if period >= ages.n_periods - 1:
+                continue
+            if targets is not None and not any(
+                period in selected for selected in targets.values()
+            ):
+                continue
+            case = selected.get(period)
+            if is_gate:
+                active = (
+                    period in targets.get(slot[0], ())
+                    if targets is not None
+                    else _case_names_target(case=case, target=slot[0])
+                )
+                if active and any(
+                    path == slot and param_name in inspect.signature(func).parameters
+                    for path, func, gate in iter_transition_callables(
+                        declaration, phase=phase
+                    )
+                    if gate is not None
+                ):
+                    required.add(period + 1)
+            elif (
+                targets is None or not slot or period in targets.get(slot[0], ())
+            ) and any(
+                path == slot and param_name in inspect.signature(func).parameters
+                for path, func, _ in iter_edge_callables(law=case, path=(), phase=phase)
+            ):
+                required.add(period)
+    return tuple(sorted(required))
+
+
+def _case_names_target(*, case: object, target: str) -> bool:
+    """Read named support without evaluating parameter-dependent probabilities."""
+    if isinstance(case, Phased):
+        return any(
+            _case_names_target(case=variant, target=target)
+            for variant in (case.solve, case.simulate)
+        )
+    return target in case if isinstance(case, Mapping) else case == target
+
+
+def _needs_param_preflight(value: object) -> bool:
+    """Inspect arrays and containers, including scalar-only or empty containers."""
+    return isinstance(
+        value,
+        (
+            pd.Series,
+            TimeVarying,
+            Array,
+            np.ndarray,
+            UserMappingLeaf,
+            UserSequenceLeaf,
+            Mapping,
+        ),
+    )
+
+
+def _joint_variants(
+    *, raw: JointTransition | Phased, phase: Phase | None
+) -> tuple[JointTransition, ...]:
+    """Return the requested phase variants of one joint declaration."""
     if isinstance(raw, Phased):
-        return cast(
+        variants = cast(
             "tuple[JointTransition, JointTransition]", (raw.solve, raw.simulate)
         )
+        return variants if phase is None else (variants[0 if phase == "solve" else 1],)
     return (raw,)
 
 
@@ -524,8 +764,9 @@ def _resolve_param_consumer(
     parts: tuple[str, ...],
     param_name: str,
     user_regime: UserRegime,
-    all_funcs: dict[str, Callable[..., Any]],
+    all_funcs: Mapping[str, object],
     aggregator_variants: tuple[Callable[..., Any], ...],
+    phase: Phase | None = None,
 ) -> tuple[Callable[..., Any] | None, FunctionName]:
     """Resolve a flattened param path to the callable declaring its Series leaf.
 
@@ -540,7 +781,7 @@ def _resolve_param_consumer(
     }:
         target, kernel_name, role, _ = parts
         raw = user_regime.joint_transitions[target][kernel_name]
-        variants = _joint_variants(raw)
+        variants = _joint_variants(raw=raw, phase=phase)
         role_funcs: tuple[Callable[..., Any], ...]
         if role == "support":
             role_funcs = tuple(
@@ -550,14 +791,16 @@ def _resolve_param_consumer(
             )
         else:
             role_funcs = tuple(variant.probabilities for variant in variants)
-        if not role_funcs:
+        if not role_funcs and phase is None:
             msg = (
                 f"Parameter path {'__'.join(parts)!r} names a callable joint "
                 f"transition {role} role, but the declaration has no callable."
             )
             raise KeyError(msg)
         return (
-            _variant_declaring(variants=role_funcs, param_name=param_name),
+            _variant_declaring(variants=role_funcs, param_name=param_name)
+            if role_funcs
+            else None,
             f"{kernel_name}.{role}",
         )
 
@@ -568,7 +811,7 @@ def _resolve_param_consumer(
             output_variants = tuple(
                 joint.outputs[state_name]
                 for raw in user_regime.joint_transitions.get(target, {}).values()
-                for joint in _joint_variants(raw)
+                for joint in _joint_variants(raw=raw, phase=phase)
                 if state_name in joint.outputs
             )
             if output_variants:
@@ -580,13 +823,15 @@ def _resolve_param_consumer(
         # ``func__target`` even though the public params path is target-first.
         resolved = qname_from_tree_path((public_func_name, target))
         return _scheduled_consumer(
-            func=all_funcs[resolved], param_name=param_name
+            func=all_funcs.get(resolved), param_name=param_name, phase=phase
         ), resolved
 
     resolved = parts[0]
     if resolved == "koopmans_aggregator":
         return (
-            _variant_declaring(variants=aggregator_variants, param_name=param_name),
+            _variant_declaring(variants=aggregator_variants, param_name=param_name)
+            if aggregator_variants
+            else None,
             cast("FunctionName", resolved),
         )
     if resolved in _PSEUDO_KEYS_WITHOUT_A_SIGNATURE or _is_runtime_grid_param(
@@ -594,7 +839,9 @@ def _resolve_param_consumer(
     ):
         return None, cast("FunctionName", resolved)
     return (
-        _scheduled_consumer(func=all_funcs[resolved], param_name=param_name),
+        _scheduled_consumer(
+            func=all_funcs.get(resolved), param_name=param_name, phase=phase
+        ),
         cast("FunctionName", resolved),
     )
 
@@ -605,12 +852,13 @@ def _convert_param_value(
     func: Callable | None,
     param_name: str,
     func_name: FunctionName,
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None,
     declared_categoricals: Mapping[ReferenceName, DiscreteGrid],
     array_writer: CanonicalArrayWriter | None = None,
+    required_periods: tuple[int, ...] | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -648,8 +896,31 @@ def _convert_param_value(
         regime_name=regime_name,
         declared_categoricals=declared_categoricals,
         array_writer=array_writer,
+        required_periods=required_periods,
     )
 
+    managed = param_name in temporal_parameter_names(func)
+    name = f"params.{regime_name}.{func_name}.{param_name}"
+    if managed and isinstance(value, (UserMappingLeaf, UserSequenceLeaf, Mapping)):
+        raise InvalidParamsError(
+            f"{name}: a managed temporal parameter cannot be a container; "
+            "supply a scalar, TimeVarying, or labelled Series."
+        )
+    support = (
+        tuple(range(ages.n_periods)) if required_periods is None else required_periods
+    )
+    if isinstance(value, TimeVarying):
+        if not managed:
+            raise InvalidParamsError(
+                f"{name}: TimeVarying requires @time_varying_params on its consumer."
+            )
+        return align_time_varying(
+            value=value,
+            ages=ages,
+            required_periods=support,
+            name=name,
+            array_writer=array_writer,
+        )
     if isinstance(value, pd.Series):
         return array_from_series(
             sr=value,
@@ -662,6 +933,7 @@ def _convert_param_value(
             regime_name=regime_name,
             declared_categoricals=declared_categoricals,
             array_writer=array_writer,
+            required_periods=support,
         )
     # `convert_series_in_params` runs between broadcast and canonicalization,
     # so leaves are still in user form. Preserve that user form on output:
@@ -670,7 +942,45 @@ def _convert_param_value(
         return UserMappingLeaf({k: recurse(value=v) for k, v in value.data.items()})
     if isinstance(value, UserSequenceLeaf):
         return UserSequenceLeaf(tuple(recurse(value=v) for v in value.data))
+    if isinstance(value, (Array, np.ndarray)) and value.ndim:
+        _check_raw_time_array(
+            managed=managed, func=func, param_name=param_name, ages=ages, name=name
+        )
     return value
+
+
+def _check_raw_time_array(
+    *, managed: bool, func: Callable | None, param_name: str, ages: TimeAxis, name: str
+) -> None:
+    """Reject ambiguous managed arrays and diagnose visible manual time indexing."""
+    if managed:
+        raise InvalidParamsError(
+            f"{name}: declared temporal parameters require labelled "
+            "TimeVarying or Series input."
+        )
+    indices = (
+        frozenset()
+        if func is None
+        else time_index_names(func=func, array_param_name=param_name)
+    )
+    if not {"age", "period"}.intersection(indices):
+        return
+    if "age" in indices:
+        raise InvalidParamsError(
+            f"{name}: table[age] cannot index an array stored by period. "
+            "Use managed selection or table[period]."
+        )
+    if coordinate_kind(ages) == "period":
+        raise InvalidParamsError(
+            f"{name}: unlabelled temporal array; use a labelled Series "
+            "or managed TimeVarying."
+        )
+    warnings.warn(
+        f"{name}: unlabelled time array; its age-to-period mapping cannot "
+        "be checked. Use labelled data.",
+        UnlabelledTimeParameterWarning,
+        stacklevel=4,
+    )
 
 
 def array_from_series(
@@ -679,12 +989,13 @@ def array_from_series(
     func: Callable | None,
     param_name: str,
     func_name: FunctionName,
-    ages: AgeGrid,
+    ages: TimeAxis,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
     declared_categoricals: Mapping[ReferenceName, DiscreteGrid] = MappingProxyType({}),
     array_writer: CanonicalArrayWriter | None = None,
+    required_periods: tuple[int, ...] | None = None,
 ) -> FloatND:
     """Convert a pandas Series to a JAX array.
 
@@ -730,6 +1041,19 @@ def array_from_series(
         else _get_func_indexing_params(func=func, array_param_name=param_name)
     )
     name = f"params.{regime_name}.{func_name}.{param_name}"
+    managed = param_name in temporal_parameter_names(func)
+    if "age" in indexing_params:
+        raise InvalidParamsError(
+            f"{name}: table[age] cannot index period-normalized data. "
+            "Use managed selection or table[period]."
+        )
+    if managed:
+        if "period" in indexing_params:
+            raise InvalidParamsError(
+                f"{name}: managed temporal consumers already receive a time slice; "
+                "remove manual period indexing."
+            )
+        indexing_params = ["period", *indexing_params]
 
     if not indexing_params:
         return _write_pandas_array(
@@ -746,7 +1070,9 @@ def array_from_series(
     }
 
     # Replace internal "period" with user-facing "age"
-    display_params = ["age" if p == "period" else p for p in indexing_params]
+    display_params = [
+        coordinate_kind(ages) if p == "period" else p for p in indexing_params
+    ]
 
     level_mappings = _build_level_mappings_for_param(
         indexing_params=display_params, grids=grids, ages=ages
@@ -767,15 +1093,50 @@ def array_from_series(
             )
             level_mappings = (*level_mappings, outcome_mapping)
 
-    if "age" in display_params:
-        _fail_if_period_level(sr)
-        sr = _filter_to_grid_ages(series=sr, ages=ages)
+    if "period" in indexing_params:
+        expected_levels = [mapping.name for mapping in level_mappings]
+        sr = _validate_and_reorder_levels(series=sr, expected_levels=expected_levels)
+        kind = coordinate_kind(ages)
+        labels = tuple(sr.index.get_level_values(kind))
+        # Validate schema on every row, but duplicate full keys only after
+        # filtering surplus time coordinates. Repeated times across categories
+        # are ordinary observations.
+        time_gather_indices(
+            labels=labels,
+            kind=kind,
+            ages=ages,
+            required_periods=(),
+            name=name,
+            check_duplicates=False,
+        )
+        wanted = set(ages.exact_values) | (
+            {float(v) for v in ages.exact_values} if kind == "age" else set()
+        )
+        sr = sr.loc[sr.index.get_level_values(kind).isin(wanted)]
+        if sr.index.has_duplicates:
+            raise InvalidParamsError(
+                f"{name}: duplicate selected {kind} keys "
+                f"{sr.index[sr.index.duplicated()].tolist()[:8]}."
+            )
+        support = (
+            tuple(range(ages.n_periods))
+            if required_periods is None
+            else required_periods
+        )
+        _require_temporal_cells(
+            series=sr,
+            mappings=level_mappings,
+            required_periods=support,
+            name=name,
+            kind=kind,
+        )
 
     return _scatter_series(
         series=sr,
         level_mappings=level_mappings,
         name=name,
         array_writer=array_writer,
+        fill_value=0.0 if "period" in indexing_params else np.nan,
     )
 
 
@@ -862,7 +1223,7 @@ def _fail_if_period_level(sr: pd.Series) -> None:
 def _filter_to_grid_ages(
     *,
     series: pd.Series,
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> pd.Series:
     """Keep only rows whose `"age"` level value is on the `AgeGrid`.
 
@@ -907,12 +1268,15 @@ class _RegimeIdCode:
         return int(self.regime_names_to_ids[label])
 
 
-def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
+def _age_level_mapping(ages: TimeAxis) -> _LevelMapping:
     """Create a `_LevelMapping` for the age dimension."""
+    labels: dict[object, int] = {v: i for i, v in enumerate(ages.exact_values)}
+    if coordinate_kind(ages) == "age":
+        labels.update({float(v): i for i, v in enumerate(ages.exact_values)})
     return _LevelMapping(
-        name="age",
+        name=coordinate_kind(ages),
         size=ages.n_periods,
-        get_code_from_label=ages.age_to_period,  # ty: ignore[invalid-argument-type]
+        get_code_from_label=labels.__getitem__,
     )
 
 
@@ -940,7 +1304,7 @@ def _build_level_mappings_for_param(
     *,
     indexing_params: list[str],
     grids: dict[str, DiscreteGrid],
-    ages: AgeGrid,
+    ages: TimeAxis,
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings for `array_from_series` from indexing params.
 
@@ -956,7 +1320,7 @@ def _build_level_mappings_for_param(
     """
     mappings: list[_LevelMapping] = []
     for param in indexing_params:
-        if param == "age":
+        if param == coordinate_kind(ages):
             mappings.append(_age_level_mapping(ages))
         elif param in grids:
             mappings.append(_grid_level_mapping(name=param, grid=grids[param]))
@@ -1019,6 +1383,36 @@ def _build_outcome_mapping(
                 return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
 
     return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
+
+
+def _require_temporal_cells(
+    *,
+    series: pd.Series,
+    mappings: tuple[_LevelMapping, ...],
+    required_periods: tuple[int, ...],
+    name: str,
+    kind: str,
+) -> None:
+    """Require complete labelled categorical combinations at every read time."""
+    codes = {
+        mapping.name: _map_level(
+            mapping=mapping, level_values=series.index.get_level_values(mapping.name)
+        )
+        for mapping in mappings
+    }
+    cells_per_time = int(
+        np.prod([mapping.size for mapping in mappings if mapping.name != kind])
+    )
+    missing = [
+        period
+        for period in required_periods
+        if np.count_nonzero(codes[kind] == period) != cells_per_time
+    ]
+    if missing:
+        raise InvalidParamsError(
+            f"{name}: missing required {kind}/categorical keys at "
+            f"period positions {missing[:8]}."
+        )
 
 
 def _scatter_series(
@@ -1131,7 +1525,7 @@ def _validate_and_reorder_levels(
     """Validate MultiIndex level names and reorder to match expected order."""
     actual_names = list(series.index.names)
 
-    if "period" in actual_names:
+    if "period" in actual_names and "period" not in expected_levels:
         msg = (
             "Use 'age' (with actual age values) as the MultiIndex level name "
             "instead of 'period'."
@@ -1283,19 +1677,45 @@ def _build_discrete_grid_lookup(
 _PSEUDO_KEYS_WITHOUT_A_SIGNATURE = frozenset({"certainty_equivalent", "taste_shocks"})
 
 
-def _scheduled_consumer(*, func: object, param_name: str) -> Callable[..., Any]:
+def _scheduled_consumer(
+    *, func: object, param_name: str, phase: Phase | None = None
+) -> Callable[..., Any] | None:
     """Return the callable law of a `ByAge` schedule that declares `param_name`.
 
     A schedule is a declaration, not a callable; the law it selects is what
     reads the parameter. Any other consumer is returned unchanged.
     """
+    if isinstance(func, Phased):
+        if phase is not None:
+            return _scheduled_consumer(
+                func=func.solve if phase == "solve" else func.simulate,
+                param_name=param_name,
+                phase=phase,
+            )
+        return _variant_declaring(
+            variants=tuple(
+                consumer
+                for variant in (func.solve, func.simulate)
+                if (
+                    consumer := _scheduled_consumer(func=variant, param_name=param_name)
+                )
+                is not None
+            ),
+            param_name=param_name,
+        )
     if not isinstance(func, ByAge):
-        return cast("Callable[..., Any]", func)
+        return cast("Callable[..., Any] | None", func)
     laws = tuple(
         variant
         for law in func.laws
         for variant in (
-            (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
+            (
+                (law.solve, law.simulate)
+                if phase is None
+                else ((law.solve if phase == "solve" else law.simulate),)
+            )
+            if isinstance(law, Phased)
+            else (law,)
         )
         if callable(variant)
     )
@@ -1318,6 +1738,7 @@ def _variant_declaring(
     A `Phased` slot contributes both of its variants to the params template, so
     a parameter may be declared by only one of them.
     """
+    validate_temporal_variants(functions=variants, name=param_name)
     for variant in variants:
         if param_name in inspect.signature(variant).parameters:
             return variant

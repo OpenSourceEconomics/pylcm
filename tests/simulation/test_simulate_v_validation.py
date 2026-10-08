@@ -38,6 +38,7 @@ def _simulate(*, log_level: LogLevel) -> None:
         wage=20.0,
     )
     wealth = jnp.linspace(1.0, 120.0, 12)
+    assert model.ages is not None
     model.simulate(
         params=params,
         initial_conditions={

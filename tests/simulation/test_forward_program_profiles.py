@@ -82,6 +82,7 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
         "_lcm.simulation.forward_program_profiles"
     )
     ordinary_key = _key_descriptor(impl=jax.config.jax_default_prng_impl)
+    assert model.ages is not None
     with monkeypatch.context() as guard:
         guard.setattr(jax, "device_put", _forbid_allocation)
         guard.setattr(jax._src.core.EvalTrace, "process_primitive", _forbid_allocation)
@@ -128,6 +129,7 @@ def test_independent_taste_profile_keeps_its_actual_key_dtype_under_rbg(
 
     with jax.default_prng_impl("rbg"):
         model = get_model()
+        assert model.ages is not None
         with monkeypatch.context() as observer:
             observer.setattr(SimulationRuntime, "dispatch", observe)
             result = model.simulate(
