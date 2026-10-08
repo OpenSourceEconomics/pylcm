@@ -195,7 +195,7 @@ def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
     """Reject a per-target law naming a destination its `targets` leave out."""
     with pytest.raises(
         ModelInitializationError,
-        match=r"supplied: \{'perceived': \[0\]\}; derived from the "
+        match=r"supplied: \{'perceived': \[0\], 'work': \[0\]\}; derived from the "
         r"law and its gates: \{'perceived': \[0\], 'realized': \[0\]\}",
     ):
         Model(
