@@ -3,8 +3,11 @@
 The destinations of a per-target law are the keys of its cells, plus the route
 fallbacks of its gates; each destination's source ages are the ages whose case
 names it, and a gate fallback's are those of its gated target. Supplying
-`targets` as well is allowed, but only when it says the same thing.
+`targets` as well is allowed, but only when it says the same thing out of the
+ages at which the source is active, into targets active at the next age.
 """
+
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import pytest
@@ -281,7 +284,13 @@ def _model_with_edges(*, edges: object) -> Model:
                 },
             ),
             "retired": Regime(
-                states={"wealth": _WEALTH}, functions={"utility": _utility}
+                states={"wealth": _WEALTH},
+                state_transitions=(
+                    {"wealth": _keep_wealth}
+                    if isinstance(edges, Mapping) and "retired" in edges
+                    else {}
+                ),
+                functions={"utility": _utility},
             ),
             "dead": Regime(states={"wealth": _WEALTH}, functions={"utility": _utility}),
         },
