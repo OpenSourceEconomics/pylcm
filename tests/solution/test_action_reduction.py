@@ -272,6 +272,32 @@ def test_hard_max_identity_is_not_matched_against_a_separately_reduced_maximum()
     assert count_equalities_with_a_reduced_maximum(jaxpr) == 0
 
 
+def test_hard_max_block_reads_its_values_once_through_a_barrier():
+    """The block's values are materialized once before anything reads them.
+
+    The NaN test and the paired reduction then read the same copy. Left free, the
+    compiler fuses the values' producer into each reader, and how a fused copy
+    rounds depends on the width the program is compiled at, so a regime chunked
+    at another width would publish a different maximum.
+    """
+    action_ids = jnp.arange(4, dtype=jnp.int32)
+
+    def reduce_block(values: jax.Array) -> HardMaxAccumulator:
+        return HARD_MAX_REDUCTION.add(
+            accumulator=HARD_MAX_REDUCTION.initialize(
+                value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype)
+            ),
+            values=values,
+            feasible=jnp.ones(values.shape, dtype=bool),
+            action_ids=action_ids,
+        )
+
+    closed = jax.make_jaxpr(reduce_block)(jnp.zeros((2, 4)))
+    values = closed.jaxpr.invars[0]
+    readers = [eqn.primitive.name for eqn in closed.jaxpr.eqns if values in eqn.invars]
+    assert readers == ["optimization_barrier"]
+
+
 @pytest.mark.parametrize(
     ("dtype", "raw_ids"),
     [

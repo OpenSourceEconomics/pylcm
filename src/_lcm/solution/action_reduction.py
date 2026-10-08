@@ -9,6 +9,7 @@ device placement.
 
 from typing import Literal, NamedTuple
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
@@ -199,8 +200,12 @@ def _reduce_block(
     """Reduce one block without assuming its local order is canonical.
 
     The best value and its identity come out of one reduction, so the identity
-    always names a feasible action attaining the published value.
+    always names a feasible action attaining the published value. The values are
+    materialized once before the NaN test and the reduction read them: fused into
+    each reader instead, they can round differently at different compiled widths,
+    so the published maximum would depend on the width a regime is chunked at.
     """
+    values = jax.lax.optimization_barrier(values)
     feasible_nan = feasible & jnp.isnan(values)
     any_feasible = jnp.any(feasible, axis=-1)
     any_nan = jnp.any(feasible_nan, axis=-1)

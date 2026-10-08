@@ -27,10 +27,8 @@ from tests.test_models.processes import (
 
 _N_PERIODS = 6
 _CELL_AXIS = "cell"
-# The leaves whose low-income, bad-health entries are born by cancellation: every
-# working-life period, each a small sum of a negative flow utility and a larger
-# positive continuation.
-_CANCELLATION_LEAVES = frozenset({(0, "work"), (1, "work"), (2, "work")})
+# The one leaf whose low-income, bad-health entries are born by cancellation.
+_CANCELLATION_LEAF = (2, "work")
 
 
 def _base_model() -> Model:
@@ -135,17 +133,16 @@ def test_a_per_regime_width_preserves_the_solved_values() -> None:
         for regime_name, expected in by_regime.items():
             got = pinned_values[period][regime_name]
             err_msg = f"{regime_name} period {period}"
-            if (period, regime_name) not in _CANCELLATION_LEAVES:
+            if (period, regime_name) != _CANCELLATION_LEAF:
                 assert_agrees_to_ulp(
                     got=got, expected=expected, n_ulp=8, err_msg=err_msg
                 )
                 continue
-            # A cancellation leaf's low-income, bad-health entries are a small
-            # sum of a flow utility and a continuation of opposite sign. A
-            # reordered reduction, here or in a later period whose value the
-            # continuation averages, moves such an entry by roundings of those
-            # operands, which are many of the entry's own steps, so these leaves
-            # are bounded by each entry's own two operands.
+            # The cancellation leaf's low-income, bad-health entries are a
+            # small sum of a flow utility and a continuation of opposite sign.
+            # A reordered reduction moves such an entry by roundings of those
+            # operands, which are many of the entry's own steps, so this leaf
+            # alone is bounded by each entry's own two operands.
             flow, continuation = _bellman_operands(
                 values=planned_values, period=period, regime_name=regime_name
             )

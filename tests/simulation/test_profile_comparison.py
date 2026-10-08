@@ -226,8 +226,7 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
     """
     _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
     expected_values = solution._engine_view.values
-    period, regime = 2, "work"
-    assert (period, regime) in axis_parity._CANCELLATION_LEAVES
+    period, regime = axis_parity._CANCELLATION_LEAF
     leaf = np.array(expected_values[period][regime])
     for _ in range(steps):
         leaf[0, 0, 0] = np.nextafter(leaf[0, 0, 0], leaf.dtype.type(np.inf))
