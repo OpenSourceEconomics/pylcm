@@ -1,6 +1,7 @@
-"""A stateless lookup is one row however many subject devices the model has.
+"""A policy lookup gives the same rows however many devices the model has.
 
 An empty query stands for one row, and one row cannot be split across devices.
+A stateful query reads the next period's values wherever the solve left them.
 Each device count runs in its own subprocess with forced host devices, so the
 witness does not depend on the ambient topology.
 """
@@ -62,14 +63,59 @@ _SCRIPT = textwrap.dedent(
 )
 
 
-def _lookup_on_devices(*, n_devices: int, return_action_values: bool) -> dict:
+_STATEFUL_SCRIPT = textwrap.dedent(
+    """
+    import json
+    import sys
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from tests.test_models.deterministic.regression import get_model, get_params
+
+    n_devices = int(sys.argv[1])
+    return_action_values = sys.argv[2] == "1"
+    assert jax.device_count() == n_devices, jax.devices()
+
+    model = get_model(n_periods=5)
+    params = get_params(n_periods=5)
+    solution = model.solve(params=params, log_level="off")
+    wealth = model.state_grid(
+        params=params, regime_name="working_life", state_name="wealth"
+    )
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=3,
+        regime_name="working_life",
+        states={"wealth": jnp.asarray(wealth[:2])},
+        return_action_values=return_action_values,
+    )
+    outputs = {
+        "actions": {
+            name: np.asarray(values).tolist() for name, values in got.actions.items()
+        },
+        "value": np.asarray(got.value).tolist(),
+    }
+    if return_action_values:
+        outputs["Q"] = np.asarray(got.Q).tolist()
+        outputs["F"] = np.asarray(got.F).tolist()
+    print("LOOKUP-ROWS", json.dumps(outputs))
+    """
+)
+
+
+def _lookup_on_devices(
+    *, n_devices: int, return_action_values: bool, script: str = _SCRIPT
+) -> dict:
     env = {
         **os.environ,
         "XLA_FLAGS": f"--xla_force_host_platform_device_count={n_devices}",
         "JAX_PLATFORMS": "cpu",
     }
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", _SCRIPT, str(n_devices), str(int(return_action_values))],
+        [sys.executable, "-c", script, str(n_devices), str(int(return_action_values))],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
@@ -98,3 +144,22 @@ def test_budgeted_stateless_lookup_returns_one_row_of_action_values(
     """With action values requested, `Q` and `F` carry the same one row."""
     got = _lookup_on_devices(n_devices=n_devices, return_action_values=True)
     assert got == {"actions": [], "value": [0.0], "Q": [0.0], "F": [True]}
+
+
+@pytest.mark.parametrize("return_action_values", [False, True])
+@pytest.mark.parametrize("n_devices", [2, 8])
+def test_stateful_lookup_on_several_devices_matches_one_device(
+    *, n_devices: int, return_action_values: bool
+) -> None:
+    """A default-config model's stateful lookup gives the one-device rows."""
+    got = _lookup_on_devices(
+        n_devices=n_devices,
+        return_action_values=return_action_values,
+        script=_STATEFUL_SCRIPT,
+    )
+    expected = _lookup_on_devices(
+        n_devices=1,
+        return_action_values=return_action_values,
+        script=_STATEFUL_SCRIPT,
+    )
+    assert got == expected

@@ -142,6 +142,7 @@ from _lcm.simulation.simulate import (
 from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -3749,14 +3750,27 @@ class Model:
             source_regime_name=regime_name,
             source_period=period,
         )
+        references = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=V_arrs,
+            flat_params=flat_params,
+            period=period,
+        )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if isinstance(executor, SimulationRuntime):
+            # The solve may leave a regime's values on any of its devices; the
+            # decision reads them replicated over the subject devices, as in
+            # simulation.
+            next_V, references = _place_values_on_subject_devices(
+                values=(next_V, references), devices=executor.subject_devices
+            )
         unit = None
         if allocations is not None and isinstance(executor, SimulationRuntime):
             call_live = functools.partial(
                 _lookup_live_footprint,
                 allocations=allocations,
-                call_roots=(states, space.states, grids),
+                call_roots=(states, space.states, grids, next_V, references),
             )
             unit = SimulationUnitExecutor(
                 runtime=executor,
@@ -3785,12 +3799,7 @@ class Model:
                     continuous_actions={n: grids[n] for n in space.continuous_actions},
                     taste_keys={},
                     next_values=next_V,
-                    references=_referenced_value_kwargs(
-                        regime=regime,
-                        period_to_regime_to_V_arr=V_arrs,
-                        flat_params=flat_params,
-                        period=period,
-                    ),
+                    references=references,
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
@@ -4526,6 +4535,25 @@ def _fail_if_a_sharded_state_is_pruned(
             "devices. Drop the name, or make some regime use the state."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _place_values_on_subject_devices[T](
+    *, values: T, devices: tuple[jax.Device, ...]
+) -> T:
+    """Copy every value array to the replicated layout its subject devices read."""
+    return jax.tree.map(
+        lambda leaf: (
+            jax.device_put(
+                leaf,
+                simulation_value_sharding(
+                    stored_sharding=leaf.sharding, devices=devices
+                ),
+            )
+            if isinstance(leaf, jax.Array)
+            else leaf
+        ),
+        values,
+    )
 
 
 def _lookup_live_footprint(
