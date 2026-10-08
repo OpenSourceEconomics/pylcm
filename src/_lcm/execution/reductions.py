@@ -22,6 +22,7 @@ from typing import Literal, NamedTuple, Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -389,11 +390,17 @@ class HardMaxWithCarryReduction:
         """Fold one block; `values[..., k]` is candidate `action_ids[k]`'s value."""
         mask = jnp.broadcast_to(feasible, values.shape)
         ids = jnp.broadcast_to(action_ids, values.shape)
-        comparable = jnp.where(mask, values, -jnp.inf)
-        block_best = jnp.max(comparable, axis=-1, initial=-jnp.inf)
-        winner = mask & (values == jnp.expand_dims(block_best, axis=-1))
-        sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
-        block_id = jnp.min(jnp.where(winner, ids, sentinel), axis=-1, initial=sentinel)
+        is_nan = jnp.isnan(values)
+        comparable = mask & ~is_nan
+        block_best, block_id = max_and_smallest_id(
+            values=jnp.where(comparable, values, -jnp.inf),
+            ids=jnp.where(comparable, ids, NO_ID),
+            initial=-jnp.inf,
+        )
+        # A NaN candidate makes the block value NaN, matched by no identity.
+        any_nan = jnp.any(mask & is_nan, axis=-1)
+        block_best = jnp.where(any_nan, jnp.full_like(block_best, jnp.nan), block_best)
+        block_id = jnp.where(any_nan, NO_ID, block_id)
         block = OuterCandidateAccumulator(
             best_value=block_best, best_candidate_id=block_id, carry=None
         )

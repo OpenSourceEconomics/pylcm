@@ -37,6 +37,7 @@ from tests.solution.test_retirement_only_oracle import (
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
+    get_graph_only_retirement_params,
     get_retirement_only_model,
     get_retirement_only_params,
 )
@@ -151,7 +152,7 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
     )
-    params = get_retirement_only_params(
+    params = get_graph_only_retirement_params(
         n_periods=n_periods, discount_factor=discount_factor
     )
 
@@ -361,7 +362,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={40: "retirement"},
     )
-    params = get_retirement_only_params(
+    params = get_graph_only_retirement_params(
         n_periods=n_periods, discount_factor=discount_factor
     )
 

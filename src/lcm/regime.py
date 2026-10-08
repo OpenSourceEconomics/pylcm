@@ -21,7 +21,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.transitions import collect_state_transitions
-from _lcm.regime_law import UNBOUND_LAW, RegimeLaw
+from _lcm.regime_law import RegimeLaw
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
 from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
@@ -199,9 +199,9 @@ class Regime:
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
     Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a
-    `ValueDependentTransition`, with a folded IID state or nonlinear certainty
-    equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    rejected on a collective regime, on the source of a `Gate`, with a folded
+    IID state or nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or
+    `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | None = None
@@ -257,10 +257,9 @@ class Regime:
     per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `stakeholders` tuple — per-stakeholder routing to different
-    regimes goes through a `ValueDependentTransition` in the source's
-    `Transition` law. EV1 taste shocks, nonlinear certainty
-    equivalents, and non-GridSearch solvers on a collective regime raise
-    `NotImplementedError`.
+    regimes goes through a `Gate` in the source's `Transition`. EV1 taste
+    shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
+    collective regime raise `NotImplementedError`.
 
     A shock declared `fold=True` is refused when the model is built, naming the
     regime and the state. A collective regime writes `-inf` where no action
@@ -370,11 +369,11 @@ class Regime:
     def __post_init__(self) -> None:
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
-        # The model validates the regime again once it binds the regime's law
-        # from `Model(edges=...)`; completeness (a `utility` entry, aggregator
+        # What depends on the law is validated once the model binds it from
+        # `Model(edges=...)`; completeness (a `utility` entry, aggregator
         # injection, transition coverage) is validated when the model finalizes
         # its regimes, since model-level slots may still satisfy it.
-        validate_regime(self, law=UNBOUND_LAW)
+        validate_regime(self)
         self._make_field_immutable(name="functions")
         self._make_field_immutable(name="states")
         self._make_field_immutable(name="state_transitions")
@@ -389,8 +388,8 @@ class Regime:
         """Derive the engine-facing views of the collective declarations.
 
         `CollectiveUtility` and `ValueDependentConstraint` are declared inside
-        the slots a regime
-        already have — `functions` and `constraints` — and each one carries
+        the slots a regime already has — `functions` and `constraints` — and
+        each one carries
         several engine-side facts at once. Deriving those facts here, without
         replacing the raw declarations, lets every later stage read the fields
         and decomposed views it needs.
@@ -431,7 +430,7 @@ class Regime:
         this view holds is the ordinary constraints alone — the ones evaluated
         before and independently of the action values.
 
-        Deterministic and idempotent, like the other two views.
+        Deterministic and idempotent, like `decomposed_functions`.
         """
         return decompose_constraints(self.constraints)
 
@@ -546,7 +545,8 @@ class Regime:
 
         Args:
             phase: Which variant to use for phase-variant entries.
-            law: The law the model binds for this regime from its edges. Without
+            law: The law the model binds for this regime from its edges
+                (`model.graph.laws[name]`). Without
                 one the regime's state laws are collected and no regime
                 transition; a terminal law contributes neither.
 

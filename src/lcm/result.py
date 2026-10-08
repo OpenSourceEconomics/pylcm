@@ -32,7 +32,7 @@ from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 
 if TYPE_CHECKING:
     _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
@@ -51,6 +51,17 @@ class PolicyLookup:
 
     value: FloatND
     """Max over the action grid of Q, using the solved continuation, per row."""
+
+    Q: FloatND | None = None
+    """Action values over the queried action grid, or `None` unless requested.
+
+    One leading row axis, then one axis per action in the order of `actions`.
+    Raw and unmasked: an infeasible entry holds the value the action would have,
+    which may exceed `value`; only `F` excludes it from the maximization.
+    """
+
+    F: BoolND | None = None
+    """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
 
 
 class SimulationResult:
@@ -329,6 +340,7 @@ class SimulationResult:
             result_metadata=self._metadata,
             available_targets=self._available_targets,
             subject_batch_size=self._subject_batch_size,
+            subject_rows=self._subject_rows,
         )
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
@@ -435,6 +447,7 @@ class SimulationResult:
         instance._metadata = metadata.result_metadata  # noqa: SLF001
         instance._available_targets = metadata.available_targets  # noqa: SLF001
         instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
+        instance._subject_rows = metadata.subject_rows  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
         instance._durable_identity = True  # noqa: SLF001
         instance._plan_summary = None  # noqa: SLF001
@@ -475,6 +488,10 @@ class _SavedMetadata:
 
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
+
+    subject_rows: np.ndarray | None = None
+    """Original rows of a simulation of selected codes; `None` for the whole
+    population."""
 
 
 @dataclass(frozen=True)

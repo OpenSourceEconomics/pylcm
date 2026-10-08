@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.initial_conditions as initial_module
+from _lcm.params.edges import regime_kernel_params
 from _lcm.params.processing import process_params
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
@@ -217,20 +218,17 @@ def test_changed_transition_params_are_validated_again_on_the_same_model() -> No
     params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
+    alive_params = regime_kernel_params(params, regime_name="alive")
     valid = MappingProxyType(
         {
             **params,
-            "alive": MappingProxyType(
-                {**params["alive"], "probability": jnp.array(1.0)}
-            ),
+            "alive": MappingProxyType({**alive_params, "probability": jnp.array(1.0)}),
         }
     )
     invalid = MappingProxyType(
         {
             **params,
-            "alive": MappingProxyType(
-                {**params["alive"], "probability": jnp.array(-1.0)}
-            ),
+            "alive": MappingProxyType({**alive_params, "probability": jnp.array(-1.0)}),
         }
     )
     logger = get_logger(log_level="debug")

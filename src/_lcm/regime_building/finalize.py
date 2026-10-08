@@ -16,7 +16,7 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast, no_type_check
+from typing import Literal, cast, no_type_check
 
 import jax.numpy as jnp
 from dags import get_annotations
@@ -521,7 +521,10 @@ def _merge_derived_categoricals(
 
 
 def _fail_if_continuation_slot_is_mixed(
-    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws, slot: str
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    slot: Literal["koopmans_aggregator", "certainty_equivalent"],
 ) -> None:
     """Reject a model that declares a continuation slot at both levels.
 

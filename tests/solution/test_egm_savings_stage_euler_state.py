@@ -25,6 +25,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
     DiscreteGrid,
     IrregSpacedGrid,
@@ -280,10 +281,15 @@ def _survival_prob_model(solver: str) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob),
-                    "dead": StochasticTransition(func=death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob),
+                            "dead": StochasticTransition(func=death_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob)},
+                    }
+                ),
             )
         },
         regime_id_class=SavingsStageRegimeId,
@@ -511,10 +517,15 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay),
-                    "dead": StochasticTransition(func=die),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay),
+                            "dead": StochasticTransition(func=die),
+                        },
+                        60: "dead",
+                    }
+                ),
             )
         },
         regime_id_class=SavingsStageRegimeId,

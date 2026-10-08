@@ -42,12 +42,12 @@ from tests.solution.test_compilation_identity import _capture_lowering_keys, _mo
 from tests.test_models import nbegm_ride_along_toy
 from tests.test_models.deterministic.regression import (
     START_AGE,
+    WORKING_LIFE_LAW,
     LaborSupply,
     RegimeId,
     dead,
     get_params,
     working_life,
-    working_life_transitions,
 )
 
 _N_PERIODS = 3
@@ -79,7 +79,7 @@ def _reordered_actions_model() -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": 18, "dead": (18, 19)},
-                law=working_life_transitions(last_age=final_age_alive + 1),
+                law=WORKING_LIFE_LAW,
             )
         },
     )
@@ -113,7 +113,7 @@ def _rewaged_model() -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": 18, "dead": (18, 19)},
-                law=working_life_transitions(last_age=final_age_alive + 1),
+                law=WORKING_LIFE_LAW,
             )
         },
     )
@@ -142,7 +142,7 @@ def _fixed_discount_model(*, discount_factor: float) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": 18, "dead": (18, 19)},
-                law=working_life_transitions(last_age=START_AGE + _N_PERIODS - 1),
+                law=WORKING_LIFE_LAW,
             )
         },
     )
@@ -239,7 +239,7 @@ def test_disabling_donation_relowers_every_donating_core(
     Cores that donate nothing either way are lowered under one key in both
     arms; only the donating cores' keys must vanish from the non-donating solve.
     """
-    params = nbegm_ride_along_toy.build_params(final_age_alive=2.0)
+    params = nbegm_ride_along_toy.build_params()
     donating = _keys_of(
         model=_nbegm_model(donate_buffers=True),
         params=params,

@@ -7,20 +7,25 @@ import pytest
 from _lcm.utils.logging import LogLevel
 from lcm import (
     AgeGrid,
+    ByAge,
     DeterministicTransition,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
+    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
+    fixed_transition,
 )
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
 )
 from lcm.regime import Regime
-from lcm.typing import ScalarInt
+from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.test_models import n_nbegm_toy
 
 
@@ -187,8 +192,12 @@ def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> N
 
 
 def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
-    """Reject known scalar-law targets outside the model's declared support."""
-    with pytest.raises(ModelInitializationError, match="realized"):
+    """Reject a per-target law naming a destination its `targets` leave out."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"supplied: \{'perceived': \[0\], 'work': \[0\]\}; derived from the "
+        r"law and its gates: \{'perceived': \[0\], 'realized': \[0\]\}",
+    ):
         Model(
             regimes=_graph_regimes(),
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -209,26 +218,32 @@ def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
         )
 
 
-def test_scalar_probability_mapping_may_use_a_subset_of_declared_graph() -> None:
-    """Keep graph-declared support inspectable when a scalar lottery is narrower."""
-    model = Model(
-        regimes=_graph_regimes(),
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_GraphRegimeId,
-        initial_nodes=((0, "work"),),
-        edges={
-            "work": Transition(
-                targets={"perceived": 0, "realized": 0},
-                law={"perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))},
-            )
-        },
-        enable_jit=False,
-    )
-    assert set(model.graph.edges.solve["work"]) == {"perceived", "realized"}
-    assert model.graph.solution.targets(period=0, source="work") == ("perceived",)
-    assert model.graph.pruned_edges["solve"][(0, "work", "realized")] == (
-        "fixed_zero_probability"
-    )
+def test_scalar_probability_mapping_naming_fewer_targets_than_supplied_is_refused():
+    """Reject supplied `targets` that a per-target law does not name.
+
+    A per-target law names its destinations, so a supplied destination without a
+    cell is a second, conflicting declaration of the graph.
+    """
+    with pytest.raises(
+        ModelInitializationError,
+        match=r"supplied: \{'perceived': \[0\], 'realized': \[0\]\}; derived from "
+        r"the law and its gates: \{'perceived': \[0\]\}",
+    ):
+        Model(
+            regimes=_graph_regimes(),
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_GraphRegimeId,
+            initial_nodes=((0, "work"),),
+            edges={
+                "work": Transition(
+                    targets={"perceived": 0, "realized": 0},
+                    law={
+                        "perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))
+                    },
+                )
+            },
+            enable_jit=False,
+        )
 
 
 @pytest.mark.parametrize("stochastic", [False, True])
@@ -353,15 +368,6 @@ class _DormantGateRegimeId:
 
 def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> None:
     """A gate used at one source age owes no references at a value-only age."""
-    from lcm import (  # noqa: PLC0415 -- bounded regression vocabulary
-        ByAge,
-        ProjectedRegimeValue,
-        StakeholderRoute,
-        ValueDependentTransition,
-        fixed_transition,
-    )
-    from lcm.typing import BoolND, ContinuousState, FloatND  # noqa: PLC0415
-
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
     def identity(x: ContinuousState) -> ContinuousState:
@@ -372,34 +378,25 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
 
     one = StochasticTransition(func=lambda: jnp.asarray(1.0))
     zero = StochasticTransition(func=lambda: jnp.asarray(0.0))
-    routes = {
-        "only": StakeholderRoute(
-            fallback=ProjectedRegimeValue(regime="fallback", projection={"x": identity})
+    gates = {
+        "target": Gate(
+            predicate=gate,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="fallback", projection={"x": identity}
+                    )
+                )
+            },
+            references={
+                "V_reference": ProjectedRegimeValue(
+                    regime="reference", projection={"x": identity}
+                )
+            },
         )
     }
-    references = {
-        "V_reference": ProjectedRegimeValue(
-            regime="reference", projection={"x": identity}
-        )
-    }
-    perceived_gate = ValueDependentTransition(
-        probability=zero, gate=gate, routes=routes, gate_references=references
-    )
-    realized_gate = ValueDependentTransition(
-        probability=one, gate=gate, routes=routes, gate_references=references
-    )
-    source_law = ByAge(
-        cases={
-            0: Phased(
-                solve={"source": one, "target": perceived_gate},
-                simulate={"target": realized_gate},
-            ),
-            1: Phased(
-                solve={"terminal": one},
-                simulate={"target": realized_gate},
-            ),
-        }
-    )
+    solve_law = ByAge(cases={0: {"source": one, "target": zero}, 1: {"terminal": one}})
+    simulate_law = ByAge(cases={0: {"target": one}})
     source = Regime(
         states={"x": grid},
         state_transitions={"x": fixed_transition("x")},
@@ -433,14 +430,17 @@ def test_value_only_source_age_does_not_activate_dormant_simulation_gate() -> No
             solve={
                 "source": Transition(
                     targets={"source": 0, "target": 0, "fallback": 0, "terminal": 1},
-                    law=source_law,
+                    law=solve_law,
+                    gates=gates,
                 ),
                 "other": {"target": 1},
                 "reference": {"terminal": 1},
             },
             simulate={
                 "source": Transition(
-                    targets={"target": 0, "fallback": 0}, law=source_law
+                    targets={"target": 0, "fallback": 0},
+                    law=simulate_law,
+                    gates=gates,
                 ),
                 "other": {"terminal": 1},
             },

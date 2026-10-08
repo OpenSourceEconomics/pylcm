@@ -83,7 +83,6 @@ def _simulate_with_bequest(bequest: float):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }

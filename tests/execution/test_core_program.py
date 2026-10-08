@@ -40,6 +40,7 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.execution.workspace_planning import workspace_width_candidates
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
@@ -527,7 +528,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
-            regime_params=flat_params["alive"]
+            regime_params=regime_kernel_params(flat_params, regime_name="alive")
         ),
         next_regime_to_V_arr=next_V,
         next_regime_to_continuation=next_continuation,
@@ -593,7 +594,7 @@ def test_collective_grid_search_plans_cells_with_canonical_action_reduction() ->
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
-            regime_params=flat_params["couple"]
+            regime_params=regime_kernel_params(flat_params, regime_name="couple")
         ),
         next_regime_to_V_arr=next_V,
         next_regime_to_continuation=next_continuation,
@@ -645,7 +646,7 @@ def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:
     kernel = regime.solution.period_kernels[0]
     context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
-            regime_params=flat_params["alive"]
+            regime_params=regime_kernel_params(flat_params, regime_name="alive")
         ),
         next_regime_to_V_arr=next_V,
         next_regime_to_continuation=next_continuation,

@@ -188,10 +188,10 @@ class _WidthCollisionRegimeId:
 
 
 def _width_collision_utility(
-    *, _lcm_subject_width: ContinuousAction, wealth: ContinuousState
+    *, lcm_subject_width: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     """Read a legal user action whose spelling resembles an execution keyword."""
-    return _lcm_subject_width + wealth
+    return lcm_subject_width + wealth
 
 
 def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
@@ -206,7 +206,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
             "alive": UserRegime(
                 functions={"utility": _width_collision_utility},
                 actions={
-                    "_lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
+                    "lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
                 },
             ),
             "done": UserRegime(
@@ -232,7 +232,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         log_level="off",
     ).to_dataframe(use_labels=False)
     np.testing.assert_array_equal(
-        frame.query("period == 0")["_lcm_subject_width"], np.asarray([2.0, 2.0])
+        frame.query("period == 0")["lcm_subject_width"], np.asarray([2.0, 2.0])
     )
 
 

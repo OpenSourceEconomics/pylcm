@@ -6,7 +6,7 @@ coverage and graph-bound support prepared by `_lcm.model_graph.prepare_graph`.
 `ByAge` supply the available laws. There is no runtime topology pass: the graph
 never changes after construction, and runtime probabilities cannot alter it.
 
-Every retained edge in `targets_by_period` / `edge_status_by_period` is
+Every retained edge in `targets_by_period` is
 `EdgeStatus.CONDITIONAL`: no declaration proves unconditional positive probability
 independently of states, actions and free runtime parameters. Construction-fixed
 exact-zero scalar probability proofs may remove effective edges. Every retained
@@ -60,9 +60,6 @@ class PhaseReachability:
     active_regimes_by_period: tuple[frozenset[RegimeName], ...]
     candidate_targets_by_source: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
     targets_by_period: tuple[MappingProxyType[RegimeName, tuple[RegimeName, ...]], ...]
-    edge_status_by_period: tuple[
-        MappingProxyType[tuple[RegimeName, RegimeName], EdgeStatus], ...
-    ]
 
     def __hash__(self) -> int:
         """Return a structural hash independent of mapping insertion order."""
@@ -74,10 +71,6 @@ class PhaseReachability:
                 tuple(
                     tuple(sorted(targets_by_source.items()))
                     for targets_by_source in self.targets_by_period
-                ),
-                tuple(
-                    tuple(sorted(status_by_edge.items()))
-                    for status_by_edge in self.edge_status_by_period
                 ),
             )
         )
@@ -98,12 +91,15 @@ class PhaseReachability:
     def edge_status(
         self, *, period: int, source: RegimeName, target: RegimeName
     ) -> EdgeStatus:
-        """Return the construction-time status of a candidate edge."""
+        """Return the construction-time status of a candidate edge.
+
+        A retained edge is `CONDITIONAL`; every other pair is `FALSE`.
+        """
         if not 0 <= period < self.n_periods - 1:
             raise IndexError(period)
-        return self.edge_status_by_period[period].get(
-            (source, target), EdgeStatus.FALSE
-        )
+        if target in self.targets_by_period[period].get(source, ()):
+            return EdgeStatus.CONDITIONAL
+        return EdgeStatus.FALSE
 
     def periods_for_edge(
         self, *, source: RegimeName, target: RegimeName
@@ -254,35 +250,26 @@ def build_phase_reachability(
     )
 
     target_maps: list[MappingProxyType[RegimeName, tuple[RegimeName, ...]]] = []
-    status_maps: list[MappingProxyType[tuple[RegimeName, RegimeName], EdgeStatus]] = []
     for period in range(n_periods - 1):
         period_targets: dict[RegimeName, tuple[RegimeName, ...]] = {}
-        period_status: dict[tuple[RegimeName, RegimeName], EdgeStatus] = {}
         for source in sorted(regimes):
             declared = (
                 ()
                 if source in terminal or period not in active[source]
                 else tuple(support_by_period.get(source, {}).get(period, ()))
             )
-            retained: list[RegimeName] = []
-            for target in candidates.get(source, ()):
-                status = (
-                    EdgeStatus.CONDITIONAL if target in declared else EdgeStatus.FALSE
-                )
-                period_status[(source, target)] = status
-                if status != EdgeStatus.FALSE:
-                    retained.append(target)
+            retained = tuple(
+                target for target in candidates.get(source, ()) if target in declared
+            )
             if retained:
-                period_targets[source] = tuple(retained)
+                period_targets[source] = retained
         target_maps.append(MappingProxyType(period_targets))
-        status_maps.append(MappingProxyType(period_status))
 
     return PhaseReachability(
         n_periods=n_periods,
         active_regimes_by_period=active_by_period,
         candidate_targets_by_source=candidates,
         targets_by_period=tuple(target_maps),
-        edge_status_by_period=tuple(status_maps),
     )
 
 

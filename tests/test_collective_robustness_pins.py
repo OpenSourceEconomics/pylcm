@@ -31,11 +31,10 @@ from lcm import (
     ParetoObjective,
     Regime,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
 from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
@@ -149,12 +148,7 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
             initial_nodes={0: "source"},
-            edges={
-                "source": Transition(
-                    targets={"target": 0, "fallback": 0},
-                    law=_make_dissolution_gate_law(),
-                )
-            },
+            edges={"source": _make_dissolution_gate_transition()},
         )
 
 
@@ -210,32 +204,37 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     return MappingProxyType({"source": source, "target": target, "fallback": fallback})
 
 
-def _make_dissolution_gate_law() -> ByAge:
-    """Build the source's law: a dissolution-gated edge into `target` at age 0.
+def _make_dissolution_gate_transition() -> Transition:
+    """Build the source's transition: a dissolution-gated edge into `target` at age 0.
 
     Returns:
-        The `ByAge` law choosing between `target`, through a gate reading the
+        The `Transition` choosing between `target`, through a gate reading the
         target's dissolution flag, and the never-entered `fallback`.
 
     """
-    return ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "target": ValueDependentTransition(
-                    probability=StochasticTransition(func=_enters_target),
-                    gate=_no_dissolution,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback",
-                                projection={"wage": _identity_wage},
-                            ),
-                        )
-                    },
-                ),
-                "fallback": StochasticTransition(func=_never_entered),
+    return Transition(
+        targets={"target": 0, "fallback": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_enters_target),
+                    "fallback": StochasticTransition(func=_never_entered),
+                }
             }
-        }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_no_dissolution,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            )
+        },
     )
 
 

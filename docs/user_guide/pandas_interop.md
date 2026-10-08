@@ -78,8 +78,15 @@ Each `pd.Series` must have:
 - **String labels** for discrete variables, matching the model's categorical classes.
 - **`"age"`** (not `"period"`) for the age dimension, with actual age values from the
   model's `AgeGrid`.
-- For **transition functions** (`next_*`): an additional outcome level (`"next_health"`
-  for state transitions, `"next_regime"` for regime transitions).
+- For **transition functions**: an additional outcome level — `"next_health"` for a
+  state transition, `"next_regime"` for a regime-transition law over all targets, whose
+  parameters sit at `params["edges"][source]`. A gate or a projection under
+  `params["edges"][source][target]` runs on the target regime's grid, so the target's
+  categories label its levels.
+
+A discrete state or action labels a level wherever the regime declares it, including a
+horizon at which no demanded function reads it and the model prunes it: the parameter a
+dormant law reads keeps its slot, and its Series converts by the same categories.
 
 Level order does not matter — levels are reordered to match the function signature
 automatically.

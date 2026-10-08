@@ -53,6 +53,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -60,7 +61,6 @@ from lcm import (
     StakeholderRoute,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -399,34 +399,38 @@ def _consent_laws() -> dict[str, object]:
     `None` marks a terminal regime.
     """
     return {
-        "single_f": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                        gate_references={
-                            "V_single_f_ref": ProjectedRegimeValue(
+        "single_f": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married_terminal": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "married_terminal": Gate(
+                    predicate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
                             ),
-                            "V_single_m_ref": ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        },
-                    )
-                }
-            }
+                        )
+                    },
+                    references={
+                        "V_single_f_ref": ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={"wage": _identity_wage},
+                        ),
+                        "V_single_m_ref": ProjectedRegimeValue(
+                            regime="single_m_terminal",
+                            projection={"wage": _identity_wage},
+                        ),
+                    },
+                )
+            },
         ),
         "single_f_terminal": None,
         "single_m_terminal": None,
@@ -626,37 +630,41 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _married_dissolution_law() -> ByAge:
-    """Return `married`'s law: its gated edge into `married_ir` at age 0.
+def _married_dissolution_transition() -> Transition:
+    """Return `married`'s transition: its gated edge into `married_ir` at age 0.
 
-    The edge's stakeholder routes fall back to `single_f` / `single_m`, so a
-    model declares `married` with all three as targets at age 0.
+    The edge's stakeholder routes fall back to `single_f` / `single_m`, so
+    `married` reaches all three at age 0.
     """
-    return ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "married_ir": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_no_dissolution_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
+    return Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_ir": StochasticTransition(func=_prob_one)
+                }
             }
-        }
+        ),
+        gates={
+            "married_ir": Gate(
+                predicate=_no_dissolution_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_m",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                },
+            )
+        },
     )
 
 
@@ -667,7 +675,7 @@ def _dissolution_laws() -> dict[str, object]:
     the single outgoing edge of its source age.
     """
     return {
-        "married": _married_dissolution_law(),
+        "married": _married_dissolution_transition(),
         "married_ir": ByAge(
             cases={
                 AgeRange(start=1, exclusive_stop=2): {
@@ -1036,40 +1044,44 @@ def _consent_discrete_axis_laws() -> dict[str, object]:
     marks a terminal regime.
     """
     return {
-        "single_f": ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={
-                                        "wage": _identity_wage,
-                                        "educ": _identity_educ,
-                                    },
-                                ),
-                            )
-                        },
-                        gate_references={
-                            "V_single_f_ref": ProjectedRegimeValue(
+        "single_f": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married_terminal": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "married_terminal": Gate(
+                    predicate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={
                                     "wage": _identity_wage,
                                     "educ": _identity_educ,
                                 },
                             ),
-                            "V_single_m_ref": ProjectedRegimeValue(
-                                regime="single_m_terminal",
-                                projection={"wage": _identity_wage},
-                            ),
-                        },
-                    )
-                }
-            }
+                        )
+                    },
+                    references={
+                        "V_single_f_ref": ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={
+                                "wage": _identity_wage,
+                                "educ": _identity_educ,
+                            },
+                        ),
+                        "V_single_m_ref": ProjectedRegimeValue(
+                            regime="single_m_terminal",
+                            projection={"wage": _identity_wage},
+                        ),
+                    },
+                )
+            },
         ),
         "single_f_terminal": None,
         "single_m_terminal": None,
@@ -1246,10 +1258,7 @@ def _make_dissolution_model() -> Model:
         regime_id_class=DissolutionRegimeId,
         initial_nodes={ages.exact_values[0]: "married"},
         edges={
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=_married_dissolution_law(),
-            ),
+            "married": _married_dissolution_transition(),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1)},
@@ -1671,12 +1680,18 @@ def _repeating_self_loop_laws() -> dict[str, object]:
     """
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     return {
-        "src": ByAge.until(
-            stop_age_exclusive=2,
-            law={
-                "src": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_stay),
-                    gate=_repeat_gate,
+        "src": Transition(
+            law=ByAge.until(
+                stop_age_exclusive=2,
+                law={
+                    "src": StochasticTransition(func=_prob_stay),
+                    "src_exit": exit_cell,
+                },
+                then={"src_exit": exit_cell},
+            ),
+            gates={
+                "src": Gate(
+                    predicate=_repeat_gate,
                     routes={
                         "only": StakeholderRoute(
                             fallback=ProjectedRegimeValue(
@@ -1685,10 +1700,8 @@ def _repeating_self_loop_laws() -> dict[str, object]:
                             ),
                         )
                     },
-                ),
-                "src_exit": exit_cell,
+                )
             },
-            then={"src_exit": exit_cell},
         ),
         "src_exit": None,
         "src_fallback": None,

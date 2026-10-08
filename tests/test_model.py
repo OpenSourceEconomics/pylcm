@@ -3,7 +3,7 @@ import pytest
 
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     DeterministicTransition,
@@ -141,7 +141,7 @@ def test_regime_transition_must_be_callable():
     """Binding a non-callable regime transition law is rejected."""
     regime = UserRegime(states={}, actions={}, functions={"utility": lambda: 0})
     with pytest.raises(RegimeInitializationError, match="transition"):
-        validate_regime(regime, law=bind_regime_law(42))
+        validate_regime_law(regime, law=bind_regime_law(42))
 
 
 def test_model_requires_terminal_regime(binary_category_class):

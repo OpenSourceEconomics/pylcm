@@ -1,10 +1,13 @@
 """Test Regime class validation."""
 
 import inspect
+import re
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
+from dags import rename_arguments
 from dags.tree import QNAME_DELIMITER
 
 from _lcm.grids import IrregSpacedGrid
@@ -14,21 +17,31 @@ from _lcm.regime_building.transitions import (
     collect_state_transitions,
 )
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
+from _lcm.utils.error_messages import path_segment_name_errors
 from lcm import (
     AgeRange,
+    CollectiveUtility,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     Model,
+    Phased,
+    ProjectedRegimeValue,
+    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import (
+    InvalidNameError,
+    ModelInitializationError,
+    RegimeInitializationError,
+)
 from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.typing import (
@@ -107,6 +120,382 @@ def test_state_name_does_not_contain_separator():
         )
 
 
+INVALID_SEGMENT_NAMES = [
+    pytest.param("my__name", id="separator"),
+    pytest.param("_name", id="leading-underscore"),
+    pytest.param("name_", id="trailing-underscore"),
+]
+
+
+def _invalid_names_match(*, kind: str, name: str) -> str:
+    """Pattern of the error naming `name` as an invalid name of this kind."""
+    return rf"{kind} names cannot contain.*{re.escape(repr(name))}"
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_regime_name_must_be_a_valid_path_segment(name):
+    """A regime name with `__` or a leading/trailing `_` is rejected by `Model`."""
+    regime_id = categorical(ordered=False)(
+        type("RegimeId", (), {"__annotations__": {name: ScalarInt, "dead": ScalarInt}})
+    )
+    working = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={"wealth": fixed_transition("wealth")},
+    )
+    dead = UserRegime(functions={"utility": lambda: 0})
+    ages = AgeGrid(start=0, inclusive_stop=5, step="Y")
+    with pytest.raises(
+        ModelInitializationError, match=_invalid_names_match(kind="Regime", name=name)
+    ):
+        Model(
+            regimes={name: working, "dead": dead},
+            ages=ages,
+            regime_id_class=regime_id,
+            initial_nodes={ages.exact_values[0]: name},
+            edges={name: {"dead": AgeRange(exclusive_stop=5)}},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_state_name_must_be_a_valid_path_segment(name):
+    """A state name with `__` or a leading/trailing `_` is rejected by `Regime`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="State and action", name=name),
+    ):
+        UserRegime(
+            functions={"utility": utility},
+            states={name: WEALTH_GRID},
+            actions={"consumption": CONSUMPTION_GRID},
+            state_transitions={name: fixed_transition(name)},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_action_name_must_be_a_valid_path_segment(name):
+    """An action name with `__` or a leading/trailing `_` is rejected by `Regime`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="State and action", name=name),
+    ):
+        UserRegime(
+            functions={"utility": lambda wealth: wealth},
+            states={"wealth": WEALTH_GRID},
+            actions={name: CONSUMPTION_GRID},
+            state_transitions={"wealth": fixed_transition("wealth")},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_function_name_must_be_a_valid_path_segment(name):
+    """A function name with `__` or a leading/trailing `_` is rejected by `Regime`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="Function and constraint", name=name),
+    ):
+        UserRegime(
+            functions={"utility": utility, name: lambda: 1.0},
+            states={"wealth": WEALTH_GRID},
+            actions={"consumption": CONSUMPTION_GRID},
+            state_transitions={"wealth": fixed_transition("wealth")},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_constraint_name_must_be_a_valid_path_segment(name):
+    """A constraint name with `__` or a leading/trailing `_` is rejected by `Regime`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="Function and constraint", name=name),
+    ):
+        UserRegime(
+            functions={"utility": utility},
+            constraints={name: lambda consumption: consumption > 0},
+            states={"wealth": WEALTH_GRID},
+            actions={"consumption": CONSUMPTION_GRID},
+            state_transitions={"wealth": fixed_transition("wealth")},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_stakeholder_name_must_be_a_valid_path_segment(name):
+    """A stakeholder with `__` or a leading/trailing `_` is rejected by `Regime`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="Stakeholder", name=name),
+    ):
+        UserRegime(
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={name: utility, "partner": utility}
+                )
+            },
+            states={"wealth": WEALTH_GRID},
+            actions={"consumption": CONSUMPTION_GRID},
+        )
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_route_key_must_be_a_valid_path_segment(name):
+    """A route key with `__` or a leading/trailing `_` is rejected by `Model`."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="route", name=name),
+    ):
+        _gated_edge_model(route_key=name)
+
+
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_gate_reference_key_must_be_a_valid_path_segment(name):
+    """A gate-reference key with `__` or a leading/trailing `_` is rejected."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=_invalid_names_match(kind="gate-reference", name=name),
+    ):
+        _gated_edge_model(gate_reference_key=name)
+
+
+@pytest.mark.parametrize(
+    "callable_kind",
+    [
+        "utility",
+        "regime_transition_law",
+        "probability",
+        "gate",
+        "gate_reference_projection",
+        "fallback_projection",
+    ],
+)
+@pytest.mark.parametrize("name", INVALID_SEGMENT_NAMES)
+def test_parameter_argument_name_must_be_a_valid_path_segment(
+    *, name: str, callable_kind: str
+) -> None:
+    """A model function's parameter named with `__` or `_` at an end is rejected.
+
+    The argument becomes a parameter name, so `Model` refuses it whether it sits
+    on a regime function or on a callable declared in `edges`.
+    """
+    func, build_model = _PARAMETER_CARRIERS[callable_kind]
+    renamed = rename_arguments(func, mapper={"scale": name})
+    with pytest.raises(
+        InvalidNameError, match=_invalid_names_match(kind="argument", name=name)
+    ):
+        build_model(renamed)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "predicate",
+        "references",
+        "routes",
+        "fallback",
+        "solve",
+        "simulate",
+    ],
+)
+def test_entry_names_of_edge_declarations_are_valid_path_segments(name):
+    """The field names pylcm puts into a parameter path obey the user naming rule."""
+    assert path_segment_name_errors(kind="Entry", names=[name]) == []
+
+
+@categorical(ordered=False)
+class _GatedRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    outside: ScalarInt
+
+
+_WAGE_GRID = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
+
+
+def _wage_utility(*, wage: ContinuousState, scale: float) -> FloatND:
+    return scale * wage
+
+
+def _probability_one(*, age: float, scale: float) -> FloatND:
+    return jnp.ones_like(age, dtype=float) * scale
+
+
+def _gate_open(*, V_target: FloatND, scale: float) -> BoolND:
+    return V_target >= scale
+
+
+def _project_wage(*, wage: ContinuousState, scale: float) -> ContinuousState:
+    return scale * wage
+
+
+def _gated_edge_model(
+    *,
+    route_key: str = "only",
+    gate_reference_key: str = "outside_value",
+    utility: Callable = _wage_utility,
+    probability: Callable = _probability_one,
+    gate: Callable = _gate_open,
+    gate_reference_projection: Callable = _project_wage,
+    fallback_projection: Callable = _project_wage,
+) -> Model:
+    """Build a singleton source whose edge into `target` is gated."""
+    source = UserRegime(
+        states={"wage": _WAGE_GRID},
+        state_transitions={"wage": fixed_transition("wage")},
+        functions={"utility": utility},
+    )
+    target = UserRegime(
+        states={"wage": _WAGE_GRID}, functions={"utility": _wage_utility}
+    )
+    outside = UserRegime(
+        states={"wage": _WAGE_GRID}, functions={"utility": _wage_utility}
+    )
+    return Model(
+        regimes={"source": source, "target": target, "outside": outside},
+        edges={
+            "source": Transition(
+                targets={"target": 0, "outside": 0},
+                law={"target": StochasticTransition(func=probability)},
+                gates={
+                    "target": Gate(
+                        predicate=gate,
+                        references={
+                            gate_reference_key: ProjectedRegimeValue(
+                                regime="outside",
+                                projection={"wage": gate_reference_projection},
+                            )
+                        },
+                        routes={
+                            route_key: StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="outside",
+                                    projection={"wage": fallback_projection},
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_GatedRegimeId,
+        initial_nodes={0: "source"},
+    )
+
+
+@categorical(ordered=False)
+class _LawRegimeId:
+    working: ScalarInt
+    retired: ScalarInt
+
+
+def _next_regime(*, age: float, scale: float) -> ScalarInt:
+    return jnp.where(age >= scale, _LawRegimeId.retired, _LawRegimeId.working)
+
+
+def _law_model(*, law: Callable) -> Model:
+    """Build a working regime whose regime-transition law is `law`."""
+    working = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={"wealth": next_wealth},
+    )
+    retired = UserRegime(functions={"utility": lambda wealth: wealth})
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    return Model(
+        regimes={"working": working, "retired": retired},
+        edges={
+            "working": Transition(
+                targets={"working": (0, 1), "retired": (0, 1, 2)},
+                law=DeterministicTransition(func=law),
+            )
+        },
+        ages=ages,
+        regime_id_class=_LawRegimeId,
+        initial_nodes={0: "working"},
+    )
+
+
+_PARAMETER_CARRIERS: dict[str, tuple[Callable, Callable[[Callable], Model]]] = {
+    "utility": (_wage_utility, lambda func: _gated_edge_model(utility=func)),
+    "regime_transition_law": (_next_regime, lambda func: _law_model(law=func)),
+    "probability": (
+        _probability_one,
+        lambda func: _gated_edge_model(probability=func),
+    ),
+    "gate": (_gate_open, lambda func: _gated_edge_model(gate=func)),
+    "gate_reference_projection": (
+        _project_wage,
+        lambda func: _gated_edge_model(gate_reference_projection=func),
+    ),
+    "fallback_projection": (
+        _project_wage,
+        lambda func: _gated_edge_model(fallback_projection=func),
+    ),
+}
+
+
+def _aggregator(*, utility, CE, discount_factor):
+    return utility + discount_factor * CE
+
+
+def test_phased_aggregator_missing_a_phase_is_rejected_once_the_regime_has_a_law():
+    """A non-terminal regime needs a Koopmans aggregator in both phases.
+
+    Whether the regime is terminal comes from its law, so the regime itself
+    constructs and the check fires when the law is bound.
+    """
+    regime = UserRegime(
+        functions={"utility": utility},
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        koopmans_aggregator=Phased(solve=None, simulate=_aggregator),
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"`koopmans_aggregator` is `Phased\(\.\.\.\)` with `solve=None`",
+    ):
+        validate_regime_law(regime, law=bind_regime_law(lambda: 0))
+
+
+@pytest.mark.parametrize(
+    ("regime_kwargs", "match"),
+    [
+        (
+            {"functions": {"utility": utility, "next_helper": lambda: 1}},
+            r"must not start with 'next_'.*\['next_helper'\]",
+        ),
+        (
+            {
+                "functions": {
+                    "utility": utility,
+                    "helper": Phased(solve=lambda: 1, simulate=3),
+                },
+            },
+            r"functions\['helper'\] simulate variant must be a callable, got 3",
+        ),
+        (
+            {
+                "functions": {"utility": utility},
+                "states": {"wealth": WEALTH_GRID},
+                "state_transitions": {"wealth": fixed_transition("savings")},
+            },
+            r"`fixed_transition\('savings'\)` is assigned to state 'wealth'",
+        ),
+    ],
+    ids=[
+        "next-prefixed function",
+        "non-callable phase variant",
+        "mismatched fixed transition",
+    ],
+)
+def test_regime_local_declaration_errors_raise_at_construction(*, regime_kwargs, match):
+    """Errors that need no law are raised when the regime is constructed."""
+    with pytest.raises(RegimeInitializationError, match=match):
+        UserRegime(**regime_kwargs)
+
+
 def test_terminal_regime_creation():
     """A regime bound to no outgoing law is terminal and can have states and utility."""
     regime = UserRegime(
@@ -114,7 +503,7 @@ def test_terminal_regime_creation():
         states={"wealth": WEALTH_GRID},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
 
 
@@ -126,7 +515,7 @@ def test_terminal_regime_with_actions():
         actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
     assert "bequest_share" in regime.actions
 
@@ -140,7 +529,7 @@ def test_non_terminal_regime_has_transition():
         state_transitions={"wealth": fixed_transition("wealth")},
     )
     law = bind_regime_law(next_wealth)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is False
 
 
@@ -151,7 +540,7 @@ def test_terminal_regime_can_be_created_without_states():
         states={},
     )
     law = bind_regime_law(None)
-    validate_regime(regime, law=law)
+    validate_regime_law(regime, law=law)
     assert law.terminal is True
     assert regime.states == {}
 
@@ -291,7 +680,7 @@ def test_state_grid_with_fixed_transition_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "wealth" in regime.states
 
 
@@ -303,7 +692,7 @@ def test_state_grid_with_transition_callable_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": next_wealth},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "wealth" in regime.states
 
 
@@ -315,7 +704,7 @@ def test_action_grid_without_transition_is_accepted():
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
     )
-    validate_regime(regime, law=bind_regime_law(lambda: 0))
+    validate_regime_law(regime, law=bind_regime_law(lambda: 0))
     assert "consumption" in regime.actions
 
 

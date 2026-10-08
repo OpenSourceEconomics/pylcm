@@ -2,7 +2,9 @@
 
 A regime that is valued but never visited demands only its solve law; the
 realized (simulate) side of a `Phased` law at such an age is dormant and must
-not contribute arguments, parameters or annotation conflicts.
+not contribute arguments of the regime's own branch or annotation conflicts.
+The declared law's parameters sit at `params["edges"][source]` whether or not
+the regime is visited.
 """
 
 from collections.abc import Mapping
@@ -123,11 +125,16 @@ def _leaves(*, tree: object) -> set[str]:
     }
 
 
+def _edge_leaves(*, model: Model) -> set[str]:
+    return _leaves(tree=model.get_params_template().get("edges", {}).get("perceived"))
+
+
 def _params(*, promote: tuple[int, ...]) -> dict[str, Any]:
-    params: dict[str, Any] = {"discount_factor": 0.5, "backward_bonus": 1.0}
-    if promote:
-        params["realized_rate"] = 1 if promote == (2,) else 1.0
-    return params
+    return {
+        "discount_factor": 0.5,
+        "backward_bonus": 1.0,
+        "realized_rate": 1 if promote == (2,) else 1.0,
+    }
 
 
 def test_dormant_realized_annotations_do_not_reject_a_backward_problem() -> None:
@@ -141,15 +148,15 @@ def test_dormant_realized_annotations_do_not_reject_a_backward_problem() -> None
 
 @pytest.mark.parametrize("reverse_cases", [False, True])
 @pytest.mark.parametrize("promote", [(), (1,), (2,)])
-def test_promoted_ages_add_exactly_their_realized_parameter(
+def test_realized_parameter_is_an_edge_parameter_at_every_promotion(
     *, promote: tuple[int, ...], reverse_cases: bool
 ) -> None:
-    """Visiting one perceived age requires that age's realized schema alone."""
+    """`perceived` owes its backward parameters; its edge holds `realized_rate`."""
     model = _demand_model(promote=promote, reverse_cases=reverse_cases)
-    expected = {"discount_factor", "backward_bonus"} | (
-        {"realized_rate"} if promote else set()
-    )
-    assert _leaves(tree=model.get_params_template()["perceived"]) == expected
+    assert (
+        _leaves(tree=model.get_params_template()["perceived"]),
+        _edge_leaves(model=model),
+    ) == ({"discount_factor", "backward_bonus"}, {"realized_rate"})
 
 
 @pytest.mark.parametrize("promote", [(), (1,), (2,)])
@@ -198,4 +205,4 @@ def test_promoting_both_conflicting_schemas_raises(*, reverse_cases: bool) -> No
 def test_promoting_both_compatible_schemas_is_valid() -> None:
     """Two demanded realized laws with one annotation share the parameter."""
     model = _demand_model(promote=(1, 2), compatible=True)
-    assert "realized_rate" in _leaves(tree=model.get_params_template()["perceived"])
+    assert _edge_leaves(model=model) == {"realized_rate"}

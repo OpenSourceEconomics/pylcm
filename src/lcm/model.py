@@ -43,9 +43,9 @@ from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
+    collect_declared_transitions,
     naming_cells_without_edges,
     prepare_graph,
-    resolve_graph_edges,
 )
 from _lcm.model_processing import (
     _validate_param_types,
@@ -58,11 +58,13 @@ from _lcm.pandas_utils import (
     has_series,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     materialize_granular_transition_params,
 )
+from _lcm.params.regime_template import create_edge_vocabulary
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -126,8 +128,10 @@ from _lcm.simulation.program_arguments import decision_arguments
 from _lcm.simulation.program_types import SimulationProgramExecutor
 from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
+    DeviceBufferFootprint,
     measure_buffer_footprint,
     resolve_budget_devices,
+    union_buffer_footprints,
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.runtime import SimulationRuntime
@@ -255,6 +259,7 @@ from lcm.execution import ExecutionConfig, InvariantBlockSchedule
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -287,11 +292,13 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
+from lcm.transition import ModelEdges, PhaseEdges, Transition
 from lcm.typing import (
     Bool1D,
     FloatND,
     InitialNodes,
     IntND,
+    Phase,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -627,9 +634,8 @@ class Model:
         Args:
             regimes: Mapping of regime names to user-provided `Regime`
                 instances. Stored as `self.user_regimes` after merging in
-                any model-level `derived_categoricals`, with each transition
-                kept as declared; the canonical processed form is exposed as
-                `self._regimes`.
+                any model-level `derived_categoricals`; the canonical processed
+                form is exposed as `self._regimes`.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -693,8 +699,11 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
-        self.edges = edges
-        laws, edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        self._edges = cast("ModelEdges", edges)
+        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        # The transitions as declared, before any age selects among them: the
+        # `edges` parameter template and its Series conversion read these.
+        self._declared_transitions = collect_declared_transitions(self._edges)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (
@@ -748,7 +757,6 @@ class Model:
         resolved_initial_nodes = resolve_initial_nodes(
             initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
         )
-        graph_edges = resolve_graph_edges(edges=edges, regimes=regimes, ages=ages)
         regime_names_to_ids = {
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
@@ -767,6 +775,11 @@ class Model:
             model_slots=model_slots,
         )
         validate_regimes(regimes=merged_regimes, laws=laws)
+        # What each regime declares before demand prunes any: a declared law
+        # reads these as variables at every horizon, never as parameters, and a
+        # Series indexed by one keeps its labels.
+        declared_edge_vocabulary = create_edge_vocabulary(merged_regimes)
+        self._declared_edge_vocabulary = declared_edge_vocabulary
         prepared_graph = prepare_graph(
             regimes=merged_regimes,
             laws=laws,
@@ -778,7 +791,9 @@ class Model:
         merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         self._cells_without_edges = prepared_graph.cells_without_edges
         # Lowering reads only the demanded periods, so a case no required
-        # problem selects contributes no argument, parameter or kernel.
+        # problem selects contributes no runtime argument or kernel. Its free
+        # parameters keep their slots: the `edges` template reads the
+        # declarations.
         demanded_transitions = lower_demanded_transitions(
             schedules=schedules,
             declared_transitions=prepared_graph.declarations,
@@ -786,7 +801,10 @@ class Model:
         )
         laws = MappingProxyType(
             {
-                name: bind_regime_law(transition)
+                name: bind_regime_law(
+                    transition,
+                    gated_edges=prepared_graph.laws[name].gated_edges,
+                )
                 for name, transition in demanded_transitions.items()
             }
         )
@@ -816,10 +834,12 @@ class Model:
             certainty_equivalent=certainty_equivalent,
         )
         # Runs on the finalized regimes, since a conditioner's law may arrive as
-        # a model-level broadcast, and against the graph-bound laws, whose
-        # targets are regime names rather than lowered regime codes.
+        # a model-level broadcast, and against the resolved graph support: the
+        # targets each source reaches after fixed-zero pruning, at the pairs the
+        # model values or visits.
         fail_if_a_folded_conditioner_can_move(
-            user_regimes=finalized_regimes, laws=prepared_graph.laws
+            user_regimes=finalized_regimes,
+            targets_by_regime=schedules.targets_by_regime,
         )
         # A process law named in `fixed_params` means exactly what the same
         # value passed to the process constructor means, so it is bound into
@@ -828,16 +848,16 @@ class Model:
         # known. What no process could take stays a runtime parameter and
         # reaches `build_regimes_and_template` unchanged.
         (
-            self._engine_user_regimes,
+            self.user_regimes,
             residual_fixed_params,
             params_consumed_by_binder,
         ) = bind_fixed_process_laws(
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
-        validate_regimes(regimes=self._engine_user_regimes, laws=laws)
+        validate_regimes(regimes=self.user_regimes, laws=laws)
         validate_model_inputs(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
@@ -860,19 +880,17 @@ class Model:
             device_pool_limit_bytes=visible_device_pool_limits(),
             state_names=frozenset(states)
             | frozenset(
-                name
-                for regime in self._engine_user_regimes.values()
-                for name in regime.states
+                name for regime in self.user_regimes.values() for name in regime.states
             ),
-            regime_names=frozenset(self._engine_user_regimes),
+            regime_names=frozenset(self.user_regimes),
         )
         _fail_if_a_sharded_state_is_pruned(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
         continuous_sharded_state = _validate_sharded_state_capability(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             model_states=states,
             sharded_states=self._execution.sharded_states,
@@ -881,23 +899,25 @@ class Model:
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
         fail_if_invariant_blocking_route_is_unsupported(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
             schedule=self._execution.invariant_block_schedule,
         )
         self._execution = _with_action_partition_ceilings(
-            execution=self._execution, user_regimes=self._engine_user_regimes, laws=laws
+            execution=self._execution, user_regimes=self.user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=laws,
             ages=self.ages,
             active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
+            declared_transitions=self._declared_transitions,
+            declared_edge_vocabulary=declared_edge_vocabulary,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -917,12 +937,10 @@ class Model:
             pruned_edges=prepared_graph.pruned_edges,
             laws=laws,
         )
-        # Regimes carry no law: the graph holds it.
-        self.user_regimes = self._engine_user_regimes
         self.initial_nodes = resolved_initial_nodes
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
@@ -933,7 +951,7 @@ class Model:
             execution=self._execution,
         )
         self._regimes = admit_invariant_blocking(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regimes=self._regimes,
             laws=laws,
             reachability=self.reachability,
@@ -979,13 +997,67 @@ class Model:
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         self._solution_param_projection: SolutionParamProjection = (
             solution_param_projection(self._regimes)
         )
         self._seal()
+
+    @property
+    def edges(self) -> ModelEdges:
+        """The edges exactly as declared in `Model(edges=...)`, laws included."""
+        return self._edges
+
+    @property
+    def declared_transitions(self) -> Mapping[Phase, Mapping[RegimeName, Transition]]:
+        """Each source declared as a `Transition`, by phase and source.
+
+        - Edges declared for both phases give both phases the same `Transition`.
+        - `Phased` edges give each phase the `Transition` that phase declares.
+
+        A `Transition` declared with `targets` is returned as declared. One whose
+        law names its targets is returned with the targets derived from that law
+        and its gates in that phase, each at its exact source ages; its law and
+        gates are the declared objects. A source without a `Transition` in a
+        phase is absent from that phase. `model.graph.laws` holds each law as
+        bound to the graph.
+        """
+        edges = self._edges
+        phase_edges: dict[Phase, PhaseEdges] = (
+            {"solve": edges.solve, "simulate": edges.simulate}
+            if isinstance(edges, Phased)
+            else {"solve": edges, "simulate": edges}
+        )
+        graph_edges = {
+            "solve": self._graph.edges.solve,
+            "simulate": self._graph.edges.simulate,
+        }
+        return MappingProxyType(
+            {
+                phase: MappingProxyType(
+                    {
+                        source: (
+                            declaration
+                            if declaration.targets is not None
+                            else dataclasses.replace(
+                                declaration,
+                                targets={
+                                    target: tuple(sorted(source_ages))
+                                    for target, source_ages in graph_edges[phase][
+                                        source
+                                    ].items()
+                                },
+                            )
+                        )
+                        for source, declaration in declared.items()
+                        if isinstance(declaration, Transition)
+                    }
+                )
+                for phase, declared in phase_edges.items()
+            }
+        )
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
@@ -1015,7 +1087,7 @@ class Model:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
                 ages=self.ages,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
@@ -1050,7 +1122,7 @@ class Model:
             else ""
         )
         return (
-            f"Model(n_regimes={len(self._engine_user_regimes)}, "
+            f"Model(n_regimes={len(self.user_regimes)}, "
             f"n_periods={self.n_periods}{pruned_part})"
         )
 
@@ -1166,7 +1238,7 @@ class Model:
         return fingerprint_model(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -1185,7 +1257,7 @@ class Model:
         return fingerprint_model_programs(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
@@ -1197,7 +1269,10 @@ class Model:
         """Get a human-readable params template.
 
         Return a nested dict showing which parameters each function in each
-        regime expects.
+        regime expects. The `edges` branch lists each edge parameter at its
+        declaration path, the most specific level. Any single level may supply a
+        slot instead: the declaration path, `params["edges"][source][arg]`, or
+        the model level.
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
@@ -1601,7 +1676,7 @@ class Model:
                 internal_result=internal_result,
                 retention=preparation.retention,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
@@ -1785,6 +1860,46 @@ class Model:
                 )
             return self._simulate_runtime_regimes[compile_batch_size]
 
+    def _open_entry_allocations(
+        self, *, params: object, inputs: object, solution: object | None
+    ) -> SimulationEntryAllocations | None:
+        """Own a budgeted public call's original inputs, solution and model roots.
+
+        Refuses an already-infeasible existing residency before any conversion.
+        Without a budget, returns `None` and the eager path is unchanged.
+        """
+        entry_inputs = capture_simulation_entry_inputs(
+            execution=self._execution,
+            params=params,
+            initial_conditions=inputs,
+            solution=solution,
+        )
+        if entry_inputs is None:
+            return None
+        return SimulationEntryAllocations(
+            operations=self._simulate_entry_operations,
+            original_inputs=entry_inputs,
+            solution=solution,
+            model_roots=(
+                self.ages.values,  # noqa: PD011
+                self.regime_names_to_ids,
+                tuple(
+                    (
+                        regime.resolved_fixed_params,
+                        regime.solution.resolved_fixed_params,
+                        regime.solution._base_state_action_space.states,  # noqa: SLF001
+                        regime.solution._base_state_action_space.actions,  # noqa: SLF001
+                        regime.derived_categorical_code_arrays,
+                    )
+                    for regime in self._regimes.values()
+                ),
+            ),
+            devices=placed_devices_for_ids(
+                submesh_device_ids=(), visible_device_ids=self._execution.device_ids
+            ),
+            budget_bytes=cast("int", self._execution.device_memory_bytes),
+        )
+
     def _resolve_solution_result(
         self,
         *,
@@ -1939,6 +2054,7 @@ class Model:
                         "only canonical eager and admitted native values are supported."
                         f"{self._execution.device_memory_cap_note()}"
                     )
+            self._fail_if_another_instances_result(solution=solution)
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -2182,11 +2298,11 @@ class Model:
                 f"{type(user_regime.solver).__module__}."
                 f"{type(user_regime.solver).__qualname__}"
             )
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_solver_identities = {
             regime_name: user_regime.solver.identity
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_replay_routes = {
             regime_name: _replay_route_identity(regime.simulation.replay_route)
@@ -2640,7 +2756,9 @@ class Model:
             if route is None:
                 continue
             base_state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
                 process_grid_resolver=process_grid_resolver,
             )
             for period in regime.active_periods:
@@ -2913,9 +3031,7 @@ class Model:
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
                 continue
             if isinstance(route, UnsupportedReplayRoute):
-                solver_name = type(
-                    self._engine_user_regimes[regime_name].solver
-                ).__name__
+                solver_name = type(self.user_regimes[regime_name].solver).__name__
                 reasons.append(
                     f"'{regime_name}': its solver '{solver_name}' declares that its "
                     "solved decision cannot be reproduced in simulation"
@@ -3045,38 +3161,8 @@ class Model:
                 self._fail_if_declared_entry_is_not_permitted(
                     initial_conditions=initial_conditions
                 )
-                entry_inputs = capture_simulation_entry_inputs(
-                    execution=self._execution,
-                    params=params,
-                    initial_conditions=initial_conditions,
-                    solution=solution,
-                )
-                entry_allocations = (
-                    None
-                    if entry_inputs is None
-                    else SimulationEntryAllocations(
-                        operations=self._simulate_entry_operations,
-                        original_inputs=entry_inputs,
-                        solution=solution,
-                        model_roots=(
-                            self.ages.values,  # noqa: PD011
-                            self.regime_names_to_ids,
-                            tuple(
-                                (
-                                    regime.resolved_fixed_params,
-                                    regime.solution.resolved_fixed_params,
-                                    regime.solution._base_state_action_space.states,  # noqa: SLF001
-                                    regime.solution._base_state_action_space.actions,  # noqa: SLF001
-                                )
-                                for regime in self._regimes.values()
-                            ),
-                        ),
-                        devices=placed_devices_for_ids(
-                            submesh_device_ids=(),
-                            visible_device_ids=self._execution.device_ids,
-                        ),
-                        budget_bytes=cast("int", self._execution.device_memory_bytes),
-                    )
+                entry_allocations = self._open_entry_allocations(
+                    params=params, inputs=initial_conditions, solution=solution
                 )
                 # The canonical parameters bind both the supplied result preflight
                 # and an automatic solve. Process them once and keep one
@@ -3094,7 +3180,9 @@ class Model:
                 if process_grid_resolver is not None:
                     for regime_name, regime in self._regimes.items():
                         regime.solution.resolve_process_grids(
-                            regime_params=flat_params[regime_name],
+                            regime_params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
                             process_grid_resolver=process_grid_resolver,
                         )
                     process_grid_resolver.seal()
@@ -3150,13 +3238,13 @@ class Model:
                 initial_conditions = split_initial_conditions(
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
-                    user_regimes=self._engine_user_regimes,
+                    user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
-                        user_regimes=self._engine_user_regimes,
+                        user_regimes=self.user_regimes,
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
                     )
@@ -3467,6 +3555,37 @@ class Model:
             return None
         return cast("RetainedComponentValues | None", engine_view.component_values)
 
+    def _fail_if_another_instances_result(
+        self, *, solution: _SolutionResultBoundary | None
+    ) -> None:
+        """Refuse an in-memory result another instance built, before copying it.
+
+        Such a result is never simulated, so a budgeted simulation refuses it
+        before it copies or uploads any of its values. A malformed result
+        passes through to the full structural checks.
+
+        Raises:
+            InvalidSimulationInputError: The result is held in memory and was
+                built by another model instance.
+
+        """
+        if type(solution) is not SolutionResult:
+            return
+        metadata = solution.metadata
+        if (
+            type(metadata) is SolutionMetadata
+            and metadata.source is SolutionSource.IN_MEMORY
+            and not _same_exactly_typed(
+                actual=metadata.model_instance_id,
+                expected=self._solution_model_instance_id,
+            )
+        ):
+            msg = (
+                "SolutionResult metadata is incompatible with this model: "
+                "model_instance_id does not match this Model."
+            )
+            raise InvalidSimulationInputError(msg)
+
     def _fail_if_component_simulation_is_unsupported(
         self, *, log_path: str | Path | None
     ) -> None:
@@ -3518,6 +3637,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
+        return_action_values: bool = False,
     ) -> PolicyLookup:
         """Return the optimal actions and value at given states of one regime-period.
 
@@ -3534,14 +3654,20 @@ class Model:
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
-                are extrapolated exactly as in `simulate`.
+                are extrapolated exactly as in `simulate`. A regime without states
+                takes `{}`, which is one row.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
+            return_action_values: Whether to also return the action values `Q`
+                and their feasibility `F` over the (possibly restricted) action
+                grid, from the same decision program. Not supported for a
+                collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row.
+            (possibly restricted) action grid, one entry per state row; with
+            `return_action_values`, also `Q` and `F`.
 
         """
         self._check_identity_runtime()
@@ -3558,10 +3684,76 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
-        flat_params = self._process_params(params)
-        V_arrs, sim_policies, _, replay_readers = self._resolve_solution_result(
-            solution=solution, flat_params=flat_params
+        if return_action_values and regime.stakeholders is not None:
+            msg = (
+                "Policy lookup returns action values for singleton regimes only; "
+                f"{regime_name!r} is a collective regime."
+            )
+            raise InvalidSimulationInputError(msg)
+        allocations = self._open_entry_allocations(
+            params=params, inputs=(states, action_grids), solution=solution
         )
+        try:
+            return self._lookup_policy(
+                params=params,
+                solution=solution,
+                period=period,
+                regime_name=regime_name,
+                states=states,
+                action_grids=action_grids,
+                allocations=allocations,
+                return_action_values=return_action_values,
+            )
+        finally:
+            if allocations is not None:
+                allocations.close()
+
+    def _lookup_policy(
+        self,
+        *,
+        params: UserParams,
+        solution: _SolutionResultBoundary,
+        period: int,
+        regime_name: RegimeName,
+        states: Mapping[StateName, jax.Array],
+        action_grids: Mapping[ActionName, jax.Array] | None,
+        allocations: SimulationEntryAllocations | None,
+        return_action_values: bool,
+    ) -> PolicyLookup:
+        """Run a validated lookup under the call's entry owner, if budgeted.
+
+        A budgeted call admits parameter conversion, process grids, solution
+        materialization, the decision program and action decoding against the
+        original inputs, every retained owner of `solution` and the call's own
+        arrays.
+        """
+        regime = self._regimes[regime_name]
+        flat_params = (
+            self._process_params(params)
+            if allocations is None
+            else self._process_params(params, array_writer=allocations)
+        )
+        resolver = None if allocations is None else allocations.process_grid_resolver
+        if resolver is not None:
+            for name, each in self._regimes.items():
+                each.solution.resolve_process_grids(
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
+                    process_grid_resolver=resolver,
+                )
+            resolver.seal()
+        resolved = self._resolve_solution_result(
+            solution=solution,
+            flat_params=flat_params,
+            entry_allocations=allocations,
+            process_grid_resolver=resolver,
+        )
+        if allocations is not None:
+            allocations.update_solution(solution=solution, resolved_inputs=resolved)
+        V_arrs, sim_policies, _, replay_readers = resolved
+        if self._owned_component_values(solution=solution) is not None:
+            # A block-major result keeps its values on the host; its value
+            # store assembles each value the lookup reads, when it reads it.
+            V_arrs = solution.values  # noqa: PD011
         if (
             sim_policies.get(period, {}).get(regime_name) is not None
             or replay_readers.get(period, {}).get(regime_name) is not None
@@ -3572,7 +3764,9 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
         base = _build_base_state_action_spaces(
-            regimes=self._regimes, flat_params=flat_params, process_grid_resolver=None
+            regimes=self._regimes,
+            flat_params=flat_params,
+            process_grid_resolver=resolver,
         )[regime_name]
         _fail_if_off_grid(
             kind="state",
@@ -3617,24 +3811,31 @@ class Model:
         )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
-        if (
-            isinstance(executor, SimulationRuntime)
-            and executor.execution.device_memory_bytes is not None
-        ):
-            live = measure_buffer_footprint(tree=(V_arrs, flat_params, states, grids))
-            executor = SimulationUnitExecutor(
+        unit = None
+        if allocations is not None and isinstance(executor, SimulationRuntime):
+            call_live = functools.partial(
+                _lookup_live_footprint,
+                allocations=allocations,
+                call_roots=(states, space.states, grids),
+            )
+            unit = SimulationUnitExecutor(
                 runtime=executor,
-                live_footprint=lambda: live,
+                live_footprint=call_live,
                 budget_devices=resolve_budget_devices(
-                    execution_devices=executor.subject_devices, live=live
+                    execution_devices=executor.subject_devices, live=call_live()
                 ),
             )
-        indices, value = cast(
-            "tuple[IntND, FloatND]",
+            executor = unit
+        outputs = cast(
+            "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=_with_action_extents(
-                    program=programs.decision[period],
-                    extents=tuple(len(grids[n]) for n in space.action_names),
+                program=(
+                    programs.action_values[period]
+                    if return_action_values
+                    else _with_action_extents(
+                        program=programs.decision[period],
+                        extents=tuple(len(grids[n]) for n in space.action_names),
+                    )
                 ),
                 period=period,
                 n_subjects=n_rows,
@@ -3650,19 +3851,44 @@ class Model:
                         flat_params=flat_params,
                         period=period,
                     ),
-                    params=flat_params[regime_name],
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
                 ),
             ),
         )
-        return PolicyLookup(
-            actions=_lookup_values_from_indices(
-                flat_indices=indices,
-                grids=MappingProxyType({n: grids[n] for n in space.actions}),
-            ),
-            value=value,
-        )
+        if not space.states:
+            # Without states the decision has no per-subject argument and runs
+            # once, for the one row an empty query stands for; every output gets
+            # that row here.
+            outputs = tuple(output[None] for output in outputs)
+        indices, value = outputs[:2]
+        Q, F = outputs[2:] if return_action_values else (None, None)
+        lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
+        if unit is None or allocations is None:
+            actions = _lookup_values_from_indices(
+                flat_indices=indices, grids=lookup_grids
+            )
+        else:
+            actions = cast(
+                "MappingProxyType[ActionName, FloatND | IntND]",
+                allocations.operations.dispatch(
+                    function=_lookup_values_from_indices,
+                    arguments={"flat_indices": indices, "grids": lookup_grids},
+                    subject_arg_names=("flat_indices",),
+                    devices=unit.runtime.subject_devices,
+                    live_footprint=functools.partial(
+                        _lookup_live_footprint,
+                        allocations=allocations,
+                        call_roots=(states, space.states, grids, outputs),
+                    ),
+                    budget_devices=unit.budget_devices,
+                    budget_bytes=allocations.budget_bytes,
+                ),
+            )
+            jax.block_until_ready(actions)
+            unit.close()
+        return PolicyLookup(actions=actions, value=value, Q=Q, F=F)
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
@@ -3711,7 +3937,9 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
         states = regime.solution.state_action_space(
-            regime_params=self._process_params(params)[regime_name]
+            regime_params=regime_kernel_params(
+                self._process_params(params), regime_name=regime_name
+            )
         ).states
         if state_name not in states:
             msg = f"Regime {regime_name!r} has no state {state_name!r}; known: "
@@ -3841,13 +4069,13 @@ class Model:
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         canonical = canonicalize_initial_conditions(
@@ -4021,10 +4249,12 @@ class Model:
             flat_params = convert_series_in_params(
                 flat_params=flat_params,
                 ages=self.ages,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
+                declared_transitions=self._declared_transitions,
+                declared_vocabulary=self._declared_edge_vocabulary,
             )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves
@@ -4354,3 +4584,12 @@ def _fail_if_a_sharded_state_is_pruned(
             "devices. Drop the name, or make some regime use the state."
         )
         raise ExecutionPlanningError(msg)
+
+
+def _lookup_live_footprint(
+    *, allocations: SimulationEntryAllocations, call_roots: object
+) -> DeviceBufferFootprint:
+    """Union the entry owner's current inventory with a lookup's call-local arrays."""
+    return union_buffer_footprints(
+        footprints=(allocations.snapshot(), measure_buffer_footprint(tree=call_roots))
+    )

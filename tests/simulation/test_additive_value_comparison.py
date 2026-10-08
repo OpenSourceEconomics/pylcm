@@ -133,7 +133,7 @@ def _evaluate_operands(q: _QAndF) -> Callable[..., Any]:
 
 def assert_additive_witness(*, model: Model, flat_params: FlatParams) -> None:
     """Refuse to apply the additive scale without its exact declared assumptions."""
-    for name, regime in model._engine_user_regimes.items():
+    for name, regime in model.user_regimes.items():
         if not model.graph.laws[name].terminal:
             assert type(regime.koopmans_aggregator) is LinearAggregator
             np.testing.assert_array_equal(

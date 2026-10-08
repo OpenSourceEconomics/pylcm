@@ -23,6 +23,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -31,7 +32,6 @@ from lcm import (
     StakeholderRoute,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -132,7 +132,7 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
         regime=_make_regimes()["couple_ir"],
         laws=bind_laws(
             {
-                "couple": _couple_law(),
+                "couple": _couple_transition(),
                 "couple_ir": ByAge(
                     cases={
                         AgeRange(start=1, exclusive_stop=2): {
@@ -206,10 +206,7 @@ def _record_root_calls(
     Model(
         regimes=_make_regimes(),
         edges={
-            "couple": Transition(
-                targets={"couple_ir": 0, "single_f": 0, "single_m": 0},
-                law=_couple_law(),
-            ),
+            "couple": _couple_transition(),
             "couple_ir": {"couple_terminal": 1},
             "single_f": {"single_terminal": 1},
             "single_m": {"single_terminal": 1},
@@ -305,42 +302,47 @@ def _make_regimes() -> dict[str, Regime]:
     }
 
 
-def _couple_law() -> ByAge:
-    """The couple's age-0 law: a gated edge into `couple_ir`.
+def _couple_transition() -> Transition:
+    """The couple's age-0 transition: a gated edge into `couple_ir`.
 
     The gate reads the target's dissolution flag and a same-period reference
     to `single_f`; each stakeholder's route falls back to her own single regime.
     """
-    return ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "couple_ir": ValueDependentTransition(
-                    probability=StochasticTransition(func=_probability_one),
-                    gate=_no_dissolution_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                    gate_references={
-                        "V_single_ref": ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _identity_wage}
-                        )
-                    },
-                )
+    return Transition(
+        targets={"couple_ir": 0, "single_f": 0, "single_m": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "couple_ir": StochasticTransition(func=_probability_one)
+                }
             }
-        }
+        ),
+        gates={
+            "couple_ir": Gate(
+                predicate=_no_dissolution_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                    "m": StakeholderRoute(
+                        target_stakeholder="m",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_m",
+                            projection={"wage": _identity_wage},
+                        ),
+                    ),
+                },
+                references={
+                    "V_single_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
+            )
+        },
     )
 
 

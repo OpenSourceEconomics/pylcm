@@ -24,7 +24,10 @@ from _lcm.regime_building.age_specialization import (
 )
 from _lcm.regime_building.processing import _fail_if_phase_state_nodes_disagree
 from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import _validate_logical_consistency
+from _lcm.user_regime_validation import (
+    _validate_law_consistency,
+    _validate_logical_consistency,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import AgeSpecializedFunction, StochasticTransition
 from lcm.typing import Float1D
@@ -141,7 +144,9 @@ def test_age_specialized_regime_transition_is_rejected(binary_category_class):
         RegimeInitializationError,
         match=r"A regime transition law cannot be an `AgeSpecializedFunction`",
     ):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_class):
@@ -150,7 +155,6 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
     `StochasticTransition(func=AgeSpecializedFunction(...))` is out of scope for v1 and
     must raise.
     """
-    law = bind_regime_law(lambda: 0)
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -166,7 +170,7 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_logical_consistency(regime)
 
 
 def test_age_specialized_deterministic_state_transition_is_rejected(
@@ -178,7 +182,6 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
     `AgeSpecializedFunction` helper function; a direct marker in
     `state_transitions` must raise before any program is built.
     """
-    law = bind_regime_law(lambda: 0)
     regime = MockRegime(
         actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={"b": DiscreteGrid(category_class=binary_category_class)},
@@ -192,7 +195,7 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_logical_consistency(regime)
 
 
 def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
@@ -215,7 +218,9 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def test_regime_transition_reading_age_specialized_helper_is_rejected(
@@ -245,7 +250,9 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def test_regime_transition_reading_age_specialized_constraint_is_rejected(
@@ -277,7 +284,9 @@ def test_regime_transition_reading_age_specialized_constraint_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
@@ -311,7 +320,9 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
@@ -339,7 +350,9 @@ def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
     )
 
     with pytest.raises(RegimeInitializationError):
-        _validate_logical_consistency(regime, law=law)
+        _validate_law_consistency(
+            regime, transition=law.decomposed_transition, terminal=law.terminal
+        )
 
 
 def _nodes(*values: float) -> Float1D:

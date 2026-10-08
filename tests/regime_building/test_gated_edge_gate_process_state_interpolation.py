@@ -66,18 +66,18 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -211,34 +211,38 @@ def _make_laws() -> RegimeLaws:
     """`single_f` consents into `married_terminal` at age 0; the rest are terminal."""
     return bind_laws(
         {
-            "single_f": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "married_terminal": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=_consent_gate,
-                            routes={
-                                "f": StakeholderRoute(
-                                    target_stakeholder="f",
-                                    fallback=ProjectedRegimeValue(
-                                        regime="single_f_terminal",
-                                        projection={"wage": _identity_wage},
-                                    ),
-                                )
-                            },
-                            gate_references={
-                                "V_single_f_ref": ProjectedRegimeValue(
+            "single_f": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_terminal": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                gates={
+                    "married_terminal": Gate(
+                        predicate=_consent_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
                                     regime="single_f_terminal",
                                     projection={"wage": _identity_wage},
                                 ),
-                                "V_single_m_ref": ProjectedRegimeValue(
-                                    regime="single_m_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            },
-                        )
-                    }
-                }
+                            )
+                        },
+                        references={
+                            "V_single_f_ref": ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                            "V_single_m_ref": ProjectedRegimeValue(
+                                regime="single_m_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        },
+                    )
+                },
             ),
             "single_f_terminal": None,
             "single_m_terminal": None,

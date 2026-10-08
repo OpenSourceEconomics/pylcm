@@ -35,6 +35,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
@@ -729,7 +730,7 @@ def build_solution_authority(  # noqa: PLR0915
         # A plugin build context can carry placeholder nodes for runtime irregular
         # grids; those values are descriptive input, never model authority.
         base_state_action_space = regime.solution.state_action_space(
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             process_grid_resolver=process_grid_resolver,
         )
         for period in regime.active_periods:
@@ -2341,7 +2342,7 @@ class _AuthorityBinding:
         state_action_space = _state_action_space_for_period(
             regime=regime,
             base=regime.solution.state_action_space(
-                regime_params=flat_params[ref.regime],
+                regime_params=regime_kernel_params(flat_params, regime_name=ref.regime),
             ),
             period=ref.period,
         )

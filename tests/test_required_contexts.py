@@ -3,8 +3,8 @@
 A problem some start requires by value must have a law at the age it is read,
 whatever kind of read requires it, and adding a start never repairs a missing
 prerequisite. A registered regime no start reaches keeps its code, its place in
-the regime vector and its absence from every period. Gate folds belong to the
-source case that declares the gate. Parameters are collected over the required
+the regime vector and its absence from every period. A gate folds only where
+its source reaches the gated target. Parameters are collected over the required
 cases, including value-only problems, and one parameter name has one schema.
 """
 
@@ -20,6 +20,7 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -28,7 +29,6 @@ from lcm import (
     StochasticTransition,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -98,21 +98,27 @@ def _projected(regime: str) -> ProjectedRegimeValue:
     return ProjectedRegimeValue(regime=regime, projection={"wealth": _identity})
 
 
-def _gated_law(*, fallback: Any = None) -> dict:
+def _gated_law() -> dict:
+    return {"target": StochasticTransition(func=_prob_one)}
+
+
+def _target_gate(*, fallback: Any = None) -> dict:
     return {
-        "target": ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_one),
-            gate=_gate,
+        "target": Gate(
+            predicate=_gate,
             routes={
                 "only": StakeholderRoute(fallback=fallback or _projected("fallback"))
             },
-            gate_references={"V_reference": _projected("reference")},
+            references={"V_reference": _projected("reference")},
         )
     }
 
 
-def _with_source_law(*, phase: Any, law: Any) -> dict:
-    return {**phase, "source": Transition(targets=phase["source"], law=law)}
+def _with_source_law(*, phase: Any, law: Any, gates: Any) -> dict:
+    return {
+        **phase,
+        "source": Transition(targets=phase["source"], law=law, gates=gates),
+    }
 
 
 def _gated_model(
@@ -124,7 +130,8 @@ def _gated_model(
     fallback: Any = None,
     edges: Any = None,
 ) -> Model:
-    law = source or ByAge(cases={40: _gated_law(fallback=fallback)})
+    law = source or ByAge(cases={40: _gated_law()})
+    gates = _target_gate(fallback=fallback)
     structure = edges or {"source": {"target": 40, "fallback": 40}}
     return Model(
         regimes={
@@ -139,11 +146,13 @@ def _gated_model(
         initial_nodes=initial_nodes or {40: "source"},
         edges=(
             Phased(
-                solve=_with_source_law(phase=structure.solve, law=law),
-                simulate=_with_source_law(phase=structure.simulate, law=law),
+                solve=_with_source_law(phase=structure.solve, law=law, gates=gates),
+                simulate=_with_source_law(
+                    phase=structure.simulate, law=law, gates=gates
+                ),
             )
             if isinstance(structure, Phased)
-            else _with_source_law(phase=structure, law=law)
+            else _with_source_law(phase=structure, law=law, gates=gates)
         ),
     )
 
@@ -310,6 +319,17 @@ def test_an_unknown_target_in_an_unused_case_is_a_global_error() -> None:
         )
 
 
+def test_a_gate_folds_at_every_age_its_target_is_reached() -> None:
+    """A target reached by two schedule cases is gated after both of them."""
+    model = _gated_model(
+        source=ByAge(cases={40: _gated_law(), 45: _gated_law()}),
+        edges={"source": {"target": (40, 45), "fallback": (40, 45)}},
+        initial_nodes={40: "source", 45: "source"},
+    )
+    folds = model._regimes["source"].gated_edges["target"].folds_by_period
+    assert set(folds) == {1, 2}
+
+
 @categorical(ordered=False)
 class _LifeId:
     working: ScalarInt
@@ -429,8 +449,8 @@ def _source_owned_fold_model() -> Model:
     )
 
 
-def test_a_gate_fold_belongs_to_the_case_that_declares_the_gate() -> None:
-    """A source gated only at 45 folds its gate only at the landing age 50."""
+def test_a_gate_folds_only_where_its_source_reaches_the_target() -> None:
+    """A source reaching its gated target only at 45 folds the gate only at 50."""
     folds = _source_owned_fold_model()._regimes["source"].gated_edges["target"]
     assert set(folds.folds_by_period) == {2}
 
@@ -442,15 +462,22 @@ class _MaritalId:
     dead: ScalarInt
 
 
-def _gated_move(*, target: str, stay: str) -> dict:
-    return {
-        target: ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_one),
-            gate=_marital_gate,
-            routes={"only": StakeholderRoute(fallback=_projected(stay))},
-            gate_references={"V_stay": _projected(stay)},
-        )
-    }
+def _gated_move(*, target: str, stay: str) -> Transition:
+    return Transition(
+        targets={target: 0, stay: 0, "dead": 1},
+        law=ByAge.until(
+            stop_age_exclusive=2,
+            law={target: StochasticTransition(func=_prob_one)},
+            then="dead",
+        ),
+        gates={
+            target: Gate(
+                predicate=_marital_gate,
+                routes={"only": StakeholderRoute(fallback=_projected(stay))},
+                references={"V_stay": _projected(stay)},
+            )
+        },
+    )
 
 
 def _marital_gate(*, V_target: FloatND, V_stay: FloatND) -> BoolND:
@@ -468,22 +495,8 @@ def _marital_model() -> Model:
         regime_id_class=_MaritalId,
         initial_nodes={0: ("single", "married")},
         edges={
-            "single": Transition(
-                targets={"married": 0, "single": 0, "dead": 1},
-                law=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_gated_move(target="married", stay="single"),
-                    then="dead",
-                ),
-            ),
-            "married": Transition(
-                targets={"single": 0, "married": 0, "dead": 1},
-                law=ByAge.until(
-                    stop_age_exclusive=2,
-                    law=_gated_move(target="single", stay="married"),
-                    then="dead",
-                ),
-            ),
+            "single": _gated_move(target="married", stay="single"),
+            "married": _gated_move(target="single", stay="married"),
         },
     )
 
@@ -555,7 +568,7 @@ def test_conflicting_schemas_of_one_required_parameter_fail() -> None:
 def test_a_schema_conflict_in_an_unrequired_case_is_not_required() -> None:
     """With only the late case required, `rate` has the late case's schema."""
     template = _two_schema_model({55: "working"}).get_params_template()
-    assert template["working"]["working"]["next_regime"] == {"rate": "ScalarInt"}
+    assert template["edges"]["working"]["working"] == {"rate": "ScalarInt"}
 
 
 @categorical(ordered=False)

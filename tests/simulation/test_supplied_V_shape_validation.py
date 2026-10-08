@@ -71,7 +71,6 @@ _PARAMS = {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 0.95},
         "next_wealth": {},
-        "next_regime": {},
     },
     "gone": {"utility": {}},
 }

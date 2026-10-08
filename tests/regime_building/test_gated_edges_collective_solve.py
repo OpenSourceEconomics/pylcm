@@ -1,7 +1,7 @@
 """Integration tests for gated edge objects.
 
-A source regime declares a `ValueDependentTransition` inside its `transition`,
-keyed by TARGET regime name. At the end of each period the engine folds, per
+A source regime declares a `Gate` beside the law of its `Transition`, keyed by
+TARGET regime name. At the end of each period the engine folds, per
 declared edge and source stakeholder ``s``, a gated continuation object on the
 target regime's grid (EKL 2019 eqs. 9/12/27)::
 
@@ -29,15 +29,16 @@ from _lcm.regime_building.processing import (
     _fail_if_gated_edge_references_inactive,
     process_regimes,
 )
-from _lcm.regime_law import RegimeLaws, bind_regime_law
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -45,7 +46,6 @@ from lcm import (
     StakeholderRoute,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -125,18 +125,22 @@ def _consent_source() -> Regime:
     )
 
 
-def _consent_laws(
-    transition_into_married: StochasticTransition | ValueDependentTransition,
-) -> RegimeLaws:
-    """The consent regimes' laws, the source declaring `transition_into_married`."""
+def _consent_laws(gate: Gate | None) -> RegimeLaws:
+    """The consent regimes' laws, the source's move into the couple under `gate`.
+
+    `None` declares the move into the couple without a gate.
+    """
     return bind_laws(
         {
-            "single_f": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "married_terminal": transition_into_married
+            "single_f": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_terminal": StochasticTransition(func=_prob_one)
+                        }
                     }
-                }
+                ),
+                gates={} if gate is None else {"married_terminal": gate},
             ),
             "single_f_terminal": None,
             "single_m_terminal": None,
@@ -145,11 +149,10 @@ def _consent_laws(
     )
 
 
-def _consent_edge() -> ValueDependentTransition:
-    """The consent edge into the couple, routing the wife to her own fallback."""
-    return ValueDependentTransition(
-        probability=StochasticTransition(func=_prob_one),
-        gate=_consent_gate,
+def _consent_edge() -> Gate:
+    """The consent gate into the couple, routing the wife to her own fallback."""
+    return Gate(
+        predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
@@ -159,7 +162,7 @@ def _consent_edge() -> ValueDependentTransition:
                 ),
             )
         },
-        gate_references={
+        references={
             "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_terminal",
                 projection={"wage": _identity_wage},
@@ -400,31 +403,35 @@ def _dissolution_laws() -> RegimeLaws:
     """The dissolution regimes' laws, bound as a model binds them."""
     return bind_laws(
         {
-            "married": ByAge(
-                cases={
-                    AgeRange(exclusive_stop=1): {
-                        "married_ir": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=_no_dissolution_gate,
-                            routes={
-                                "f": StakeholderRoute(
-                                    target_stakeholder="f",
-                                    fallback=ProjectedRegimeValue(
-                                        regime="single_f",
-                                        projection={"wage": _identity_wage},
-                                    ),
-                                ),
-                                "m": StakeholderRoute(
-                                    target_stakeholder="m",
-                                    fallback=ProjectedRegimeValue(
-                                        regime="single_m",
-                                        projection={"wage": _identity_wage},
-                                    ),
-                                ),
-                            },
-                        )
+            "married": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "married_ir": StochasticTransition(func=_prob_one)
+                        }
                     }
-                }
+                ),
+                gates={
+                    "married_ir": Gate(
+                        predicate=_no_dissolution_gate,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_f",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                            "m": StakeholderRoute(
+                                target_stakeholder="m",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_m",
+                                    projection={"wage": _identity_wage},
+                                ),
+                            ),
+                        },
+                    )
+                },
             ),
             "married_ir": ByAge(
                 cases={
@@ -556,8 +563,8 @@ def test_dissolution_edge_matches_under_jit():
 def test_raw_ungated_mixed_transition_still_rejected():
     """A singleton regime reaching a collective target WITHOUT an edge is rejected."""
     regimes = _make_consent_regimes()
-    # Drop the gated edge but keep the singleton -> collective transition.
-    laws = _consent_laws(StochasticTransition(func=_prob_one))
+    # Drop the gate but keep the singleton -> collective transition.
+    laws = _consent_laws(None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     with pytest.raises(NotImplementedError, match="stakeholders"):
         process_regimes(
@@ -590,43 +597,35 @@ def test_raw_ungated_mixed_transition_still_rejected():
 def test_probabilistic_gate_is_rejected():
     """A stochastic (StochasticTransition) gate is out of scope — boolean only."""
     with pytest.raises(RegimeInitializationError, match="boolean"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": fixed_transition("wage")},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _u_single_f},
             ),
-            law=bind_regime_law(
-                ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "married_terminal": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=StochasticTransition(func=_prob_one),
-                                routes={
-                                    "f": StakeholderRoute(
-                                        target_stakeholder="f",
-                                        fallback=ProjectedRegimeValue(
-                                            regime="single_f_terminal",
-                                            projection={"wage": _identity_wage},
-                                        ),
-                                    )
-                                },
-                            )
-                        }
-                    }
+            law=_consent_laws(
+                Gate(
+                    predicate=StochasticTransition(func=_prob_one),
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        )
+                    },
                 )
-            ),
+            )["single_f"],
         )
 
 
 def test_edge_fallback_to_unknown_regime_is_rejected():
     """A gated edge whose fallback names a missing regime is rejected at build."""
     regimes = _make_consent_regimes()
-    bad_edge = ValueDependentTransition(
-        probability=StochasticTransition(func=_prob_one),
-        gate=_consent_gate,
+    bad_edge = Gate(
+        predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
@@ -635,7 +634,7 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
                 ),
             )
         },
-        gate_references={
+        references={
             "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_terminal", projection={"wage": _identity_wage}
             ),
@@ -677,9 +676,8 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
 def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
     """An edge leg naming a target stakeholder the target lacks is rejected."""
     regimes = _make_consent_regimes()
-    bad_edge = ValueDependentTransition(
-        probability=StochasticTransition(func=_prob_one),
-        gate=_consent_gate,
+    bad_edge = Gate(
+        predicate=_consent_gate,
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="not_a_stakeholder",
@@ -688,7 +686,7 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
                 ),
             )
         },
-        gate_references={
+        references={
             "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_terminal", projection={"wage": _identity_wage}
             ),
@@ -746,8 +744,9 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     """The mini-EKL regimes: consent edges into `married`, a dissolution edge out.
 
     The regimes carry no law. The sources with several outgoing edges at an age
-    (`single_f`, `single_m`, `married`) take theirs from `_full_topology_laws`;
-    `_with_full_topology_laws` wraps them into a model's edges.
+    (`single_f`, `single_m`, `married`) take theirs from
+    `_full_topology_transitions`; `_with_full_topology_laws` wraps them into a
+    model's edges.
     """
     single_f = Regime(
         states={"wage": _WAGE3},
@@ -817,8 +816,8 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
     }
 
 
-def _full_topology_laws() -> dict[str, ByAge]:
-    """The laws of the mini-EKL sources with several outgoing edges at an age.
+def _full_topology_transitions() -> dict[str, Transition]:
+    """The transitions of the mini-EKL sources with several outgoing edges at an age.
 
     - `single_f` / `single_m`: at age 0 a mutual-consent edge into `married`,
       each single's own leg falling back to her `*_p1` regime;
@@ -847,50 +846,58 @@ def _full_topology_laws() -> dict[str, ByAge]:
         ),
     }
 
-    def _consent_law(*, fallback_regime: str, stakeholder: str) -> ByAge:
-        return ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_consent_gate,
-                        routes=_consent_leg(
-                            fallback_regime=fallback_regime, stakeholder=stakeholder
-                        ),
-                        gate_references=consent_gate_refs,
-                    )
+    def _consent_transition(*, fallback_regime: str, stakeholder: str) -> Transition:
+        return Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "married": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "married": Gate(
+                    predicate=_consent_gate,
+                    routes=_consent_leg(
+                        fallback_regime=fallback_regime, stakeholder=stakeholder
+                    ),
+                    references=consent_gate_refs,
+                )
+            },
         )
 
     return {
-        "single_f": _consent_law(fallback_regime="single_f_p1", stakeholder="f"),
-        "single_m": _consent_law(fallback_regime="single_m_p1", stakeholder="m"),
-        "married": ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "married_terminal": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m_terminal",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
+        "single_f": _consent_transition(fallback_regime="single_f_p1", stakeholder="f"),
+        "single_m": _consent_transition(fallback_regime="single_m_p1", stakeholder="m"),
+        "married": Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(start=1, exclusive_stop=2): {
+                        "married_terminal": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "married_terminal": Gate(
+                    predicate=_no_dissolution_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
+                )
+            },
         ),
     }
 
@@ -898,11 +905,19 @@ def _full_topology_laws() -> dict[str, ByAge]:
 def _with_full_topology_laws(
     edges: Mapping[str, Mapping[str, AgeSelector]],
 ) -> dict[str, Mapping[str, AgeSelector] | Transition]:
-    """Wrap each source of `edges` that `_full_topology_laws` covers in its law."""
-    laws = _full_topology_laws()
+    """Wrap each source of `edges` that `_full_topology_transitions` covers.
+
+    The source's `targets` are the ones `edges` declares for it; its law and
+    gates come from `_full_topology_transitions`.
+    """
+    transitions = _full_topology_transitions()
     return {
-        source: Transition(targets=targets, law=laws[source])
-        if source in laws
+        source: Transition(
+            targets=targets,
+            law=transitions[source].law,
+            gates=transitions[source].gates,
+        )
+        if source in transitions
         else targets
         for source, targets in edges.items()
     }
@@ -965,41 +980,34 @@ def test_full_ekl_topology_via_public_model_api():
 def test_singleton_source_with_two_legs_is_rejected():
     """A singleton source must declare exactly one edge leg."""
     with pytest.raises(RegimeInitializationError, match="exactly one leg"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={"wage": _WAGE},
                 state_transitions={"wage": fixed_transition("wage")},
                 actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _u_single_f},
             ),
-            law=bind_regime_law(
-                ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "married_terminal": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_consent_gate,
-                                routes={
-                                    "f": StakeholderRoute(
-                                        target_stakeholder="f",
-                                        fallback=ProjectedRegimeValue(
-                                            regime="single_f_terminal",
-                                            projection={"wage": _identity_wage},
-                                        ),
-                                    ),
-                                    "extra": StakeholderRoute(
-                                        target_stakeholder="m",
-                                        fallback=ProjectedRegimeValue(
-                                            regime="single_m_terminal",
-                                            projection={"wage": _identity_wage},
-                                        ),
-                                    ),
-                                },
-                            )
-                        }
-                    }
+            law=_consent_laws(
+                Gate(
+                    predicate=_consent_gate,
+                    routes={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "extra": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m_terminal",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
                 )
-            ),
+            )["single_f"],
         )
 
 

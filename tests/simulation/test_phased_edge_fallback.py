@@ -17,7 +17,9 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
@@ -25,7 +27,6 @@ from lcm import (
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -85,10 +86,10 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 
 def _make_model() -> Model:
-    worker_law = {
-        "retired": ValueDependentTransition(
-            probability=StochasticTransition(func=_certain),
-            gate=_well_off,
+    worker_law = ByAge(cases={0: {"retired": StochasticTransition(func=_certain)}})
+    worker_gates = {
+        "retired": Gate(
+            predicate=_well_off,
             routes={
                 "only": StakeholderRoute(
                     fallback=Phased(
@@ -138,12 +139,16 @@ def _make_model() -> Model:
         edges=Phased(
             solve={
                 "worker": Transition(
-                    targets={"retired": 0, "hardship": 0}, law=worker_law
+                    targets={"retired": 0, "hardship": 0},
+                    law=worker_law,
+                    gates=worker_gates,
                 )
             },
             simulate={
                 "worker": Transition(
-                    targets={"retired": 0, "shelter": 0}, law=worker_law
+                    targets={"retired": 0, "shelter": 0},
+                    law=worker_law,
+                    gates=worker_gates,
                 )
             },
         ),

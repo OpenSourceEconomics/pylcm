@@ -94,6 +94,7 @@ def _build_mapping(*, gate, supply_flag: bool) -> MappingProxyType:
         gate_refs={},
         legs=(
             ResolvedStakeholderRoute(
+                route="f",
                 source_stakeholder=None,
                 target_component_index=0,
                 fallback=ResolvedProjectedRegimeValue(

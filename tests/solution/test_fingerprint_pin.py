@@ -5,9 +5,11 @@ working float format, so the table records one row per format and each test read
 the row of the format the session runs under. What it never covers is execution
 policy: two models differing only in ExecutionConfig widths are the same model.
 
-The table records structure schema 9. It binds the current Solver API identity and
-the dated `Model(edges=...)` declarations, transition laws included; regenerate it
-deliberately whenever a model's declaration or the structure schema changes.
+The table records structure schema 9. It binds the current Solver API identity, the
+dated `Model(edges=...)` declarations, transition laws included, and the installed jax,
+jaxlib and numpy versions, which seal every native numerical callable a model captures;
+regenerate it deliberately whenever a model's declaration or the structure schema
+changes, or the lock moves one of those packages.
 """
 
 import json

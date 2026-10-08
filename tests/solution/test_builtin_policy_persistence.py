@@ -62,7 +62,7 @@ from tests.simulation.test_nnbegm_split_workflow_parity import (
 from tests.solution.test_egm_published_policy import _two_period_bequest_model
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.deterministic.dcegm_variants import (
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 
 
@@ -272,7 +272,7 @@ def test_builtin_egm_continuation_roundtrips_as_an_independent_lazy_entry(
     """All-persistable retention is broader than replay-only for EGM carries."""
     model = _two_period_bequest_model()
     solution = model.solve(
-        params=get_retirement_only_params(n_periods=2, discount_factor=0.98),
+        params=get_graph_only_retirement_params(n_periods=2, discount_factor=0.98),
         log_level="off",
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )

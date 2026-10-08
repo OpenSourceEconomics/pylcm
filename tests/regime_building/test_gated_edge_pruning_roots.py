@@ -18,13 +18,13 @@ from lcm import (
     AgeRange,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -122,30 +122,30 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
                 law=ByAge(
                     cases={
                         AgeRange(exclusive_stop=1): {
-                            "retired": ValueDependentTransition(
-                                probability=StochasticTransition(func=_probability_one),
-                                gate=_gate_reading_bonus,
-                                routes={
-                                    "self": StakeholderRoute(
-                                        target_stakeholder=None,
-                                        fallback=ProjectedRegimeValue(
-                                            regime="outside",
-                                            projection={
-                                                "wage": _project_wage_identically
-                                            },
-                                        ),
-                                    )
-                                },
-                                gate_references={
-                                    "V_outside_ref": ProjectedRegimeValue(
-                                        regime="outside",
-                                        projection={"wage": _project_wage_identically},
-                                    )
-                                },
-                            )
+                            "retired": StochasticTransition(func=_probability_one)
                         }
                     }
                 ),
+                gates={
+                    "retired": Gate(
+                        predicate=_gate_reading_bonus,
+                        routes={
+                            "self": StakeholderRoute(
+                                target_stakeholder=None,
+                                fallback=ProjectedRegimeValue(
+                                    regime="outside",
+                                    projection={"wage": _project_wage_identically},
+                                ),
+                            )
+                        },
+                        references={
+                            "V_outside_ref": ProjectedRegimeValue(
+                                regime="outside",
+                                projection={"wage": _project_wage_identically},
+                            )
+                        },
+                    )
+                },
             )
         },
         regimes={
@@ -181,30 +181,30 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
                 law=ByAge(
                     cases={
                         AgeRange(exclusive_stop=1): {
-                            "retired": ValueDependentTransition(
-                                probability=StochasticTransition(func=_probability_one),
-                                gate=_gate_comparing_values,
-                                routes={
-                                    "self": StakeholderRoute(
-                                        target_stakeholder=None,
-                                        fallback=ProjectedRegimeValue(
-                                            regime="outside",
-                                            projection={
-                                                "wage": _project_wage_identically
-                                            },
-                                        ),
-                                    )
-                                },
-                                gate_references={
-                                    "V_outside_ref": ProjectedRegimeValue(
-                                        regime="outside",
-                                        projection={"wage": _project_wage_from_bonus},
-                                    )
-                                },
-                            )
+                            "retired": StochasticTransition(func=_probability_one)
                         }
                     }
                 ),
+                gates={
+                    "retired": Gate(
+                        predicate=_gate_comparing_values,
+                        routes={
+                            "self": StakeholderRoute(
+                                target_stakeholder=None,
+                                fallback=ProjectedRegimeValue(
+                                    regime="outside",
+                                    projection={"wage": _project_wage_identically},
+                                ),
+                            )
+                        },
+                        references={
+                            "V_outside_ref": ProjectedRegimeValue(
+                                regime="outside",
+                                projection={"wage": _project_wage_from_bonus},
+                            )
+                        },
+                    )
+                },
             )
         },
         regimes={

@@ -15,6 +15,8 @@ from jax import Array
 
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
+from _lcm.params.edges import EDGES
+from _lcm.params.regime_template import EdgeVocabulary, iter_transition_callables
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
@@ -34,8 +36,8 @@ from lcm.exceptions import InvalidParamsError
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition
-from lcm.typing import Float1D, FloatND, Int1D
+from lcm.transition import AgeSpecializedGrid, ByAge, JointTransition, Transition
+from lcm.typing import Float1D, FloatND, Int1D, ReferenceName, UserFunction
 
 _JOINT_TRANSITION_ROLE_PARAM_QNAME_DEPTH = 4
 
@@ -291,6 +293,8 @@ def convert_series_in_params(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     regime_names_to_ids: RegimeNamesToIds,
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+    declared_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     array_writer: CanonicalArrayWriter | None = None,
 ) -> FlatParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -303,7 +307,10 @@ def convert_series_in_params(
     existing arrays) pass through unchanged.
 
     Each regime's `derived_categoricals` field is used to resolve index
-    levels that correspond to DAG function outputs (not states/actions).
+    levels that correspond to DAG function outputs (not states/actions). A
+    level named by a discrete state or action the regime declares resolves
+    even where demand pruned it, so a parameter a dormant callable reads keeps
+    its labels at every horizon.
 
     Args:
         flat_params: Already-broadcast params in template shape
@@ -313,6 +320,11 @@ def convert_series_in_params(
         laws: Each regime's law, whose transition functions read params too.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
+        declared_transitions: Per source regime, its `Transition`s as
+            `Model(edges=...)` declares them; an `edges` slot's Series is indexed
+            by the declared callable reading it.
+        declared_vocabulary: Per regime, what it declares before demand prunes
+            any; its discrete grids label the levels of a pruned variable.
         array_writer: Optional owner admitting each Series upload and retaining
             completed leaves while the parameter mapping is assembled.
 
@@ -321,8 +333,28 @@ def convert_series_in_params(
         arrays.
 
     """
-    result: dict[RegimeName, dict[str, object]] = {}
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
+    result: dict[RegimeName, Mapping[str, object]] = {}
     for regime_name, regime_params in flat_params.items():
+        if regime_name == EDGES:
+            result[EDGES] = MappingProxyType(
+                {
+                    source: MappingProxyType(
+                        _convert_edge_params(
+                            source=source,
+                            leaves=cast("Mapping[str, object]", leaves),
+                            declared_transitions=declared_transitions.get(source, ()),
+                            ages=ages,
+                            user_regimes=user_regimes,
+                            declared_vocabulary=declared_vocabulary,
+                            regime_names_to_ids=regime_names_to_ids,
+                            array_writer=array_writer,
+                        )
+                    )
+                    for source, leaves in regime_params.items()
+                }
+            )
+            continue
         user_regime = user_regimes[regime_name]
         all_funcs = dict(user_regime.get_all_functions(law=laws[regime_name]))
         # The Koopmans aggregator is not a regime function; its params live
@@ -380,6 +412,7 @@ def convert_series_in_params(
                 user_regimes=user_regimes,
                 regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
+                declared_categoricals=declared_vocabulary[regime_name].categoricals,
                 array_writer=array_writer,
             )
         result[regime_name] = converted_regime
@@ -387,6 +420,81 @@ def convert_series_in_params(
         "FlatParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def _convert_edge_params(
+    *,
+    source: RegimeName,
+    # User leaves, keyed by slot path; the values are heterogeneous.
+    leaves: Mapping[str, object],
+    declared_transitions: tuple[Transition, ...],
+    ages: AgeGrid,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    declared_vocabulary: Mapping[RegimeName, EdgeVocabulary],
+    regime_names_to_ids: RegimeNamesToIds,
+    array_writer: CanonicalArrayWriter | None,
+) -> dict[str, object]:
+    """Convert the Series leaves of one source's `edges` slots.
+
+    A slot's key is the declaration path of the callable reading it, so that
+    callable decides the Series' indexing axes. A law over all targets returns a
+    probability vector over regimes, which a Series names by a `next_regime`
+    level; a gate or a projection runs on its target's grid, so the target's
+    categoricals resolve its levels.
+
+    Args:
+        source: The source regime.
+        leaves: The source's slots, keyed by declaration path.
+        declared_transitions: The source's `Transition` declarations.
+        ages: Age grid for the model.
+        user_regimes: Mapping of regime names to user-provided `Regime` instances.
+        declared_vocabulary: Per regime, what it declares before demand prunes
+            any; its discrete grids label the levels of a pruned variable.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        array_writer: Optional owner admitting each Series upload.
+
+    Returns:
+        The slots with every Series replaced by its array.
+
+    """
+    readers: dict[tuple[str, ...], list[tuple[UserFunction, bool]]] = {}
+    for transition in declared_transitions:
+        for path, func, gate in iter_transition_callables(transition):
+            readers.setdefault(path, []).append((func, gate is not None))
+    # User leaves (scalars, arrays, Series, mapping and sequence leaves).
+    converted: dict[str, object] = {}
+    for key, value in leaves.items():
+        if not _value_contains_series(value):
+            converted[key] = value
+            continue
+        path = tree_path_from_qname(key)
+        slot, param_name = path[:-1], path[-1]
+        slot_readers = readers.get(slot, [])
+        on_target_grid = any(runs_on_target for _, runs_on_target in slot_readers)
+        regime_name = slot[0] if on_target_grid else source
+        converted[key] = _convert_param_value(
+            value=value,
+            func=(
+                _variant_declaring(
+                    variants=tuple(func for func, _ in slot_readers),
+                    param_name=param_name,
+                )
+                if slot_readers
+                else None
+            ),
+            param_name=param_name,
+            func_name=(
+                "next_regime" if not slot else qname_from_tree_path((EDGES, *slot))
+            ),
+            ages=ages,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            regime_name=regime_name,
+            declared_categoricals=declared_vocabulary[regime_name].categoricals,
+            array_writer=array_writer,
+        )
+    return converted
 
 
 def _value_contains_series(value: object) -> bool:
@@ -501,6 +609,7 @@ def _convert_param_value(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None,
+    declared_categoricals: Mapping[ReferenceName, DiscreteGrid],
     array_writer: CanonicalArrayWriter | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
@@ -517,6 +626,8 @@ def _convert_param_value(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime name for action grid lookup.
+        declared_categoricals: The discrete grids `regime_name` declares, demand
+            pruned or not.
         array_writer: Optional owner admitting each nested Series upload.
 
     Returns:
@@ -535,6 +646,7 @@ def _convert_param_value(
         user_regimes=user_regimes,
         regime_names_to_ids=regime_names_to_ids,
         regime_name=regime_name,
+        declared_categoricals=declared_categoricals,
         array_writer=array_writer,
     )
 
@@ -548,6 +660,7 @@ def _convert_param_value(
             user_regimes=user_regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
+            declared_categoricals=declared_categoricals,
             array_writer=array_writer,
         )
     # `convert_series_in_params` runs between broadcast and canonicalization,
@@ -570,6 +683,7 @@ def array_from_series(
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: RegimeName | None = None,
+    declared_categoricals: Mapping[ReferenceName, DiscreteGrid] = MappingProxyType({}),
     array_writer: CanonicalArrayWriter | None = None,
 ) -> FloatND:
     """Convert a pandas Series to a JAX array.
@@ -598,6 +712,8 @@ def array_from_series(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime for grid and derived categorical lookup.
+        declared_categoricals: Discrete grids `regime_name` declares, which label
+            a level whose variable demand pruned from the regime.
         array_writer: Optional owner admitting the completed numeric device array.
 
     Returns:
@@ -623,10 +739,11 @@ def array_from_series(
             array_writer=array_writer,
         )
 
-    grids = _resolve_categoricals(
-        user_regimes=user_regimes,
-        regime_name=regime_name,
-    )
+    # A declared grid labels a level whose variable demand pruned from the regime.
+    grids = {
+        **declared_categoricals,
+        **_resolve_categoricals(user_regimes=user_regimes, regime_name=regime_name),
+    }
 
     # Replace internal "period" with user-facing "age"
     display_params = ["age" if p == "period" else p for p in indexing_params]

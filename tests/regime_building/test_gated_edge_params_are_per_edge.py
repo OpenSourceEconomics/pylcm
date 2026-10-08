@@ -8,20 +8,23 @@ resolving it against a model-wide union of state names removes it from the
 template — leaving a model whose gate reads a value nothing can supply.
 """
 
+from typing import cast
+
 import jax.numpy as jnp
 import pytest
 
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -112,10 +115,12 @@ def _build_model(*, with_bystander: bool) -> Model:
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_gate,
+                law=ByAge(
+                    cases={40: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -150,7 +155,8 @@ def test_a_gate_parameter_survives_an_unrelated_regimes_state_of_the_same_name(
     """
     template = _build_model(with_bystander=with_bystander).get_params_template()
 
-    assert template["source"]["target"]["gate"] == {"marriage_bonus": "float"}
+    edges = cast("dict", template["edges"])
+    assert edges["source"]["target"]["predicate"] == {"marriage_bonus": "float"}
 
 
 def test_the_bystanders_state_is_not_a_parameter_of_its_own_regime() -> None:
@@ -172,13 +178,11 @@ def test_the_edge_gate_parameter_is_solvable() -> None:
     """
     model = _build_model(with_bystander=True)
     params = {
-        "source": {
-            "koopmans_aggregator": {"discount_factor": 0.5},
-            "target": {"gate": {"marriage_bonus": 1.0}},
-        },
+        "source": {"koopmans_aggregator": {"discount_factor": 0.5}},
         "target": {},
         "fallback": {},
         "bystander": {},
+        "edges": {"source": {"target": {"predicate": {"marriage_bonus": 1.0}}}},
     }
 
     solution = model.solve(params=params, log_level="debug").values

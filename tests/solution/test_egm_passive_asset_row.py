@@ -25,6 +25,7 @@ import pytest
 from _lcm.egm.carry import EGMCarry
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     IrregSpacedGrid,
@@ -248,10 +249,15 @@ def _model(*, solver: str, cell_width: int | None = None) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob),
-                    "dead": StochasticTransition(func=death_prob),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob),
+                            "dead": StochasticTransition(func=death_prob),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob)},
+                    }
+                ),
             )
         },
         regime_id_class=PassiveAssetRowRegimeId,
@@ -463,10 +469,15 @@ def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": (40, 50), "dead": (40, 50, 60)},
-                law={
-                    "working_life": StochasticTransition(func=stay_prob_share),
-                    "dead": StochasticTransition(func=death_prob_share),
-                },
+                law=ByAge(
+                    cases={
+                        (40, 50): {
+                            "working_life": StochasticTransition(func=stay_prob_share),
+                            "dead": StochasticTransition(func=death_prob_share),
+                        },
+                        60: {"dead": StochasticTransition(func=death_prob_share)},
+                    }
+                ),
             )
         },
         regime_id_class=PassiveAssetRowRegimeId,

@@ -130,8 +130,6 @@ def build_params(
     subsidy_low: float = 0.0,
     subsidy_high: float = 3.0,
     fpl_cliff: float = 15.0,
-    # Unused: the model's edges fix the age at which `alive` dies.
-    final_age_alive: float = 3.0,  # noqa: ARG001
 ) -> dict:
     """Get parameters for the derived-income subsidy-cliff toy.
 

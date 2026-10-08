@@ -5,11 +5,20 @@ import pytest
 
 from _lcm.regime_building.phases import PhasedRegimeSpec, normalize_regime_phases
 from _lcm.regime_law import RegimeLaw, bind_regime_law
-from _lcm.user_regime_validation import validate_regime
-from lcm import JointTransition, Phased, StochasticTransition
+from _lcm.user_regime_validation import (
+    fail_if_a_joint_target_is_unreachable,
+    validate_regime_law,
+)
+from lcm import (
+    AgeGrid,
+    JointTransition,
+    Model,
+    Phased,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
-from lcm.typing import FloatND
+from lcm.typing import FloatND, ScalarInt
 
 
 def _probabilities() -> FloatND:
@@ -47,7 +56,7 @@ def _regime(
         joint_transitions=joint_transitions,  # ty: ignore[invalid-argument-type]
     )
     bound = bind_regime_law(law)
-    validate_regime(regime, law=bound)
+    validate_regime_law(regime, law=bound)
     return regime, bound
 
 
@@ -118,7 +127,7 @@ def test_phased_joint_transition_requires_a_static_support_schema(
 def test_joint_node_name_cannot_collide_with_source_function() -> None:
     """A transition-local node cannot shadow a source DAG producer."""
     with pytest.raises(RegimeInitializationError, match=r"node name.*match.*collides"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 functions={
                     "utility": lambda: jnp.asarray(0.0),
@@ -137,17 +146,62 @@ def test_joint_node_name_cannot_use_a_reserved_transition_prefix() -> None:
 
 
 def test_joint_transition_target_must_be_declared_reachable() -> None:
-    """An edge-owned joint kernel cannot name a structurally unreachable target."""
-    with pytest.raises(RegimeInitializationError, match=r"reachable.*couple"):
-        _regime(
-            law={"single": StochasticTransition(func=_probabilities)},
-            joint_transitions={"couple": {"match": _kernel()}},
+    """A joint kernel cannot name a target its source has no edge into."""
+    regime = Regime(
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        joint_transitions={"couple": {"match": _kernel()}},
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"'source'.*reachable under the declared edges \['single'\]; "
+        r"got 'couple'",
+    ):
+        fail_if_a_joint_target_is_unreachable(
+            user_regimes={"source": regime},
+            targets_by_regime={"source": frozenset({"single"})},
+        )
+
+
+@categorical(ordered=False)
+class _JointRegimeId:
+    source: ScalarInt
+    single: ScalarInt
+    couple: ScalarInt
+
+
+def test_model_rejects_a_joint_target_outside_the_declared_edges() -> None:
+    """A source whose only edge leads to `single` cannot own a kernel into `couple`.
+
+    The source has a single destination, so its law is that destination's name;
+    the edges, not the law's form, decide which targets a kernel may name.
+    """
+    source = Regime(
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        joint_transitions={"couple": {"match": _kernel()}},
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"'source'.*reachable under the declared edges \['single'\]; "
+        r"got 'couple'",
+    ):
+        Model(
+            regimes={
+                "source": source,
+                "single": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+                "couple": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            },
+            edges={"source": {"single": 0}},
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_JointRegimeId,
+            initial_nodes={0: "source"},
         )
 
 
 def test_terminal_regime_cannot_declare_joint_transition() -> None:
     """A terminal regime has no target edge on which to own a joint kernel."""
-    with pytest.raises(RegimeInitializationError, match=r"Terminal.*joint_transitions"):
+    with pytest.raises(
+        RegimeInitializationError, match=r"regime is terminal.*joint_transitions"
+    ):
         _regime(law=None, joint_transitions={"couple": {"match": _kernel()}})
 
 

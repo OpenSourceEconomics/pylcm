@@ -57,7 +57,7 @@ def test_discrete_route_checks_affinity_across_the_liquid_domain() -> None:
 
 def test_single_liquid_nbegm_binds_action_before_building_preferences() -> None:
     """A single-liquid branch evaluates utility with its own discrete action."""
-    params = toy.build_params(include_income=False, final_age_alive=2.0)
+    params = toy.build_params(include_income=False)
     nbegm = (
         toy.build_model(
             variant="nbegm",

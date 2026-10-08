@@ -47,7 +47,7 @@ from tests.regime_building.test_carried_state_through_gated_self_loop import (
     _make_regimes as _make_gated_self_loop_regimes,
 )
 from tests.regime_building.test_carried_state_through_gated_self_loop import (
-    _src_law,
+    _src_transition,
 )
 from tests.regime_building.test_same_period_ref_period_axes import (
     _make_model as _make_same_period_ref_model,
@@ -301,7 +301,7 @@ def _work_to_gap(age: float) -> ScalarInt:
 def _components(model: Model) -> dict[str, InvariantComponent]:
     return dict(
         analyze_invariant_components(
-            user_regimes=model._engine_user_regimes,
+            user_regimes=model.user_regimes,
             laws=model.graph.laws,
             regimes=model._regimes,
             reachability=model.reachability,
@@ -476,12 +476,7 @@ def test_gated_edge_is_an_unsupported_channel():
     """A gated edge touching a carrier refuses the coordinate."""
     model = Model(
         regimes=_make_gated_self_loop_regimes(),
-        edges={
-            "src": Transition(
-                targets={"src": 0, "src_fallback": 0, "src_exit": (0, 1)},
-                law=_src_law(),
-            )
-        },
+        edges={"src": _src_transition()},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_GatedRegimeId,
         initial_nodes={0: "src"},

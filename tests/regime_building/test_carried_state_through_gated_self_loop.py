@@ -46,18 +46,18 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -123,15 +123,18 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
     return V_target > _REPEAT_GATE_THRESHOLD
 
 
-def _src_law() -> ByAge:
-    """Return the law of `src`: a gated self-loop until age 2, then `src_exit`."""
+def _src_transition() -> Transition:
+    """Return `src`'s transition: a gated self-loop until age 2, then `src_exit`."""
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
-    return ByAge.until(
-        stop_age_exclusive=2,
-        law={
-            "src": ValueDependentTransition(
-                probability=StochasticTransition(func=_prob_stay),
-                gate=_repeat_gate,
+    return Transition(
+        law=ByAge.until(
+            stop_age_exclusive=2,
+            law={"src": StochasticTransition(func=_prob_stay), "src_exit": exit_cell},
+            then={"src_exit": exit_cell},
+        ),
+        gates={
+            "src": Gate(
+                predicate=_repeat_gate,
                 routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
@@ -140,15 +143,13 @@ def _src_law() -> ByAge:
                         ),
                     )
                 },
-            ),
-            "src_exit": exit_cell,
+            )
         },
-        then={"src_exit": exit_cell},
     )
 
 
 def _make_regimes() -> dict[str, Regime]:
-    """Return the regimes without their laws; `_src_law` is the source's law."""
+    """Return the regimes without their laws; `_src_transition` declares `src`'s."""
     src = Regime(
         states={
             "wage": _WAGE,
@@ -177,7 +178,7 @@ def _make_regimes() -> dict[str, Regime]:
 
 def _solve_and_simulate():
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    laws = bind_laws({"src": _src_law(), "src_exit": None, "src_fallback": None})
+    laws = bind_laws({"src": _src_transition(), "src_exit": None, "src_fallback": None})
     regimes_dict = _make_regimes()
     regime_names = list(regimes_dict)
     regime_names_to_ids = MappingProxyType(

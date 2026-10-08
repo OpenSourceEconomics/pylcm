@@ -16,7 +16,7 @@ chosen, death occurs at a fixed age) as in the original paper.
 
 import statistics
 
-from lcm import ByAge, DeterministicTransition, Transition
+from lcm import DeterministicTransition, Transition
 
 from . import _gpu_mem
 
@@ -133,16 +133,11 @@ def _make_model_and_params(
         return 1.0 / marginal_continuation
 
     ages = AgeGrid(start=40, inclusive_stop=40 + _N_PERIODS - 1, step="Y")
-    last_age = ages.exact_values[-1]
 
     wealth_grid = LinSpacedGrid(start=1, stop=400, n_points=wealth_n_points)
     consumption_grid = LinSpacedGrid(start=1, stop=400, n_points=consumption_n_points)
 
-    working_life_law = ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime_from_working),
-        then=DeterministicTransition(func=next_regime_from_working),
-    )
+    working_life_law = DeterministicTransition(func=next_regime_from_working)
     working_life = Regime(
         actions={
             "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -159,11 +154,7 @@ def _make_model_and_params(
         taste_shocks=ExtremeValueTasteShocks(),
     )
 
-    retirement_law = ByAge.until(
-        stop_age_exclusive=last_age,
-        law=DeterministicTransition(func=next_regime_from_retirement),
-        then=DeterministicTransition(func=next_regime_from_retirement),
-    )
+    retirement_law = DeterministicTransition(func=next_regime_from_retirement)
     retirement = Regime(
         actions={"consumption": consumption_grid},
         states={"wealth": wealth_grid},

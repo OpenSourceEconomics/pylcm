@@ -327,12 +327,13 @@ def build_model(variant: Literal["dcegm", "brute"] = "dcegm") -> Model:
     A single non-terminal keeper regime — DC-EGM or its brute-force twin — plus
     the shared terminal `dead` regime.
     """
+    ages = _ages()
     return Model(
         regimes={"keeper": build_working_regime(variant), "dead": dead},
-        ages=_ages(),
+        ages=ages,
         regime_id_class=HousingKeeperRegimeId,
         initial_nodes={40: "keeper"},
-        edges=_edges(_ages()),
+        edges=_edges(ages),
     )
 
 

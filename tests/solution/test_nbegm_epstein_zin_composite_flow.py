@@ -17,6 +17,7 @@ import numpy as np
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     CESAggregator,
     LinSpacedGrid,
     Model,
@@ -86,10 +87,14 @@ def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
 
 def _build_model(*, solver: OneMarginSolver | GridSearch) -> Model:
     final_age_alive = float(_FIRST_AGE + (_N_PERIODS - 2) * 5)
-    alive_law = {
-        "alive": StochasticTransition(func=_prob_alive),
-        "dead": StochasticTransition(func=_prob_dead),
-    }
+    alive_law = ByAge.until(
+        stop_age_exclusive=_FIRST_AGE + (_N_PERIODS - 1) * 5,
+        law={
+            "alive": StochasticTransition(func=_prob_alive),
+            "dead": StochasticTransition(func=_prob_dead),
+        },
+        then={"dead": StochasticTransition(func=_prob_dead)},
+    )
     alive = ConsumptionSavingsRegime(
         states={"liquid": _LIQUID_GRID, "income": _INCOME},
         state_transitions={"liquid": {"alive": _next_liquid, "dead": _next_liquid}},

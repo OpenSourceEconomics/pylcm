@@ -54,6 +54,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.reductions import HARD_MAX_WITH_CARRY_REDUCTION
 from _lcm.grids import ContinuousGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.continuation_target import union_fixed_params
@@ -81,6 +82,7 @@ from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
     FlatParams,
+    FlatRegimeParams,
     RegimeName,
 )
 from lcm._solver_api.capabilities import SolverExecutionCapabilities
@@ -874,7 +876,7 @@ class _NEGMPeriodKernel:
         param, so the same values are bound into `coh_shift_func` as well.
         """
         regime_fixed = dict(
-            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+            regime_kernel_params(fixed_flat_params, regime_name=self.regime_name)
         )
         coh_shift_func = self.coh_shift_func
         if regime_fixed:
@@ -1003,7 +1005,7 @@ class _NEGMSweepArgumentBuilder:
             _COH_SHIFTS: self.coh_shift_func(
                 durable_values=self.durable_grid_values,
                 outer_values=self.outer_grid_values,
-                **flat_params[self.regime_name],
+                **regime_kernel_params(flat_params, regime_name=self.regime_name),
             ),
         }
         _fail_if_sweep_inputs_collide_with_the_adjusters(
@@ -1504,9 +1506,13 @@ def _with_outer_post_decision(
     the durable's declared law of motion reads it and produces the next-period
     stock itself, so a law that is not the identity is honoured rather than
     replaced by the node the outer search picked.
+
+    Only the source's own branch receives the node. Its edge parameters stay in
+    `flat_params["edges"]`, which the inner argument builder joins with the own
+    branch when it binds the kernel.
     """
     regime_params = {
-        **dict(flat_params[regime_name]),
+        **dict(cast("FlatRegimeParams", flat_params[regime_name])),
         outer_post_decision: value,
     }
     return MappingProxyType(

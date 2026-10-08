@@ -30,7 +30,7 @@ from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
-    get_retirement_only_params,
+    get_graph_only_retirement_params,
 )
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
@@ -111,7 +111,9 @@ def test_solve_publishes_policy_matching_closed_form_consumption(
     policy interpolated at off-grid resources must hit it.
     """
     discount_factor = 0.98
-    params = get_retirement_only_params(n_periods=2, discount_factor=discount_factor)
+    params = get_graph_only_retirement_params(
+        n_periods=2, discount_factor=discount_factor
+    )
 
     sim_policy = _kernel_published_policies(
         model=_two_period_bequest_model(), params=params, monkeypatch=monkeypatch

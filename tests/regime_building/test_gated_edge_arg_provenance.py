@@ -8,11 +8,14 @@ The three provenances an edge-side callable mixes, all in one signature:
 
 1. The TARGET's candidate states, and (simulate only) the TARGET's own V/`D`
    interpolation grid.
-2. The SOURCE's params: the gate predicate's own free params, and the free
-   params of the source-declared gate-ref / fallback projections.
-   `backward_induction._evaluate_edge_fold` binds every param the SOLVE-side
-   fold needs from `flat_params[source]`, so this is not a preference between
-   two merges — it is what makes simulate evaluate the same object solve folded.
+2. The SOURCE's edge params: the gate predicate's own free params, and the free
+   params of the source-declared gate-ref / fallback projections. They live in
+   the source's edge namespace, `flat_params["edges"][source]` (read through
+   `edge_params`), apart from the params of the source regime's own functions in
+   `flat_params[source]`. `backward_induction._evaluate_edge_fold` binds every
+   param the SOLVE-side fold needs from that edge namespace, so this is not a
+   preference between two merges — it is what makes simulate evaluate the same
+   object solve folded.
 3. Each REFERENCE regime's own interpolation grid, for a gate ref's or a leg
    fallback's read of that regime's V.
 
@@ -26,7 +29,8 @@ Covered here:
   identically named `x__points` — is pinned in
   `test_simulate_gate_param_and_leg_selection.py`.)
 - **The fallback projector's params.** `route_gated_edges` must project a
-  coordinate with the same `flat_params[source]` the fold projected it with.
+  coordinate with the same `flat_params["edges"][source]` the fold projected it
+  with.
   Calling the projector with `{**candidate_target_states, **flat_params[target]}`
   instead puts the row in the right fallback REGIME at a STATE the solved policy
   never priced, and carries it into the next period.
@@ -45,24 +49,28 @@ values for the contested name (`_SRC_SHIFT` != `_TARGET_SHIFT`, `_REF_POINTS`
 != `_SRC_POINTS`) and asserts the disagreement itself.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
     ResolvedProjectedRegimeValue,
-    _reached_target_param_leaves,
+    _fence_edge_consumer,
     _reject_gate_operand_state_name_collision,
+    _with_qualified_params,
 )
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
@@ -91,13 +99,14 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -236,12 +245,12 @@ def _same_period_mappings(*, regimes, flat_params, solution):
 # source's parameter; the target's identically named one exists only to make the
 # target-bound misbinding SILENT rather than a crash (both halves are asserted below).
 #
-# An edge callable's parameters are qualified by the edge's target regime and by
-# the callable within it (`<target>__<entry>__<param>`), which is the name the
-# source's params template emits and the name both the fold and the simulate
-# evaluator declare. The TARGET's competing entry is spelled identically here so
-# the contest stays a contest: two namespaces, one qname, different values.
-_SHIFT_QNAME = "target__gate_ref_ref_v_x__shift"
+# An edge callable's parameter is keyed by its declaration path below
+# `params["edges"]["src"]` (target, `references`, reference, projected state,
+# parameter), the name both the fold and the simulate evaluator declare. The
+# TARGET's competing entry is spelled identically here so the contest stays a
+# contest: two namespaces, one qname, different values.
+_SHIFT_QNAME = "target__references__ref_v__x__shift"
 _SRC_SHIFT = 0.1
 _TARGET_SHIFT = 0.9
 
@@ -273,27 +282,31 @@ def _make_shift_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_ref_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "ref_v": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_to_shift}
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_ref_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "ref_v": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_to_shift}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -334,14 +347,14 @@ def _shift_flat_params(*, target_declares_shift: bool = True):
     return MappingProxyType(
         {
             "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _SHIFT_QNAME: jnp.asarray(_SRC_SHIFT),
-                }
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "target": MappingProxyType(target_params),
             "refregime": MappingProxyType({}),
             "fallback": MappingProxyType({}),
+            "edges": MappingProxyType(
+                {"src": MappingProxyType({_SHIFT_QNAME: jnp.asarray(_SRC_SHIFT)})}
+            ),
         }
     )
 
@@ -358,7 +371,8 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     from the target's namespace (replayed by feeding that value into the leaf)
     CLOSES the gate, binding it from the source's OPENS it,
     and the two differ. The published provenance says SOURCE — matching the
-    solve-side fold, which bound this same argument from `flat_params["src"]`.
+    solve-side fold, which bound this same argument from
+    `flat_params["edges"]["src"]`.
     """
     flat_params = _shift_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
@@ -381,7 +395,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
 
     # The fixture is a genuine counterexample only if the two namespaces
     # disagree about the contested qname.
-    assert float(flat_params["src"][_SHIFT_QNAME]) != float(
+    assert float(flat_params["edges"]["src"][_SHIFT_QNAME]) != float(
         flat_params["target"][_SHIFT_QNAME]
     )
 
@@ -421,7 +435,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -518,7 +532,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -541,11 +555,12 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
 
 # The fallback projector must project the coordinate the FOLD projected.
 
-# The leg fallback's projection parameter, qualified by the edge's target regime
-# and by the leg — which the params template and both sides of the solve/simulate
-# seam name by the regime the leg falls back to. The target's competing entry is
-# spelled identically so the two namespaces still contest one qname.
-_PROJ_SHIFT_QNAME = "target__leg_fallback_fallback_z__shift"
+# The route fallback's projection parameter, keyed by its declaration path below
+# `params["edges"]["src"]` (target, `routes`, route, `fallback`, projected state,
+# parameter), the name both sides of the solve/simulate seam read. The target's
+# competing entry is spelled identically so the two namespaces still contest one
+# qname.
+_PROJ_SHIFT_QNAME = "target__routes__only__fallback__z__shift"
 _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
@@ -594,23 +609,27 @@ def _make_projector_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_always_closed_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"z": _project_x_plus_shift},
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_always_closed_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"z": _project_x_plus_shift},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -634,9 +653,13 @@ def _projector_flat_params():
     return MappingProxyType(
         {
             "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
+            "edges": MappingProxyType(
                 {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    _PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_SRC_SHIFT),
+                    "src": MappingProxyType(
+                        {_PROJ_SHIFT_QNAME: jnp.asarray(_PROJ_SRC_SHIFT)}
+                    )
                 }
             ),
             "target": MappingProxyType(
@@ -664,7 +687,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
-    assert float(flat_params["src"][_PROJ_SHIFT_QNAME]) != float(
+    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(
         flat_params["target"][_PROJ_SHIFT_QNAME]
     )
 
@@ -728,7 +751,9 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
     supplied = {
         **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
-        **flat_params["src"],
+        **cast(
+            "Mapping[str, Any]", regime_kernel_params(flat_params, regime_name="src")
+        ),
         "period": jnp.int32(1),
         "age": jnp.asarray(_AGES.period_to_age(1)),
     }
@@ -823,7 +848,7 @@ def test_router_writes_the_fold_consistent_fallback_state():
             "fallback": MappingProxyType({"z": jnp.array([-999.0])}),
         }
     )
-    states, routed_ids, _routed_roles = route_gated_edges(
+    states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -938,27 +963,31 @@ def _make_ref_grid_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_ref_only,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "ref_v": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_realized}
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_ref_only,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "ref_v": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_realized}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1071,7 +1100,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids, _routed_roles = route_gated_edges(
+    _states, routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -1107,23 +1136,27 @@ def _make_fallback_grid_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_always_closed_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"z": _identity_x_to_z},
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_always_closed_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"z": _identity_x_to_z},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1399,10 +1432,9 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     assert _ref_value(_SINGLE_POINTS) <= 5.0
 
 
-# A param introduced by the TARGET regime's OWN functions, read by a
-# source-declared gate, would be mis-owned as source (and collapse with a
-# same-named source param). Origin-preserving edge compilation is deferred, so
-# the builder FENCES this topology instead of silently misbinding it.
+# A gate or projection that names a TARGET regime function would have that
+# function's own parameters bound from the source's namespace. Any argument
+# naming a target-DAG node is refused at construction, whatever the node reads.
 _HELPER_TARGET_SCALE = 0.9
 
 
@@ -1410,10 +1442,7 @@ def _target_scaled_x(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
     """A helper declared in the TARGET regime's functions.
 
     `target_scale` is a parameter the TARGET regime binds from
-    `flat_params[target]` — NOT a parameter the source edge declares. The current
-    collective-edge provenance binds every non-injected gate argument from
-    `flat_params[source]`, so this leaf would be evaluated from the wrong
-    namespace; the builder must reject the topology rather than misbind it.
+    `flat_params[target]` — NOT a parameter the source edge declares.
     """
     return x * target_scale
 
@@ -1431,22 +1460,26 @@ def _make_target_helper_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_target_helper,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_target_helper,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1467,9 +1500,8 @@ def _make_target_helper_regimes() -> _Spec:
 
 
 def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
-    """Building an edge whose gate reads a target-regime function
-    with a free dynamic parameter must raise, rather than silently binding that
-    parameter from the source namespace."""
+    """A gate naming a target-regime function is refused at construction, and the
+    message names that function, so its parameter is never bound from the source."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
@@ -1483,24 +1515,19 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"target_scale.*introduced by the TARGET regime's own functions",
+        match=(
+            r"get_edge_fold \(solve-side gate\): the edge to regime 'target' "
+            r"declares gate/projection argument\(s\) \['target_scaled_x'\] that "
+            r"name the TARGET regime's own function"
+        ),
     ):
         _solve_fixture(spec=_make_target_helper_regimes(), flat_params=flat_params)
 
 
-# A fence covering only the concatenated gate predicate, keyed on GLOBAL
-# target-DAG leaf names, lets three topologies through:
-#   - a gate-REFERENCE projection reaches a target helper param (unfenced: the
-#     readers are compiled on a separate path from the gate predicate);
-#   - the fence over-rejects a valid DIRECT source param merely because an
-#     UNRELATED target helper reuses the qname (global union, not the consumer's
-#     own ancestor closure);
-#   - a target function/transition NODE whose name collides with an injected
-#     gate-ref key shadows the injected reference value in the concatenated DAG.
-# So the fence is ancestry-aware (seeded on each consumer's OWN args) and applies
-# to every gate-ref / fallback projection, alongside an injected-name collision
-# guard. Fixtures give the two candidate bindings DIFFERENT values so each
-# misbinding is genuinely discriminated, not coincidentally agreed.
+# Every target-DAG-concatenating consumer is fenced, not only the gate predicate:
+# a gate-REFERENCE projection or a leg-fallback projection naming a target helper
+# is compiled on a separate path and is refused the same way. A target node whose
+# name collides with an injected gate-ref key is refused by its own guard.
 
 
 def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
@@ -1526,28 +1553,32 @@ def _make_gate_ref_target_helper_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_ref_value_only,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                        gate_references={
-                            "scaled_ref": ProjectedRegimeValue(
-                                regime="refregime",
-                                projection={"x": _project_through_target_helper},
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_ref_value_only,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        "scaled_ref": ProjectedRegimeValue(
+                            regime="refregime",
+                            projection={"x": _project_through_target_helper},
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1577,13 +1608,11 @@ def _make_gate_ref_target_helper_regimes() -> _Spec:
 
 
 def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
-    """A gate-ref projection reaching a target helper's param must raise.
+    """A gate-ref projection naming a target helper is refused at construction.
 
-    A fence that inspects only the concatenated gate predicate misses this: a
-    gate-ref reader is compiled separately (`_build_same_period_ref_reader`), and
-    classifying its args source-owned binds the target-owned `target_scale` from
-    the source in both the solve fold and the simulate gate. Construction raises
-    instead of building silently.
+    The gate-ref reader is compiled apart from the gate predicate, and binding its
+    args from the source would read the target-owned `target_scale` from the
+    source in both the solve fold and the simulate gate.
     """
     flat_params = MappingProxyType(
         {
@@ -1599,69 +1628,265 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
     )
     with pytest.raises(
         ModelInitializationError,
-        match=r"target_scale.*introduced by the TARGET regime's own functions",
+        match=(
+            r"get_edge_fold \(solve-side gate-ref 'scaled_ref' projection\): the "
+            r"edge to regime 'target' declares gate/projection argument\(s\) "
+            r"\['target_scaled_x'\] that name the TARGET regime's own function"
+        ),
     ):
         _solve_fixture(
             spec=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
         )
 
 
-# The fence must be ancestry-aware — it must not reject a valid direct source
-# param merely because an UNRELATED target helper reuses the name. This is a
-# property of the leaf-set computation itself, so it is pinned as a unit test on
-# `_reached_target_param_leaves` (a full-solve fixture would instead exercise
-# pylcm's function-param qualification `helper__param`, which cannot collide with
-# a bare source qname and so cannot reproduce the finding at all).
-def _reached_helper(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
-    """A target node the consumer DOES reach — contributes `target_scale`."""
-    return x * target_scale
+def _make_leg_fallback_target_helper_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_uses_v_target,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={"x": _project_through_target_helper},
+                            )
+                        )
+                    },
+                )
+            },
+        ),
+    )
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def _unrelated_helper(*, y: ContinuousState, shift: FloatND) -> FloatND:
-    """A target node the consumer does NOT reach — its `shift` must stay clean."""
-    return y * shift
+def test_leg_fallback_projection_naming_a_target_helper_is_rejected():
+    """A leg-fallback projection naming a target helper is refused at construction.
 
-
-def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
-    """The fence returns only the target params a consumer REACHES.
-
-    Unioning the free args of every target-DAG function and rejecting on a bare
-    name match would reject a gate declaring `shift` directly, merely because an
-    unrelated target helper also has a `shift`. The ancestry-aware form walks the
-    consumer's own closure: a gate that
-    reaches `reached_helper` (hence `target_scale`) but declares `shift` as its
-    OWN source param yields exactly `{target_scale}` — never `shift`.
+    The projection would otherwise evaluate the helper's `target_scale` from the
+    source's namespace when it writes the routed row's fallback state.
     """
-    dag_pool = {
-        "reached_helper": _reached_helper,
-        "unrelated_helper": _unrelated_helper,
-    }
-    state_names = frozenset({"x", "y"})
-
-    # A gate reaching `reached_helper` and declaring `shift` directly.
-    reached = _reached_target_param_leaves(
-        dag_pool=dag_pool,
-        seed_args=("V_target", "reached_helper", "shift"),
-        state_names=state_names,
+    flat_params = MappingProxyType(
+        {
+            "src": MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+            ),
+            "target": MappingProxyType(
+                {"target_scale": jnp.asarray(_HELPER_TARGET_SCALE)}
+            ),
+            "fallback": MappingProxyType({}),
+        }
     )
-    assert reached == frozenset({"target_scale"})
-    assert "shift" not in reached  # the unrelated helper's param is NOT contested
-
-    # A gate declaring only `shift` directly reaches no target node at all.
-    assert (
-        _reached_target_param_leaves(
-            dag_pool=dag_pool, seed_args=("V_target", "shift"), state_names=state_names
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"get_edge_fold \(solve-side leg fallback projection\): the edge to "
+            r"regime 'target' declares gate/projection argument\(s\) "
+            r"\['target_scaled_x'\] that name the TARGET regime's own function"
+        ),
+    ):
+        _solve_fixture(
+            spec=_make_leg_fallback_target_helper_regimes(), flat_params=flat_params
         )
-        == frozenset()
+
+
+# The edge-consumer fence on a hand-checked target DAG: a chain
+# `wage -> labor_income -> net_income`, a diamond joining `net_income` and
+# `transfers` in `resources`, and a helper no consumer below names.
+def _pool_wage(*, human_capital: FloatND, wage_level: float) -> FloatND:
+    return human_capital * wage_level
+
+
+def _pool_labor_income(*, wage: FloatND, hours: float) -> FloatND:
+    return wage * hours
+
+
+def _pool_net_income(*, labor_income: FloatND, tax_rate: float) -> FloatND:
+    return labor_income * (1 - tax_rate)
+
+
+def _pool_transfers(*, wage: FloatND, transfer_rate: float) -> FloatND:
+    return wage * transfer_rate
+
+
+def _pool_resources(
+    *, net_income: FloatND, transfers: FloatND, wealth: FloatND
+) -> FloatND:
+    return net_income + transfers + wealth
+
+
+def _pool_unrelated_helper(*, wealth: FloatND, shift: float) -> FloatND:
+    return wealth * shift
+
+
+_FENCE_DAG_POOL = MappingProxyType(
+    {
+        "wage": _pool_wage,
+        "labor_income": _pool_labor_income,
+        "net_income": _pool_net_income,
+        "transfers": _pool_transfers,
+        "resources": _pool_resources,
+        "unrelated_helper": _pool_unrelated_helper,
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("seed_args", "named_nodes"),
+    [
+        pytest.param(("V_target", "net_income"), "['net_income']", id="chain-tail"),
+        pytest.param(("resources", "wealth"), "['resources']", id="diamond-join"),
+        pytest.param(("wage",), "['wage']", id="chain-head"),
+        pytest.param(
+            ("transfers", "net_income", "source_own_param"),
+            "['net_income', 'transfers']",
+            id="several-nodes-listed-sorted",
+        ),
+    ],
+)
+def test_fence_edge_consumer_rejects_every_argument_naming_a_target_node(
+    *, seed_args: tuple[str, ...], named_nodes: str
+) -> None:
+    """A consumer argument naming a target-DAG node is refused, and the message
+    lists exactly the named nodes, however deep a parameter sits below them."""
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"^ctx: the edge to regime 'target' declares gate/projection "
+            rf"argument\(s\) {re.escape(named_nodes)} that name the TARGET "
+            r"regime's own function"
+        ),
+    ):
+        _fence_edge_consumer(
+            dag_pool=_FENCE_DAG_POOL,
+            seed_args=seed_args,
+            edge_target="target",
+            context="ctx",
+        )
+
+
+@pytest.mark.parametrize(
+    "seed_args",
+    [
+        pytest.param(("V_target", "wealth", "human_capital"), id="target-states"),
+        pytest.param(("source_own_param",), id="source-param"),
+        pytest.param(("shift",), id="param-named-like-an-unrelated-helper-param"),
+        pytest.param((), id="no-arguments"),
+    ],
+)
+def test_fence_edge_consumer_accepts_arguments_naming_no_target_node(
+    seed_args: tuple[str, ...],
+) -> None:
+    """Arguments that name no target-DAG node pass, including a source parameter
+    spelled like a parameter some target helper reads."""
+    assert (
+        _fence_edge_consumer(
+            dag_pool=_FENCE_DAG_POOL,
+            seed_args=seed_args,
+            edge_target="target",
+            context="ctx",
+        )
+        is None
     )
 
-    # For contrast: a global-union fence WOULD flag `shift`, because
-    # `unrelated_helper` contributes it to the whole-pool leaf set.
-    global_leaves: set[str] = set()
-    for fn in dag_pool.values():
-        global_leaves |= set(get_union_of_args([fn]))
-    global_leaves -= set(dag_pool) | state_names
-    assert "shift" in global_leaves
+
+def _gate_reads_own_target_scale(
+    *, V_target: FloatND, x: ContinuousState, target_scale: FloatND
+) -> BoolND:
+    """A source gate whose OWN parameter shares its name with the parameter of the
+    target's `target_scaled_x` helper."""
+    return V_target > x * target_scale
+
+
+def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
+    src = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            state_transitions={"x": _next_x_offgrid},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _u_src},
+        ),
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
+                }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_own_target_scale,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
+        ),
+    )
+    target = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity, "target_scaled_x": _target_scaled_x},
+        ),
+        None,
+    )
+    fallback = (
+        Regime(
+            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+            functions={"utility": _u_identity},
+        ),
+        None,
+    )
+    return _split({"src": src, "target": target, "fallback": fallback})
+
+
+def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
+    """A gate that reads a target state and its own parameter builds, and binds that
+    parameter from the source under the gate's declaration path, even though a
+    target helper reads a parameter of the same name."""
+    regimes_dict, laws = _make_own_param_named_like_target_helper_param_regimes()
+    regimes, _ = _process(regimes_dict=regimes_dict, laws=laws, ages=_AGES)
+    evaluator = (
+        regimes["src"].gated_edges["target"].simulate_gate_evaluator_at(period=1)
+    )
+    source_qnames = sorted(
+        qname
+        for namespace, qname in evaluator.arg_provenance.params.values()
+        if namespace == SOURCE_PARAMS
+    )
+    assert source_qnames == ["target__predicate__target_scale"]
 
 
 # An injected gate-ref key that collides with a target function name must be
@@ -1682,31 +1907,35 @@ def _make_gate_ref_name_collision_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_outside,
-                        gate_references={
-                            # Injected operand named exactly like the target's
-                            # `outside` function below: the concatenated DAG
-                            # resolves the gate's `outside` arg to the target NODE
-                            # (0.9), not this ref (~0.6).
-                            "outside": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _project_realized}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_outside,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Injected operand named exactly like the target's
+                        # `outside` function below: the concatenated DAG
+                        # resolves the gate's `outside` arg to the target NODE
+                        # (0.9), not this ref (~0.6).
+                        "outside": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _project_realized}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1765,10 +1994,9 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
 
 
 # Two residual namespace defects survive the fences above:
-#   - a gate/projection arg naming a STATE-ONLY target node reaches no dynamic
-#     leaf, so `_reject_target_function_params` stays silent -- but name-based
-#     concatenation still rebinds the arg to the node and drops a same-named
-#     source parameter (a silent gate reversal / wrong projected fallback state);
+#   - a gate/projection arg naming a STATE-ONLY target node: name-based
+#     concatenation rebinds the arg to the node and drops a same-named source
+#     parameter (a silent gate reversal / wrong projected fallback state);
 #   - a gate-ref KEY spelled `V_target` / `D_target` aliases a built-in injected
 #     operand; the `injected_names` SET collapses the duplicate and the built-in
 #        wins, silently discarding the computed reference value.
@@ -1797,22 +2025,26 @@ def _make_threshold_shadow_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_shadowed_threshold,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_shadowed_threshold,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -1835,11 +2067,10 @@ def _make_threshold_shadow_regimes() -> _Spec:
 def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
     """A gate arg naming a STATE-ONLY target node must be rejected.
 
-    `_reject_target_function_params` sees no dynamic leaf (the node reads only the
-    target state `x`), so it stays silent -- but `concatenate_functions` still binds
-    the gate's `threshold` to `_target_threshold`, dropping the source's `threshold`
-    parameter and evaluating `V_target > 0.9` where the source meant `> 0.1`. The
-    build must raise rather than silently misbind.
+    The node reads only the target state `x`, yet `concatenate_functions` would
+    bind the gate's `threshold` to `_target_threshold`, dropping the source's
+    `threshold` parameter and evaluating `V_target > 0.9` where the source meant
+    `> 0.1`. The build must raise rather than silently misbind.
     """
     flat_params = MappingProxyType(
         {
@@ -1872,28 +2103,32 @@ def _make_gate_ref_v_target_alias_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_uses_v_target,
-                        gate_references={
-                            # Aliases the built-in target-value operand `V_target`.
-                            "V_target": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _identity_x}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_uses_v_target,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Aliases the built-in target-value operand `V_target`.
+                        "V_target": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _identity_x}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2014,29 +2249,33 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_x_operand,
-                        gate_references={
-                            # Aliases the TARGET STATE `x` (not a value/D operand,
-                            # so the gate-ref alias fence stays silent).
-                            "x": ProjectedRegimeValue(
-                                regime="refregime", projection={"x": _identity_x}
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_x_operand,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                    references={
+                        # Aliases the TARGET STATE `x` (not a value/D operand,
+                        # so the gate-ref alias fence stays silent).
+                        "x": ProjectedRegimeValue(
+                            regime="refregime", projection={"x": _identity_x}
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2094,14 +2333,11 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         )
 
 
-# A gate/projection arg that is BOTH a TARGET STATE and a
-# SOURCE PARAM binds one fold leaf two ways -- solve reads the param
-# (`_evaluate_edge_fold` overwrites the state grid), simulate reads the state
-# (`_expose` classifies it as a state before recording a source param). The two
-# sides then evaluate different gates. `regime_to_flat_param_names[source]` cannot
-# catch it at construction: a gate/projection param is bound from a BARE key the
-# user adds to `flat_params[source]`, never from the (function-qualified) template.
-# The fence therefore runs at solve, where `flat_params` is in hand.
+# A gate argument named like a target state reads that state. A source function's
+# parameter of the same name lives under the source regime's own namespace
+# (`utility__x`), and a gate's own parameters under
+# `flat_params["edges"][source]` at `<target>__predicate__<param>`, so neither shares
+# the fold leaf the target state binds.
 
 
 def _next_y_identity(y: ContinuousState) -> ContinuousState:
@@ -2125,8 +2361,7 @@ def _entry_x() -> FloatND:
 def _u_src_reads_x_param(
     *, y: ContinuousState, work: DiscreteAction, x: FloatND
 ) -> FloatND:
-    """Source utility reads param `x` -> `x` is a genuine source param the user
-    supplies (bare) in `flat_params['src']`. It ALSO names the target's state."""
+    """Source utility reads param `x`, which also names the target's state."""
     return jnp.zeros_like(y) * work + 0.0 * x
 
 
@@ -2143,10 +2378,9 @@ def _make_gate_param_aliases_target_state_regimes(
 ) -> _Spec:
     """Source `y`-regime; target state is `x`; the gate reads `x`.
 
-    With `source_supplies_x_param=True` the source utility also reads param `x`,
-    so the user supplies a bare `x` in `flat_params['src']` -- the collision. With
-    `False` the source never supplies `x`, so `gate(x)` is an unambiguous direct
-    read of the target state (the legitimate case that must still solve).
+    With `source_supplies_x_param=True` the source utility also reads a parameter
+    `x`, filed under the source regime's own namespace. Either way `gate(x)` reads
+    the target state.
     """
     src = (
         Regime(
@@ -2159,22 +2393,26 @@ def _make_gate_param_aliases_target_state_regimes(
                 else _u_src_no_param
             },
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_x,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_x,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2194,75 +2432,42 @@ def _make_gate_param_aliases_target_state_regimes(
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
-    """The solve-time fence rejects the double-bound leaf.
+@pytest.mark.parametrize("source_supplies_x_param", [False, True])
+def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
+    source_supplies_x_param,
+):
+    """A gate reading target state `x` solves, whatever the source's own params.
 
-    Without it the model solves silently, with the solve-side `Wbar` reading the
-    source param `x=0.9` (`_evaluate_edge_fold` overwrites the state grid) and the
-    simulate router reading the realized target state instead -- two different
-    gates for one edge. `x` is a genuine source param (the source utility reads
-    it), supplied bare in `flat_params['src']`, and simultaneously the target
-    state name.
+    With `source_supplies_x_param=True` the source utility reads a parameter
+    `x`, supplied at `flat_params['src']['utility__x']`; it does not reach the
+    gate, which reads the target's state.
     """
+    own_params = {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
+    if source_supplies_x_param:
+        own_params["utility__x"] = jnp.asarray(0.9)
     flat_params = MappingProxyType(
         {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "utility__x": jnp.asarray(0.0),
-                    "x": jnp.asarray(0.9),
-                }
-            ),
+            "src": MappingProxyType(own_params),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
         }
     )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"simultaneously a TARGET state.*and a source parameter",
-    ):
-        _solve_fixture(
-            spec=_make_gate_param_aliases_target_state_regimes(
-                source_supplies_x_param=True
-            ),
-            flat_params=flat_params,
-        )
-
-
-def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
-    """Negative control: a gate reading a target state the source never supplies
-    as a param is a legitimate direct state read and must still solve. The fence
-    keys on membership in `flat_params[source]`, not on the state name alone."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    # Must not raise.
     _solve_fixture(
         spec=_make_gate_param_aliases_target_state_regimes(
-            source_supplies_x_param=False
+            source_supplies_x_param=source_supplies_x_param
         ),
         flat_params=flat_params,
     )
 
 
-# The ENGINE argument namespace must be reserved too.
+# The ENGINE argument namespace is reserved against target states.
 #
 # `_evaluate_edge_fold` binds the internal engine mappings `SAME_PERIOD_V_ARG`
-# (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) into the fold
-# kwargs, then OVERWRITES them from `flat_params[source]` -- so a source param
-# named after an engine arg is bound as the source scalar on the SOLVE side. The
-# simulate evaluator's `_expose` classifies the same spelling as the engine mapping
-# BEFORE it could be a source param, so SIMULATE reads the engine object. Solve and
-# simulate then evaluate different gates (or the solve side crashes when the source
-# scalar overwrites the value MAPPING). A target STATE named after an engine arg is
-# the same hazard. Intersecting source-params with target STATES alone is not
-# enough; the engine names are reserved too.
+# (always) and `SAME_PERIOD_PARAMS_ARG` (when a ref/gate reads it) and the period
+# context under their bare names. A gate's own parameters never meet them: every
+# one is renamed to its `<target>__predicate__<name>` slot before the fold is built,
+# while the period context stays the engine's. A target STATE spelled like an
+# engine argument would share one fold leaf with it, so those names are reserved.
 def _gate_reads_params_engine_arg(
     *, V_target: FloatND, same_period_regime_to_params: FloatND
 ) -> BoolND:
@@ -2273,13 +2478,8 @@ def _gate_reads_period_engine_arg(*, V_target: FloatND, period: ScalarInt) -> Bo
     return V_target > period
 
 
-def _make_source_param_aliases_regimes(gate: UserFunction) -> _Spec:
-    """A source whose edge into `target` is gated by `gate`.
-
-    The source supplies a bare param in `flat_params['src']` spelled exactly like
-    one of the fold's own arguments, so `gate` decides which collision the fixture
-    exercises.
-    """
+def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
+    """A source whose edge into `target` is gated by `gate`."""
     src = (
         Regime(
             states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
@@ -2287,91 +2487,26 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src_no_param},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
-        ),
-    )
-    target = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    fallback = (
-        Regime(
-            states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            functions={"utility": _u_identity},
-        ),
-        None,
-    )
-    return _split({"src": src, "target": target, "fallback": fallback})
-
-
-def _make_source_param_aliases_engine_params_regimes() -> _Spec:
-    """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
-    supplied in `flat_params['src']` -- so it is both a source param and the fold's
-    engine reference-params leaf."""
-    return _make_source_param_aliases_regimes(_gate_reads_params_engine_arg)
-
-
-def _make_source_param_aliases_period_context_regimes() -> _Spec:
-    """Source gate reads `period`, the fold's own context argument, as a bare
-    param supplied in `flat_params['src']`."""
-    return _make_source_param_aliases_regimes(_gate_reads_period_engine_arg)
-
-
-def _u_src_reads_v_arg_param(
-    *, y: ContinuousState, work: DiscreteAction, same_period_regime_to_V_arr: FloatND
-) -> FloatND:
-    return jnp.zeros_like(y) * work + 0.0 * same_period_regime_to_V_arr
-
-
-def _gate_v_only(V_target: FloatND) -> BoolND:
-    return V_target > 0.0
-
-
-def _make_source_param_aliases_engine_v_regimes() -> _Spec:
-    """Source utility reads a bare param spelled exactly `SAME_PERIOD_V_ARG`,
-    supplied in `flat_params['src']`. `SAME_PERIOD_V_ARG` is ALWAYS in the fold
-    signature, so the source scalar overwrites the solve-side value MAPPING."""
-    src = (
-        Regime(
-            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src_reads_v_arg_param},
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_v_only,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
+            ),
+            gates={
+                "target": Gate(
+                    predicate=gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback", projection={"x": _identity_x}
                             )
-                        },
-                    )
-                }
-            }
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2417,25 +2552,27 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_src_no_param},
         ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_reads_v_arg_state,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={
-                                        SAME_PERIOD_V_ARG: _identity_v_arg_state
-                                    },
-                                )
-                            )
-                        },
-                    )
+        Transition(
+            law=ByAge(
+                cases={
+                    AgeRange(exclusive_stop=1): {
+                        "target": StochasticTransition(func=_prob_one)
+                    }
                 }
-            }
+            ),
+            gates={
+                "target": Gate(
+                    predicate=_gate_reads_v_arg_state,
+                    routes={
+                        "only": StakeholderRoute(
+                            fallback=ProjectedRegimeValue(
+                                regime="fallback",
+                                projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},
+                            )
+                        )
+                    },
+                )
+            },
         ),
     )
     target = (
@@ -2455,78 +2592,29 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_source_param_aliasing_the_engine_params_arg_is_rejected():
-    """A source param named `SAME_PERIOD_PARAMS_ARG` is rejected: it would open
-    the gate in solve (source scalar) and close it in simulate (engine mapping)."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    SAME_PERIOD_PARAMS_ARG: jnp.asarray(0.1),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
+@pytest.mark.parametrize(
+    ("gate", "expected"),
+    [
+        pytest.param(
+            _gate_reads_params_engine_arg,
+            {"V_target", f"target__predicate__{SAME_PERIOD_PARAMS_ARG}"},
+            id="engine-params-spelling-is-a-gate-slot",
+        ),
+        pytest.param(
+            _gate_reads_period_engine_arg,
+            {"V_target", "period"},
+            id="period-stays-the-engine-context",
+        ),
+    ],
+)
+def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
+    *, gate: UserFunction, expected: set[str]
+) -> None:
+    """A gate parameter takes its slot name; the period context keeps its own."""
+    qualified = _with_qualified_params(
+        func=gate, path=("target", "predicate"), wired_names=frozenset()
     )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|same_period_regime_to_params|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_engine_params_regimes(),
-            flat_params=flat_params,
-        )
-
-
-def test_source_param_aliasing_edge_period_context_is_rejected():
-    """A source parameter cannot shadow the target fold's period context."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "period": jnp.asarray(0),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|period|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_period_context_regimes(),
-            flat_params=flat_params,
-        )
-
-
-def test_source_param_aliasing_the_engine_v_arg_is_rejected():
-    """A source param named `SAME_PERIOD_V_ARG` is rejected: it would overwrite
-    the solve-side value mapping."""
-    flat_params = MappingProxyType(
-        {
-            "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    SAME_PERIOD_V_ARG: jnp.asarray(0.1),
-                }
-            ),
-            "target": MappingProxyType({}),
-            "fallback": MappingProxyType({}),
-        }
-    )
-    with pytest.raises(
-        ModelInitializationError,
-        match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
-    ):
-        _solve_fixture(
-            spec=_make_source_param_aliases_engine_v_regimes(),
-            flat_params=flat_params,
-        )
+    assert set(signature(qualified).parameters) == expected
 
 
 def test_target_state_aliasing_the_engine_v_arg_is_rejected():
@@ -2551,56 +2639,46 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
         )
 
 
-def test_source_param_near_engine_name_still_solves():
-    """Negative control: a source param whose name merely RESEMBLES an engine arg
-    (not an exact match) is a legitimate gate param and must still solve."""
+def _gate_near_engine_name(
+    *, V_target: FloatND, same_period_regime_to_params_user: FloatND
+) -> BoolND:
+    return V_target > same_period_regime_to_params_user
+
+
+@pytest.mark.parametrize(
+    ("gate", "name"),
+    [
+        pytest.param(
+            _gate_near_engine_name,
+            "same_period_regime_to_params_user",
+            id="name-resembling-an-engine-name",
+        ),
+        pytest.param(
+            _gate_reads_params_engine_arg,
+            SAME_PERIOD_PARAMS_ARG,
+            id="name-spelled-like-an-engine-name",
+        ),
+    ],
+)
+def test_gate_param_named_like_an_engine_argument_solves_from_its_slot(
+    *, gate: UserFunction, name: str
+) -> None:
+    """A gate parameter is supplied at its `target__predicate__<name>` edge slot."""
     flat_params = MappingProxyType(
         {
             "src": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    # The gate declares it, so it is an edge parameter and carries
-                    # the edge-qualified spelling; the near-miss the control is
-                    # about is in the name the GATE reads.
-                    "target__gate__same_period_regime_to_params_user": jnp.asarray(0.1),
-                }
+                {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "target": MappingProxyType({}),
             "fallback": MappingProxyType({}),
-        }
-    )
-
-    def _gate_near(
-        *, V_target: FloatND, same_period_regime_to_params_user: FloatND
-    ) -> BoolND:
-        return V_target > same_period_regime_to_params_user
-
-    regimes, laws = _make_source_param_aliases_engine_params_regimes()
-    # swap the gate to read the near-miss (non-engine) name
-    regimes["src"], laws["src"] = (
-        Regime(
-            states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-            state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _u_src_no_param},
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate_near,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
+            "edges": MappingProxyType(
+                {
+                    "src": MappingProxyType(
+                        {f"target__predicate__{name}": jnp.asarray(0.1)}
                     )
                 }
-            }
-        ),
+            ),
+        }
     )
     # Must not raise.
-    _solve_fixture(spec=(regimes, laws), flat_params=flat_params)
+    _solve_fixture(spec=_make_gated_source_regimes(gate), flat_params=flat_params)

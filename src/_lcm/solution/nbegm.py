@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 from beartype import beartype
 from dags import concatenate_functions
+from dags.tree import QNAME_DELIMITER
 
 import lcm.typing as lcm_typing
 from _lcm.axis_boundaries import (
@@ -78,6 +79,7 @@ from _lcm.execution.reductions import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.continuation_arguments import (
@@ -181,26 +183,6 @@ _WIDTH_KEYWORDS = (
     "__lcm_branch_width__",
     "__lcm_stochastic_node_width__",
 )
-
-
-def _map_ride_partitioned[InputTree, OutputTree](
-    *,
-    func: Callable[[InputTree], OutputTree],
-    xs: InputTree,
-    width: int,
-) -> OutputTree:
-    """Map a ride/cell axis using the requested production batch window."""
-    return map_over_leading_axis(func=func, xs=xs, batch_size=width)
-
-
-def _map_branch_partitioned[InputTree, OutputTree](
-    *,
-    func: Callable[[InputTree], OutputTree],
-    xs: InputTree,
-    width: int,
-) -> OutputTree:
-    """Map a case/discrete branch axis using its requested batch window."""
-    return map_over_leading_axis(func=func, xs=xs, batch_size=width)
 
 
 @beartype(conf=REGIME_CONF)
@@ -2050,7 +2032,7 @@ def _flat_params(func: Callable[..., object]) -> frozenset[str]:
     names; a flat parameter always arrives qualified by the function that owns
     it, so the qualifying separator is what tells the two apart.
     """
-    return frozenset(name for name in _parameter_names(func) if "__" in name)
+    return frozenset(name for name in _parameter_names(func) if QNAME_DELIMITER in name)
 
 
 def _parameter_names(func: Callable[..., object]) -> frozenset[str]:
@@ -3166,10 +3148,10 @@ class _ProbeArguments:
         target regime and reads that target's params.
         """
         merged: dict[str, object] = {}
-        for name, regime_params in flat_params.items():
-            if name != regime_name:
+        for path, regime_params in flat_namespaces(flat_params):
+            if path != (regime_name,) and path[0] != EDGES:
                 merged.update(regime_params)
-        merged.update(flat_params.get(regime_name, MappingProxyType({})))
+        merged.update(regime_kernel_params(flat_params, regime_name=regime_name))
         return replace(self, param_values=MappingProxyType(merged))
 
     def fill(
@@ -6502,10 +6484,10 @@ def _solve_nbegm_inner_mesh(
     if inner_cells is None:
         stacks = solve_cell(())
         return tuple(leaf[jnp.newaxis] for leaf in stacks)
-    return _map_ride_partitioned(
+    return map_over_leading_axis(
         func=solve_cell,
         xs=inner_cells,
-        width=statics.cell_width,
+        batch_size=statics.cell_width,
     )
 
 
@@ -6793,7 +6775,7 @@ class _NBEGMCellContinuation:
         # per-class intermediates never all sit in flight whatever the partition.
         branch_bindings = self.schedule_spec.branch_bindings
         representatives = statics.continuation_representatives
-        class_rows = _map_branch_partitioned(
+        class_rows = map_over_leading_axis(
             func=functools.partial(self._rows_for_codes, base_pool=base_pool),
             xs=_stacked_branch_codes(
                 branch_bindings=tuple(
@@ -6801,7 +6783,7 @@ class _NBEGMCellContinuation:
                 ),
                 action_names=self.action_names,
             ),
-            width=statics.branch_width,
+            batch_size=statics.branch_width,
         )
         if len(representatives) == len(branch_bindings):
             return class_rows
@@ -6904,10 +6886,10 @@ class _NBEGMCellContinuation:
             interval_inputs = (
                 (midpoints,) if cliff_targets is None else (midpoints, cliff_targets)
             )
-            rows = _map_ride_partitioned(
+            rows = map_over_leading_axis(
                 func=self._interval_rows_for(combo_pool=combo_pool),
                 xs=interval_inputs,
-                width=statics.interval_width,
+                batch_size=statics.interval_width,
             )
             if cliff_targets is None:
                 return rows
@@ -7286,14 +7268,14 @@ class _NBEGMCellSolver:
                 extra_cont_value=extra_cont_value,
                 cliff_savings=cliff_savings,
             )
-            value_stack, marginal_stack, policy_stack = _map_branch_partitioned(
+            value_stack, marginal_stack, policy_stack = map_over_leading_axis(
                 func=functools.partial(
                     _solve_one_branch,
                     branch_solver=branch_solver,
                     branch_action_names=branch_action_names,
                 ),
                 xs=branch_inputs,
-                width=statics.branch_width,
+                batch_size=statics.branch_width,
             )
             modal = jnp.argmax(value_stack, axis=0)
             index = jnp.arange(value_stack.shape[1])

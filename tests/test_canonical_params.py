@@ -11,6 +11,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
+from _lcm.params.edges import edge_params
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -23,6 +24,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError
 from lcm.regime import Regime as UserRegime
+from lcm.transition import TransitionLaw
 from lcm.typing import FloatND, ScalarInt
 
 
@@ -61,7 +63,7 @@ _WORK_LAW = ByAge(
 )
 
 
-def _edges(*, work_law: object = _WORK_LAW) -> dict:
+def _edges(*, work_law: TransitionLaw = _WORK_LAW) -> dict:
     return {
         "work": Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=work_law),
         "retired": {"dead": (0, 1, 2)},
@@ -94,7 +96,7 @@ def _retired_regime() -> UserRegime:
     )
 
 
-def _build_model(*, work: UserRegime, work_law: object = _WORK_LAW) -> Model:
+def _build_model(*, work: UserRegime, work_law: TransitionLaw = _WORK_LAW) -> Model:
     return Model(
         regimes={
             "work": work,
@@ -116,11 +118,11 @@ def test_per_target_state_law_params_nest_under_the_target() -> None:
 
 
 def test_per_target_regime_transition_params_nest_under_the_target() -> None:
-    """A granular cell's params live at `template[regime][target]["next_regime"]`."""
+    """A granular cell's params live at `template["edges"][regime][target]`."""
     model = _build_model(work=_work_regime())
     template = model.get_params_template()
-    assert "hazard" in template["work"]["retired"]["next_regime"]
-    assert "hazard" in template["work"]["dead"]["next_regime"]
+    assert "hazard" in template["edges"]["work"]["retired"]
+    assert "hazard" in template["edges"]["work"]["dead"]
 
 
 def test_broadcast_law_params_stay_coarse_in_the_template() -> None:
@@ -139,13 +141,10 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
     params = {
         "work": {
             "discount_factor": 0.95,
-            "retired": {
-                "next_wealth": {"exit_tax": 0.1},
-                "next_regime": {"hazard": 0.01},
-            },
-            "dead": {"next_regime": {"hazard": 0.01}},
+            "retired": {"next_wealth": {"exit_tax": 0.1}},
         },
         "retired": {"discount_factor": 0.95},
+        "edges": {"work": {"retired": {"hazard": 0.01}, "dead": {"hazard": 0.01}}},
     }
     regime_to_v = model.solve(params=params, log_level="debug").values
     assert set(regime_to_v[0]) == {"work"}
@@ -185,10 +184,9 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
         "work": {
             "discount_factor": 0.95,
             "next_wealth": {"growth": 1.02},
-            "retired": {"next_regime": {"hazard": 0.01}},
-            "dead": {"next_regime": {"hazard": 0.01}},
         },
         "retired": {"discount_factor": 0.95},
+        "edges": {"work": {"retired": {"hazard": 0.01}, "dead": {"hazard": 0.01}}},
     }
     initial_conditions = {
         "age": jnp.array([0, 0]),
@@ -211,16 +209,16 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
 
 
 def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
-    """A function-level value broadcast over per-target template slots lands
-    in every target as the same leaf object."""
+    """A source-level edge value broadcast over per-target law slots lands in
+    every target as the same leaf object."""
     model = _build_model(work=_work_regime())
     params = {
         "work": {
             "discount_factor": 0.95,
-            "next_regime": {"hazard": 0.01},
             "retired": {"next_wealth": {"exit_tax": 0.1}},
         },
         "retired": {"discount_factor": 0.95},
+        "edges": {"work": {"hazard": 0.01}},
     }
     initial_conditions = {
         "age": jnp.array([0, 0]),
@@ -232,11 +230,8 @@ def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    flat_work = result.flat_params["work"]
-    assert (
-        flat_work["retired__next_regime__hazard"]
-        is flat_work["dead__next_regime__hazard"]
-    )
+    flat_work_edges = edge_params(result.flat_params, source="work")
+    assert flat_work_edges["retired__hazard"] is flat_work_edges["dead__hazard"]
 
 
 def test_coarse_regime_transition_rejects_per_target_params() -> None:
@@ -255,11 +250,9 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
         ),
     )
     params = {
-        "work": {
-            "discount_factor": 0.95,
-            "retired": {"next_regime": {"hazard": 0.01}},
-        },
+        "work": {"discount_factor": 0.95},
         "retired": {"discount_factor": 0.95},
+        "edges": {"work": {"retired": {"hazard": 0.01}}},
     }
-    with pytest.raises(InvalidParamsError, match="retired__next_regime__hazard"):
+    with pytest.raises(InvalidParamsError, match="edges__work__retired__hazard"):
         model.solve(params=params, log_level="debug")

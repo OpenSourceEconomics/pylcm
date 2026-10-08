@@ -390,13 +390,9 @@ def build_model(
 
     dies = ages.exact_values[:-1]
     edges = {
-        "alive": (
-            Transition(
-                targets={"alive": stays, "dead": dies},
-                law=DeterministicTransition(func=next_regime),
-            )
-            if stays
-            else {"dead": dies}
+        "alive": Transition(
+            targets={**({"alive": stays} if stays else {}), "dead": dies},
+            law=DeterministicTransition(func=next_regime),
         )
     }
 

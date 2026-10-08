@@ -515,13 +515,9 @@ def build_model(
     stays = ages.exact_values[:-2]
     dies = ages.exact_values[:-1]
     edges = {
-        "working": (
-            Transition(
-                targets={"working": stays, "dead": dies},
-                law=DeterministicTransition(func=next_regime),
-            )
-            if stays
-            else {"dead": dies}
+        "working": Transition(
+            targets={**({"working": stays} if stays else {}), "dead": dies},
+            law=DeterministicTransition(func=next_regime),
         )
     }
 
@@ -710,9 +706,7 @@ def build_params(
         }
     return {
         "discount_factor": discount_factor,
-        # The law reading `final_age_alive` exists only where some age has two
-        # outgoing edges, which takes at least three periods.
-        **({"final_age_alive": final_age_alive} if n_periods > 2 else {}),
+        "final_age_alive": final_age_alive,
         "working": working,
         "dead": {
             "utility": {"interest_rate": interest_rate, "theta": theta},

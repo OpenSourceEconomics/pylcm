@@ -25,8 +25,10 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
@@ -35,7 +37,6 @@ from lcm import (
     StakeholderRoute,
     Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.solver_api import DISSOLUTION_FLAG
@@ -107,10 +108,12 @@ def _projection_model(projection) -> Model:
         edges={
             "source": Transition(
                 targets={"target": 0, "fallback": 0},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_closed_above_one,
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_closed_above_one,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -276,10 +279,10 @@ def _coupled_model(saving_points) -> Model:
         edges={
             "source": Transition(
                 targets={"pair": 0, "alone_m": 0},
-                law={
-                    "pair": ValueDependentTransition(
-                        probability=StochasticTransition(func=_to_pair),
-                        gate=_no_dissolution,
+                law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
+                gates={
+                    "pair": Gate(
+                        predicate=_no_dissolution,
                         routes={
                             "only": StakeholderRoute(
                                 target_stakeholder="f",

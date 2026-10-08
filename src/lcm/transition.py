@@ -15,7 +15,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import jax
 from beartype import beartype
@@ -25,9 +25,10 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.typing import StateName
 from lcm.ages import AgeGrid
+from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.typing import FloatND, UserAge, UserFunction
+from lcm.typing import FloatND, RegimeName, UserAge, UserFunction
 
 
 def fixed_transition(state_name: StateName) -> UserFunction:
@@ -65,6 +66,48 @@ class AgeRange:
 
 type AgeSelector = UserAge | float | tuple[UserAge | float, ...] | range | AgeRange
 
+# One phase's edges: each source regime maps to its destinations' source-age
+# selectors, or to a `Transition` whose law chooses among them.
+type PhaseEdges = Mapping[RegimeName, Transition | Mapping[RegimeName, AgeSelector]]
+
+# What `Model(edges=...)` takes: one phase's edges for both phases, or a
+# `Phased` pair of them.
+type ModelEdges = PhaseEdges | Phased[PhaseEdges, PhaseEdges]
+
+# One target's cell of a per-target law: its probability, or a `Phased` pair.
+type TargetLawCell = (
+    StochasticTransition
+    | UserFunction
+    | Phased[StochasticTransition | UserFunction, StochasticTransition | UserFunction]
+)
+
+# A law one phase evaluates at a source age.
+type PhaseTransitionLaw = (
+    RegimeName
+    | DeterministicTransition
+    | StochasticTransition
+    | UserFunction
+    | Mapping[RegimeName, TargetLawCell]
+)
+
+# A law one `ByAge` case selects: one phase's law for both phases, or a
+# `Phased` pair of them.
+type AgeCaseLaw = PhaseTransitionLaw | Phased[PhaseTransitionLaw, PhaseTransitionLaw]
+
+# What `Transition(law=...)` takes: a case law, or a `ByAge` selecting among
+# case laws per source age.
+type TransitionLaw = AgeCaseLaw | ByAge
+
+if TYPE_CHECKING:
+    type _DeclaredCaseLaw = AgeCaseLaw
+    type _DeclaredTransitionLaw = TransitionLaw
+else:
+    # The runtime checks also admit `None` and a nested `ByAge`, so that
+    # `Transition` and `ByAge` refuse them with their own messages rather than
+    # with a type violation.
+    type _DeclaredCaseLaw = AgeCaseLaw | ByAge | None
+    type _DeclaredTransitionLaw = TransitionLaw | None
+
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
@@ -78,8 +121,8 @@ class Transition:
     edge, the source is declared as a `Transition` whose `law` chooses among
     them:
 
-    - a per-target mapping of `StochasticTransition` probabilities (or
-      `ValueDependentTransition` gates), keyed by target;
+    - a per-target mapping of `StochasticTransition` probabilities, keyed by
+      target;
     - a plain function or `DeterministicTransition` returning a global regime
       code, which is how a discrete choice between regimes is written;
     - a `StochasticTransition` returning the full regime-code probability vector;
@@ -89,36 +132,86 @@ class Transition:
 
         edges = {
             "working": Transition(
-                targets={"working": (60, 61), "dead": (60, 61), "retired": 62},
-                law=ByAge(cases={(60, 61): {"working": survive, "dead": die}}),
+                law=ByAge(
+                    cases={
+                        (60, 61): {"working": survive, "dead": die},
+                        62: {"retired": certain},
+                    }
+                ),
             ),
             "retired": {"dead": (63, 64)},
         }
 
-    A `ByAge` law need not select ages with a single outgoing edge; the edge is
-    the law there. It must select every age with more than one. A source whose
-    every age has at most one outgoing edge takes no `Transition`, unless its law
-    carries a `ValueDependentTransition` gate.
+    A law is evaluated at every source age with outgoing edges, also where only
+    one edge leaves the source, and there it must put unit mass on that edge.
+    With declared `targets`, a `ByAge` law need not select ages with a single
+    outgoing edge; the edge is the law there. It must select every age with more
+    than one. With derived targets, an age no case selects has no edge.
+
+    `gates` makes the transition into a target value-dependent: the law still
+    supplies the probability of reaching it, and the target's `Gate` decides
+    whether a row stays there or takes its route's fallback.
     """
 
-    targets: Mapping[str, AgeSelector]
-    """Destination regimes and the source ages at which each edge fires."""
+    targets: Mapping[RegimeName, AgeSelector] | None = None
+    """Destination regimes and the source ages at which each edge fires.
 
-    law: object
+    Optional when the law names its targets — a per-target mapping, a regime
+    name, or a `ByAge` / `Phased` of those. The destinations are then read off
+    the law: each key of a case is reached at the non-final ages that case
+    covers, and each route fallback of a gate wherever its gated target is.
+    Supplied anyway, it must equal what the law names. A law over all targets
+    names none, so it requires `targets`.
+    """
+
+    law: _DeclaredTransitionLaw
     """The numerical law choosing among the destinations."""
 
+    gates: Mapping[RegimeName, Gate] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """One `Gate` per value-dependent destination, keyed by that destination."""
+
     def __post_init__(self) -> None:
-        if not self.targets:
-            raise RegimeInitializationError(
-                "`Transition.targets` must be a nonempty mapping from destination "
-                f"regimes to source-age selectors; got {self.targets!r}."
-            )
         if self.law is None:
             raise RegimeInitializationError(
                 "`Transition.law` cannot be `None`. A regime with no outgoing "
                 "edges is terminal; leave it out of `Model(edges=...)`."
             )
-        object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        if self.targets is None:
+            if not law_names_its_targets(self.law):
+                raise RegimeInitializationError(
+                    "`Transition.targets` is required when the law does not name "
+                    "its targets: a function, `DeterministicTransition` or "
+                    "vector `StochasticTransition` chooses among regime codes, "
+                    "so declare the destinations and their source ages; got "
+                    f"law={self.law!r}."
+                )
+        elif not self.targets:
+            raise RegimeInitializationError(
+                "`Transition.targets` must be a nonempty mapping from destination "
+                f"regimes to source-age selectors; got {self.targets!r}."
+            )
+        else:
+            object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+
+
+def law_names_its_targets(law: object) -> bool:
+    """Whether every case and phase of `law` is a per-target mapping or a name.
+
+    Args:
+        law: A `Transition` law.
+
+    Returns:
+        Whether the law's destinations can be read off its declaration.
+
+    """
+    if isinstance(law, ByAge):
+        return all(law_names_its_targets(case) for case in law.laws)
+    if isinstance(law, Phased):
+        return law_names_its_targets(law.solve) and law_names_its_targets(law.simulate)
+    return isinstance(law, Mapping | str)
 
 
 @beartype(conf=REGIME_CONF)
@@ -444,13 +537,14 @@ class AgeSpecializedFunction(_AgeSpecialized):
 
     Usable in `functions` and `constraints` of non-terminal regimes. A
     policy-dependent law of motion is expressed as a plain state transition that
-    reads an `AgeSpecializedFunction` entry of `functions`; a direct
-    `AgeSpecializedFunction` state-transition value, a specialized regime
-    transition law, a regime transition whose dependency graph reads an
-    `AgeSpecializedFunction`, a
-    `StochasticTransition(func=AgeSpecializedFunction(...))`, and
-    any `AgeSpecializedFunction` in a terminal regime are rejected at `Regime`
-    construction. Every concrete function returned by `build` must expose the same
+    reads an `AgeSpecializedFunction` entry of `functions`. A direct
+    `AgeSpecializedFunction` state-transition value and a
+    `StochasticTransition(func=AgeSpecializedFunction(...))` state transition are
+    rejected at `Regime` construction. A specialized regime transition law, a
+    regime transition whose dependency graph reads an `AgeSpecializedFunction`,
+    and any `AgeSpecializedFunction` in a terminal regime are rejected when the
+    model binds each regime's law from `Model(edges=...)`. Every concrete function
+    returned by `build` must expose the same
     call signature — only the constants it closes over may differ across ages.
 
         functions={"tax": AgeSpecializedFunction(build=make_tax, signature=policy_key)}
@@ -556,14 +650,19 @@ class ByAge:
 
     Cases may not overlap. A law available at the last age is legal while no
     nonterminal problem is required there.
+
+    When a `Transition` derives its targets from the schedule, every source age
+    with an edge needs a case. An age with a single certain destination takes
+    that regime's bare name, which mixes with per-target cases in one schedule:
+    `cases={AgeRange(exclusive_stop=64): {"worker": p, "dead": q}, 64: "retiree"}`.
     `None` — terminality — is never a case: a terminal regime is a source
     without outgoing edges in `Model(edges=...)`.
     """
 
-    def __init__(
+    def __init__[K: AgeSelector](
         self,
         *,
-        cases: Mapping[AgeSelector, object],
+        cases: Mapping[K, _DeclaredCaseLaw],
         default: object = _MISSING,
     ) -> None:
         if not cases and default is _MISSING:
@@ -630,7 +729,7 @@ class ByAge:
                 until=dataclasses.replace(self._until, law=law, then=then)
             )
         cases = cast(
-            "Mapping[AgeSelector, object]",
+            "Mapping[AgeSelector, AgeCaseLaw]",
             {
                 selector: law
                 for (selector, _), law in zip(self._cases, mapped, strict=False)

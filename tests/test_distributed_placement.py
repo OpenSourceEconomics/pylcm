@@ -86,7 +86,10 @@ from lcm.solvers import GridSearch, Solver
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_eager_core import eager_program, internal_eager_program
-from tests.simulation._profile_comparison import assert_values_agree
+from tests.simulation._profile_comparison import (
+    assert_same_bytes,
+    assert_values_agree,
+)
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized; otherwise the tests skip.
@@ -693,7 +696,17 @@ def _assert_only_planning_descriptors[Key: Hashable](
 def test_eager_solve_respects_planned_regime_layouts(
     *, devices: tuple[int, ...] | None, constant_retired: bool
 ) -> None:
-    """Eager computations, including constant bodies, obey actual regime placement."""
+    """Eager computations, including constant bodies, obey actual regime placement.
+
+    Layouts are checked against the compiled solve of the same placement. Values
+    are checked against the eager solve on the other device set: placement never
+    changes eager arithmetic, so the two publish the same bytes. The compiled
+    solve is no value reference here, because XLA contracts multiply-adds into
+    fused ones that eager dispatch rounds twice, and this fixture amplifies that
+    rounding: consumption above wealth reads the continuation value by linear
+    extrapolation far below the wealth grid, and at the lowest wealth node the
+    utility and the continuation cancel to near zero.
+    """
     eager = _make_three_type_model(
         distributed=True,
         enable_jit=False,
@@ -702,6 +715,12 @@ def test_eager_solve_respects_planned_regime_layouts(
     ).solve(params=_PARAMS, log_level="off")
     compiled = _make_three_type_model(
         distributed=True, devices=devices, constant_retired=constant_retired
+    ).solve(params=_PARAMS, log_level="off")
+    other_placement = _make_three_type_model(
+        distributed=True,
+        enable_jit=False,
+        devices=(1, 2, 3) if devices is None else None,
+        constant_retired=constant_retired,
     ).solve(params=_PARAMS, log_level="off")
 
     assert tuple(eager.values) == tuple(compiled.values)
@@ -722,7 +741,11 @@ def test_eager_solve_respects_planned_regime_layouts(
             if devices is not None:
                 assert value.devices() <= {jax.devices()[index] for index in devices}
                 assert jax.devices()[0] not in value.devices()
-            assert_values_agree(got=value, expected=expected, n_ulp=8)
+            assert_same_bytes(
+                got=np.asarray(value),
+                expected=np.asarray(other_placement.values[period][regime]),
+                err_msg=f"regime {regime!r}, period {period}",
+            )
 
 
 @_skip_pytest_parallel
@@ -1868,3 +1891,60 @@ def _uniform_placement_model(
         initial_nodes={0: "alive"},
         edges={"alive": {"done": 0}},
     )
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(("execution_device", "admitted"), [(0, (0,)), (1, (0, 1))])
+def test_solve_admission_covers_code_owners_held_off_the_execution_device(
+    *,
+    execution_device: int,
+    admitted: tuple[int, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codes a law keeps on device 0 are admitted when the solve runs elsewhere.
+
+    The model is built under device 0, so the two-code int32 array its stochastic
+    law keeps for validation lives there. A budgeted solve on device 1 still
+    decides every candidate on device 0 as well, charging at least those 8 bytes.
+    """
+    from tests.test_transition_checks import (  # noqa: PLC0415
+        _health_probs_reading_effort,
+        _model_with_function_reading_health_probs,
+    )
+
+    with jax.default_device(jax.devices()[0]):
+        model = _model_with_function_reading_health_probs(
+            next_health_func=_health_probs_reading_effort,
+            execution_config=ExecutionConfig(
+                devices=(execution_device,), device_memory_bytes=2**28
+            ),
+        )
+    codes = tuple(
+        code
+        for regime in model._regimes.values()
+        for code in regime.derived_categorical_code_arrays
+    )
+    assert [(code.nbytes, code.devices()) for code in codes] == [
+        (8, {jax.devices()[0]})
+    ]
+    captured: list[Mapping[Any, ResidentInventory]] = []
+    original = backward_induction._resident_inventory_by_triple
+
+    def record(**kwargs: Any) -> Mapping[Any, ResidentInventory]:
+        inventories = original(**kwargs)
+        captured.append(inventories)
+        return inventories
+
+    monkeypatch.setattr(backward_induction, "_resident_inventory_by_triple", record)
+    model.solve(params={"discount_factor": 0.95}, log_level="off")
+
+    inventories = [inventory for mapping in captured for inventory in mapping.values()]
+    assert inventories
+    assert {
+        (
+            inventory.admission_device_ids,
+            inventory.fixed_bytes.get(0, 0) >= 8,
+            inventory.resident_bytes(consumes=()) >= inventory.fixed_bytes[0],
+        )
+        for inventory in inventories
+    } == {(admitted, True, True)}

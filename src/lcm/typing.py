@@ -11,7 +11,14 @@ live in `_lcm.typing`.
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from fractions import Fraction
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    runtime_checkable,
+)
 
 import numpy as np
 import pandas as pd
@@ -19,6 +26,11 @@ from jax import Array
 from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+
+if TYPE_CHECKING:
+    # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
+    # `lcm.__init__` binds it here through `_bind_forward_refs`.
+    from lcm.transition import AgeSelector  # noqa: F401  (re-exported)
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -63,6 +75,7 @@ type LoopIndex = int | Int[Scalar, ""]
 # String-label aliases. Runtime-equivalent to `str`; they exist purely to make
 # signatures self-documenting about which kind of name a string slot carries.
 type RegimeName = str
+type Phase = Literal["solve", "simulate"]
 type StateName = str
 type ActionName = str
 type StateOrActionName = str
@@ -131,14 +144,14 @@ type UserParams = Mapping[str, _UserParamsNode]
 
 
 # User-facing templates keep the first regime and function/target levels
-# structurally visible to type checkers. The final extra mapping admits a joint
-# kernel's `support`/`probabilities` role before rendered annotation leaves.
+# structurally visible to type checkers; below them a branch nests as deep as its
+# declaration path does — a joint kernel's `support`/`probabilities` role, or an
+# `edges` slot's target, gate reference or route — before rendered annotation
+# leaves. The `edges` branch maps each source regime to its slots.
+type _UserFacingTemplateNode = str | dict[str, _UserFacingTemplateNode]
 type UserFacingParamsTemplate = dict[
     RegimeName,
-    dict[
-        FunctionName | RegimeName,
-        dict[str, str | dict[str, str | dict[str, str]]],
-    ],
+    dict[FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]],
 ]
 
 
@@ -178,3 +191,14 @@ def __getattr__(name: str) -> object:
         return getattr(engine_typing, name)
     msg = f"module 'lcm.typing' has no attribute {name!r}"
     raise AttributeError(msg)
+
+
+def _bind_forward_refs(*, age_selector: TypeAliasType) -> None:
+    """Bind `AgeSelector` into this module's globals.
+
+    `lcm.transition` defines it beside `AgeRange` and imports this module, so
+    it cannot be imported here at module level. `lcm.__init__` calls this
+    helper once `lcm.transition` is loaded, which makes
+    `from lcm.typing import AgeSelector` resolve at runtime.
+    """
+    globals()["AgeSelector"] = age_selector

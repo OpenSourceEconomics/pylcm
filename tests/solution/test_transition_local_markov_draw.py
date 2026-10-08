@@ -33,6 +33,7 @@ from _lcm.grids import Grid
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -192,11 +193,15 @@ def _model(
                     "other": 0,
                     "dead": AgeRange(start=0, exclusive_stop=2),
                 },
-                law={
-                    "alive": StochasticTransition(func=_p_alive),
-                    "other": StochasticTransition(func=_p_other),
-                    "dead": StochasticTransition(func=_p_dead),
-                },
+                law=ByAge.until(
+                    stop_age_exclusive=2,
+                    law={
+                        "alive": StochasticTransition(func=_p_alive),
+                        "other": StochasticTransition(func=_p_other),
+                        "dead": StochasticTransition(func=_p_dead),
+                    },
+                    then="dead",
+                ),
             )
             for source in ("alive", "other")
         },

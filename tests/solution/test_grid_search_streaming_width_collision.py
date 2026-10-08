@@ -30,13 +30,18 @@ def _one_collision_utility(*, _lcm_action_block_width: ContinuousAction) -> Floa
     return _lcm_action_block_width
 
 
-def _two_collision_utility(
+def _one_lookalike_utility(*, lcm_action_block_width: ContinuousAction) -> FloatND:
+    """Make one action spelled like the width keyword observable in the value."""
+    return lcm_action_block_width
+
+
+def _two_lookalike_utility(
     *,
-    _lcm_action_block_width: ContinuousAction,
-    _lcm_action_block_width_1: ContinuousAction,
+    lcm_action_block_width: ContinuousAction,
+    lcm_action_block_width_1: ContinuousAction,
 ) -> FloatND:
-    """Make two legal colliding action names observable in the value function."""
-    return _lcm_action_block_width + _lcm_action_block_width_1
+    """Make two actions spelled like the width keyword observable in the value."""
+    return lcm_action_block_width + lcm_action_block_width_1
 
 
 def _selector_model_utility(*, action: ContinuousAction) -> FloatND:
@@ -110,35 +115,35 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
     ("utility", "actions", "expected_width_keyword", "expected_value"),
     [
         pytest.param(
-            _one_collision_utility,
+            _one_lookalike_utility,
             {
-                "_lcm_action_block_width": LinSpacedGrid(
+                "lcm_action_block_width": LinSpacedGrid(
                     start=1.0,
                     stop=3.0,
                     n_points=3,
                 )
             },
-            "_lcm_action_block_width_1",
+            "_lcm_action_block_width",
             3.0,
-            id="base-name-collision",
+            id="base-name-lookalike",
         ),
         pytest.param(
-            _two_collision_utility,
+            _two_lookalike_utility,
             {
-                "_lcm_action_block_width": LinSpacedGrid(
+                "lcm_action_block_width": LinSpacedGrid(
                     start=1.0,
                     stop=3.0,
                     n_points=3,
                 ),
-                "_lcm_action_block_width_1": LinSpacedGrid(
+                "lcm_action_block_width_1": LinSpacedGrid(
                     start=10.0,
                     stop=20.0,
                     n_points=2,
                 ),
             },
-            "_lcm_action_block_width_2",
+            "_lcm_action_block_width",
             23.0,
-            id="two-consecutive-collisions",
+            id="two-consecutive-lookalikes",
         ),
     ],
 )
@@ -149,7 +154,7 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     expected_width_keyword: str,
     expected_value: float,
 ) -> None:
-    """Planner width selection leaves colliding action inputs model-owned."""
+    """Actions spelled like the planner width keyword stay model-owned inputs."""
     model = Model(
         regimes={
             "acting": Regime(

@@ -13,14 +13,15 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -79,10 +80,10 @@ def _make_model(*, gate) -> Model:
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=gate,
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
+                gates={
+                    "target": Gate(
+                        predicate=gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(

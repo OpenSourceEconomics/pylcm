@@ -160,7 +160,7 @@ def _initial_conditions():
 
 
 def _save_cpu_checkpoint(
-    *, tmp_path: Path, named: bool = False
+    *, tmp_path: Path, named: bool = False, subject_rows: np.ndarray | None = None
 ) -> tuple[Path, jax.Array]:
     """Save literal values through the public simulation checkpoint interface."""
     cpu = jax.local_devices(backend="cpu")[0]
@@ -194,7 +194,24 @@ def _save_cpu_checkpoint(
         ages=model.ages,
         simulation_output_dtypes={},
     )
+    result._subject_rows = subject_rows
     return result.save(directory=tmp_path / "result"), values
+
+
+@pytest.mark.parametrize(
+    "subject_rows", [None, np.array([4, 7], dtype=np.int64)], ids=["all", "selected"]
+)
+def test_load_restores_the_subject_rows_of_the_saved_result(
+    *, tmp_path: Path, subject_rows: np.ndarray | None
+) -> None:
+    """A loaded result names the same simulated rows as the result that was saved."""
+    directory, _values = _save_cpu_checkpoint(
+        tmp_path=tmp_path, subject_rows=subject_rows
+    )
+
+    loaded = _PublicSimulationResult.load(directory=directory)
+
+    assert repr(loaded._subject_rows) == repr(subject_rows)
 
 
 @pytest.mark.parametrize("solution_only", [False, True])

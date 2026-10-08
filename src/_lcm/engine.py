@@ -36,6 +36,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    EdgeParamsTemplate,
     FlatRegimeParams,
     FunctionName,
     NextStateSimulationFunction,
@@ -1255,7 +1256,14 @@ class Regime:
     """Period indices during which this regime is active."""
 
     regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
+    """Template for the parameter structure expected by this regime's functions."""
+
+    edge_params_template: EdgeParamsTemplate = MappingProxyType({})
+    """Template of the callables this regime's edges declare, as a source.
+
+    Nested by declaration path, so it is the regime's branch of
+    `params["edges"]`; empty for a source whose edges declare no parameter.
+    """
 
     solution: SolutionPhase
     """Solve-phase view: variables, grids, compiled functions, state-action space."""
@@ -1357,6 +1365,20 @@ class Regime:
     so a consumer reads them off the edge it is already holding rather than
     re-pairing parallel mappings by target name or by leg position.
     """
+
+    @property
+    def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:
+        """Return the code arrays every stochastic law keeps for validation.
+
+        One entry per law, target and phase that reads a derived categorical.
+        These are the retained owners themselves, so a residency inventory charges
+        their storage for the model's lifetime without allocating anything.
+        """
+        return tuple(
+            code
+            for transition in self.stochastic_state_transitions.values()
+            for code in transition.derived_categorical_codes.values()
+        )
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
@@ -88,3 +89,23 @@ def test_linear_indices_and_weights_outside_domain():
     assert_array_equal(weight_low, jnp.array([2, -1], dtype=jnp.float32))
     assert_array_equal(idx_high, jnp.array([1, 1], dtype=jnp.int32))
     assert_array_equal(weight_high, jnp.array([-1, 2], dtype=jnp.float32))
+
+
+def test_linear_indices_and_weights_read_the_coordinate_once():
+    """Index and weights derive from one materialized copy of the coordinate.
+
+    Left free, the compiler may recompute the coordinate separately for the
+    gather index and for the weight. When the two copies round differently, a
+    coordinate within an ulp of a node pairs the index of one cell with the
+    weight of the neighbouring cell, so the read jumps by the neighbour's value.
+    """
+    closed = jax.make_jaxpr(
+        lambda c: _compute_indices_and_weights(coordinate=c, input_size=5)
+    )(1.0)
+    coordinate = closed.jaxpr.invars[0]
+
+    readers = [
+        eqn.primitive.name for eqn in closed.jaxpr.eqns if coordinate in eqn.invars
+    ]
+
+    assert readers == ["optimization_barrier"]

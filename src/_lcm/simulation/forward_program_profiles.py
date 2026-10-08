@@ -17,6 +17,7 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
@@ -203,7 +204,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     }
     states = {state: current[state] for state in base.states}
     carried = {state: current[state] for state in regime.simulation.carried_grids}
-    params = _shared_tree(tree=flat_params[name], devices=devices)
+    params = _shared_tree(
+        tree=regime_kernel_params(flat_params, regime_name=name), devices=devices
+    )
     age = jax.ShapeDtypeStruct((), ages.values.dtype, sharding=shared)
     period_value = jax.ShapeDtypeStruct((), np.dtype(np.int32), sharding=shared)
     next_values = (
@@ -285,7 +288,10 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {ref: values[period][ref] for ref in regime.same_period_ref_regimes}
         )
         references[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in regime.same_period_ref_regimes
+            }
         )
     edge_references = regime.simulation.edge_reference_regimes_by_period.get(period)
     if edge_references is not None:
@@ -293,7 +299,10 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {ref: values[period + 1][ref] for ref in edge_references}
         )
         references[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in edge_references}
+            {
+                ref: regime_kernel_params(flat_params, regime_name=ref)
+                for ref in edge_references
+            }
         )
     subject_key = jax.ShapeDtypeStruct(
         (n_subjects,), ordinary_key.dtype, sharding=subject

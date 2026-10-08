@@ -1,5 +1,6 @@
 import itertools
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.action_streaming import (
+    build_streaming_collective_max_Q_over_a,
+    build_streaming_ev1_max_Q_over_a,
+    build_streaming_max_Q_over_a,
+)
 
 
 def _direct_scalar_oracle(
@@ -233,3 +238,221 @@ def test_streaming_rejects_non_positive_block_width(block_width: int):
             action_names=(),
             block_width=block_width,
         )
+
+
+def count_primitive(*, jaxpr: object, name: str) -> int:
+    """Count the equations of primitive `name` in a jaxpr and every sub-jaxpr."""
+    return sum(
+        (eqn.primitive.name == name)
+        + sum(
+            count_primitive(jaxpr=sub, name=name)
+            for sub in _sub_jaxprs(tuple(eqn.params.values()))
+        )
+        for eqn in _jaxpr_body(jaxpr).eqns
+    )
+
+
+def scan_lengths(*, jaxpr: object) -> list[int]:
+    """Return the length of every scan in a jaxpr and its sub-jaxprs, in order."""
+    lengths = []
+    for eqn in _jaxpr_body(jaxpr).eqns:
+        if eqn.primitive.name == "scan":
+            lengths.append(eqn.params["length"])
+        for sub in _sub_jaxprs(tuple(eqn.params.values())):
+            lengths.extend(scan_lengths(jaxpr=sub))
+    return lengths
+
+
+def _jaxpr_body(jaxpr: object) -> Any:
+    """Return the open jaxpr of a closed or open jaxpr."""
+    return jaxpr if hasattr(jaxpr, "eqns") else jaxpr.jaxpr  # ty: ignore[unresolved-attribute]
+
+
+def _sub_jaxprs(values: tuple[object, ...]) -> list[object]:
+    """Return the jaxprs among equation parameters, inside tuples included."""
+    found: list[object] = []
+    for value in values:
+        if hasattr(value, "eqns") or hasattr(getattr(value, "jaxpr", None), "eqns"):
+            found.append(value)
+        elif isinstance(value, tuple | list):
+            found.extend(_sub_jaxprs(tuple(value)))
+    return found
+
+
+def sin_Q_and_F(*, choice: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """A Q whose every evaluation stages exactly one `sin`."""
+    return jnp.sin(choice), jnp.ones((), dtype=bool)
+
+
+def _sin_collective_Q_and_F(*, choice: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Two stakeholders' Q from one `sin` per evaluation."""
+    return jnp.sin(choice) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
+
+
+def _sin_ev1_Q_and_F(
+    *, branch: jax.Array, choice: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A discrete-branch Q whose every evaluation stages exactly one `sin`."""
+    return jnp.sin(choice) + branch, jnp.ones((), dtype=bool)
+
+
+# Seven actions in blocks of three are three blocks, the last one padded.
+_CHOICE = jnp.arange(7.0)
+
+
+def _single_device_jaxpr() -> object:
+    streamed = build_streaming_max_Q_over_a(
+        Q_and_F=sin_Q_and_F, action_names=("choice",), block_width=3
+    )
+    return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
+
+
+def _collective_jaxpr() -> object:
+    streamed = build_streaming_collective_max_Q_over_a(
+        Q_and_F=_sin_collective_Q_and_F,
+        action_names=("choice",),
+        block_width=3,
+        stakeholders=("first", "second"),
+        weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
+    )
+    return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
+
+
+def _ev1_jaxpr() -> object:
+    # Two branches of seven continuous cells in blocks of three: three blocks
+    # per branch, six blocks in all.
+    streamed = build_streaming_ev1_max_Q_over_a(
+        Q_and_F=_sin_ev1_Q_and_F,
+        action_names=("branch", "choice"),
+        n_discrete_action_axes=1,
+        block_width=3,
+        scale=1.0,
+    )
+    return jax.make_jaxpr(
+        lambda branch, choice: streamed(branch=branch, choice=choice)
+    )(jnp.arange(2.0), _CHOICE)
+
+
+_STREAMED_ROUTES = {
+    "hard_max": (_single_device_jaxpr, [3]),
+    "collective": (_collective_jaxpr, [3]),
+    "ev1": (_ev1_jaxpr, [6]),
+}
+
+
+@pytest.mark.parametrize("route", tuple(_STREAMED_ROUTES))
+def test_streaming_stages_q_and_f_once(route: str) -> None:
+    """The program evaluates Q_and_F in one place: the scan body."""
+    build, _ = _STREAMED_ROUTES[route]
+    assert count_primitive(jaxpr=build(), name="sin") == 1
+
+
+@pytest.mark.parametrize("route", tuple(_STREAMED_ROUTES))
+def test_streaming_scans_every_block(route: str) -> None:
+    """One scan runs over every block of the action product."""
+    build, expected = _STREAMED_ROUTES[route]
+    assert scan_lengths(jaxpr=build()) == expected
+
+
+def _shifted_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A Q that reads the action and one per-device state."""
+    return jnp.sin(choice) + shift, jnp.ones((), dtype=bool)
+
+
+def _shifted_collective_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Two stakeholders' Q from the action and one per-device state."""
+    return (jnp.sin(choice) + shift) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
+
+
+def _shifted_ev1_Q_and_F(
+    *, branch: jax.Array, choice: jax.Array, shift: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A discrete-branch Q that reads one per-device state."""
+    return jnp.sin(choice) + branch + shift, jnp.ones((), dtype=bool)
+
+
+_SHIFTED_ROUTES = {
+    "hard_max": lambda shift: build_streaming_max_Q_over_a(
+        Q_and_F=_shifted_Q_and_F, action_names=("choice",), block_width=3
+    )(choice=_CHOICE, shift=shift),
+    "collective": lambda shift: build_streaming_collective_max_Q_over_a(
+        Q_and_F=_shifted_collective_Q_and_F,
+        action_names=("choice",),
+        block_width=3,
+        stakeholders=("first", "second"),
+        weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
+    )(choice=_CHOICE, shift=shift),
+    "ev1": lambda shift: build_streaming_ev1_max_Q_over_a(
+        Q_and_F=_shifted_ev1_Q_and_F,
+        action_names=("branch", "choice"),
+        n_discrete_action_axes=1,
+        block_width=3,
+        scale=1.0,
+    )(branch=jnp.arange(2.0), choice=_CHOICE, shift=shift),
+}
+
+
+@pytest.mark.parametrize("route", tuple(_SHIFTED_ROUTES))
+def test_streaming_reduces_a_device_varying_state(route: str) -> None:
+    """Inside `shard_map`, a state that varies over the mesh axis streams as outside."""
+    reduce_route = _SHIFTED_ROUTES[route]
+    mesh = jax.make_mesh((1,), ("X",), (jax.sharding.AxisType.Auto,))
+    shift = jnp.asarray([0.25])
+    sharded = jax.shard_map(
+        lambda local: jax.tree.map(
+            lambda leaf: leaf[jnp.newaxis], reduce_route(local[0])
+        ),
+        mesh=mesh,
+        in_specs=jax.P("X"),
+        out_specs=jax.P("X"),
+        check_vma=True,
+    )(shift)
+    expected = reduce_route(shift[0])
+    assert_array_equal(
+        np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(sharded)]),
+        np.concatenate([np.ravel(leaf) for leaf in jax.tree.leaves(expected)]),
+    )
+
+
+@jax.jit
+def _first_of(*, value: jax.Array, ignored: jax.Array) -> jax.Array:
+    """Return `value`; `ignored` is an argument the call never reads."""
+    del ignored
+    return value
+
+
+def _partly_reading_Q_and_F(
+    *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """A Q that hands `ignored` to a nested call which never reads it."""
+    return jnp.sin(choice) + _first_of(value=shift, ignored=ignored), jnp.ones(
+        (), dtype=bool
+    )
+
+
+def test_streamed_program_takes_no_argument_its_blocks_never_read() -> None:
+    """An argument reaching `Q_and_F` only through a nested call that ignores it
+    stays a dead argument of the compiled program, as it is without streaming."""
+
+    def reduce_actions(
+        *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
+    ) -> tuple[jax.Array, ...]:
+        return build_streaming_max_Q_over_a(
+            Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
+        )(choice=choice, shift=shift, ignored=ignored)
+
+    compiled = (
+        jax.jit(reduce_actions)
+        .lower(choice=_CHOICE, shift=jnp.asarray(0.25), ignored=jnp.asarray(1.0))
+        .compile()
+    )
+    _, keyword_shardings = compiled.input_shardings
+    assert {name: sharding is None for name, sharding in keyword_shardings.items()} == {
+        "choice": False,
+        "shift": False,
+        "ignored": True,
+    }

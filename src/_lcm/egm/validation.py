@@ -854,10 +854,9 @@ def _savings_stage_candidates(
                     transition_func,
                 )
             )
-    if law.decomposed_transition is not None:
-        for label, regime_transition in _transition_variants(
-            value=law.decomposed_transition
-        ):
+    transition = law.decomposed_transition
+    if transition is not None:
+        for label, regime_transition in _transition_variants(value=transition):
             candidates.append(
                 (
                     "regime_transition",

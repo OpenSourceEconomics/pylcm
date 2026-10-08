@@ -186,16 +186,8 @@ def get_model(n_periods: int) -> Model:
     }
     return Model(
         edges={
-            "working_life": (
-                Transition(targets=working_targets, law=WORKING_LIFE_LAW)
-                if len(working_targets) > 1
-                else working_targets
-            ),
-            "retirement": (
-                Transition(targets=retirement_targets, law=RETIREMENT_LAW)
-                if len(retirement_targets) > 1
-                else retirement_targets
-            ),
+            "working_life": Transition(targets=working_targets, law=WORKING_LIFE_LAW),
+            "retirement": Transition(targets=retirement_targets, law=RETIREMENT_LAW),
         },
         regimes={
             "working_life": working_life,

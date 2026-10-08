@@ -140,7 +140,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": 2.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_other": {}},
+            "target": {"next_shock": {}, "next_other": {}},
         },
         "target": {"utility": {}},
     }
@@ -192,7 +192,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_good": {}},
+            "target": {"next_shock": {}, "next_good": {}},
         },
         "target": {"utility": {}},
     }
@@ -252,7 +252,7 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_wealth": {}},
+            "target": {"next_shock": {}, "next_wealth": {}},
         },
         "target": {"utility": {}},
     }

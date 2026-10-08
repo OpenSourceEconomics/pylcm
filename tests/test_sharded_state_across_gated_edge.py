@@ -38,14 +38,15 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -198,22 +199,25 @@ def build_model(
         if projection_reads == "level"
         else _projected_x_from_wealth
     )
-    leaving = (
-        ValueDependentTransition(
-            probability=StochasticTransition(func=_half_before_age_two),
-            gate=_gate_open_above_the_middle,
-            routes={
-                "only": StakeholderRoute(
-                    fallback=ProjectedRegimeValue(
-                        regime="solo",
-                        projection={"wealth": _projected_wealth, "x": projected_x},
+    pair_gates = (
+        {
+            "mate": Gate(
+                predicate=_gate_open_above_the_middle,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="solo",
+                            projection={"wealth": _projected_wealth, "x": projected_x},
+                        )
                     )
-                )
-            },
-        )
+                },
+            )
+        }
         if gated
-        else StochasticTransition(func=_half_before_age_two)
+        else {}
     )
+    leaving = StochasticTransition(func=_half_before_age_two)
+    dying = StochasticTransition(func=_half_from_age_one)
     solo = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
@@ -254,25 +258,25 @@ def build_model(
         edges={
             "solo": Transition(
                 targets={"solo": (0, 1), "dead": (0, 1, 2)},
-                law={
-                    "solo": StochasticTransition(func=_all_before_age_two),
-                    "dead": StochasticTransition(func=_none_before_age_two),
-                },
+                law=_stay_until_age_two(regime="solo"),
             ),
             "pair": Transition(
                 targets=pair_edges | ({"solo": (0, 1)} if gated else {}),
-                law={
-                    "pair": StochasticTransition(func=_half_before_age_two),
-                    "mate": leaving,
-                    "dead": StochasticTransition(func=_half_from_age_one),
-                },
+                law=ByAge(
+                    cases={
+                        0: {
+                            "pair": StochasticTransition(func=_half_before_age_two),
+                            "mate": leaving,
+                            "dead": dying,
+                        },
+                        1: {"mate": leaving, "dead": dying},
+                    }
+                ),
+                gates=pair_gates,
             ),
             "mate": Transition(
                 targets={"mate": (0, 1), "dead": (0, 1, 2)},
-                law={
-                    "mate": StochasticTransition(func=_all_before_age_two),
-                    "dead": StochasticTransition(func=_none_before_age_two),
-                },
+                law=_stay_until_age_two(regime="mate"),
             ),
         },
         states={
@@ -283,6 +287,20 @@ def build_model(
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(devices=devices, sharded_states=sharded),
         initial_nodes={0: "pair"},
+    )
+
+
+def _stay_until_age_two(*, regime: str) -> ByAge:
+    """Stay in `regime` at ages 0 and 1, then leave for `dead` at age 2."""
+    dying = StochasticTransition(func=_none_before_age_two)
+    return ByAge(
+        cases={
+            (0, 1): {
+                regime: StochasticTransition(func=_all_before_age_two),
+                "dead": dying,
+            },
+            2: {"dead": dying},
+        }
     )
 
 

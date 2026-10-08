@@ -25,6 +25,7 @@ from lcm import (
     AgeRange,
     ByAge,
     DeterministicTransition,
+    Gate,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -33,7 +34,6 @@ from lcm import (
     StakeholderRoute,
     StochasticTransition,
     Transition,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -254,30 +254,26 @@ def _numeric_gate_model() -> Model:
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
-                law=ByAge(
-                    cases={
-                        40: {
-                            "target": ValueDependentTransition(
-                                probability=StochasticTransition(func=_prob_one),
-                                gate=_numeric_gate,
-                                routes={
-                                    "only": StakeholderRoute(
-                                        fallback=ProjectedRegimeValue(
-                                            regime="fallback",
-                                            projection={"wealth": _identity},
-                                        )
-                                    )
-                                },
-                                gate_references={
-                                    "V_reference": ProjectedRegimeValue(
-                                        regime="reference",
-                                        projection={"wealth": _identity},
-                                    )
-                                },
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
+                gates={
+                    "target": Gate(
+                        predicate=_numeric_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection={"wealth": _identity},
+                                )
                             )
-                        }
-                    }
-                ),
+                        },
+                        references={
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference",
+                                projection={"wealth": _identity},
+                            )
+                        },
+                    )
+                },
             )
         },
         regimes={
@@ -837,7 +833,7 @@ def _shock_model(exit_law: Any) -> Model:
     return Model(
         edges={
             "working": Transition(
-                targets={"retirement": 25, "dead": 25},
+                targets={"retirement": 25},
                 law=ByAge(cases={25: exit_law}),
             ),
             "retirement": {"retirement": (35, 45, 55), "dead": 65},

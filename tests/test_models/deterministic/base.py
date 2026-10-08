@@ -11,7 +11,9 @@ import functools
 from lcm import Model
 from lcm_examples.iskhakov_et_al_2017 import (
     CONSUMPTION_GRID,
+    RETIREMENT_LAW,
     WEALTH_GRID,
+    WORKING_LIFE_LAW,
     LaborSupply,
     RegimeId,
     borrowing_constraint,
@@ -23,11 +25,9 @@ from lcm_examples.iskhakov_et_al_2017 import (
     next_regime_from_working,
     next_wealth,
     retirement,
-    retirement_transitions,
     utility_retirement,
     utility_working,
     working_life,
-    working_life_transitions,
 )
 from lcm_examples.iskhakov_et_al_2017 import (
     get_model as get_example_model,
@@ -35,7 +35,9 @@ from lcm_examples.iskhakov_et_al_2017 import (
 
 __all__ = [
     "CONSUMPTION_GRID",
+    "RETIREMENT_LAW",
     "WEALTH_GRID",
+    "WORKING_LIFE_LAW",
     "LaborSupply",
     "RegimeId",
     "borrowing_constraint",
@@ -48,11 +50,9 @@ __all__ = [
     "next_regime_from_working",
     "next_wealth",
     "retirement",
-    "retirement_transitions",
     "utility_retirement",
     "utility_working",
     "working_life",
-    "working_life_transitions",
 ]
 
 

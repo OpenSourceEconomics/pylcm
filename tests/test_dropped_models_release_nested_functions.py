@@ -30,7 +30,7 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
 )
 
@@ -142,7 +142,7 @@ def _adaptive_outer_search() -> AdaptiveOuterMesh:
 
 
 _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
-    "grid_search": (_grid_search_model, lambda: get_params(n_periods=2)),
+    "grid_search": (_grid_search_model, lambda: get_graph_only_params(n_periods=2)),
     "negm": (lambda: _toy_model(variant="negm"), lambda: _TOY_PARAMS),
     "n_nbegm_finite": (lambda: _toy_model(variant="n_nbegm"), lambda: _TOY_PARAMS),
     "n_nbegm_adaptive": (

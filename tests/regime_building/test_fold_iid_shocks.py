@@ -42,26 +42,26 @@ from _lcm.regime_building.transition_support import (
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.regime_law import bind_regime_law
 from _lcm.solution.backward_induction import solve
-from _lcm.user_regime_validation import validate_regime
+from _lcm.user_regime_validation import validate_regime_law
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
     DeterministicTransition,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
-from lcm.transition import StochasticTransition
+from lcm.transition import StochasticTransition, Transition
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
@@ -342,7 +342,7 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
 
     A gate is compiled and evaluated on the TARGET regime's own grid/DAG
     (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this (source)
-    regime's — so `gate=lambda wage_shock: ...` here reads `some_target`'s
+    regime's — so `predicate=lambda wage_shock: ...` here reads `some_target`'s
     `wage_shock` (if it declares one), not this regime's. Treating the
     SOURCE-local `_validate_fold_declarations` walk as if the gate were
     source-local would produce a false positive purely from a name collision.
@@ -353,23 +353,31 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     `test_fold_gate_guard.py`/`test_fold_guard_complete.py`), which correctly
     checks the TARGET side of the same declarations instead.
     """
-    validate_regime(
+    validate_regime_law(
         Regime(states={"wage_shock": _shock(fold=True)}),
-        law=bind_regime_law(
+        law=bind_laws(
             {
-                "some_target": ValueDependentTransition(
-                    probability=StochasticTransition(func=lambda: jnp.asarray(1.0)),
-                    gate=lambda wage_shock: wage_shock > 0.0,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="elsewhere", projection={}
-                            )
+                "source": Transition(
+                    law={
+                        "some_target": StochasticTransition(
+                            func=lambda: jnp.asarray(1.0)
+                        )
+                    },
+                    gates={
+                        "some_target": Gate(
+                            predicate=lambda wage_shock: wage_shock > 0.0,
+                            routes={
+                                "only": StakeholderRoute(
+                                    fallback=ProjectedRegimeValue(
+                                        regime="elsewhere", projection={}
+                                    )
+                                )
+                            },
                         )
                     },
                 )
             }
-        ),
+        )["source"],
     )
 
 
@@ -378,7 +386,7 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
     compose with folding it: the shock is integrated out, so nothing
     downstream may depend on which node was realized."""
     with pytest.raises(RegimeInitializationError, match="next-period transition"):
-        validate_regime(
+        validate_regime_law(
             Regime(
                 states={
                     "wage_shock": _shock(fold=True),
@@ -391,6 +399,42 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
                 functions={"utility": _utility},
             ),
             law=bind_regime_law(_next_regime),
+        )
+
+
+def _probability_reading_the_shock(wage_shock: FloatND) -> FloatND:
+    return jnp.where(wage_shock > 0.0, 1.0, 1.0)
+
+
+def test_fold_on_dated_regime_law_conditioning_shock_is_rejected():
+    """A regime law that reads the folded shock is refused once it is bound.
+
+    The law is an age schedule, the form a model binds from its edges; the
+    check reads the probability cell inside it.
+    """
+    regime = Regime(
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": _utility},
+    )
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"fold=True on state\(s\) \['wage_shock'\] conflicts with a "
+        r"next-period transition",
+    ):
+        validate_regime_law(
+            regime,
+            law=bind_regime_law(
+                ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "terminal": StochasticTransition(
+                                func=_probability_reading_the_shock
+                            )
+                        }
+                    }
+                )
+            ),
         )
 
 
@@ -767,25 +811,13 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
 
 
 def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
-    """A coarse `transition=func`'s candidate universe is admitted as reachable
-    EXCEPT the source regime itself, so it never fabricates a self-transition.
+    """Explicit terminal-only support builds no self-transition of the source.
 
-    A coarse `transition=func` emits a `next_regime` cell for EVERY regime —
-    routing is decided at runtime from the returned id — so its cell keys are
-    the CANDIDATE universe. Those candidates ARE admitted to `reachable_targets`
-    (omitting a genuinely-routed candidate would silently drop its
-    continuation), but two things keep that from fabricating a spurious
-    continuation here: (1) the SOURCE regime is excluded, so no false
-    `period0 -> period0` self-transition is fabricated;
-    (2) process transitions are still scoped to the source's own processes, and
-    `terminal` shares none, so admitting it builds nothing. This is the module's
-    primary supported fold topology (shock declared and folded only in
-    `period0`); it must still solve cleanly to `E[10 + shock] = 10`.
-
-    MEASURED: admitting the candidates INCLUDING self (`reachable_targets |=
-    set(next_regime_cells_by_target)`) fabricates the self-transition and fails
-    this model with a bogus persistence error; the minus-self admission does
-    not.
+    `period0`'s coarse law declares `terminal` as its only target, so the source
+    reaches no continuation of its own, and `terminal` shares none of its
+    processes, so the edge builds no process transition either. This is the
+    module's primary supported fold topology (shock declared and folded only in
+    `period0`); it solves to `E[10 + shock] = 10`.
     """
     solution = _solve(_make_regimes(fold=True), laws=_to_terminal_laws())
     assert solution[0]["period0"].shape == ()
@@ -983,13 +1015,19 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
     """A regime that folds a shock and coarse-routes to itself is the repeat case.
 
     `stay` is active for two periods and redraws the shock in each, so its own
-    continuation reads a value whose shock axis is already integrated out.
+    continuation reads a value whose shock axis is already integrated out. Work
+    pays `10 + shock` with a mean-zero shock that never makes leisure better, so
+    the folded value is 10 in the last `stay` period, which exits into the
+    worthless `done`, and `10 + 0.9 * 10 = 19` in the first.
     """
     ages3 = AgeGrid(start=0, inclusive_stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
 
     def _next_self() -> ScalarInt:
         return jnp.int32(0)
+
+    def _next_done() -> ScalarInt:
+        return jnp.int32(1)
 
     stay = Regime(
         states={"wage_shock": _shock(fold=True)},
@@ -1009,7 +1047,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
                     func=_next_self, targets=("stay", "done")
                 ),
                 then=_SupportedDeterministicTransition(
-                    func=_next_self, targets=("done",)
+                    func=_next_done, targets=("done",)
                 ),
             ),
             "done": None,
@@ -1024,11 +1062,16 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
         flat_params=_discounted_params("stay", "done"),
         ages=ages3,
         regimes=processed,
-        logger=get_logger(log_level="off"),
+        logger=get_logger(log_level="debug"),
         enable_jit=False,
     ).value_functions
     assert solution[0]["stay"].shape == ()
     assert solution[1]["stay"].shape == ()
+    np.testing.assert_allclose(
+        [float(solution[0]["stay"]), float(solution[1]["stay"])],
+        [19.0, 10.0],
+        atol=1e-4,
+    )
 
 
 def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():

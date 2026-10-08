@@ -17,8 +17,10 @@ from _lcm.pandas_utils import (
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import edge_params, regime_kernel_params
 from _lcm.params.processing import broadcast_to_template
-from _lcm.regime_law import UNBOUND_LAW
+from _lcm.params.regime_template import create_edge_vocabulary
+from _lcm.regime_law import bind_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -45,6 +47,14 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.regime_markov import EDGES as REGIME_MARKOV_EDGES
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
 
 
 @categorical(ordered=False)
@@ -147,6 +157,8 @@ def test_convert_series_heterogeneous_grids() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
 
 
@@ -192,6 +204,8 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
         laws=m.graph.laws,
         ages=m.ages,
         regime_names_to_ids=m.regime_names_to_ids,
+        declared_transitions=m._declared_transitions,
+        declared_vocabulary=m._declared_edge_vocabulary,
     )
     assert result is not None
 
@@ -523,24 +537,30 @@ def _alive_regime_law() -> StochasticTransition:
 
 
 def test_convert_series_regime_transition_under_a_schedule() -> None:
-    """A Series for a regime transition law's parameter is converted."""
+    """A Series for a regime transition law's parameter is converted.
+
+    The law returns a probability vector over regimes, so the Series carries a
+    `next_regime` level that becomes the array's trailing outcome axis.
+    """
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
     internal = broadcast_to_template(
-        params={"alive": {"next_regime": {"probs_array": series}}},
+        params={"edges": {"alive": {"probs_array": series}}},
         template=model._params_template,
         required=False,
     )
     result = convert_series_in_params(
         flat_params=internal,
-        user_regimes=model._engine_user_regimes,
+        user_regimes=model.user_regimes,
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     np.testing.assert_allclose(
-        cast("FloatND", result["alive"]["next_regime__probs_array"]),
+        cast("FloatND", edge_params(result, source="alive")["probs_array"]),
         arr,
         atol=1e-7,
     )
@@ -873,8 +893,12 @@ def test_convert_series_function_level_series() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
@@ -892,6 +916,8 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     # Model-level param is broadcast to all regimes/functions that need it
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
@@ -916,8 +942,12 @@ def test_convert_series_regime_level_series() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
-    arr = result["working_life"]["next_partner__probs_array"]
+    arr = regime_kernel_params(result, regime_name="working_life")[
+        "next_partner__probs_array"
+    ]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
@@ -943,6 +973,8 @@ def test_convert_series_mixed_dict() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     assert result["working_life"]["koopmans_aggregator__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
@@ -974,6 +1006,8 @@ def test_convert_series_mapping_leaf() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, UserMappingLeaf)
@@ -1003,6 +1037,8 @@ def test_convert_series_nested_mapping_leaf() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     converted = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted, UserMappingLeaf)
@@ -1075,6 +1111,8 @@ def test_convert_series_with_derived_categoricals() -> None:
             laws=model.graph.laws,
             ages=model.ages,
             regime_names_to_ids=model.regime_names_to_ids,
+            declared_transitions=model._declared_transitions,
+            declared_vocabulary=model._declared_edge_vocabulary,
         )
 
     # With derived_categoricals on the regime, it succeeds
@@ -1092,6 +1130,8 @@ def test_convert_series_with_derived_categoricals() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     arr = result["retirement"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1179,6 +1219,8 @@ def test_convert_series_per_target_transition() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     arr = result["working"]["working__next_health__probs_array"]
     assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1277,6 +1319,8 @@ def test_convert_series_structured_derived_categoricals() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
     assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
@@ -1319,6 +1363,8 @@ def test_convert_series_runtime_grid_param() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())  # ty: ignore[no-matching-overload]
 
@@ -1340,6 +1386,8 @@ def test_convert_series_sequence_leaf_traversal() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, UserSequenceLeaf)
@@ -1462,6 +1510,8 @@ def test_convert_series_cross_grid_transition() -> None:
         laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
 
     arr = result["pre65"]["post65__next_health__health_trans_probs_cross"]
@@ -1617,9 +1667,13 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
         flat_params=flat_params,
         ages=ages,
         user_regimes={"source": source, "target": target},
-        laws={"source": UNBOUND_LAW},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
+        ),
+        declared_transitions=MappingProxyType({}),
+        declared_vocabulary=create_edge_vocabulary(
+            {"source": source, "target": target}
         ),
     )["source"]
 
@@ -1681,9 +1735,13 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
         flat_params={"source": {"target__next_health__transition_matrix": series}},
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
         user_regimes={"source": source, "target": target},
-        laws={"source": UNBOUND_LAW},
+        laws={"source": _NON_TERMINAL_LAW},
         regime_names_to_ids=MappingProxyType(
             {"source": jnp.int32(0), "target": jnp.int32(1)}
+        ),
+        declared_transitions=MappingProxyType({}),
+        declared_vocabulary=create_edge_vocabulary(
+            {"source": source, "target": target}
         ),
     )["source"]["target__next_health__transition_matrix"]
 

@@ -166,6 +166,53 @@ def test_axis_width_gate_never_borrows_another_elements_magnitude(
                 check(got=got, expected=expected)
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["fp32", "fp64"])
+@pytest.mark.parametrize(
+    ("steps", "accepted"),
+    [
+        pytest.param(8, True, id="eight-accepted"),
+        pytest.param(9, False, id="nine-rejected"),
+        pytest.param(12, False, id="twelve-rejected"),
+        pytest.param(13, False, id="thirteen-rejected"),
+    ],
+)
+def test_axis_width_gate_holds_an_ordinary_leaf_to_eight_of_its_own_steps(
+    *,
+    dtype: type[np.floating],
+    steps: int,
+    accepted: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ordinary value may move eight of its own steps, never nine.
+
+    The leaf `(1, "work")` holds `3/2`, the exact sum of a flow of `1` and a
+    continuation of `1/2`. Eight spacings of each operand are twelve steps of
+    the value, so an operand-rounding allowance would admit nine and twelve
+    steps; the real parity test must not.
+    """
+    reference = np.asarray([1.5], dtype=dtype)
+    actual = reference.copy()
+    for _ in range(steps):
+        actual = np.nextafter(actual, np.asarray(np.inf, dtype=dtype))
+    solutions = iter(
+        SimpleNamespace(_engine_view=SimpleNamespace(values={1: {"work": leaf}}))
+        for leaf in (reference, actual)
+    )
+    monkeypatch.setattr(
+        axis_parity, "_solve_and_collect_widths", lambda **_: ({}, next(solutions))
+    )
+    monkeypatch.setattr(
+        axis_parity,
+        "_bellman_operands",
+        lambda **_: (np.asarray([1.0]), np.asarray([0.5])),
+    )
+    if accepted:
+        axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+    else:
+        with pytest.raises(AssertionError):
+            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+
+
 @pytest.mark.parametrize(("steps", "accepted"), [(16, True), (512, False)])
 def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
     *, steps: int, accepted: bool, monkeypatch: pytest.MonkeyPatch
@@ -179,7 +226,7 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
     """
     _, solution = axis_parity._solve_and_collect_widths(config=ExecutionConfig())
     expected_values = solution._engine_view.values
-    period, regime = 2, "work"
+    period, regime = axis_parity._CANCELLATION_LEAF
     leaf = np.array(expected_values[period][regime])
     for _ in range(steps):
         leaf[0, 0, 0] = np.nextafter(leaf[0, 0, 0], leaf.dtype.type(np.inf))

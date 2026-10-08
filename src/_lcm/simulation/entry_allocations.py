@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.engine import Regime
+from _lcm.params.edges import EDGES, flat_namespaces
 from _lcm.simulation.entry_inputs import SimulationEntryInputs
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.operand_placement import place_simulation_arguments
@@ -32,7 +33,13 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.solution_copies import copy_solution_leaf
-from _lcm.typing import FlatParams, FlatRegimeParams, InitialConditions, RegimeName
+from _lcm.typing import (
+    FlatEdgeParams,
+    FlatParams,
+    FlatRegimeParams,
+    InitialConditions,
+    RegimeName,
+)
 
 
 @dataclasses.dataclass(kw_only=True, eq=False)
@@ -122,10 +129,13 @@ class SimulationEntryAllocations:
         regime copy. Each transfer reserves destination payload and scratch before
         allocation; the automatic solve inventories these same physical owners.
         """
-        placed: dict[RegimeName, FlatRegimeParams] = {}
+        placed: dict[RegimeName, FlatRegimeParams | FlatEdgeParams] = {}
+        placed_edges: dict[RegimeName, FlatRegimeParams] = {}
         self._stages["solve_params"] = placed
-        for name, parameters in flat_params.items():
-            phase = regimes[name].solution
+        # A source's edge slots are read by the source's kernels, so they go
+        # where the source runs.
+        for path, parameters in flat_namespaces(flat_params):
+            phase = regimes[path[-1]].solution
             devices = phase.placed_devices()
             if not phase.sharded_state_names:
                 devices = devices[:1]
@@ -139,7 +149,14 @@ class SimulationEntryAllocations:
                 live_footprint=live,
                 budget_devices=tuple(dict.fromkeys((*self.devices, *live.spans))),
             )
-            placed[name] = cast("FlatRegimeParams", arguments["solve_params"])
+            on_devices = cast("FlatRegimeParams", arguments["solve_params"])
+            if path[0] == EDGES:
+                # A live view, so each placed source counts toward the next
+                # placement's footprint.
+                placed.setdefault(EDGES, MappingProxyType(placed_edges))
+                placed_edges[path[-1]] = on_devices
+            else:
+                placed[path[0]] = on_devices
         return MappingProxyType(placed)
 
     def copy_solution_leaf(self, *, leaf: jax.Array, label: str) -> jax.Array:

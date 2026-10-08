@@ -33,6 +33,7 @@ from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.solution.artifacts import OwnedSolutionView
+from _lcm.solution.block_major import _ComponentValueEntry
 from _lcm.solution.model_authority import SolutionAuthority
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm._solver_api import authority as authority_module
@@ -149,7 +150,13 @@ class _RetainedBuffers:
             self.collect_reader(value)
 
     def collect_lazy(self, entry: _LazyEntry) -> None:
-        """Pin a known archive cache without calling its materialization API."""
+        """Pin a known archive cache without calling its materialization API.
+
+        A block-major value entry pins nothing: its retention holds host NumPy
+        blocks, and nothing of the value is on a device until it is read.
+        """
+        if type(entry) is _ComponentValueEntry:
+            return
         # The archive imports solution ownership; resolve this type only at call time.
         from _lcm.persistence import solution as persistence  # noqa: PLC0415
 

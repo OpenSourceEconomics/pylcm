@@ -25,6 +25,7 @@ try:
         build_inventory,
         derive_source_paths,
         inventory_digest,
+        profile_sources,
         sha256_file,
     )
 except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
         build_inventory,
         derive_source_paths,
         inventory_digest,
+        profile_sources,
         sha256_file,
     )
 
@@ -424,8 +426,8 @@ def _policy_profiles(path: Path) -> dict[str, ProfileDeclaration]:
     A bundler compiles the contract down to one `candidate_source` path and one
     `candidate_source_digest` per profile, which is why the contract anchors on the
     inventory file: the compiled projection then still names the whole set by proxy.
-    The richer `candidate_sources` list is read too, so the same reader serves the
-    inventory's own derived policy.
+    A richer explicit policy may also list its `candidate_sources`; those are read
+    and compared with the profile's set resolved from the inventory.
     """
     payload = _load_json(path)
     profiles = payload.get("profiles") if isinstance(payload, dict) else None
@@ -670,49 +672,19 @@ def verify_repository(
         )
         offending.add(INVENTORY_PATH)
 
-    internal_policy = committed_payload.get("derived_policy")
-    internal_profiles = (
-        internal_policy.get("profiles") if isinstance(internal_policy, dict) else None
-    )
+    # Each profile references the canonical inventory and may exclude paths from
+    # it; every profile-contract consumer below compares against these sets.
     internal_policy_records: dict[str, list[SourceRecord]] = {}
-    if not isinstance(internal_profiles, dict):
-        errors.append("derived policy: missing profiles object in sources.json")
-        offending.add(INVENTORY_PATH)
-    else:
-        for profile in REQUIRED_PROFILES:
-            entry = internal_profiles.get(profile)
-            if not isinstance(entry, dict):
-                errors.append(f"derived policy: missing profile {profile}")
-                offending.add(INVENTORY_PATH)
-                continue
-            try:
-                observed = _records(
-                    raw=entry.get("candidate_sources"),
-                    label=f"derived policy {profile} candidate_sources",
-                )
-            except ValueError as error:
-                errors.append(str(error))
-                offending.add(INVENTORY_PATH)
-                continue
-            internal_policy_records[profile] = observed
-            new_errors, new_paths = _compare_records(
-                label=f"sources.json derived policy {profile}",
-                expected=committed,
-                observed=observed,
+    try:
+        internal_policy_records = {
+            profile: _records(
+                raw=records, label=f"derived policy {profile} candidate sources"
             )
-            errors += new_errors
-            offending |= new_paths
-            if entry.get("source_inventory_sha256") != actual_inventory_digest:
-                errors.append(
-                    f"derived policy: {profile} inventory digest differs from "
-                    "sources.json"
-                )
-                offending.add(INVENTORY_PATH)
-            if entry.get("source_count") != len(committed):
-                errors.append(
-                    f"derived policy: {profile} source count differs from sources.json"
-                )
-                offending.add(INVENTORY_PATH)
+            for profile, records in profile_sources(committed_payload).items()
+        }
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append(f"derived policy: {error}")
+        offending.add(INVENTORY_PATH)
 
     disk_records: list[SourceRecord] = []
     for item in committed:
@@ -744,7 +716,7 @@ def verify_repository(
             declaration = contract_profiles.get(profile, {})
             new_errors, new_paths = _compare_records(
                 label=f"profile contract {profile}",
-                expected=committed,
+                expected=internal_policy_records.get(profile, committed),
                 observed=declaration.get("sources", []),
             )
             errors += new_errors
@@ -781,7 +753,7 @@ def verify_repository(
             if declared_sources:
                 new_errors, new_paths = _compare_records(
                     label=f"explicit derived policy {profile}",
-                    expected=committed,
+                    expected=internal_policy_records.get(profile, committed),
                     observed=declared_sources,
                 )
                 errors += new_errors

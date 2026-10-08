@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -194,3 +195,19 @@ def test_get_irreg_coordinate_with_array():
     coords = get_irreg_coordinate(value=values, points=points)
     expected = jnp.array([0.5, 2.0, 2.5])
     aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_concrete_linspace_coordinate_compiles_one_division_by_the_value() -> None:
+    """A concrete grid's spacing enters a compiled program as one constant.
+
+    The spacing is the correctly rounded quotient computed before tracing, so the
+    only division left in the program is the value's, and no compiler folding of
+    `(stop - start) / (n_points - 1)` can make it differ between two programs.
+    """
+    start, stop, n_points = jnp.asarray(1.0), jnp.asarray(10.0), jnp.int32(8)
+    lowered = jax.jit(
+        lambda value: get_linspace_coordinate(
+            value=value, start=start, stop=stop, n_points=n_points
+        )
+    ).lower(jnp.asarray(2.0))
+    assert lowered.as_text().count("stablehlo.divide") == 1
