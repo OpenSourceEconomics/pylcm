@@ -398,7 +398,7 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd",
-    SIMULATION_PROGRAMS_SOURCE: "c4267d950c2e27b9f69a6b95fae963e7d9ddb4a5ac379604d9067c673635130f",
+    SIMULATION_PROGRAMS_SOURCE: "c49a27b9b09dda4b408ff2f5f5357f3ca3e27f40a54851b383c4ad1cf49aac0d",
     SIMULATION_PROGRAM_TYPES_SOURCE: "e678e3aa5bdfd0ce21697b3e36f298aafb8bb159db0d0f5065f6b74506c80e9d",
     SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
@@ -1800,9 +1800,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "58590b633642ba9b8b64884d12974919e070966267d700470b64871381aa7023",
+        "b67938422632d1efa8c739a04e69bd13564cec81c550336b9000a6d88139c51e",
         {
-            "build_simulation_programs": "ab9bcbfd84d9861ea5cd2a9fa9a3d555f07d3ef14a0a89217dff5076d6529c7c",
+            "build_simulation_programs": "9e78fbfa5e57de13a0662de3ec39f29e1e9c435a956118cf481c94d58e8f605f",
             "_decision_programs": "1594a9e60852e1db131b0f158f3c48ca66f7ac4f36e5ea22357b7e98dd559f6a",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",

@@ -130,6 +130,32 @@ def test_requesting_action_values_leaves_actions_and_value_unchanged(*, solved, 
     )
 
 
+@pytest.mark.parametrize("period", [1, N_PERIODS - 1])
+def test_action_values_of_a_regime_without_states_or_actions_have_one_row(
+    *, solved, period
+):
+    """`dead` has no states and no actions: its empty query is one feasible row.
+
+    Its utility is zero and it has no continuation, so `Q` is `[0.0]` and `F` is
+    `[True]`, each with the one leading row of the lookup.
+    """
+    model, params, solution = solved
+    got = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=period,
+        regime_name="dead",
+        states={},
+        return_action_values=True,
+    )
+    assert (
+        got.Q.shape,
+        np.asarray(got.Q).tolist(),
+        got.F.shape,
+        np.asarray(got.F).tolist(),
+    ) == ((1,), [0.0], (1,), [True])
+
+
 def test_some_actions_are_infeasible(solved):
     got = lookup(solved=solved, period=LAST_ALIVE_PERIOD, return_action_values=True)
     assert not np.asarray(got.F).all()

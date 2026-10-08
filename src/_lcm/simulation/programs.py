@@ -184,12 +184,16 @@ def build_simulation_programs(
     is_hard_max_singleton = (
         not context.has_taste_shocks and context.stakeholders is None
     )
+    subject_arg_names = _decision_subject_arg_names(context=context)
     for period in decision if is_hard_max_singleton else ():
         group = id(Q_and_F_functions[period])
         if group not in action_value_bodies:
             action_value_bodies[group] = _SubjectTiled(
-                func=_with_action_values(reducer=per_subject_decisions[period]),
-                subject_arg_names=_decision_subject_arg_names(context=context),
+                func=_with_action_values(
+                    reducer=per_subject_decisions[period],
+                    adds_row=not subject_arg_names,
+                ),
+                subject_arg_names=subject_arg_names,
             )
         action_values[period] = dataclasses.replace(
             decision[period],
@@ -707,18 +711,23 @@ def _decision_body(
     return _SubjectTiled(func=cell, subject_arg_names=subject_arg_names)
 
 
-def _with_action_values(*, reducer: Callable[..., object]) -> Callable[..., object]:
+def _with_action_values(
+    *, reducer: Callable[..., object], adds_row: bool
+) -> Callable[..., object]:
     """Return `reducer` extended by the `Q` and `F` it maximizes over.
 
     `reducer` is the dense hard-max decision, a signature wrapper around one
-    `_HardMaxArgmaxQOverA`; the result takes the same arguments.
+    `_HardMaxArgmaxQOverA`; the result takes the same arguments. `adds_row` is
+    whether the body runs once for the whole query, with no per-subject argument.
     """
     kernel = getattr(reducer, "__wrapped__", None)
     if not isinstance(kernel, _HardMaxArgmaxQOverA):
         msg = f"Expected a wrapped hard-max decision reducer, got {kernel!r}."
         raise ExecutionPlanningError(msg)
     return with_signature(
-        _DecisionWithActionValues(decision=reducer, Q_and_F=kernel.Q_and_F),
+        _DecisionWithActionValues(
+            decision=reducer, Q_and_F=kernel.Q_and_F, adds_row=adds_row
+        ),
         args=list(inspect.signature(reducer).parameters),
         return_annotation="tuple[IntND, FloatND, FloatND, BoolND]",
         enforce=False,
@@ -744,6 +753,13 @@ class _DecisionWithActionValues:
     Q_and_F: Callable[..., tuple[FloatND, BoolND]]
     """The decision's own action value and feasibility over the action product."""
 
+    adds_row: bool
+    """Whether `Q` and `F` get the query's one leading row here.
+
+    True where the regime has no per-subject argument: the body then runs once
+    for the whole query, outside the subject tiling that adds the row axis.
+    """
+
     def __call__(
         self,
         **kwargs: Any,  # noqa: ANN401
@@ -751,6 +767,8 @@ class _DecisionWithActionValues:
         """Return the chosen flat index, its value, and `Q` and `F`."""
         index, value = cast("tuple[IntND, FloatND]", self.decision(**kwargs))
         Q_arr, F_arr = self.Q_and_F(**kwargs)
+        if self.adds_row:
+            return index, value, Q_arr[None], F_arr[None]
         return index, value, Q_arr, F_arr
 
 
