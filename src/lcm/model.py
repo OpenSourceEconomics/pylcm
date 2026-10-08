@@ -3594,7 +3594,8 @@ class Model:
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
-                are extrapolated exactly as in `simulate`.
+                are extrapolated exactly as in `simulate`. A regime without states
+                takes `{}`, which is one row.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
@@ -3796,6 +3797,11 @@ class Model:
                 ),
             ),
         )
+        if not space.states:
+            # Without states the decision has no per-subject argument and runs
+            # once, for the one row an empty query stands for; every output gets
+            # that row here.
+            outputs = tuple(output[None] for output in outputs)
         indices, value = outputs[:2]
         Q, F = outputs[2:] if return_action_values else (None, None)
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
@@ -3809,7 +3815,7 @@ class Model:
                 allocations.operations.dispatch(
                     function=_lookup_values_from_indices,
                     arguments={"flat_indices": indices, "grids": lookup_grids},
-                    subject_arg_names=("flat_indices",) if indices.ndim else (),
+                    subject_arg_names=("flat_indices",),
                     devices=unit.runtime.subject_devices,
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
