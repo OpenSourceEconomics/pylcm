@@ -137,16 +137,17 @@ def create_regime_params_template(
     # Anywhere else the name has no value behind it, and admitting it as a
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
-    edge_entries = _gated_edge_entries(law)
-    template_functions = _collect_all_functions_for_template(
-        user_regime, law=law, edge_entries=edge_entries
-    )
+    template_functions = _collect_all_functions_for_template(user_regime, law=law)
     _fail_if_a_next_name_is_read_outside_a_transition(
         user_regime, template_functions=template_functions
     )
     _fail_if_a_joint_node_is_read_outside_its_transition(
         user_regime, template_functions=template_functions
     )
+    # A gate and its projections run on the gated target, whose reads the
+    # target-side fence checks; the source's functions are not theirs to follow.
+    # Only the `next_` prefix is checked here, as it is reserved everywhere.
+    _fail_if_a_gated_edge_reads_a_next_name(law)
 
     # Every illegitimate read is already rejected, so the subtraction below only
     # has to be permissive enough for the legitimate ones: a name in transition
@@ -169,9 +170,9 @@ def create_regime_params_template(
     function_params: dict[FunctionName, dict[str, str]] = {}
     per_target_params: dict[RegimeName, dict[str, Any]] = {}
 
-    # The law and the gated-edge callables join the checks above, but their
-    # parameters belong to the edge namespace (`create_edge_params_template`).
-    edge_entry_names = set(edge_entries) | (
+    # The law joins the checks above, but its parameters belong to the edge
+    # namespace (`create_edge_params_template`).
+    edge_entry_names = (
         set()
         if law.terminal
         else set(_regime_transition_entries(law.decomposed_transition))
@@ -1417,9 +1418,11 @@ def _collect_all_functions_for_template(
     user_regime: UserRegime,
     *,
     law: RegimeLaw,
-    edge_entries: Mapping[FunctionName, UserFunction],
 ) -> dict[FunctionName | TransitionFunctionName, UserFunction | Phased]:
-    """Collect all regime functions, preserving phase-variant entries.
+    """Collect all regime functions evaluated on this regime's domain.
+
+    The law runs on the source grid and is collected; a gated edge's callables
+    run on its target's grid and are not.
 
     Unlike `user_regime.get_all_functions(phase=...)` which resolves `Phased`
     entries to a single variant, this returns them as-is so the caller can
@@ -1463,12 +1466,30 @@ def _collect_all_functions_for_template(
             joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(law.decomposed_transition)
-    result |= edge_entries
     return result
 
 
+def _fail_if_a_gated_edge_reads_a_next_name(law: RegimeLaw) -> None:
+    """Reject a gate or projection that names a `next_` value directly.
+
+    A gated edge's callables run on the target's grid after the target is
+    chosen, where no `next_` value of the source exists. Their other names are
+    resolved on the target; a source function that shares a name is not theirs.
+
+    Raises:
+        InvalidNameError: If a gated-edge callable has a `next_` argument.
+
+    """
+    # Each entry is a plain callable; a `Phased` fallback is keyed once per phase.
+    for name, func in _gated_edge_entries(law).items():
+        _fail_if_a_next_name_is_read(
+            consumer_name=name,
+            reserved=_next_names_reachable_from(func=func, functions={}, phase="solve"),
+        )
+
+
 def _gated_edge_entries(law: RegimeLaw) -> dict[FunctionName, UserFunction]:
-    """Key every gated-edge callable of a regime for the read checks.
+    """Key every gated-edge callable of a regime for the `next_` read check.
 
     A gated edge is declared with three kinds of user callable, each an ordinary
     DAG function:
