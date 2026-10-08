@@ -19,7 +19,7 @@ from typing import Any, Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.grids import IrregSpacedGrid
+from _lcm.grids import DiscreteGrid, IrregSpacedGrid
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -30,7 +30,10 @@ from _lcm.params.edges import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
-from _lcm.regime_building.gated_edges import is_target_value_operand
+from _lcm.regime_building.gated_edges import (
+    EDGE_PERIOD_CONTEXT_ARGS,
+    is_target_value_operand,
+)
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import RegimeLaw
 from _lcm.typing import (
@@ -258,7 +261,7 @@ def create_regime_params_template(
 
 @dataclass(frozen=True)
 class EdgeVocabulary:
-    """The names a regime gives the edge callables that read it."""
+    """The names a regime gives the callables that read it, and their categories."""
 
     variables: frozenset[ReferenceName]
     """Names a law of this source reads that the engine binds: its states,
@@ -269,10 +272,15 @@ class EdgeVocabulary:
     """Its states, which a gate or projection with this regime as target reads
     off the target grid."""
 
+    categoricals: MappingProxyType[ReferenceName, DiscreteGrid]
+    """Its discrete state and action grids, which label the levels of a Series
+    indexed by them; a carried state by its simulate grid."""
+
     def __or__(self, other: EdgeVocabulary) -> EdgeVocabulary:
         return EdgeVocabulary(
             variables=self.variables | other.variables,
             states=self.states | other.states,
+            categoricals=MappingProxyType({**other.categoricals, **self.categoricals}),
         )
 
 
@@ -285,7 +293,8 @@ def create_edge_vocabulary(
         user_regimes: User-form regimes, keyed by name.
 
     Returns:
-        Each regime's states, actions, functions and engine-wired names.
+        Each regime's states, actions, functions and engine-wired names, and its
+        discrete grids.
 
     """
     return MappingProxyType(
@@ -293,8 +302,26 @@ def create_edge_vocabulary(
             name: EdgeVocabulary(
                 variables=frozenset(_wired_names(regime)),
                 states=frozenset(regime.states),
+                categoricals=_declared_categoricals(regime),
             )
             for name, regime in user_regimes.items()
+        }
+    )
+
+
+def _declared_categoricals(
+    regime: UserRegime,
+) -> MappingProxyType[ReferenceName, DiscreteGrid]:
+    """Return a regime's discrete state and action grids, keyed by name."""
+    states = {
+        name: spec.simulate if isinstance(spec, Phased) else spec
+        for name, spec in regime.states.items()
+    }
+    return MappingProxyType(
+        {
+            name: grid
+            for name, grid in {**states, **regime.actions}.items()
+            if isinstance(grid, DiscreteGrid)
         }
     )
 
@@ -320,12 +347,15 @@ def create_edge_params_template(
 
     The template is read off the declared laws, every `ByAge` case and both
     phases included, so its slots do not depend on the horizon or on which cells
-    a fixed zero prunes. A law reads the source regime's variables; a gate and a
-    projection run on the target regime's grid and also read its states, its
-    `V_target` value components, `D_target` and the gate's reference keys.
-    None of those is a parameter. The vocabulary holds what a regime declares
-    even where no demanded law reads it, so a variable that only a case no age
-    selects reads is never mistaken for a parameter.
+    a fixed zero prunes. A law runs on the source regime's grid and reads its
+    variables. A gate and a projection run on the target regime's grid and read
+    its states, its `V_target` value components, `D_target`, the gate's
+    reference keys, `period` and `age`; a name only the source declares is one
+    of their parameters. None of the engine-bound names is a parameter. The
+    vocabulary holds what a regime declares even where no demanded law reads it,
+    so a variable that only a case no age selects reads is never mistaken for a
+    parameter. Only the law's cases decide whether it reads parameters both over
+    all targets and per target; a gate is not one of its cases.
 
     Args:
         source: The source regime's name.
@@ -346,13 +376,13 @@ def create_edge_params_template(
     """
     variables = set(vocabulary_by_regime[source].variables)
     params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]] = []
+    law_params_by_path: list[tuple[tuple[str, ...], dict[ParameterName, str]]] = []
     for transition in declared_transitions:
         for path, func, gate in iter_transition_callables(transition):
             non_params = (
                 variables
                 if gate is None
-                else variables
-                | _gated_edge_wired_names(
+                else _gated_edge_wired_names(
                     gate_reference_names=frozenset(gate.references),
                     target_state_names=(
                         vocabulary_by_regime[path[0]].states
@@ -361,23 +391,22 @@ def create_edge_params_template(
                     ),
                 )
             )
-            params_by_path.append(
-                (
-                    path,
-                    _discovered_params(
-                        name="edge",
-                        func=func,
-                        non_params=non_params,
-                        strip_target_value_operands=gate is not None,
-                        kind=(
-                            "Edge-callable (at "
-                            f"{user_path(path=(EDGES, source, *path))}) argument"
-                        ),
-                    ),
-                )
+            params = _discovered_params(
+                name="edge",
+                func=func,
+                non_params=non_params,
+                strip_target_value_operands=gate is not None,
+                kind=(
+                    "Edge-callable (at "
+                    f"{user_path(path=(EDGES, source, *path))}) argument"
+                ),
             )
+            params_by_path.append((path, params))
+            if gate is None:
+                law_params_by_path.append((path, params))
+    # Only the law's own cases decide its form; a gate is no case of it.
     _fail_if_coarse_law_params_meet_per_target_cells(
-        source=source, params_by_path=params_by_path
+        source=source, params_by_path=law_params_by_path
     )
     # A mutable build buffer of nested slots; freezing gives it its template type.
     template: dict[str, Any] = {}
@@ -1503,15 +1532,16 @@ def _gated_edge_wired_names(
     gate_reference_names: frozenset[ReferenceName],
     target_state_names: frozenset[StateName],
 ) -> set[ReferenceName]:
-    """Return the names ONE edge's callables read that the engine binds itself.
+    """Return the names ONE edge's gate callables read that the engine binds itself.
 
     A gate and a projection are evaluated on that edge's TARGET regime's grid, so
-    beyond the source regime's own vocabulary they read names no user supplies:
+    the names no user supplies are those of that evaluation, not the source's:
 
     - the target regime's states, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
     - each key of THIS edge's gate `references`, bound to that reference's
-      interpolated value.
+      interpolated value;
+    - `period` and `age` of the fold.
 
     The set is per edge because that is what makes the answer right. A name that
     is engine-bound on one edge — the target's own state, another edge's
@@ -1533,7 +1563,12 @@ def _gated_edge_wired_names(
         parameters.
 
     """
-    return {"D_target", *target_state_names, *gate_reference_names}
+    return {
+        "D_target",
+        *EDGE_PERIOD_CONTEXT_ARGS,
+        *target_state_names,
+        *gate_reference_names,
+    }
 
 
 def _drop_engine_provided_args(

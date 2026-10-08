@@ -3,8 +3,7 @@
 The destinations of a per-target law are the keys of its cells, plus the route
 fallbacks of its gates; each destination's source ages are the ages whose case
 names it, and a gate fallback's are those of its gated target. Supplying
-`targets` as well is allowed, but only when it says the same thing out of the
-ages at which the source is active, into targets active at the next age.
+`targets` as well is allowed, but only when it says the same thing.
 """
 
 from collections.abc import Mapping
@@ -134,31 +133,11 @@ def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets)
         _model(Transition(targets=targets, law=_EXIT_LAW))
 
 
-def test_supplied_targets_of_a_source_active_at_fewer_ages_are_accepted():
-    """A source with edges out of ages 0 and 1 only is checked at those ages."""
-    model = _model(
-        Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=_EXIT_LAW)
-    )
-    assert dict(model.graph.edges.solve["alive"]) == {
-        "retired": frozenset({0, 1}),
-        "dead": frozenset({0, 1}),
-    }
-
-
-@pytest.mark.parametrize("law_form", ["plain", "by-age"])
-def test_supplied_targets_are_checked_where_their_target_is_active(law_form):
-    """A target active only from age 2 is entered only out of age 1.
-
-    `alive` has edges out of ages 0 and 1, `retired` only out of age 2. The law
-    names `retired` at more ages, but the edge into it can fire only out of age 1,
-    and the edge back into `alive` only out of age 0.
-    """
+def test_age_schedule_names_each_target_at_the_ages_its_edge_fires():
+    """A target active only from age 2 is named only by the case for age 1."""
     model = _model_with_edges(
         edges={
-            "alive": Transition(
-                targets={"alive": (0,), "retired": (1,), "dead": (0, 1)},
-                law=_retirement_law(law_form),
-            ),
+            "alive": Transition(law=_retirement_law("by-age")),
             "retired": {"dead": (2,)},
         }
     )
@@ -169,39 +148,25 @@ def test_supplied_targets_are_checked_where_their_target_is_active(law_form):
     }
 
 
-def test_gate_fallback_is_checked_at_the_ages_its_gated_target_is_reached():
-    """A source active at ages 0 and 1 reaches the gated couple and its fallback."""
-    model = _model(
-        Transition(
-            targets={"couple": (0, 1), "dead": (0, 1), "retired": (0, 1)},
-            law={
-                "couple": StochasticTransition(func=_survive),
-                "dead": StochasticTransition(func=_die),
-            },
-            gates={"couple": _consent_gate(fallback="retired")},
-        )
-    )
-    assert dict(model.graph.edges.solve["alive"]) == {
-        "couple": frozenset({0, 1}),
-        "dead": frozenset({0, 1}),
-        "retired": frozenset({0, 1}),
-    }
+@pytest.mark.parametrize(
+    "case",
+    [
+        "source-active-at-fewer-ages",
+        "target-active-from-a-later-age",
+        "target-entered-before-it-is-active",
+        "gate-fallback-at-fewer-ages",
+    ],
+)
+def test_supplied_targets_narrower_than_the_law_are_refused(case):
+    """A law with no age schedule names its targets out of every non-final age.
 
-
-def test_supplied_target_entered_before_it_is_active_is_refused():
-    """`retired` is active only from age 2, so supplying it out of age 0 disagrees."""
+    Supplied targets that name fewer ages disagree with it, whether or not the
+    edge could fire there; an age schedule says where each target is reached.
+    """
     with pytest.raises(
         ModelInitializationError, match=r"(?s)'alive'.*supplied.*derived"
     ):
-        _model_with_edges(
-            edges={
-                "alive": Transition(
-                    targets={"alive": (0,), "retired": (0, 1), "dead": (0, 1)},
-                    law=_retirement_law("plain"),
-                ),
-                "retired": {"dead": (2,)},
-            }
-        )
+        _model_with_edges(edges=_narrowed_edges(case))
 
 
 def test_law_over_all_targets_still_requires_targets():
@@ -302,11 +267,40 @@ def _model_with_edges(*, edges: object) -> Model:
     )
 
 
+def _narrowed_edges(case: str) -> dict[str, Transition | dict[str, tuple[int]]]:
+    """Edges whose supplied targets name fewer ages than their plain law."""
+    if case == "source-active-at-fewer-ages":
+        return {
+            "alive": Transition(
+                targets={"retired": (0, 1), "dead": (0, 1)}, law=_EXIT_LAW
+            )
+        }
+    if case == "gate-fallback-at-fewer-ages":
+        return {
+            "alive": Transition(
+                targets={"couple": (0, 1), "dead": (0, 1), "retired": (0, 1)},
+                law={
+                    "couple": StochasticTransition(func=_survive),
+                    "dead": StochasticTransition(func=_die),
+                },
+                gates={"couple": _consent_gate(fallback="retired")},
+            )
+        }
+    retired_ages = (1,) if case == "target-active-from-a-later-age" else (0, 1)
+    return {
+        "alive": Transition(
+            targets={"alive": (0,), "retired": retired_ages, "dead": (0, 1)},
+            law=_retirement_law("plain"),
+        ),
+        "retired": {"dead": (2,)},
+    }
+
+
 def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
     """A law out of `alive` that names `retired` from age 1 on.
 
     `"plain"` is one per-target mapping over every age; `"by-age"` names
-    `alive` at age 0 and `retired` from age 1 on.
+    `alive` at age 0 and `retired` at age 1.
     """
     if form == "plain":
         return {
@@ -320,7 +314,7 @@ def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
                 "alive": StochasticTransition(func=_survive),
                 "dead": StochasticTransition(func=_die),
             },
-            (1, 2): {
+            1: {
                 "retired": StochasticTransition(func=_survive),
                 "dead": StochasticTransition(func=_die),
             },

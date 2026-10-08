@@ -196,6 +196,7 @@ def _build_regimes_and_template_with_fixed_params(
             laws=prepared_structure.laws,
             regime_names_to_ids=regime_names_to_ids,
             declared_transitions=prepared_structure.declared_transitions,
+            declared_vocabulary=prepared_structure.declared_edge_vocabulary,
         )
     fixed_flat_params = cast_params_to_canonical_dtypes(fixed_flat_params)
     _validate_param_types(fixed_flat_params)
