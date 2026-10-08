@@ -654,7 +654,9 @@ decision program: the action values and their feasibility over the (possibly res
 action grid, with one leading row per state and one axis per action in the order of
 `actions`. `Q` is raw: an infeasible entry holds the value the action would have, which
 can exceed `value`, and `value` is the max of `Q` over the entries `F` admits. Both are
-`None` by default. Collective regimes refuse the option.
+`None` by default. Collective regimes refuse the option. A lookup over a restricted grid
+compiles its own program, so its `Q` and `value` can differ in the last bits from the
+matching slice of a full-grid lookup's `Q`.
 
 (api-simulation-result)=
 
