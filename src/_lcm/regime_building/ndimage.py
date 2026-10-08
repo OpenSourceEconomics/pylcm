@@ -111,19 +111,28 @@ def map_coordinates(
         contribution = input[indices]
         corner_weight = _multiply_all(weights)
         # Only a floating grid can hold the `+-inf` that makes a zero-weight
-        # corner undefined or marks an infeasible state, and only a floating
-        # weight has a sign bit and an exponent field to read. An integer read
-        # has neither hazard, so it multiplies as it always did.
-        if jnp.issubdtype(corner_weight.dtype, jnp.floating) and jnp.issubdtype(
-            contribution.dtype, jnp.floating
-        ):
-            weighted_value = zero_safe_weighted_term(
-                weight=corner_weight,
-                value=contribution,
-                subnormal_is_accounted_for=True,
-            )
+        # corner undefined or marks an infeasible state, so an integer grid
+        # multiplies as it always did. The corner weight is floating or, when
+        # every coordinate is an integer, integer: a floating weight is tested
+        # for a represented zero, an integer weight for equality with 0.
+        if jnp.issubdtype(contribution.dtype, jnp.floating):
+            if jnp.issubdtype(corner_weight.dtype, jnp.floating):
+                weighted_value = zero_safe_weighted_term(
+                    weight=corner_weight,
+                    value=contribution,
+                    subnormal_is_accounted_for=True,
+                )
+                weight_is_zero = is_represented_zero(corner_weight)
+            else:
+                weight_is_zero = corner_weight == 0
+                safe_value = jnp.where(
+                    weight_is_zero & ~jnp.isfinite(contribution),
+                    jnp.zeros((), dtype=contribution.dtype),
+                    contribution,
+                )
+                weighted_value = corner_weight * safe_value
             touches_infeasible = touches_infeasible | (
-                jnp.isneginf(contribution) & ~is_represented_zero(corner_weight)
+                jnp.isneginf(contribution) & ~weight_is_zero
             )
         else:
             weighted_value = corner_weight * contribution
@@ -161,7 +170,7 @@ def _compute_indices_and_weights(
 
 def _compute_pinned_index_and_weight(
     *, coordinate: FloatND | IntND, input_size: int
-) -> list[tuple[IntND, FloatND]]:
+) -> list[tuple[IntND, FloatND | IntND]]:
     """Return the single full-weight corner of an axis read at one node.
 
     A coordinate that names no node of such an axis arrives as NaN, which no
