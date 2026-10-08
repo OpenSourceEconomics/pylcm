@@ -53,6 +53,7 @@ from lcm.transition import (
     ModelEdges,
     PeriodRange,
     Periods,
+    PeriodSelector,
     PhaseEdges,
     StochasticTransition,
     Transition,
@@ -423,8 +424,8 @@ def _transition_targets(
     transition: Transition,
     ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
-) -> Mapping[RegimeName, AgeSelector]:
-    """Return a `Transition`'s destinations and their source-age selectors.
+) -> Mapping[RegimeName, AgeSelector | PeriodSelector]:
+    """Return a `Transition`'s destinations and their source-time selectors.
 
     A law that names its targets supplies them: each case's keys at the
     non-final ages the case covers, and each gate's route fallbacks at the ages
@@ -438,7 +439,9 @@ def _transition_targets(
     )
     if derived is None:
         # `Transition` requires `targets` for a law that names no target.
-        return cast("Mapping[RegimeName, AgeSelector]", transition.targets)
+        return cast(
+            "Mapping[RegimeName, AgeSelector | PeriodSelector]", transition.targets
+        )
     if transition.targets is not None:
         # Keyed by `object`: a selector value of any type is looked up in it.
         period_by_age: dict[object, int] = {

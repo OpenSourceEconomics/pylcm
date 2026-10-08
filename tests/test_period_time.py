@@ -75,6 +75,56 @@ def test_period_model_has_no_artificial_ages() -> None:
         np.testing.assert_allclose(solution.values[period][name], expected)
 
 
+def _work_until_final_period(period: Period) -> ScalarInt:
+    return jnp.where(period == 0, RegimeId.work, RegimeId.done)
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        {
+            "work": lcm.PeriodRange(exclusive_stop=1),
+            "done": lcm.PeriodRange(exclusive_stop=2),
+        },
+        {"work": lcm.Periods(values=(0,)), "done": lcm.Periods(values=(0, 1))},
+    ],
+)
+def test_period_selectors_bound_an_explicit_transition_law(
+    targets: dict[str, lcm.PeriodRange | lcm.Periods],
+) -> None:
+    model = lcm.Model(
+        n_periods=3,
+        regimes={
+            "work": lcm.Regime(functions={"utility": _flow}),
+            "done": lcm.Regime(functions={"utility": _terminal}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=(lcm.InitialNode(period=0, regime="work"),),
+        edges={"work": lcm.Transition(targets=targets, law=_work_until_final_period)},
+        fixed_params={"discount_factor": 0.5},
+    )
+    assert model.graph.edges.solve["work"] == {
+        "work": frozenset({0}),
+        "done": frozenset({0, 1}),
+    }
+    solution = model.solve(params={}, log_level="off")
+    np.testing.assert_allclose(solution.value(period=0, regime="work"), 4.0)
+    np.testing.assert_allclose(solution.value(period=1, regime="work"), 6.0)
+    result = model.simulate(
+        params={},
+        solution=solution,
+        initial_conditions={
+            "regime_id": jnp.array([RegimeId.work]),
+            "period": jnp.array([0]),
+        },
+        seed=42,
+        log_level="off",
+    )
+    frame = result.to_dataframe().reset_index()
+    assert frame["period"].tolist() == [0, 1, 2]
+    assert frame["regime_name"].tolist() == ["work", "work", "done"]
+
+
 @pytest.mark.parametrize("n_periods", [0, -1, True, 2.5])
 def test_period_horizon_requires_positive_integer(n_periods: object) -> None:
     with pytest.raises(ModelInitializationError, match="n_periods"):
