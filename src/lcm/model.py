@@ -769,8 +769,10 @@ class Model:
         )
         validate_regimes(regimes=merged_regimes, laws=laws)
         # What each regime declares before demand prunes any: a declared law
-        # reads these as variables at every horizon, never as parameters.
+        # reads these as variables at every horizon, never as parameters, and a
+        # Series indexed by one keeps its labels.
         declared_edge_vocabulary = create_edge_vocabulary(merged_regimes)
+        self._declared_edge_vocabulary = declared_edge_vocabulary
         prepared_graph = prepare_graph(
             regimes=merged_regimes,
             laws=laws,
@@ -4166,6 +4168,7 @@ class Model:
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
                 declared_transitions=self._declared_transitions,
+                declared_vocabulary=self._declared_edge_vocabulary,
             )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves
