@@ -3,8 +3,11 @@
 The destinations of a per-target law are the keys of its cells, plus the route
 fallbacks of its gates; each destination's source ages are the ages whose case
 names it, and a gate fallback's are those of its gated target. Supplying
-`targets` as well is allowed, but only when it says the same thing.
+`targets` as well is allowed, but only when it says the same thing out of the
+ages at which the source is active, into targets active at the next age.
 """
+
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import pytest
@@ -131,6 +134,76 @@ def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets)
         _model(Transition(targets=targets, law=_EXIT_LAW))
 
 
+def test_supplied_targets_of_a_source_active_at_fewer_ages_are_accepted():
+    """A source with edges out of ages 0 and 1 only is checked at those ages."""
+    model = _model(
+        Transition(targets={"retired": (0, 1), "dead": (0, 1)}, law=_EXIT_LAW)
+    )
+    assert dict(model.graph.edges.solve["alive"]) == {
+        "retired": frozenset({0, 1}),
+        "dead": frozenset({0, 1}),
+    }
+
+
+@pytest.mark.parametrize("law_form", ["plain", "by-age"])
+def test_supplied_targets_are_checked_where_their_target_is_active(law_form):
+    """A target active only from age 2 is entered only out of age 1.
+
+    `alive` has edges out of ages 0 and 1, `retired` only out of age 2. The law
+    names `retired` at more ages, but the edge into it can fire only out of age 1,
+    and the edge back into `alive` only out of age 0.
+    """
+    model = _model_with_edges(
+        edges={
+            "alive": Transition(
+                targets={"alive": (0,), "retired": (1,), "dead": (0, 1)},
+                law=_retirement_law(law_form),
+            ),
+            "retired": {"dead": (2,)},
+        }
+    )
+    assert dict(model.graph.edges.solve["alive"]) == {
+        "alive": frozenset({0}),
+        "retired": frozenset({1}),
+        "dead": frozenset({0, 1}),
+    }
+
+
+def test_gate_fallback_is_checked_at_the_ages_its_gated_target_is_reached():
+    """A source active at ages 0 and 1 reaches the gated couple and its fallback."""
+    model = _model(
+        Transition(
+            targets={"couple": (0, 1), "dead": (0, 1), "retired": (0, 1)},
+            law={
+                "couple": StochasticTransition(func=_survive),
+                "dead": StochasticTransition(func=_die),
+            },
+            gates={"couple": _consent_gate(fallback="retired")},
+        )
+    )
+    assert dict(model.graph.edges.solve["alive"]) == {
+        "couple": frozenset({0, 1}),
+        "dead": frozenset({0, 1}),
+        "retired": frozenset({0, 1}),
+    }
+
+
+def test_supplied_target_entered_before_it_is_active_is_refused():
+    """`retired` is active only from age 2, so supplying it out of age 0 disagrees."""
+    with pytest.raises(
+        ModelInitializationError, match=r"(?s)'alive'.*supplied.*derived"
+    ):
+        _model_with_edges(
+            edges={
+                "alive": Transition(
+                    targets={"alive": (0,), "retired": (0, 1), "dead": (0, 1)},
+                    law=_retirement_law("plain"),
+                ),
+                "retired": {"dead": (2,)},
+            }
+        )
+
+
 def test_law_over_all_targets_still_requires_targets():
     """A function returning a regime code names no target, so it needs `targets`."""
     with pytest.raises(RegimeInitializationError, match="targets"):
@@ -187,8 +260,14 @@ def test_gate_declared_in_one_phase_only_is_refused():
 
 
 def _model(alive_edges: object) -> Model:
-    """Build a three-regime model whose `alive` source has `alive_edges`."""
-    edges = alive_edges if isinstance(alive_edges, Phased) else {"alive": alive_edges}
+    """Build a four-regime model whose `alive` source has `alive_edges`."""
+    return _model_with_edges(
+        edges=alive_edges if isinstance(alive_edges, Phased) else {"alive": alive_edges}
+    )
+
+
+def _model_with_edges(*, edges: object) -> Model:
+    """Build the four-regime model with `edges`."""
     return Model(
         regimes={
             "alive": Regime(
@@ -205,7 +284,13 @@ def _model(alive_edges: object) -> Model:
                 },
             ),
             "retired": Regime(
-                states={"wealth": _WEALTH}, functions={"utility": _utility}
+                states={"wealth": _WEALTH},
+                state_transitions=(
+                    {"wealth": _keep_wealth}
+                    if isinstance(edges, Mapping) and "retired" in edges
+                    else {}
+                ),
+                functions={"utility": _utility},
             ),
             "dead": Regime(states={"wealth": _WEALTH}, functions={"utility": _utility}),
         },
@@ -217,15 +302,41 @@ def _model(alive_edges: object) -> Model:
     )
 
 
-def _consent_gate() -> Gate:
-    """A gate into the couple that sends a refused single back to her own regime."""
+def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
+    """A law out of `alive` that names `retired` from age 1 on.
+
+    `"plain"` is one per-target mapping over every age; `"by-age"` names
+    `alive` at age 0 and `retired` from age 1 on.
+    """
+    if form == "plain":
+        return {
+            "alive": StochasticTransition(func=_stay_young),
+            "retired": StochasticTransition(func=_retire),
+            "dead": StochasticTransition(func=_die),
+        }
+    return ByAge(
+        cases={
+            0: {
+                "alive": StochasticTransition(func=_survive),
+                "dead": StochasticTransition(func=_die),
+            },
+            (1, 2): {
+                "retired": StochasticTransition(func=_survive),
+                "dead": StochasticTransition(func=_die),
+            },
+        }
+    )
+
+
+def _consent_gate(fallback: str = "alive") -> Gate:
+    """A gate into the couple that sends a refused single to `fallback`."""
     return Gate(
         predicate=_couple_is_better,
         routes={
             "her": StakeholderRoute(
                 target_stakeholder="f",
                 fallback=ProjectedRegimeValue(
-                    regime="alive", projection={"wealth": _keep_wealth}
+                    regime=fallback, projection={"wealth": _keep_wealth}
                 ),
             )
         },
@@ -250,6 +361,14 @@ def _survive(age: FloatND) -> FloatND:
 
 def _die(age: FloatND) -> FloatND:
     return 0.5 * jnp.ones_like(age, dtype=float)
+
+
+def _stay_young(age: FloatND) -> FloatND:
+    return jnp.where(age < 1, 0.5, 0.0)
+
+
+def _retire(age: FloatND) -> FloatND:
+    return jnp.where(age < 1, 0.0, 0.5)
 
 
 def _certain(age: FloatND) -> FloatND:

@@ -313,6 +313,13 @@ def bind_edge_laws(
         side: _resolve_edges(edges=structural[side], regimes=regimes, ages=ages)
         for side in _PHASE_SIDES
     }
+    _fail_if_supplied_targets_disagree(
+        declared=declared,
+        resolved=resolved,
+        regimes=regimes,
+        ages=ages,
+        phased=isinstance(edges, Phased),
+    )
     bound: dict[RegimeName, RegimeTransitionLaw] = {}
     for name in regimes:
         laws_by_side: dict[Side, dict[int, PhaseLaw]] = {}
@@ -399,42 +406,120 @@ def _transition_targets(
     non-final ages the case covers, and each gate's route fallbacks at the ages
     of the gated target. A `Transition` declared for one phase of a `Phased`
     edges declaration reaches only that phase's fallbacks; one shared by both
-    phases reaches both. Supplied `targets` must then say the same at every
-    non-final age; a law over all targets uses the supplied ones.
+    phases reaches both. Supplied `targets` take precedence, without the final
+    age; `_fail_if_supplied_targets_disagree` holds them to the law. A law over
+    all targets uses the supplied ones as given.
     """
     derived = _derived_target_ages(
-        transition=transition, ages=ages, fallback_phases=fallback_phases
+        transition=transition,
+        ages=ages,
+        fallback_phases=fallback_phases,
+        entry_ages=None,
     )
     if derived is None:
         # `Transition` requires `targets` for a law that names no target.
         return cast("Mapping[RegimeName, AgeSelector]", transition.targets)
     if transition.targets is not None:
-        # Keyed by `object`: a selector value of any type is looked up in it.
-        period_by_age: dict[object, int] = {
-            age: period for period, age in enumerate(ages.exact_values)
-        }
-        # No transition leaves the final age, so a selector that also selects
-        # it names the same destinations as one that stops before it.
-        final_age = ages.exact_values[-1]
-        supplied = {
-            target: _selected_source_ages(
-                selector=selector,
-                edge=f"'{source}' → '{target}'",
-                ages=ages,
-                period_by_age=period_by_age,
-            )
-            - {final_age}
-            for target, selector in transition.targets.items()
-        }
-        if supplied != derived:
-            raise ModelInitializationError(
-                f"`Transition.targets` of '{source}' disagree with the targets its "
-                f"law names. supplied: {_spelled_targets(supplied)}; derived from "
-                f"the law and its gates: {_spelled_targets(derived)}. Omit "
-                "`targets` to use the derived ones, or change the law so that it "
-                "names exactly the supplied destinations at their ages."
-            )
+        derived = _supplied_target_ages(source=source, transition=transition, ages=ages)
     return {target: tuple(sorted(selected)) for target, selected in derived.items()}
+
+
+def _fail_if_supplied_targets_disagree(
+    *,
+    declared: Mapping[Side, PhaseEdges],
+    resolved: Mapping[Side, ResolvedEdges],
+    regimes: Mapping[RegimeName, Regime],
+    ages: AgeGrid,
+    phased: bool,
+) -> None:
+    """Refuse supplied `Transition.targets` that differ from the targets its law names.
+
+    The law is read only where its edge can fire: out of an age at which the
+    source is active, into a target that is active at the next age. A regime is
+    active at the ages its edges leave in either phase, and at every age if no
+    edge leaves it. A gate's route fallbacks join the targets at the ages its
+    gated target is reached.
+    """
+    active = _active_ages(resolved=resolved, regimes=regimes, ages=ages)
+    next_age = dict(zip(ages.exact_values[:-1], ages.exact_values[1:], strict=True))
+    for side in _PHASE_SIDES:
+        phase = declared[side]
+        if not isinstance(phase, Mapping):
+            continue
+        for source, transition in phase.items():
+            if not isinstance(transition, Transition) or transition.targets is None:
+                continue
+            derived = _derived_target_ages(
+                transition=transition,
+                ages=ages,
+                fallback_phases=(side,) if phased else _PHASE_SIDES,
+                entry_ages={
+                    target: frozenset(
+                        age
+                        for age in active[source]
+                        if age in next_age and next_age[age] in target_ages
+                    )
+                    for target, target_ages in active.items()
+                },
+            )
+            if derived is None:
+                continue
+            supplied = _supplied_target_ages(
+                source=source, transition=transition, ages=ages
+            )
+            if supplied != derived:
+                raise ModelInitializationError(
+                    f"`Transition.targets` of '{source}' disagree with the targets "
+                    f"its law names. supplied: {_spelled_targets(supplied)}; derived "
+                    f"from the law and its gates: {_spelled_targets(derived)}. Omit "
+                    "`targets` to use the derived ones, or change the law so that "
+                    "it names exactly the supplied destinations at their ages. Both "
+                    "are read where the edge can fire: out of an age at which the "
+                    "source is active, into a target active at the next age."
+                )
+
+
+def _active_ages(
+    *,
+    resolved: Mapping[Side, ResolvedEdges],
+    regimes: Mapping[RegimeName, Regime],
+    ages: AgeGrid,
+) -> dict[RegimeName, frozenset[UserAge]]:
+    """Return the ages a regime's edges leave in either phase; all if none do."""
+    left = {
+        name: frozenset(
+            age
+            for side in _PHASE_SIDES
+            for selected in resolved[side].get(name, {}).values()
+            for age in selected
+        )
+        for name in regimes
+    }
+    return {name: found or frozenset(ages.exact_values) for name, found in left.items()}
+
+
+def _supplied_target_ages(
+    *, source: RegimeName, transition: Transition, ages: AgeGrid
+) -> dict[RegimeName, frozenset[UserAge]]:
+    """Return the non-final source ages each supplied target selects."""
+    # Keyed by `object`: a selector value of any type is looked up in it.
+    period_by_age: dict[object, int] = {
+        age: period for period, age in enumerate(ages.exact_values)
+    }
+    # No transition leaves the final age, so a selector that also selects it
+    # names the same destinations as one that stops before it.
+    final_age = ages.exact_values[-1]
+    targets = cast("Mapping[RegimeName, AgeSelector]", transition.targets)
+    return {
+        target: _selected_source_ages(
+            selector=selector,
+            edge=f"'{source}' → '{target}'",
+            ages=ages,
+            period_by_age=period_by_age,
+        )
+        - {final_age}
+        for target, selector in targets.items()
+    }
 
 
 def _derived_target_ages(
@@ -442,8 +527,13 @@ def _derived_target_ages(
     transition: Transition,
     ages: AgeGrid,
     fallback_phases: tuple[Side, ...],
+    entry_ages: Mapping[RegimeName, frozenset[UserAge]] | None,
 ) -> dict[RegimeName, frozenset[UserAge]] | None:
-    """The source ages at which a law names each target; `None` if it names none."""
+    """The source ages at which a law names each target; `None` if it names none.
+
+    With `entry_ages`, a regime it lists is named only at the ages it lists for
+    it; a gate's fallbacks follow their gated target's ages.
+    """
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
     non_final = range(ages.n_periods - 1)
@@ -460,8 +550,10 @@ def _derived_target_ages(
             names = _case_targets(cast("CaseLaw", case))
             if names is None:
                 return None
+            age = ages.exact_values[period]
             for name in names:
-                selected.setdefault(name, set()).add(ages.exact_values[period])
+                if entry_ages is None or age in entry_ages.get(name, (age,)):
+                    selected.setdefault(name, set()).add(age)
     for target, gate in transition.gates.items():
         for route in gate.routes.values():
             for fallback in {
