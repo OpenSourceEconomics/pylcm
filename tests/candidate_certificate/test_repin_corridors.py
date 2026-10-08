@@ -63,12 +63,18 @@ def certificate_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _collect_pins(*, repo_root: Path) -> tuple[repin_corridors.CorridorPin, ...]:
+    """Return every corridor pin in the store of the tree at `repo_root`."""
+    return repin_corridors.collect_pins(
+        tree=ast.parse((repo_root / _DIRECT_FLOW).read_text(encoding="utf-8")),
+        module=repin_corridors._load_direct_flow(root=repo_root),
+    )
+
+
 def _first_callable_pin(*, repo_root: Path) -> Any:
     """Return the first callable pin in the certificate's pin store."""
     return next(
-        pin
-        for pin in repin_corridors.collect_pins(repo_root=repo_root)
-        if pin.kind == "callable"
+        pin for pin in _collect_pins(repo_root=repo_root) if pin.kind == "callable"
     )
 
 
@@ -78,7 +84,7 @@ def _other_digest(digest: str) -> str:
 
 def test_each_corridor_pin_stands_once_in_the_certificate() -> None:
     """No source, kind and name is pinned at two places in `direct_flow.py`."""
-    pins = repin_corridors.collect_pins(repo_root=_REPO_ROOT)
+    pins = _collect_pins(repo_root=_REPO_ROOT)
 
     assert len(pins) == len({(pin.source, pin.kind, pin.name) for pin in pins})
 
@@ -131,7 +137,7 @@ def test_a_digest_shared_by_two_sources_is_rewritten_for_the_named_one_only(
     digests coincide. Editing one of them and naming it re-pins that entry; the
     other source's entry still matches its own, unchanged tree.
     """
-    pins = repin_corridors.collect_pins(repo_root=certificate_root)
+    pins = _collect_pins(repo_root=certificate_root)
     by_digest: dict[str, list[Any]] = {}
     for pin in pins:
         by_digest.setdefault(pin.pinned, []).append(pin)
@@ -172,7 +178,7 @@ def test_drift_in_a_source_that_was_not_named_is_reported_as_foreign(
     certificate_root: Path,
 ) -> None:
     """A pin the caller did not claim must still match the tree."""
-    pin = repin_corridors.collect_pins(repo_root=certificate_root)[0]
+    pin = _collect_pins(repo_root=certificate_root)[0]
     path = certificate_root / _DIRECT_FLOW
     text = path.read_text(encoding="utf-8")
     path.write_text(
@@ -188,7 +194,7 @@ def test_drift_in_a_source_that_was_not_named_is_reported_as_foreign(
 
 def test_an_unnamed_drifted_pin_blocks_the_rewrite(certificate_root: Path) -> None:
     """The run exits non-zero and leaves the stale digest standing."""
-    pin = repin_corridors.collect_pins(repo_root=certificate_root)[0]
+    pin = _collect_pins(repo_root=certificate_root)[0]
     path = certificate_root / _DIRECT_FLOW
     stale = _other_digest(pin.pinned)
     original = path.read_text(encoding="utf-8")
@@ -203,7 +209,7 @@ def test_one_intentional_drift_is_rewritten_to_the_recomputed_digest(
     certificate_root: Path,
 ) -> None:
     """Naming the source the pin belongs to restores the digest the tree implies."""
-    pin = repin_corridors.collect_pins(repo_root=certificate_root)[0]
+    pin = _collect_pins(repo_root=certificate_root)[0]
     path = certificate_root / _DIRECT_FLOW
     original = path.read_text(encoding="utf-8")
     path.write_text(
@@ -224,7 +230,7 @@ def test_one_intentional_drift_is_rewritten_to_the_recomputed_digest(
 
 def test_check_mode_leaves_the_pin_file_untouched(certificate_root: Path) -> None:
     """`--check` reports drift without writing, so it is safe in a hook."""
-    pin = repin_corridors.collect_pins(repo_root=certificate_root)[0]
+    pin = _collect_pins(repo_root=certificate_root)[0]
     path = certificate_root / _DIRECT_FLOW
     drifted_text = path.read_text(encoding="utf-8").replace(
         pin.pinned, _other_digest(pin.pinned)
@@ -246,7 +252,7 @@ def test_check_mode_leaves_the_pin_file_untouched(certificate_root: Path) -> Non
 
 def test_check_mode_exits_non_zero_on_named_drift(certificate_root: Path) -> None:
     """A stale corridor pin is a failure, not a silent repair opportunity."""
-    pin = repin_corridors.collect_pins(repo_root=certificate_root)[0]
+    pin = _collect_pins(repo_root=certificate_root)[0]
     path = certificate_root / _DIRECT_FLOW
     path.write_text(
         path.read_text(encoding="utf-8").replace(pin.pinned, _other_digest(pin.pinned)),

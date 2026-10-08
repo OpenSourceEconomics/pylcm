@@ -668,11 +668,22 @@ def test_state_validator_raises_on_invalid_law_at_unreached_derived_code() -> No
         model.solve(log_level="debug", params={"discount_factor": 0.95})
 
 
-def _health_from_income(*, income: FloatND) -> FloatND:
+# Each law below reads `health` without depending on it: a state that nothing
+# reads is refused as unused, and the row under test reads only `income` or
+# `carried_share`.
+def _health_from_income(
+    *,
+    health: DiscreteState,  # noqa: ARG001
+    income: FloatND,
+) -> FloatND:
     return jnp.stack([1.0 - income, income])
 
 
-def _health_beside_income(*, income: FloatND) -> FloatND:
+def _health_beside_income(
+    *,
+    health: DiscreteState,  # noqa: ARG001
+    income: FloatND,
+) -> FloatND:
     return jnp.stack([jnp.asarray(0.5), income])
 
 
@@ -710,12 +721,18 @@ def _half() -> FloatND:
     return jnp.asarray(0.5)
 
 
-def _health_from_share(*, carried_share: ContinuousState) -> FloatND:
+def _health_from_share(
+    *,
+    health: DiscreteState,  # noqa: ARG001
+    carried_share: ContinuousState,
+) -> FloatND:
     return jnp.stack([1.0 - carried_share, carried_share])
 
 
-def _health_from_stray_share(*, carried_share: ContinuousState) -> FloatND:
-    return _health_from_share(carried_share=2.0 * carried_share - 0.5)
+def _health_from_stray_share(
+    *, health: DiscreteState, carried_share: ContinuousState
+) -> FloatND:
+    return _health_from_share(health=health, carried_share=2.0 * carried_share - 0.5)
 
 
 def _model_with_carried_share_health_probs(*, simulate_law: Callable) -> Model:

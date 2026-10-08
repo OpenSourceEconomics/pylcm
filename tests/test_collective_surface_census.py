@@ -30,9 +30,12 @@ _TESTS_ROOT = Path(__file__).parent
 #: cover incidentally: a compiled fold's argument provenance, a treedef, a
 #: projector's vmap, a guard that raises before a model could be built, or the
 #: decomposition a declaration takes apart into, which is a property of the
-#: `Regime` alone and so has no model in it to build.
+#: `Regime` alone and so has no model in it to build. `tests/conftest.py` is the
+#: shared helper those modules build their prepared structure with, standing in
+#: for the declarations a `Model` would hold.
 _ENGINE_LEVEL_MODULES = frozenset(
     {
+        "tests/conftest.py",
         "tests/regime_building/test_carried_state_through_gated_self_loop.py",
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
