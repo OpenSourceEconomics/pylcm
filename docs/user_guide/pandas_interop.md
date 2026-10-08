@@ -84,6 +84,10 @@ Each `pd.Series` must have:
   `params["edges"][source][target]` runs on the target regime's grid, so the target's
   categories label its levels.
 
+A discrete state or action labels a level wherever the regime declares it, including a
+horizon at which no demanded function reads it and the model prunes it: the parameter a
+dormant law reads keeps its slot, and its Series converts by the same categories.
+
 Level order does not matter — levels are reordered to match the function signature
 automatically.
 

@@ -147,7 +147,7 @@ grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # ACA model on the edges-params API: law arguments live under params["edges"].
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "2400c0a2e594fb2558a5694f2c3e771a85c62c09" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "591da5c42ea52d4c8c80f192647f971944fada92" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
