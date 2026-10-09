@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import Var
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_reduction import (
@@ -12,6 +13,9 @@ from _lcm.solution.action_reduction import (
     HardMaxAccumulator,
     HardMaxReduction,
     HardMaxResult,
+)
+from tests.solution._reduced_maximum_probe import (
+    count_equalities_with_a_reduced_maximum,
 )
 
 
@@ -240,6 +244,74 @@ def test_hard_max_supports_jit_and_vmap():
     assert_array_equal(result.best_value, jnp.array([5.0, 8.0]))
     assert_array_equal(result.best_global_action_id, jnp.array([2, 17]))
     assert_array_equal(result.any_feasible, jnp.array([True, True]))
+
+
+def test_hard_max_identity_is_not_matched_against_a_separately_reduced_maximum():
+    """The winner's identity and its value come out of one reduction.
+
+    Matching the values against a separately reduced maximum loses the winner
+    whenever the compiler evaluates the values once per reduction and the two
+    evaluations round differently: no value then equals the maximum, and the
+    published identity names no action of the block.
+    """
+    values = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
+    action_ids = jnp.arange(4, dtype=jnp.int32)
+
+    def reduce_block(*, values: jax.Array, feasible: jax.Array) -> HardMaxAccumulator:
+        return HARD_MAX_REDUCTION.add(
+            accumulator=HARD_MAX_REDUCTION.initialize(
+                value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype)
+            ),
+            values=values,
+            feasible=feasible,
+            action_ids=action_ids,
+        )
+
+    jaxpr = jax.make_jaxpr(reduce_block)(
+        values=values, feasible=jnp.ones_like(values, dtype=bool)
+    ).jaxpr
+    assert count_equalities_with_a_reduced_maximum(jaxpr) == 0
+
+
+def test_hard_max_block_values_reach_exactly_one_reduction():
+    """Everything the block computes from its values flows into one reduction.
+
+    The NaN test is folded into the paired max / smallest-id reduction, so no
+    second reduction reads the values. A second reader would let the compiler
+    evaluate the values' producer once per reader, or materialize it, and which
+    it does depends on the width the program is compiled at, so a regime chunked
+    at another width could publish a different maximum.
+    """
+    action_ids = jnp.arange(4, dtype=jnp.int32)
+
+    def reduce_block(values: jax.Array) -> HardMaxAccumulator:
+        return HARD_MAX_REDUCTION.add(
+            accumulator=HARD_MAX_REDUCTION.initialize(
+                value_template=jnp.zeros(values.shape[:-1], dtype=values.dtype)
+            ),
+            values=values,
+            feasible=jnp.ones(values.shape, dtype=bool),
+            action_ids=action_ids,
+        )
+
+    block_shape = (2, 4)
+    closed = jax.make_jaxpr(reduce_block)(jnp.zeros(block_shape))
+    derived = {closed.jaxpr.invars[0]}
+    block_reductions = []
+    for eqn in closed.jaxpr.eqns:
+        reads = [var for var in eqn.invars if isinstance(var, Var) and var in derived]
+        if not reads:
+            continue
+        derived.update(eqn.outvars)
+        reads_a_block = block_shape in {
+            getattr(var.aval, "shape", None) for var in reads
+        }
+        writes_a_block = block_shape in {
+            getattr(var.aval, "shape", None) for var in eqn.outvars
+        }
+        if reads_a_block and not writes_a_block:
+            block_reductions.append(eqn.primitive.name)
+    assert block_reductions == ["custom_jvp_call"]
 
 
 @pytest.mark.parametrize(

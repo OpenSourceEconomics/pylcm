@@ -37,6 +37,7 @@ from _lcm.execution.execution_plan import (
     visible_device_ids,
     visible_device_pool_limits,
 )
+from _lcm.execution.footprint import layout_footprint
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
@@ -128,6 +129,7 @@ from _lcm.simulation.replay_inputs import PreparedReplayReader
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     measure_buffer_footprint,
+    require_transfer_headroom,
     resolve_budget_devices,
     union_buffer_footprints,
 )
@@ -142,6 +144,7 @@ from _lcm.simulation.simulate import (
 from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
+from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.artifacts import (
     OwnedSolutionView,
     build_solution_result,
@@ -3586,6 +3589,7 @@ class Model:
         regime_name: RegimeName,
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None = None,
+        return_action_values: bool = False,
     ) -> PolicyLookup:
         """Return the optimal actions and value at given states of one regime-period.
 
@@ -3602,14 +3606,20 @@ class Model:
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
                 Discrete values must be grid codes; continuous values off the grid
-                are extrapolated exactly as in `simulate`.
+                are extrapolated exactly as in `simulate`. A regime without states
+                takes `{}`, which is one row.
             action_grids: Optional replacement grids for some actions, e.g. a
                 single code of a discrete action to obtain the conditional argmax
                 and value of that branch. Values must lie on the declared grid.
+            return_action_values: Whether to also return the action values `Q`
+                and their feasibility `F` over the (possibly restricted) action
+                grid, from the same decision program. Not supported for a
+                collective regime.
 
         Returns:
             The argmax action value per action name and the max of Q over the
-            (possibly restricted) action grid, one entry per state row.
+            (possibly restricted) action grid, one entry per state row; with
+            `return_action_values`, also `Q` and `F`.
 
         """
         self._sealed_bindings.fail_if_moved()
@@ -3626,10 +3636,38 @@ class Model:
                 f"edges; {regime_name!r} declares one."
             )
             raise InvalidSimulationInputError(msg)
+        if return_action_values and regime.stakeholders is not None:
+            msg = (
+                "Policy lookup returns action values for singleton regimes only; "
+                f"{regime_name!r} is a collective regime."
+            )
+            raise InvalidSimulationInputError(msg)
         allocations = self._open_entry_allocations(
             params=params, inputs=(states, action_grids), solution=solution
         )
         try:
+            states = canonicalize_initial_conditions(
+                initial_conditions=states,
+                regimes=MappingProxyType({regime_name: regime}),
+                array_writer=allocations,
+            )
+            n_rows = len(next(iter(states.values()))) if states else 0
+            if states:
+                # Rows split evenly over the subject devices, as simulated
+                # subjects do: the last row is repeated and trimmed afterwards.
+                n_devices = len(self._execution.device_ids)
+                alignment = (
+                    n_devices if self._distributes_subjects() and n_devices > 1 else 1
+                )
+                if allocations is None:
+                    states, _ = pad_initial_conditions_to_multiple(
+                        initial_conditions=states, multiple=alignment
+                    )
+                else:
+                    states, _ = allocations.pad(
+                        initial_conditions=states, multiple=alignment
+                    )
+                    allocations.publish(stage="initial", tree=states)
             return self._lookup_policy(
                 params=params,
                 solution=solution,
@@ -3638,6 +3676,12 @@ class Model:
                 states=states,
                 action_grids=action_grids,
                 allocations=allocations,
+                return_action_values=return_action_values,
+                n_query_rows=(
+                    n_rows
+                    if states and len(next(iter(states.values()))) != n_rows
+                    else None
+                ),
             )
         finally:
             if allocations is not None:
@@ -3653,13 +3697,15 @@ class Model:
         states: Mapping[StateName, jax.Array],
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
+        return_action_values: bool,
+        n_query_rows: int | None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
         A budgeted call admits parameter conversion, process grids, solution
-        materialization, the decision program and action decoding against the
-        original inputs, every retained owner of `solution` and the call's own
-        arrays.
+        materialization, the decision program, action decoding and trimming the
+        padded rows to `n_query_rows` against the original inputs, every retained
+        owner of `solution` and the call's own arrays. `None` keeps every row.
         """
         regime = self._regimes[regime_name]
         flat_params = (
@@ -3743,14 +3789,30 @@ class Model:
             source_regime_name=regime_name,
             source_period=period,
         )
+        references = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=V_arrs,
+            flat_params=flat_params,
+            period=period,
+        )
         programs = runtime_regime.simulation.programs
         executor = cast("SimulationProgramExecutor", programs.executor)
+        if isinstance(executor, SimulationRuntime):
+            # The solve may leave a regime's values on any of its devices; the
+            # decision reads them replicated over the subject devices, as in
+            # simulation.
+            next_V, references = _place_lookup_values(
+                values=(next_V, references),
+                runtime=executor,
+                allocations=allocations,
+                call_roots=(states, space.states, grids),
+            )
         unit = None
         if allocations is not None and isinstance(executor, SimulationRuntime):
             call_live = functools.partial(
                 _lookup_live_footprint,
                 allocations=allocations,
-                call_roots=(states, space.states, grids),
+                call_roots=(states, space.states, grids, next_V, references),
             )
             unit = SimulationUnitExecutor(
                 runtime=executor,
@@ -3760,12 +3822,16 @@ class Model:
                 ),
             )
             executor = unit
-        indices, value = cast(
-            "tuple[IntND, FloatND]",
+        outputs = cast(
+            "tuple[jax.Array, ...]",
             executor.dispatch(
-                program=_with_action_extents(
-                    program=programs.decision[period],
-                    extents=tuple(len(grids[n]) for n in space.action_names),
+                program=(
+                    programs.action_values[period]
+                    if return_action_values
+                    else _with_action_extents(
+                        program=programs.decision[period],
+                        extents=tuple(len(grids[n]) for n in space.action_names),
+                    )
                 ),
                 period=period,
                 n_subjects=n_rows,
@@ -3775,18 +3841,20 @@ class Model:
                     continuous_actions={n: grids[n] for n in space.continuous_actions},
                     taste_keys={},
                     next_values=next_V,
-                    references=_referenced_value_kwargs(
-                        regime=regime,
-                        period_to_regime_to_V_arr=V_arrs,
-                        flat_params=flat_params,
-                        period=period,
-                    ),
+                    references=references,
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
                 ),
             ),
         )
+        if not space.states:
+            # Without states the decision has no per-subject argument and runs
+            # once, for the one row an empty query stands for; every output gets
+            # that row here.
+            outputs = tuple(output[None] for output in outputs)
+        indices, value = outputs[:2]
+        Q, F = outputs[2:] if return_action_values else (None, None)
         lookup_grids = MappingProxyType({n: grids[n] for n in space.actions})
         if unit is None or allocations is None:
             actions = _lookup_values_from_indices(
@@ -3798,12 +3866,14 @@ class Model:
                 allocations.operations.dispatch(
                     function=_lookup_values_from_indices,
                     arguments={"flat_indices": indices, "grids": lookup_grids},
-                    subject_arg_names=("flat_indices",) if indices.ndim else (),
+                    # The one row of a stateless query is not divisible across
+                    # subject devices, so it is decoded replicated.
+                    subject_arg_names=("flat_indices",) if space.states else (),
                     devices=unit.runtime.subject_devices,
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
                         allocations=allocations,
-                        call_roots=(states, space.states, grids, indices, value),
+                        call_roots=(states, space.states, grids, outputs),
                     ),
                     budget_devices=unit.budget_devices,
                     budget_bytes=allocations.budget_bytes,
@@ -3811,7 +3881,13 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
-        return PolicyLookup(actions=actions, value=value)
+        return _trim_lookup_rows(
+            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            n_rows=n_query_rows,
+            allocations=allocations,
+            unit=unit,
+            call_roots=(states, space.states, grids, outputs),
+        )
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
@@ -4511,6 +4587,100 @@ def _fail_if_a_sharded_state_is_pruned(
         raise ExecutionPlanningError(msg)
 
 
+def _place_lookup_values[T](
+    *,
+    values: T,
+    runtime: SimulationRuntime,
+    allocations: SimulationEntryAllocations | None,
+    call_roots: object,
+) -> T:
+    """Copy a lookup's values to their subject-device layout, admitted if budgeted.
+
+    A budgeted call admits the copies against its entry owner's inventory and
+    its own arrays before the first copy is made.
+    """
+    budget = runtime.execution.device_memory_bytes
+    if allocations is not None and budget is not None:
+        live = _lookup_live_footprint(
+            allocations=allocations, call_roots=(call_roots, values)
+        )
+        _require_value_placement_headroom(
+            values=values,
+            devices=runtime.subject_devices,
+            live=live,
+            budget_bytes=budget,
+            budget_note=runtime.execution.device_memory_cap_note(),
+        )
+    return _place_values_on_subject_devices(
+        values=values, devices=runtime.subject_devices
+    )
+
+
+def _place_values_on_subject_devices[T](
+    *, values: T, devices: tuple[jax.Device, ...]
+) -> T:
+    """Copy every value array to the replicated layout its subject devices read.
+
+    A value already in that layout is returned as is, without a copy.
+    """
+
+    def place(leaf: object) -> object:
+        if not isinstance(leaf, jax.Array):
+            return leaf
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            return leaf
+        return jax.device_put(leaf, required)
+
+    placed = jax.tree.map(place, values)
+    jax.block_until_ready(placed)
+    return placed
+
+
+def _require_value_placement_headroom(
+    *,
+    values: object,
+    devices: tuple[jax.Device, ...],
+    live: DeviceBufferFootprint,
+    budget_bytes: int,
+    budget_note: str,
+) -> None:
+    """Refuse value copies whose payload and transfer scratch exceed the budget.
+
+    Each value not yet in its replicated read layout costs that layout's payload
+    on every subject device, plus the same amount of transfer scratch on its
+    source and destination devices. `live` holds the inputs, the solution and
+    the call's own arrays, which all stay owned while the copies are made.
+    """
+    destination_bytes: dict[jax.Device, int] = {}
+    scratch_bytes: dict[jax.Device, int] = {}
+    for leaf in jax.tree.leaves(values):
+        if not isinstance(leaf, jax.Array):
+            continue
+        required = simulation_value_sharding(
+            stored_sharding=leaf.sharding, devices=devices
+        )
+        if leaf.sharding == required:
+            continue
+        byte_count = layout_footprint(
+            sharding=required, shape=tuple(leaf.shape), item_bytes=leaf.dtype.itemsize
+        ).bytes_per_device
+        for device in required.device_set:
+            destination_bytes[device] = destination_bytes.get(device, 0) + byte_count
+        for device in leaf.sharding.device_set | required.device_set:
+            scratch_bytes[device] = scratch_bytes.get(device, 0) + byte_count
+    require_transfer_headroom(
+        live=live,
+        destination_bytes=destination_bytes,
+        scratch_bytes=scratch_bytes,
+        budget_bytes=budget_bytes,
+        devices=resolve_budget_devices(execution_devices=devices, live=live),
+        budget_note=budget_note,
+    )
+
+
 def _lookup_live_footprint(
     *, allocations: SimulationEntryAllocations, call_roots: object
 ) -> DeviceBufferFootprint:
@@ -4518,3 +4688,94 @@ def _lookup_live_footprint(
     return union_buffer_footprints(
         footprints=(allocations.snapshot(), measure_buffer_footprint(tree=call_roots))
     )
+
+
+def _trim_lookup_rows(
+    *,
+    lookup: PolicyLookup,
+    n_rows: int | None,
+    allocations: SimulationEntryAllocations | None,
+    unit: SimulationUnitExecutor | None,
+    call_roots: object,
+) -> PolicyLookup:
+    """Keep the leading `n_rows` rows of every lookup output; `None` keeps all.
+
+    A budgeted lookup admits each trimmed output before allocating it.
+    """
+    if n_rows is None:
+        return lookup
+    if allocations is None or unit is None:
+        return PolicyLookup(
+            actions=MappingProxyType(
+                {name: each[:n_rows] for name, each in lookup.actions.items()}
+            ),
+            value=lookup.value[:n_rows],
+            Q=None if lookup.Q is None else lookup.Q[:n_rows],
+            F=None if lookup.F is None else lookup.F[:n_rows],
+        )
+    return _admit_trimmed_lookup_rows(
+        lookup=lookup,
+        n_rows=n_rows,
+        allocations=allocations,
+        unit=unit,
+        call_roots=call_roots,
+    )
+
+
+def _admit_trimmed_lookup_rows(
+    *,
+    lookup: PolicyLookup,
+    n_rows: int,
+    allocations: SimulationEntryAllocations,
+    unit: SimulationUnitExecutor,
+    call_roots: object,
+) -> PolicyLookup:
+    """Trim a budgeted lookup's padded rows, admitting each trimmed output first.
+
+    The trimmed rows no longer split evenly over the subject devices, so a trimmed
+    output may be held whole on every device. Each trim is admitted in that
+    resulting layout against the entry owner's inventory, the call's arrays, the
+    still-live padded outputs and the outputs trimmed before it, and refused
+    before allocation when it does not fit the budget.
+    """
+    kept: list[jax.Array] = []
+
+    def trim(array: jax.Array) -> jax.Array:
+        result = cast(
+            "jax.Array",
+            allocations.operations.dispatch(
+                function=_leading_rows,
+                arguments={"array": array},
+                static_arguments={"n_rows": n_rows},
+                subject_arg_names=("array",),
+                devices=unit.runtime.subject_devices,
+                live_footprint=functools.partial(
+                    _lookup_live_footprint,
+                    allocations=allocations,
+                    call_roots=(
+                        call_roots,
+                        tuple(lookup.actions.values()),
+                        (lookup.value, lookup.Q, lookup.F),
+                        kept,
+                    ),
+                ),
+                budget_devices=unit.budget_devices,
+                budget_bytes=allocations.budget_bytes,
+            ),
+        )
+        kept.append(result)
+        return result
+
+    return PolicyLookup(
+        actions=MappingProxyType(
+            {name: trim(each) for name, each in lookup.actions.items()}
+        ),
+        value=trim(lookup.value),
+        Q=None if lookup.Q is None else trim(lookup.Q),
+        F=None if lookup.F is None else trim(lookup.F),
+    )
+
+
+def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
+    """Return the leading `n_rows` rows of `array`."""
+    return array[:n_rows]

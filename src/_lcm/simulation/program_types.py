@@ -35,6 +35,8 @@ GATE_ROUTE_PROGRAM = "simulate_gate_route"
 # What one leaf of a simulation program's output publishes.
 ACTION_INDEX = "action_index"
 DECISION_VALUE = "decision_value"
+ACTION_VALUES = "action_values"
+ACTION_FEASIBILITY = "action_feasibility"
 NEXT_STATE = "next_state"
 REGIME_TRANSITION_PROB = "regime_transition_prob"
 GATED_CONTINUATION = "gated_continuation"
@@ -139,6 +141,13 @@ class SimulationPrograms:
     state through one code's block, without that axis; empty unless a blocked
     state is carried."""
 
+    action_values: MappingProxyType[int, CoreProgram] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Period to the dense decision that also publishes the action values and
+    feasibility it maximizes over, for policy lookup; empty for a regime with
+    taste shocks or stakeholders. Compiled only when dispatched."""
+
     grouping: SubjectGroupingRoute | None = None
     """The invariant state forward simulation groups subjects by, or `None`."""
 
@@ -149,6 +158,7 @@ class SimulationPrograms:
         """Snapshot the caller-owned program mappings."""
         for field in (
             "type_local_decision",
+            "action_values",
             "decision",
             "transition",
             "route",

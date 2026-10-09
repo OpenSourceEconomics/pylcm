@@ -5,6 +5,7 @@ specification is folded over two partitions that both end in a short block and
 compared against a scalar loop over the whole axis.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,8 +28,11 @@ from _lcm.solution.logsumexp_action_reduction import (
     LOGSUMEXP_REDUCTION,
     LogSumExpResult,
 )
-from lcm.typing import BoolND, FloatND, Int1D
+from lcm.typing import BoolND, FloatND, Int1D, IntND
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
+from tests.solution._reduced_maximum_probe import (
+    count_equalities_with_a_reduced_maximum,
+)
 
 _N_STATES = 3
 _N_ACTIONS = 10
@@ -536,3 +540,25 @@ def test_hard_max_with_carry_rejects_a_non_int32_identity() -> None:
             feasible=_feasible(),
             action_ids=_action_ids().astype(jnp.int16),
         )
+
+
+def test_hard_max_with_carry_identity_is_not_matched_against_a_reduced_maximum():
+    """The winning candidate and its value come out of one reduction."""
+    values = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
+
+    def add_block(*, values: FloatND, feasible: BoolND) -> tuple[FloatND, IntND]:
+        block = HARD_MAX_WITH_CARRY_REDUCTION.add(
+            accumulator=HARD_MAX_WITH_CARRY_REDUCTION.initialize(
+                value_template=jnp.zeros(values.shape[:-1])
+            ),
+            values=values,
+            feasible=feasible,
+            action_ids=jnp.arange(values.shape[-1], dtype=jnp.int32),
+        )
+        return block.best_value, block.best_candidate_id
+
+    jaxpr = jax.make_jaxpr(add_block)(
+        values=values, feasible=jnp.ones_like(values, dtype=bool)
+    ).jaxpr
+
+    assert count_equalities_with_a_reduced_maximum(jaxpr) == 0

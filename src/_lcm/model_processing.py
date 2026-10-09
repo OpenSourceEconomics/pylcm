@@ -963,6 +963,7 @@ def _partial_fixed_params_into_regimes(
                     for family in (
                         "decision",
                         "type_local_decision",
+                        "action_values",
                         "transition",
                         "route",
                     )

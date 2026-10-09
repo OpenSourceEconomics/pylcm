@@ -221,11 +221,14 @@ def _assert_within_operand_rounding_bound(
     """Hold each element to its own steps or to the rounding of its own operands.
 
     An element passes if it moved at most `n_ulp` of its own representable steps,
-    or if `|got - expected|` is at most the operand rounding bound
-    `n_ulp * (spacing(|flow|) + spacing(|continuation|))`, with spacings in the
-    leaf's format. Each element's bound uses only that element's two operands; a
-    reordered sum moves a value born by their cancellation by roundings of the
-    operands, not of the value.
+    or if it is born by cancellation and `|got - expected|` is at most the operand
+    rounding bound `n_ulp * (spacing(|flow|) + spacing(|continuation|))`, with
+    spacings in the leaf's format. Each element's bound uses only that element's
+    two operands; a reordered sum moves a value born by their cancellation by
+    roundings of the operands, not of the value. An element is born by
+    cancellation when it is smaller in magnitude than its larger operand, which
+    happens exactly when the two operands have opposite signs; any other element
+    is held to its own steps alone.
     """
     actual = np.asarray(got)
     reference = np.asarray(expected)
@@ -235,7 +238,10 @@ def _assert_within_operand_rounding_bound(
         + np.spacing(np.abs(continuation).astype(dtype)).astype(np.float64)
     )
     distance = np.abs(actual.astype(np.float64) - reference.astype(np.float64))
-    by_operands = distance <= bound
+    cancels = np.abs(reference.astype(np.float64)) < np.maximum(
+        np.abs(flow), np.abs(continuation)
+    )
+    by_operands = cancels & (distance <= bound)
     assert_agrees_to_ulp(
         got=actual[~by_operands],
         expected=reference[~by_operands],

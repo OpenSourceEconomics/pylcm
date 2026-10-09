@@ -153,7 +153,15 @@ def map_coordinates(
 def _compute_indices_and_weights(
     *, coordinate: FloatND | IntND, input_size: int
 ) -> list[tuple[IntND, FloatND | IntND]]:
-    """Compute indices and weights for linear interpolation."""
+    """Compute indices and weights for linear interpolation.
+
+    The index and the weights derive from one materialized copy of the
+    coordinate. Left free, the compiler may recompute the coordinate separately
+    for the gather index and for the weight, and the copies can round
+    differently; a coordinate within an ulp of a node then pairs the index of
+    one cell with the weight of its neighbour.
+    """
+    coordinate = lax.optimization_barrier(coordinate)
     lower_index = jnp.clip(jnp.floor(coordinate), 0, input_size - 2).astype(jnp.int32)
     upper_weight = coordinate - lower_index
     lower_weight = 1 - upper_weight

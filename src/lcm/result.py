@@ -32,7 +32,7 @@ from _lcm.typing import ActionName, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND
+from lcm.typing import BoolND, FloatND
 
 if TYPE_CHECKING:
     _PeriodValuesBoundary: TypeAlias = Mapping[int, Mapping[RegimeName, FloatND]]  # noqa: UP040
@@ -51,6 +51,17 @@ class PolicyLookup:
 
     value: FloatND
     """Max over the action grid of Q, using the solved continuation, per row."""
+
+    Q: FloatND | None = None
+    """Action values over the queried action grid, or `None` unless requested.
+
+    One leading row axis, then one axis per action in the order of `actions`.
+    Raw and unmasked: an infeasible entry holds the value the action would have,
+    which may exceed `value`; only `F` excludes it from the maximization.
+    """
+
+    F: BoolND | None = None
+    """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
 
 
 class SimulationResult:

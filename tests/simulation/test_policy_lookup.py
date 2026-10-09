@@ -14,10 +14,11 @@ import pytest
 
 import lcm
 import lcm.solvers
-from lcm import PolicyLookup
+from lcm import AgeGrid, DiscreteGrid, Model, PolicyLookup, Regime, categorical
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.persistence import load_solution, save_solution
 from lcm.solver_api import SolutionSource, ValueStore
+from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from lcm_examples.mortality import LaborSupply
 from tests.test_models.deterministic.discrete import get_model as get_discrete_model
 from tests.test_models.deterministic.discrete import (
@@ -26,6 +27,7 @@ from tests.test_models.deterministic.discrete import (
 from tests.test_models.deterministic.regression import (
     DEFAULT_CONSUMPTION_GRID,
     RegimeId,
+    dead,
     get_model,
     get_params,
 )
@@ -135,6 +137,79 @@ def test_lookup_policy_max_over_branches_equals_unconditional_value(solved):
     np.testing.assert_allclose(np.maximum(*branch_values), unconditional)
 
 
+@pytest.mark.parametrize("period", [1, N_PERIODS - 1])
+def test_lookup_policy_without_states_or_actions_returns_one_row_of_value(
+    *, solved, period
+):
+    """`dead` has neither states nor actions: its empty query is one row of zero."""
+    got = _lookup(solved, regime_name="dead", period=period, states={})
+    assert (got.value.shape, np.asarray(got.value).tolist()) == ((1,), [0.0])
+
+
+@categorical(ordered=False)
+class StatelessRegimeId:
+    choose: ScalarInt
+    dead: ScalarInt
+
+
+def utility_of_labor_supply(labor_supply: DiscreteAction) -> FloatND:
+    return jnp.where(labor_supply == LaborSupply.work, 1.0, 0.25)
+
+
+@pytest.fixture(scope="module")
+def solved_stateless():
+    """`choose` has one action and no states; it is followed by the terminal `dead`."""
+    model = Model(
+        regimes={
+            "choose": Regime(
+                actions={"labor_supply": DiscreteGrid(category_class=LaborSupply)},
+                functions={"utility": utility_of_labor_supply},
+            ),
+            "dead": dead,
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=StatelessRegimeId,
+        initial_nodes={0: "choose"},
+        edges={"choose": {"dead": 0}},
+    )
+    params = {"discount_factor": 0.5}
+    return model, params, model.solve(params=params, log_level="off")
+
+
+def _lookup_stateless(solved_stateless, **kwargs):
+    model, params, solution = solved_stateless
+    return model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=0,
+        regime_name="choose",
+        states={},
+        **kwargs,
+    )
+
+
+def test_lookup_policy_without_states_returns_one_row_of_actions_and_value(
+    solved_stateless,
+):
+    """Working (utility 1) beats retiring (1/4); `dead` adds a zero continuation."""
+    got = _lookup_stateless(solved_stateless)
+    assert (
+        np.asarray(got.actions["labor_supply"]).tolist(),
+        np.asarray(got.value).tolist(),
+    ) == ([LaborSupply.work], [1.0])
+
+
+def test_lookup_policy_without_states_returns_one_row_of_action_values(
+    solved_stateless,
+):
+    """`Q` holds each labor supply's utility in grid order, all feasible, in one row."""
+    got = _lookup_stateless(solved_stateless, return_action_values=True)
+    assert (np.asarray(got.Q).tolist(), np.asarray(got.F).tolist()) == (
+        [[1.0, 0.25]],
+        [[True, True]],
+    )
+
+
 def test_lookup_policy_rejects_an_unknown_regime(solved):
     with pytest.raises(InvalidSimulationInputError, match="retired"):
         _lookup(solved, regime_name="retired", period=0, states={"wealth": WEALTH})
@@ -162,6 +237,43 @@ def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid():
             regime_name="working_life",
             states={"wealth": jnp.array([0, 7], dtype=jnp.int32)},
         )
+
+
+def test_lookup_policy_rejects_fractional_discrete_state_codes():
+    """Codes between the categories `0`, `1`, `2` are refused, not truncated."""
+    model = get_discrete_model(n_periods=4)
+    params = get_discrete_params(n_periods=4)
+    solution = model.solve(params=params, log_level="off")
+    with pytest.raises(ValueError, match="wealth"):
+        model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=0,
+            regime_name="working_life",
+            states={"wealth": jnp.array([0.5, 1.5])},
+        )
+
+
+def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
+    """Codes built as the default integer dtype give the rows of `int32` codes."""
+    model = get_discrete_model(n_periods=4)
+    params = get_discrete_params(n_periods=4)
+    solution = model.solve(params=params, log_level="off")
+
+    def rows(codes: jax.Array) -> dict:
+        got = model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=0,
+            regime_name="working_life",
+            states={"wealth": codes},
+        )
+        return {
+            "value": np.asarray(got.value).tolist(),
+            **{name: np.asarray(a).tolist() for name, a in got.actions.items()},
+        }
+
+    assert rows(jnp.asarray([0, 1])) == rows(jnp.asarray([0, 1], dtype=jnp.int32))
 
 
 def test_lookup_policy_rejects_an_unknown_action_grid(solved):

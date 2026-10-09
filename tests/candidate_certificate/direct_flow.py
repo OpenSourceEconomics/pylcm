@@ -398,11 +398,11 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "50c1f0d0658baf5802dcbd459ac5a2b5e0a866ef5c87289d2f448b0b1f1e4ada",
     CONTINUATION_READS_SOURCE: "43eb385d2b2795e81a17ae01b98a795c8296ce396a49ca4d3c3dc68e33cc12cf",
     WORKSPACE_PLANNING_SOURCE: "2709a680429d3527c970043f27c091dc9d0ef1d9d4b7244eb97bb25c2322e3bd",
-    SIMULATION_PROGRAMS_SOURCE: "7c5308f075fe001b7d46d56755f748968d4d21e9d3af7944cf7d0105f39d9f3b",
-    SIMULATION_PROGRAM_TYPES_SOURCE: "13d279a7740c003d0524acd1c1f5753989b1b36a134722d148cf96b60353aa27",
+    SIMULATION_PROGRAMS_SOURCE: "c4267d950c2e27b9f69a6b95fae963e7d9ddb4a5ac379604d9067c673635130f",
+    SIMULATION_PROGRAM_TYPES_SOURCE: "e678e3aa5bdfd0ce21697b3e36f298aafb8bb159db0d0f5065f6b74506c80e9d",
     SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "83fc9b1e764492d8815bc8b8cff0eac5c2b5ce297624c1b2f4ce7f737907101f",
+    ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
     PROCESSING_SOURCE: "b41aeb3cd6a76565b9a072c43954519e476248720e18faf91857eb8f45b7742f",
@@ -413,8 +413,8 @@ _SOURCE_SEALS = {
     FOOTPRINT_SOURCE: "1de0c905590726f9df472165f7dfbf7b118e09715a26c56f4dcf7958fe55299d",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "b8e41588c0cb51a5e24946fcdaf50f9cf9e7b02fa8ad8094e55c15904988315a",
-    ACTION_REDUCTION_SOURCE: "c83a1147bd432a793b60706ea50f9735de418e2c7cf42090ed426672d2027135",
-    COLLECTIVE_ACTION_REDUCTION_SOURCE: "5a7b0d0e530a483604018dc0bd9ee34f5ff65d3a53d507cb0c0962cf4ee732be",
+    ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
+    COLLECTIVE_ACTION_REDUCTION_SOURCE: "40a7abd9b738055f00e347e6ac056fe69bf2501ba41f7ec82b40a18bf627c7e0",
     DISPATCHERS_SOURCE: "54e28af18d207a23748e7b89c47c6d3feaf6e35763e86a79d552ae160cd32adf",
     FUNCTOOLS_SOURCE: "578df5a2b97727d5b993d4e828bc80910a80f9781c8819935b76549ab5c17b88",
     CONTAINERS_SOURCE: "cc6fb60ba679598349fb49d1ea4a14068889d81f57c9293728b88dd9c7173b50",
@@ -426,12 +426,12 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "e4817cfc29f7125b9a0ddfb50a5228f293880f86de63d4b3db9a27a64a798282",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "d2219db87b3e8e6db96ddbfe38de16284cd1a0151e88058082c115fc52412692",
+    MODEL_SOURCE: "537bcac83f5960df1176e585ca77ad1aa342d1c4ba06e8bb27cc92c8738c007a",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "8a3d59d953a707276ed65bad005b85ab8738b38017197967afee2448a5bf4667",
     PERIOD_REPLAY_SOURCE: "4e9a27efa20e18ce0529ce4b7e6cff0e5d8ffb4baeb08e25d8fb898e8d78adaf",
     INITIAL_CONDITIONS_SOURCE: "a273caf098333a1b8882a7c6a7902159e458364f9e3f21df3b59585d29372048",
-    RESULT_SOURCE: "b913f0e0f57b1f36a0334faf5cff2b74f081744dc30c27a5a8afdb8da5595937",
+    RESULT_SOURCE: "e4fb6d7eb3cc2c8b96a6959bf12de64aebe49d887159928a1a5604e22e036360",
     RESULT_DATAFRAME_SOURCE: "a3a8094f661d8472581674059ae6907967a99a446c3f365be2adefd52b1749f8",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
@@ -451,10 +451,10 @@ _SOURCE_SEALS = {
     VARIABLES_SOURCE: "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139",
     PARAMS_REGIME_TEMPLATE_SOURCE: "68e4e9d4076b736c956e1775cd1f230dc21d2f07bd99e1cfbd3c15d87e933dcb",
     PARAMS_PROCESSING_SOURCE: "365fcc4bf215b1c5d69aa5b77f04fd7ae6f80add2974f8235374da4f39f634db",
-    DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
+    DTYPES_SOURCE: "8d0f33deb70c05571c6b62bd85987175ff29f9e05d2a24e56213f540ff083ef1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "af64796c54b7a2bd2ab9760a2cc541c5f0cb5f5488e94dfa850bf26c2ca89152",
-    MODEL_PROCESSING_SOURCE: "25591cad650b1f7b4b59fbd6dbebd61a4aab0ea40030d6bdbc97254f20344691",
+    MODEL_PROCESSING_SOURCE: "022c2d21310ba5c16e634c7a80a86dae00e36fef6681d1060381ed59cc1f7f53",
 }
 
 EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 406
@@ -495,7 +495,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {
             "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
             "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
-            "safe_to_int_dtype": "86a320656f3eeda21585f62873741bcff8d92b336364b48c920261c503a0d152",
+            "safe_to_int_dtype": "74788b1b7b4e09e53cade8a700ab096ca18d3722697dbe34a1ac64c2c0d2ccc5",
             "safe_to_float_dtype": "9ccfddda18e625106d7d9cd4be5fda4319583cb9e665efc24b16bdd2dc169a07",
         },
     ),
@@ -1002,7 +1002,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "02a24dffed19425bec476008ab0a4624a86031e0a8a72ed774c47b3d5793483e",
+        "2fb0a897cd0776bf79b2e28743a57bfcef17f440b8918a70fe78d3258248bb84",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -1739,13 +1739,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ACTION_REDUCTION_SOURCE: (
-        "875f69aba4cd24712f749ad4276232dfbe3a3b311ddb53c3d6f98d62b85bd987",
+        "bfb8dc25b634d82451f43454df2465d9c523e69fa4cda2db3fa863802c6c7068",
         {
             "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
             "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
             "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
             "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
-            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
+            "_reduce_block": "523679254fefd2b0e2b80c1dfc86a47841fd6d0eca64676ddcb5b267c5f8f165",
             "HardMaxReduction.semantic_key": "f024d59aadbce68d4647522cd802f542ed3a39c7cbc05664b03c5a362c6468bd",
         },
     ),
@@ -1774,7 +1774,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "CollectiveHardMaxReduction.merge": "4e288cd957f4840ebc2f5c185051a208c8e82d7df59d8d64dda3f9e5a42f530c",
             "CollectiveHardMaxReduction.finalize": "2c2128c3095d373853e0bfc2bf9f8519d8782c58c9170fd79a5cc96358d6ee47",
             "_validate_block_shapes": "ef3ba0ed14e345bd21da5ab0ac1e79824b04317f8817fce58f8ecd07a8a1b8a5",
-            "_reduce_block": "75ee08bb4dc9fc5bc9ec1ef3d700dba200b3e3cea5fd8def060f12d70403bd31",
+            "_reduce_block": "e84eb817b412c88fadd97a9f36db026c0fb89781bbde1d4d75033a7463d60f3e",
             "_take_stakeholder_values": "b84709a267bb886bef97f01076e40d5670e30caa1c4ffeede8d402008848072d",
         },
     ),
@@ -1800,9 +1800,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "30c890cbba9586b5a0c27495d483e73b83c17267178a317a3b298d4702d42ab1",
+        "58590b633642ba9b8b64884d12974919e070966267d700470b64871381aa7023",
         {
-            "build_simulation_programs": "22ff4a3460252d9a7431e795eff0344bf87b038f30f0132dd914db6a7ee58ea0",
+            "build_simulation_programs": "ab9bcbfd84d9861ea5cd2a9fa9a3d555f07d3ef14a0a89217dff5076d6529c7c",
             "_decision_programs": "1594a9e60852e1db131b0f158f3c48ca66f7ac4f36e5ea22357b7e98dd559f6a",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
@@ -1821,11 +1821,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAM_TYPES_SOURCE: (
-        "d9fbea69c51978e1d8997f033ed323dd804fbb881af9fbcf91fd098b5bf6f173",
+        "41f23b9bcf5bef0a6cebfac1a09cc1064c29414a2e533d8d55e7ab2e65476f55",
         {
             "SimulationBuildContext.__post_init__": "00641d48094283340c57d2137f90f4568bd7dfa8ff6372e0348ccf6abad54a31",
             "SimulationProgramExecutor.dispatch": "7dc2a7b53175a8eb36dba1ccaf927391aaaffc12a3a913d695f16346ff38883b",
-            "SimulationPrograms.__post_init__": "4628d895b955a9c1915e50c12972b3d7b7981e72bdb2d3e832a23b5b8aec2322",
+            "SimulationPrograms.__post_init__": "a7157a954fed1194c80116b6bb3dc746cf3da0cd6c0d1c0ee3284f51281f7f49",
             "SimulationPrograms.declared_axis_names": "1451b9d993c5de21035c9a25f9aa19ba953d2e8dfebb5f952bda617d2fa69b81",
             "SimulationPrograms.forward_decision": "369b61edb30600fcabc910d0d6a333a939519fcda229f315d91101b96cb4de3f",
             "transition_output_roles": "ed772c2beff03f47113b71f5d3f0405469b6ef4bf67d4c3ad4df1a3f064e3fab",
@@ -6341,6 +6341,10 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         node = _definition(tree=tree, name="argmax_and_max")
         move = _definition(tree=tree, name="_move_axes_to_back")
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
+        pair_max = _definition(tree=tree, name="max_and_smallest_id")
+        pair_order = _definition(tree=tree, name="_larger_value_then_smaller_id")
+        pair_reduce = _definition(tree=tree, name="_paired_max")
+        pair_jvp = _definition(tree=tree, name="_paired_max_jvp")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -6369,12 +6373,57 @@ if a.ndim != 0:
 if where is not None and where.ndim != 0:
     where = _move_axes_to_back(a=where, axes=axis)
     where = _flatten_last_n_axes(a=where, n=len(axis))
-_max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)
-max_value_mask = a == _max
-if where is not None:
-    max_value_mask = jnp.logical_and(max_value_mask, where)
-_argmax = jnp.argmax(max_value_mask, axis=-1).astype(jnp.int32)
-return _argmax, _max.reshape(_argmax.shape)
+where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(
+    where, a.shape
+)
+is_nan = jnp.isnan(a)
+comparable = where & ~is_nan
+lowest = -jnp.inf if jnp.issubdtype(a.dtype, jnp.floating) else jnp.iinfo(a.dtype).min
+positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
+_max, _argmax = max_and_smallest_id(
+    values=jnp.where(comparable, a, lowest),
+    ids=jnp.where(comparable, positions, NO_ID),
+    initial=lowest if initial is None else initial,
+)
+any_nan = jnp.any(where & is_nan, axis=-1)
+_max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
+_argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
+return _argmax, _max
+"""
+    expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
+if jnp.issubdtype(values.dtype, jnp.floating):
+    return _paired_max_with_tangent(values, ids, initial_arr)
+return _paired_max(values, ids, initial_arr)
+"""
+    expected_pair_reduce = r"""return jax.lax.reduce(
+    (values, ids),
+    (initial, jnp.asarray(NO_ID, dtype=jnp.int32)),
+    _larger_value_then_smaller_id,
+    (values.ndim - 1,),
+)
+"""
+    expected_pair_jvp = r"""values, ids, initial = primals
+values = jax.lax.optimization_barrier(values)
+values_dot, _, initial_dot = tangents
+best, best_id = _paired_max(values, ids, initial)
+attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
+count = jnp.sum(attains, axis=-1)
+elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
+initial_dot = jnp.broadcast_to(initial_dot, best.shape)
+best_dot = jnp.where(
+    count > 0,
+    jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+    initial_dot,
+)
+return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
+"""
+    expected_pair_order = r"""left_value, left_id = left
+right_value, right_id = right
+tie = right_value == left_value
+take_right = (right_value > left_value) | (tie & (right_id < left_id))
+value = jnp.where(take_right, right_value, left_value)
+value = jnp.where(tie & (left_value == 0), left_value + right_value, value)
+return value, jnp.where(take_right, right_id, left_id)
 """
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
@@ -6386,6 +6435,71 @@ return a.transpose((*front_axes, *axes))
             "argmax reducer: executable body differs from the full paired "
             "value/feasibility reduction"
         )
+    if (
+        pair_max.decorator_list
+        or pair_order.decorator_list
+        or pair_reduce.decorator_list
+        or pair_jvp.decorator_list
+    ):
+        errors.append("argmax reducer: decorators are not allowlisted")
+    if not _positional_signature(
+        node=pair_reduce, names=("values", "ids", "initial")
+    ) or not _body_matches(node=pair_reduce, expected_source=expected_pair_reduce):
+        errors.append("argmax reducer: the paired primal is not one exact `lax.reduce`")
+    if not _positional_signature(
+        node=pair_jvp, names=("primals", "tangents")
+    ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
+        errors.append(
+            "argmax reducer: the paired max's tangent is not `jnp.max`'s "
+            "tie-averaged tangent"
+        )
+    tangent_wiring = [
+        statement
+        for statement in tree.body
+        if (
+            isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+            and "_paired_max_with_tangent" in _assigned_names(statement)
+        )
+        or (
+            isinstance(statement, ast.Expr)
+            and _expression_matches(
+                node=statement.value,
+                source="_paired_max_with_tangent.defjvp(_paired_max_jvp)",
+            )
+        )
+    ]
+    if not (
+        len(tangent_wiring) == 2
+        and isinstance(tangent_wiring[0], ast.Assign)
+        and _expression_matches(
+            node=tangent_wiring[0].value, source="jax.custom_jvp(_paired_max)"
+        )
+        and isinstance(tangent_wiring[1], ast.Expr)
+    ):
+        errors.append(
+            "argmax reducer: the paired primal is not wrapped with its tangent rule"
+        )
+    if not _keyword_only_signature(
+        node=pair_max, names=("values", "ids", "initial")
+    ) or not _body_matches(node=pair_max, expected_source=expected_pair_max):
+        errors.append(
+            "argmax reducer: the (value, id) maximum is not one exact paired reduction"
+        )
+    if not _body_matches(node=pair_order, expected_source=expected_pair_order):
+        errors.append(
+            "argmax reducer: the (value, id) order is not larger value, then smaller id"
+        )
+    no_id = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(_target_names(target) == ("NO_ID",) for target in statement.targets)
+    ]
+    if not (
+        len(no_id) == 1
+        and _expression_matches(node=no_id[0].value, source="jnp.iinfo(jnp.int32).max")
+    ):
+        errors.append("argmax reducer: the no-identity sentinel is not int32 max")
     if not _body_matches(node=move, expected_source=expected_move):
         errors.append(
             "argmax reducer: action-axis move is not the exact order-preserving "
@@ -6401,6 +6515,10 @@ return a.transpose((*front_axes, *axes))
         isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
         and {
             "argmax_and_max",
+            "max_and_smallest_id",
+            "_larger_value_then_smaller_id",
+            "_paired_max",
+            "_paired_max_jvp",
             "_move_axes_to_back",
             "_flatten_last_n_axes",
         }
@@ -11379,25 +11497,21 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     argmax_cases = {
         "shared_argmax:q_order_early_return": replace_once(
             source=argmax_source,
-            old=(
-                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
-            ),
+            old="    is_nan = jnp.isnan(a)\n",
             new="    if a.reshape(-1)[0] > a.reshape(-1)[1]:\n"
             "        return jnp.array(1, dtype=jnp.int32), a.reshape(-1)[1]\n"
-            "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            "    is_nan = jnp.isnan(a)\n",
             label="argmax q-order",
         ),
         "shared_argmax:support_filter": replace_once(
             source=argmax_source,
-            old=(
-                "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)"
-            ),
+            old="    is_nan = jnp.isnan(a)\n",
             new="    where = jnp.where(\n"
             "        jnp.sum(where) > 1,\n"
             "        where.reshape(-1).at[0].set(False).reshape(where.shape),\n"
             "        where,\n"
             "    )\n"
-            "    _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)",
+            "    is_nan = jnp.isnan(a)\n",
             label="argmax support",
         ),
         "shared_argmax:axis_prefix": replace_once(
