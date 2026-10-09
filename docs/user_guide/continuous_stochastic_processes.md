@@ -261,6 +261,17 @@ This is a narrow exact reduction. Model construction enforces all of the followi
   readers need its per-node value even when their projections do not name the folded
   shock.
 
+A folded IID shock without a conditioning state that nothing in a regime reads within
+the period — not utility, constraints, the regime transition or any law — is
+*transition-only* there. Only a law's read of its draw `next_<shock>` remains, for
+example a bill realized after the period's choices and taken off end-of-period wealth.
+Such a shock is no state of the regime: its value carries no axis, the period is not
+evaluated per node, and an initial value given for it is ignored. Every edge whose laws
+read the draw takes it from the process's own nodes and weights, and the source's
+continuation sums over them. A law may not read the draw toward a target that folds the
+shock and does read it within its period; model construction refuses that combination,
+because the target's averaged value and the source's draw would be correlated.
+
 Those rules characterize a shock that is drawn, used for the within-period decision, and
 discarded before the value is stored. If its realization changes a later state, selects
 a regime, or is needed by a value-dependent endpoint, retain the ordinary unfolded axis.

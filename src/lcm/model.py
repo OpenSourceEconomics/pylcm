@@ -87,6 +87,7 @@ from _lcm.regime_building.action_partitioning import (
 from _lcm.regime_building.broadcast import (
     merge_model_slots,
     prune_broadcast_variables,
+    split_transition_only_folds,
     validate_model_slots,
 )
 from _lcm.regime_building.finalize import (
@@ -602,6 +603,12 @@ class Model:
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
+    _transition_only_shock_names: frozenset[str]
+    """Folded IID shocks no regime reads within its period.
+
+    They are no states of any regime; an initial value given for one is dropped.
+    """
+
     _execution: ResolvedExecution
     """Hardware-local facts both phases run under, resolved once at model build.
 
@@ -847,6 +854,16 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.coverage_by_regime,
         )
+        pruned_regimes, draw_only_processes = split_transition_only_folds(
+            user_regimes=pruned_regimes,
+            laws=laws,
+            koopmans_aggregator=koopmans_aggregator,
+            ages=self._time,
+            active_periods_by_regime=schedules.coverage_by_regime,
+        )
+        self._transition_only_shock_names = frozenset(
+            name for shocks in draw_only_processes.values() for name in shocks
+        )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
             laws=laws,
@@ -939,6 +956,7 @@ class Model:
             visited_periods_by_regime=schedules.visited_periods_by_regime,
             declared_transitions=self._declared_transitions,
             declared_edge_vocabulary=declared_edge_vocabulary,
+            draw_only_processes=draw_only_processes,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -3253,6 +3271,7 @@ class Model:
                     regimes=self._regimes,
                     array_writer=entry_allocations,
                     ages=self._time,
+                    unread_names=self._transition_only_shock_names,
                 )
                 self._fail_if_entry_is_not_permitted(
                     initial_conditions=initial_conditions
@@ -4136,6 +4155,7 @@ class Model:
             initial_conditions=initial_conditions,
             regimes=self._regimes,
             ages=self._time,
+            unread_names=self._transition_only_shock_names,
         )
         self._fail_if_entry_is_not_permitted(initial_conditions=canonical)
         return canonical, flat_params
