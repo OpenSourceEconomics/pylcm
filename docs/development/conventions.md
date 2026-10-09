@@ -8,6 +8,10 @@ title: Conventions
 
 - **Ruff** for linting and formatting (configured in `pyproject.toml`)
 - All functions require type annotations
+- Annotations name the narrowest type: `object` and `Any` only behind an
+  `# annotation-exempt:` marker, and the `lcm.typing` aliases (`RegimeName`,
+  `StateName`, ...) rather than bare `str` for names; the `precise-annotations` hook
+  checks both
 - Google-style docstrings in imperative mood ("Return", not "Returns")
 - Use `# ty: ignore[error-code]` for type suppression (never `# type: ignore`)
 - Never use `from __future__ import annotations`
