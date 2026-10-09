@@ -334,6 +334,21 @@ def test_singleton_logspace_grid_coordinate_has_zero_derivative() -> None:
     np.testing.assert_array_equal(derivative, np.zeros(4))
 
 
+@pytest.mark.parametrize("start", [1e3, 1e6, 1e9])
+def test_singleton_logspace_grid_has_zero_derivative_when_bounds_share_a_log(
+    *, start: float
+) -> None:
+    """Adjacent representable bounds can share one log; the derivative stays zero."""
+    dtype = _canonical_float()
+    lower = dtype(start)
+    upper = np.nextafter(lower, dtype(np.inf))
+    assert jnp.log(jnp.asarray(lower)) == jnp.log(jnp.asarray(upper))
+    grid = LogSpacedGrid(start=float(lower), stop=float(upper), n_points=1)
+    queries = jnp.asarray([lower, upper, 2 * upper], dtype=dtype)
+    derivative = jax.vmap(jax.grad(grid.get_coordinate))(queries)
+    np.testing.assert_array_equal(derivative, np.zeros(3))
+
+
 def test_logspace_grid_invalid_start():
     with pytest.raises(GridInitializationError, match="start must be less than stop"):
         LogSpacedGrid(start=1, stop=0, n_points=10)

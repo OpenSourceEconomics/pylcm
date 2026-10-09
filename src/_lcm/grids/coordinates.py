@@ -97,9 +97,15 @@ def get_logspace_coordinate(
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates.
 
     A one-point grid holds a single value, so every value maps to its only index
-    with a zero derivative. The bracket arithmetic below then runs on a unit
-    spacing, which keeps both branches of the final selection finite.
+    with a zero derivative. Its inactive arithmetic uses regular positive bounds
+    and a regular query, keeping both branches of the final selection finite.
     """
+    n_steps = n_points - 1
+    has_steps = n_steps > 0
+    start = jnp.where(has_steps, start, 1.0)
+    stop = jnp.where(has_steps, stop, 2.0)
+    value = jnp.where(has_steps, value, 1.0)
+
     # Transform start, stop, and value to linear scale
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
@@ -118,10 +124,7 @@ def get_logspace_coordinate(
     rank_upper_gridpoint = rank_lower_gridpoint + 1
 
     # Calculate lower and upper point in logarithmic space
-    n_steps = n_points - 1
-    step_length_linear = (stop_linear - start_linear) / jnp.where(
-        n_steps > 0, n_steps, 1
-    )
+    step_length_linear = (stop_linear - start_linear) / jnp.where(has_steps, n_steps, 1)
     lower_gridpoint = jnp.exp(start_linear + step_length_linear * rank_lower_gridpoint)
     upper_gridpoint = jnp.exp(start_linear + step_length_linear * rank_upper_gridpoint)
 
@@ -136,7 +139,7 @@ def get_logspace_coordinate(
     # coordinate lies on a linear scale between the ranks of the lower and upper
     # gridpoints.
     decimal_part = distance_from_lower_gridpoint / logarithmic_step_size_at_coordinate
-    return jnp.where(n_steps > 0, rank_lower_gridpoint + decimal_part, 0.0)
+    return jnp.where(has_steps, rank_lower_gridpoint + decimal_part, 0.0)
 
 
 def get_irreg_coordinate(
