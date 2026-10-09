@@ -313,6 +313,69 @@ _ALIGNED_SCRIPT = textwrap.dedent(
 )
 
 
+_TRIM_SCRIPT = textwrap.dedent(
+    """
+    import json
+    import sys
+    from collections import Counter
+
+    import jax
+    import jax.numpy as jnp
+
+    from lcm import ExecutionConfig, LinSpacedGrid
+    from lcm.exceptions import ExecutionPlanningError
+    from tests.test_models.deterministic.regression import get_model, get_params
+
+    n_devices = int(sys.argv[1])
+    return_action_values = sys.argv[2] == "1"
+    n_rows = int(sys.argv[3])
+    assert jax.device_count() == n_devices, jax.devices()
+    budget = 4_718_592
+    # Q's bytes do not depend on the float precision.
+    n_actions = 800_000 // jnp.zeros(()).dtype.itemsize
+
+    grid = LinSpacedGrid(start=1, stop=3, n_points=3)
+    model = get_model(
+        n_periods=3,
+        wealth_grid=grid,
+        consumption_grid=grid,
+        execution_config=ExecutionConfig(
+            devices=tuple(device.id for device in jax.devices()),
+            sharded_states=(),
+            simulation_sharding="subjects",
+            device_memory_bytes=budget,
+            device_memory_headroom_fraction=0.0,
+        ),
+    )
+    params = get_params(n_periods=3)
+    solution = model.solve(params=params, log_level="off")
+    try:
+        got = model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=1,
+            regime_name="working_life",
+            states={"wealth": jnp.linspace(1.0, 3.0, n_rows)},
+            action_grids={"consumption": jnp.ones(n_actions)},
+            return_action_values=return_action_values,
+        )
+    except ExecutionPlanningError:
+        outputs = {"outcome": "refused"}
+    else:
+        per_device = Counter()
+        for leaf in jax.tree.leaves((got.actions, got.value, got.Q, got.F)):
+            for shard in leaf.addressable_shards:
+                per_device[shard.device] += shard.data.nbytes
+        outputs = {
+            "outcome": "returned",
+            "rows": len(got.value),
+            "within_budget": max(per_device.values()) <= budget,
+        }
+    print("LOOKUP-ROWS", json.dumps(outputs))
+    """
+)
+
+
 def _lookup_on_devices(
     *,
     n_devices: int,
@@ -443,3 +506,28 @@ def test_budgeted_lookup_reads_values_in_place_on_one_device(
         script=_ALIGNED_SCRIPT,
     )
     assert got == {"rows": 2, "value_copies": 0}
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "expected"),
+    [
+        (3, {"outcome": "refused"}),
+        (8, {"outcome": "returned", "rows": 8, "within_budget": True}),
+    ],
+)
+def test_budgeted_lookup_admits_trimming_padded_rows_within_the_budget(
+    *, n_rows: int, expected: dict
+) -> None:
+    """Returned action values fit the per-device budget, or the lookup refuses.
+
+    Three rows padded to eight subject devices trim to a layout that holds every
+    row of `Q` on each device, beyond the budget; eight rows stay split over the
+    devices and fit it.
+    """
+    got = _lookup_on_devices(
+        n_devices=8,
+        return_action_values=True,
+        script=_TRIM_SCRIPT,
+        extra_args=(str(n_rows),),
+    )
+    assert got == expected
