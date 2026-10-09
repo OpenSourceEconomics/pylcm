@@ -90,6 +90,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     StateName,
+    ValueND,
 )
 
 
@@ -805,6 +806,7 @@ class _EGMArgumentBuilder:
         ) = self._law_readings(
             flat_params=flat_params,
             next_breakpoints=leaves.get(("breakpoints",)),
+            period=context.period,
         )
         return MappingProxyType(
             {
@@ -828,6 +830,7 @@ class _EGMArgumentBuilder:
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
                 ),
+                "period": jnp.int32(context.period),
             }
         )
 
@@ -884,6 +887,7 @@ class _EGMArgumentBuilder:
         *,
         flat_params: FlatParams,
         next_breakpoints: FloatND | None,
+        period: int,
     ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D]:
         """Read the declared law on the savings grid and check it can be inverted.
 
@@ -899,6 +903,7 @@ class _EGMArgumentBuilder:
                 regime_name=self.regime_name,
                 transition_target_names=self.transition_target_names,
             ),
+            "period": jnp.int32(period),
         }
         from _lcm.egm.declared_law import (  # noqa: PLC0415
             fail_if_declared_law_is_not_increasing,
@@ -1182,7 +1187,7 @@ class _EGMCore:
         boundary_savings_targets: Float1D,  # noqa: ARG002
         boundary_next_liquid: Float1D,  # noqa: ARG002
         effective_savings_grid: Float1D,
-        **params: FloatND,
+        **params: ValueND,
     ) -> tuple[Float1D, EGMCarry]:
         """Run one EGM step and return the value array and the marginal-value carry."""
         step = self.egm_one_asset_step(

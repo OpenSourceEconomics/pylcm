@@ -73,7 +73,7 @@ from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.params import MappingLeaf
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.transition import Transition
+from lcm.transition import JointTransition, Transition
 from lcm.typing import Phase, UserParams
 
 
@@ -388,6 +388,16 @@ def _reserved_age_errors(
                     regime_name=regime_name, regime=regime, laws=laws, phase=phase
                 )
             )
+            for target, kernels in regime.joint_transitions.items():
+                for name, raw in kernels.items():
+                    joint = cast(
+                        "JointTransition",
+                        (raw.solve if phase == "solve" else raw.simulate)
+                        if isinstance(raw, Phased)
+                        else raw,
+                    )
+                    if callable(joint.support):
+                        functions[f"__joint_support__{target}__{name}"] = joint.support
             if "age" in functions:
                 continue
             consumers = sorted(

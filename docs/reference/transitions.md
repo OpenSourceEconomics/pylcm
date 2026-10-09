@@ -227,7 +227,9 @@ phases.
 
 ### What each part may read
 
-- a callable `support` reads only `period`, `age`, and parameters;
+- a callable `support` reads only the source `period`, the source `age` when the model
+  declares an age grid, and parameters; period models reject an `age` argument at
+  construction, including in either `Phased` variant;
 - `probabilities` may also read source states, actions, and helpers;
 - an output law may transform the shared node using source values, and may read
   `next_<state>` outputs already resolved on the same target edge.

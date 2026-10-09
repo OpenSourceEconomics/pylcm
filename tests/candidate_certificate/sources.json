@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "dd2bd1ae541bb9ee98aa727396c8596c19a57fbf78672e0e759c60aa0b42a082",
+  "source_inventory_sha256": "8b62640013a8c4408de8eb029a3b59a285c2fc66c757785eea00d989b0f60245",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -110,7 +110,7 @@
     },
     {
       "path": "src/_lcm/model_processing.py",
-      "sha256": "983e0fd0e1e4d83bc3b7c504c4dd982b50ff1febf8ae7fd7961816e35696cdf9"
+      "sha256": "85783f54a90b7f25e51b86814e08aaa911e57b2e1306ed7ad7fb2a9d330f31ce"
     },
     {
       "path": "src/_lcm/pandas_utils.py",
@@ -394,7 +394,7 @@
     },
     {
       "path": "src/_lcm/solution/nbegm.py",
-      "sha256": "af195ac44e0e7bee40f4b305d9a5d7d95d9447dd79086ed509499dc73cc0d742"
+      "sha256": "71ad4c4342dcd0e8f9ea6e20491af94b3db41ee4ece32073c816f27c01974689"
     },
     {
       "path": "src/_lcm/solution/period_replay.py",
