@@ -154,6 +154,14 @@ class _TemporalDecorator:
         object.__setattr__(
             consume, "__signature__", original.replace(parameters=parameters)
         )
+        if not passes_period:
+            # dags reads `__annotations__`, not `__signature__`, so `period` must
+            # carry the type other regime functions annotate it with.
+            object.__setattr__(
+                consume,
+                "__annotations__",
+                {**inspect.get_annotations(func), "period": Period},
+            )
         object.__setattr__(consume, "__lcm_time_params__", names)
         return consume
 
