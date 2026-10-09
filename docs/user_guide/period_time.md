@@ -161,3 +161,11 @@ deliberately share a source value. A missing mapped source label or a duplicate 
 source label is an error; unused source rows are ignored. The numeric gather preserves
 derivatives with respect to the profile's values. The helper assigns neither elapsed
 duration nor biological age to the resulting periods.
+
+`from_profile` returns a period-labelled table, which an age model rejects. In an age
+model, label the profile by age directly. A profile lagged by one year, for example, is
+the profile's values shifted one row and labelled with the model's ages:
+
+```python
+lagged = TimeVarying(values=jnp.concatenate([profile[:1], profile[:-1]]), ages=ages)
+```
