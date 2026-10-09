@@ -2358,13 +2358,13 @@ class _NBEGMCaseCore:
         preferences = self.build_preferences(params)
         subsidy_below = case_spec.below_callable(
             **{
-                p: params[f"{case_spec.below_func}__{p}"]
+                p: params[p if p == "period" else f"{case_spec.below_func}__{p}"]
                 for p in case_spec.below_param_names
             }
         )
         subsidy_above = case_spec.above_callable(
             **{
-                p: params[f"{case_spec.above_func}__{p}"]
+                p: params[p if p == "period" else f"{case_spec.above_func}__{p}"]
                 for p in case_spec.above_param_names
             }
         )
