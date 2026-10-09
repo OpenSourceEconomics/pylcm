@@ -18,7 +18,7 @@ model = lcm.Model(
     regimes={"working": working, "retired": retired},
     regime_id_class=RegimeId,
     edges={"working": {"retired": 25}},
-    initial_nodes=((25, "working"),),
+    initial_nodes=lcm.InitialNodes(by_age={25: "working"}),
     enable_jit=True,
 )
 ```
@@ -31,7 +31,7 @@ at least one terminal regime; a model whose starts are all terminal needs no oth
 `n_periods` is a positive integer excluding booleans and counts every computational
 slot, including an explicitly represented terminal slot. In this mode `model.ages` is
 `None`, graph selectors use `PeriodRange` or `Periods`, starts use
-`InitialNode(period=..., regime=...)`, and simulation inputs carry a `period` column.
+`InitialNodes(by_period={0: "working"})`, and simulation inputs carry a `period` column.
 The model does not assign an age or elapsed duration to a period. See
 [Periods and temporal parameters](../user_guide/period_time.md).
 
@@ -60,8 +60,8 @@ Public inspection attributes include:
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
 - `edges`, the edges exactly as declared, `Transition` laws included;
-- `initial_nodes`, immutable admissible age–regime pairs in age mode, or explicit
-  `InitialNode` objects in period mode;
+- `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
+  mapping contains exact coordinates and sorted, unique tuples of regime names;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
   pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
   bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
@@ -97,6 +97,33 @@ age-specialized function while subjects start away from the regime's representat
 raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
 
 `model._regimes` is private canonical engine state.
+
+(api-initial-nodes)=
+
+## `InitialNodes`
+
+Declare admissible starts with exactly one of `InitialNodes(by_age={25: "working"})` or
+`InitialNodes(by_period={0: "working"})`. The keyword declares the coordinate kind; a
+model rejects a declaration for the other clock. Values are regime names or nonempty
+collections of names. Selectors contribute their Cartesian product with the names, and
+overlapping selectors are unioned.
+
+Age keys accept numeric ages, tuples, Python ranges, and `AgeRange`. Period keys accept
+integers, tuples of integers, Python ranges, `Periods`, and `PeriodRange`. Booleans and
+fractional period keys are invalid. `AgeRange` and `PeriodRange` intersect the model's
+grid; exact keys, tuples, Python ranges, and `Periods` must name existing coordinates. A
+selector that admits no node is an error. Initial-node selectors do not use the
+parameter-table rule that silently discards surplus coordinates.
+
+The declaration copies and freezes its mappings and name collections. After model
+construction, `model.initial_nodes` contains exact coordinates and sorted, unique regime
+tuples under the same keyword; the unused mapping is `None`. Pass this object directly
+back into `Model(initial_nodes=...)`. `model.graph.initial_nodes` exposes expanded
+coordinate–regime pairs, whose meaning is given by `graph.coordinate_kind`.
+
+Legacy bare pairs and selector mappings remain accepted in age models. Period models
+require `InitialNodes(by_period=...)`. `ByAge` and `ByPeriod` select transition laws;
+they do not supply initial-node regime names.
 
 (api-period-candidate-lowering)=
 

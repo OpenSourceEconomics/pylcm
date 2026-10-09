@@ -140,6 +140,8 @@ from lcm.grids import (  # noqa: E402
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.initial_nodes import InitialNodes  # noqa: E402
+from lcm.initial_nodes import UserInitialNodes as _UserInitialNodes  # noqa: E402
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator  # noqa: E402
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate  # noqa: E402
 from lcm.model import Model  # noqa: E402
@@ -173,7 +175,6 @@ from lcm.temporal import (  # noqa: E402
     UnlabelledTimeParameterWarning,
     time_varying_params,
 )
-from lcm.time import InitialNode  # noqa: E402
 from lcm.transition import (  # noqa: E402
     AgeRange,
     AgeSpecializedFunction,
@@ -201,9 +202,14 @@ from lcm.version import __version__  # noqa: E402
 # rewritten string annotations resolve at call time.
 _bind_variables_forward_refs(regime_cls=Regime)
 _bind_persistence_forward_refs(model_cls=Model, simulation_result_cls=SimulationResult)
-_bind_typing_forward_refs(age_selector=_AgeSelector)
+_bind_typing_forward_refs(
+    age_selector=_AgeSelector,
+    initial_nodes_cls=InitialNodes,
+    user_initial_nodes=_UserInitialNodes,
+)
 del (
     _AgeSelector,
+    _UserInitialNodes,
     _bind_persistence_forward_refs,
     _bind_typing_forward_refs,
     _bind_variables_forward_refs,
@@ -235,7 +241,7 @@ __all__ = [
     "ExtremeValueTasteShocks",
     "Gate",
     "GridBreakpoint",
-    "InitialNode",
+    "InitialNodes",
     "InvariantBlockSchedule",
     "IrregSpacedGrid",
     "JointTransition",

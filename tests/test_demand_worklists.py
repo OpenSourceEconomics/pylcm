@@ -174,7 +174,7 @@ def test_solve_returns_values_exactly_at_the_demanded_pairs(
 def test_initial_nodes_stay_the_declared_starts() -> None:
     """Demand expansion never adds a start."""
     model = _life_model({55: "working"})
-    assert model.initial_nodes == frozenset({(55, "working")})
+    assert model.graph.initial_nodes == frozenset({(55, "working")})
 
 
 def test_coverage_of_an_unreached_regime_is_empty() -> None:

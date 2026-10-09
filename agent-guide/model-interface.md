@@ -115,7 +115,7 @@ Model(
 ### Model Creation
 
 ```python
-from lcm import AgeGrid, categorical
+from lcm import AgeGrid, InitialNodes, categorical
 
 
 @categorical(ordered=False)
@@ -132,7 +132,7 @@ Model(
     ages=AgeGrid(start=25, inclusive_stop=75, step="Y"),  # Or n_periods=...; exactly one
     regime_id_class=RegimeId,  # Required: dataclass mapping names to indices
     edges={"working": {"retired": 25}},  # Source → destination → source ages
-    initial_nodes=((25, "working"),),  # Required: admissible starting age-regime pairs
+    initial_nodes=InitialNodes(by_age={25: "working"}),  # Required: admissible starts
     description="Optional description",
     enable_jit=True,  # Control JAX compilation (default: True)
 )
@@ -184,10 +184,13 @@ model's actual core programs declare.
   exact ages, nonempty tuples, integer ranges, or
   `AgeRange(start=..., exclusive_stop=...)`. An edge lands at the next `AgeGrid`
   coordinate. Terminal regimes have no outgoing edges.
-- `initial_nodes` is required with no default. Prefer explicit pairs such as
-  `((25, "working"),)`. A mapping from age selectors to a regime name or nonempty
-  sequence of names is also accepted. The normalized immutable pairs are admissible
-  roots; solve demand includes realized visits and their perceived value dependencies.
+- `initial_nodes` is required with no default. Use `InitialNodes(by_age={25: "working"})`
+  or `InitialNodes(by_period={0: "working"})`, matching the model's clock. Values are a
+  regime name or a nonempty sequence or set of names. Legacy exact pairs and bare
+  selector mappings remain age-only inputs. `model.initial_nodes` is a normalized
+  immutable `InitialNodes`, mapping exact coordinates to sorted, unique regime tuples;
+  `model.graph.initial_nodes` contains expanded pairs. Overlapping initial selectors
+  union. Solve demand includes realized visits and their perceived value dependencies.
 - Wrappers and decorator factories are targetless and shared by state and regime laws:
   `DeterministicTransition(func=...)`, `StochasticTransition(func=...)`,
   `@deterministic_transition()`, and `@stochastic_transition()`.
@@ -487,7 +490,7 @@ initial_conditions = {
 - `model.n_periods` - Number of computational slots, including explicit terminal slots
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
 
-Period models use `InitialNode(period=..., regime=...)`, `PeriodRange` and `Periods`
+Period models use `InitialNodes(by_period={0: "working"})`, `PeriodRange` and `Periods`
 in graph declarations, and `period` in simulation inputs. `ByPeriod` and
 `PeriodSpecializedFunction` / `PeriodSpecializedGrid` preserve their age counterparts'
 contracts while taking integer periods. Never infer an age from an integer period.

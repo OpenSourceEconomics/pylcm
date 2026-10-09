@@ -191,8 +191,8 @@ result = model.simulate(
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Every subject's starting
-time coordinate and regime must be an admissible root in `model.initial_nodes`; a start
-elsewhere is rejected even where that problem's value is solved. Returns a
+time coordinate and regime must be an admissible root in `model.graph.initial_nodes`; a
+start elsewhere is rejected even where that problem's value is solved. Returns a
 `SimulationResult` object. The complete `SolutionResult` is supplied through
 `solution=...`.
 
@@ -406,14 +406,14 @@ fingerprints.
 
 This section describes age models. A period model instead requires `"period"`, with
 integer indices in `[0, model.n_periods)`, and uses
-`InitialNode(period=..., regime=...)` to declare admissible starts. Booleans, fractional
-values and out-of-range starts are invalid. The two initial-condition checking methods
-apply the same coordinate rules.
+`InitialNodes(by_period={0: "working"})` to declare admissible starts. Booleans,
+fractional values and out-of-range starts are invalid. The two initial-condition
+checking methods apply the same coordinate rules.
 
 `"age"` must always be provided in `initial_conditions`. Each value must be a valid
 point on the model's `AgeGrid`, and each subject's `(age, regime)` pair must be a
-declared start in `model.initial_nodes`. The most common case is that all subjects start
-at the initial age — just pass a constant array.
+declared start in `model.graph.initial_nodes`. The most common case is that all subjects
+start at the initial age — just pass a constant array.
 
 Subjects can start at different ages:
 

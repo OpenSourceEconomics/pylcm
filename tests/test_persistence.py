@@ -110,7 +110,7 @@ def test_persistence_fixture_does_not_fill_an_unrequired_final_period(
     expected = frozenset(
         {(0, "working"), (1, "working"), (1, "retired"), (2, "retired")}
     )
-    assert model.initial_nodes == frozenset({(0, "working")})
+    assert model.graph.initial_nodes == frozenset({(0, "working")})
     assert model.reachability.visited_nodes == expected
     assert model.reachability.nodes == expected
 
