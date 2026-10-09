@@ -2,7 +2,7 @@ from functools import partial
 
 import jax.numpy as jnp
 import pytest
-from jax import jit, make_jaxpr, vmap
+from jax import grad, jit, make_jaxpr, vmap
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.argmax import (
@@ -198,3 +198,22 @@ def test_argmax_and_max_index_attains_the_reported_max_under_jit_and_vmap(
     )(a=rows, where=masks)
 
     assert_array_equal(index, jnp.array([expected_index, expected_index]))
+
+
+@pytest.mark.parametrize(
+    ("values", "initial"),
+    [
+        ([1.0, 3.0], 3.0),
+        ([3.0, 3.0], 3.0),
+        ([3.0, 3.0], -jnp.inf),
+        ([1.0, 3.0], 5.0),
+    ],
+)
+def test_argmax_and_max_differentiates_like_jnp_max_when_initial_ties(
+    *, values: list[float], initial: float
+) -> None:
+    """The max's gradient equals `jnp.max`'s, including a finite tying `initial`."""
+    a = jnp.array(values)
+    got = grad(lambda a: argmax_and_max(a=a, axis=0, initial=initial)[1])(a)
+    expected = grad(lambda a: jnp.max(a, axis=0, initial=initial))(a)
+    assert_array_equal(got, expected)

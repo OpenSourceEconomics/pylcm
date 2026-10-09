@@ -61,11 +61,19 @@ def safe_to_int_dtype(
         A `jnp.int32` array (0-d if `value` was a scalar).
 
     Raises:
-        ValueError: If any element of `value` is outside the int32 range
-            `[-2**31, 2**31 - 1]`. The message names the leaf via `name`.
+        ValueError: If any element of `value` is not a whole number or is outside
+            the int32 range `[-2**31, 2**31 - 1]`. The message names the leaf via
+            `name`.
 
     """
     np_value = np.asarray(value)
+    if np_value.dtype.kind == "f":
+        fractional = np_value != np.trunc(np_value)
+        if fractional.any():
+            msg = (
+                f"{name}: integer values required, got {np_value[fractional].tolist()}."
+            )
+            raise ValueError(msg)
     if np_value.size > 0:
         lo = int(np_value.min())
         hi = int(np_value.max())

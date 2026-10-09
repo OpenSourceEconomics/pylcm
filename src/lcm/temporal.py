@@ -55,7 +55,9 @@ class TimeVarying:
         """Gather an economic profile by an explicit period-to-label mapping.
 
         Several stages may share a source label. Unused source rows are ignored;
-        missing mapped labels and duplicate selected labels are errors.
+        missing mapped labels and duplicate selected labels are errors. The result
+        is period-labelled, so it serves period models; label an age model's
+        profile by age with `TimeVarying(values=..., ages=...)`.
         """
         periods = tuple(period_to_label)
         if any(

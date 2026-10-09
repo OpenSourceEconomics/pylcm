@@ -239,6 +239,21 @@ def test_lookup_policy_rejects_a_discrete_state_code_off_the_grid():
         )
 
 
+def test_lookup_policy_rejects_fractional_discrete_state_codes():
+    """Codes between the categories `0`, `1`, `2` are refused, not truncated."""
+    model = get_discrete_model(n_periods=4)
+    params = get_discrete_params(n_periods=4)
+    solution = model.solve(params=params, log_level="off")
+    with pytest.raises(ValueError, match="wealth"):
+        model.lookup_policy(
+            params=params,
+            solution=solution,
+            period=0,
+            regime_name="working_life",
+            states={"wealth": jnp.array([0.5, 1.5])},
+        )
+
+
 def test_lookup_policy_takes_discrete_state_codes_of_any_integer_dtype():
     """Codes built as the default integer dtype give the rows of `int32` codes."""
     model = get_discrete_model(n_periods=4)
