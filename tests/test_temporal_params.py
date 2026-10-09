@@ -1,6 +1,7 @@
 """Label alignment protects temporal parameters before numerical evaluation."""
 
 import inspect
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +15,17 @@ from dags.tree import flatten_to_qnames
 
 import lcm
 import lcm.exceptions
+from _lcm.execution.core_program import core_program_graph
 from _lcm.params.temporal import align_time_varying
+from _lcm.solution.preconditions import check_solver_params
 from _lcm.time import ModelTime
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+from lcm.solvers import EGM, NBEGM
 from lcm.typing import (
     BoolND,
+    ContinuousAction,
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -1088,3 +1095,244 @@ def test_temporal_gate_projection_reads_target_period(
         np.testing.assert_allclose(
             solution.values[0]["work"], 4.0 if reference else 1.5
         )
+
+
+def _weighted_log(*, consumption: ContinuousAction, weight: FloatND) -> FloatND:
+    return weight * jnp.log(consumption)
+
+
+def _log_bequest(*, liquid: ContinuousState) -> FloatND:
+    return jnp.log(liquid)
+
+
+def _log_bequest_with_kind(*, liquid: ContinuousState, kind: DiscreteState) -> FloatND:
+    return jnp.log(liquid) + 0.1 * kind
+
+
+def _wealth_resources(*, liquid: ContinuousState) -> FloatND:
+    return liquid
+
+
+def _wealth_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
+def _return_savings(*, savings: FloatND, gross_return: FloatND) -> FloatND:
+    return gross_return * savings
+
+
+def _egm_time_model(
+    *,
+    solver_name: str,
+    temporal_role: str,
+    source_periods: tuple[int, ...] = (0,),
+    resources: UserFunction | lcm.PeriodSpecializedFunction = _wealth_resources,
+    ride_along: bool = False,
+) -> tuple[lcm.Model, dict[str, Any], lcm.LinSpacedGrid]:
+    """Build a two-period weighted-log model with one temporal consumer."""
+    savings_grid = lcm.LinSpacedGrid(start=0.0, stop=20.0, n_points=400)
+    solver = (
+        EGM(savings_grid=savings_grid)
+        if solver_name == "egm"
+        else NBEGM(savings_grid=savings_grid)
+    )
+    wealth_grid = lcm.LinSpacedGrid(start=5.0, stop=20.0, n_points=4)
+    extra_states = (
+        {"kind": lcm.DiscreteGrid(category_class=Option)} if ride_along else {}
+    )
+    utility = (
+        lcm.time_varying_params("weight")(_weighted_log)
+        if temporal_role == "utility"
+        else _weighted_log
+    )
+    law = (
+        lcm.time_varying_params("gross_return")(_return_savings)
+        if temporal_role == "law"
+        else _return_savings
+    )
+    model = lcm.Model(
+        n_periods=max(source_periods) + 2,
+        regimes={
+            "work": ConsumptionSavingsRegime(
+                states={"liquid": wealth_grid, **extra_states},
+                actions={
+                    "consumption": lcm.LinSpacedGrid(start=0.01, stop=20.0, n_points=10)
+                },
+                functions={
+                    "utility": utility,
+                    "resources": resources,
+                    "savings": _wealth_savings,
+                },
+                state_transitions={
+                    "liquid": law,
+                    **({"kind": lcm.fixed_transition("kind")} if ride_along else {}),
+                },
+                solver=solver,
+                liquid=LiquidMargin(
+                    state="liquid",
+                    action="consumption",
+                    resources="resources",
+                    post_decision_state="savings",
+                ),
+            ),
+            "done": lcm.Regime(
+                states={
+                    "liquid": lcm.LogSpacedGrid(start=0.01, stop=100.0, n_points=400),
+                    **extra_states,
+                },
+                functions={
+                    "utility": _log_bequest_with_kind if ride_along else _log_bequest
+                },
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period=dict.fromkeys(source_periods, "work")),
+        edges={"work": {"done": lcm.Periods(values=source_periods)}},
+        fixed_params={"discount_factor": 1.0},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+    params = {
+        "weight": lcm.TimeVarying(
+            values=jnp.array([9.0, *[2.0 for _ in source_periods]]),
+            periods=(max(source_periods) + 1, *reversed(source_periods)),
+        )
+        if temporal_role == "utility"
+        else 2.0,
+        "gross_return": lcm.TimeVarying(
+            values=jnp.array([4.0, *[2.0 for _ in source_periods]]),
+            periods=(max(source_periods) + 1, *reversed(source_periods)),
+        )
+        if temporal_role == "law"
+        else 2.0,
+    }
+    return model, params, wealth_grid
+
+
+@pytest.mark.parametrize("solver_name", ["egm", "nbegm"])
+@pytest.mark.parametrize("temporal_role", ["utility", "law"])
+@pytest.mark.parametrize("source_period", [0, 2])
+def test_egm_temporal_consumers_use_the_source_period(
+    *, solver_name: str, temporal_role: str, source_period: int
+) -> None:
+    """Two-period weighted log saving reads current preference and return values."""
+    model, params, wealth_grid = _egm_time_model(
+        solver_name=solver_name,
+        temporal_role=temporal_role,
+        source_periods=(source_period,),
+    )
+    solution = model.solve(params=params, log_level="debug")
+    wealth = np.asarray(wealth_grid.to_jax())
+    consumption = 2.0 / 3.0 * wealth
+    expected = 2.0 * np.log(consumption) + np.log(2.0 * (wealth - consumption))
+    # The terminal log grid and savings interpolation approximate the closed form.
+    np.testing.assert_allclose(
+        solution.value(period=source_period, regime="work"),
+        expected,
+        atol=1e-3,
+        rtol=0,
+    )
+
+
+@lcm.time_varying_params("curvature")
+def _time_curved_resources(*, liquid: ContinuousState, curvature: FloatND) -> FloatND:
+    return liquid + curvature * liquid**2
+
+
+def test_nbegm_temporal_budget_probe_checks_source_period_zero() -> None:
+    """A nonlinear budget at period zero cannot hide behind later affine entries."""
+    model, params, _ = _egm_time_model(
+        solver_name="nbegm", temporal_role="constant", resources=_time_curved_resources
+    )
+    params["curvature"] = lcm.TimeVarying(values=jnp.array([0.1, 0.0]), periods=(0, 1))
+    with pytest.raises(lcm.exceptions.RegimeInitializationError, match="affine"):
+        check_solver_params(
+            regimes=model._regimes, flat_params=model._process_params(params)
+        )
+
+
+def test_nbegm_temporal_budget_probe_ignores_inactive_periods() -> None:
+    """An unused nonlinear row does not invalidate the source period's budget."""
+    model, params, _ = _egm_time_model(
+        solver_name="nbegm", temporal_role="constant", resources=_time_curved_resources
+    )
+    params["curvature"] = lcm.TimeVarying(values=jnp.array([0.0, 0.1]), periods=(0, 1))
+    check_solver_params(
+        regimes=model._regimes, flat_params=model._process_params(params)
+    )
+
+
+@pytest.mark.parametrize("solver_name", ["egm", "nbegm"])
+def test_egm_temporal_periods_share_a_core(solver_name: str) -> None:
+    """Different current weights change values without splitting the compiled core."""
+    model, params, wealth_grid = _egm_time_model(
+        solver_name=solver_name, temporal_role="utility", source_periods=(0, 2)
+    )
+    params["weight"] = lcm.TimeVarying(values=jnp.array([3.0, 2.0]), periods=(2, 0))
+    kernels = model._regimes["work"].solution.period_kernels
+    first = core_program_graph(kernel=kernels[0])["main"].function
+    second = core_program_graph(kernel=kernels[2])["main"].function
+    assert isinstance(first, partial)
+    assert isinstance(second, partial)
+    assert first.func is second.func
+    solution = model.solve(params=params, log_level="debug")
+    wealth = np.asarray(wealth_grid.to_jax())
+    for period, weight in ((0, 2.0), (2, 3.0)):
+        consumption = weight / (weight + 1.0) * wealth
+        expected = weight * np.log(consumption) + np.log(2.0 * (wealth - consumption))
+        np.testing.assert_allclose(
+            solution.value(period=period, regime="work"), expected, atol=1e-3, rtol=0
+        )
+
+
+def _period_local_resources(source_period: int) -> UserFunction:
+    """The resolved budget is affine exactly where this callback is installed."""
+
+    def resources(
+        *, liquid: ContinuousState, curvature: FloatND, period: Period
+    ) -> FloatND:
+        return liquid + (period != source_period) * curvature * liquid**2
+
+    return resources
+
+
+def _period_identity(period: int) -> int:
+    return period
+
+
+def _period_local_ride_resources(source_period: int) -> UserFunction:
+    """Keep a discrete co-state while restricting the callback to its own period."""
+
+    def resources(
+        *,
+        liquid: ContinuousState,
+        kind: DiscreteState,
+        curvature: FloatND,
+        period: Period,
+    ) -> FloatND:
+        return liquid + 0.1 * kind + (period != source_period) * curvature * liquid**2
+
+    return resources
+
+
+@pytest.mark.parametrize("ride_along", [False, True])
+def test_nbegm_temporal_probe_respects_specialized_period_groups(
+    *,
+    ride_along: bool,
+) -> None:
+    """A representative callback must not be tested in another callback's period."""
+    model, params, _ = _egm_time_model(
+        solver_name="nbegm",
+        temporal_role="constant",
+        source_periods=(0, 2),
+        ride_along=ride_along,
+        resources=lcm.PeriodSpecializedFunction(
+            build=_period_local_ride_resources
+            if ride_along
+            else _period_local_resources,
+            signature=_period_identity,
+        ),
+    )
+    params["curvature"] = 0.1
+    check_solver_params(
+        regimes=model._regimes, flat_params=model._process_params(params)
+    )

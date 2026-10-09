@@ -1,9 +1,10 @@
 """Period coordinates have explicit meaning at every public time boundary."""
 
 import logging
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,16 @@ from _lcm.time import ModelTime, coordinate_at
 from lcm import component_jobs
 from lcm.exceptions import ModelInitializationError
 from lcm.persistence import PeriodCapture, load_period_capture
-from lcm.typing import DiscreteState, FloatND, Period, ScalarInt, UserInitialNodes
+from lcm.typing import (
+    Age,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    Period,
+    ScalarInt,
+    UserInitialNodes,
+)
+from tests.conftest import DECIMAL_PRECISION
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
@@ -868,3 +878,210 @@ def test_age_initial_nodes_refuses_legacy_period_selectors(
     initial_nodes = {selector: "work"} if mapping else ((selector, "work"),)
     with pytest.raises(ModelInitializationError, match=r"[Aa]ge"):
         _age_model(initial_nodes=initial_nodes)
+
+
+def _joint_zero() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _joint_terminal_utility(*, x: ContinuousState) -> FloatND:
+    return x
+
+
+def _joint_probabilities() -> FloatND:
+    return jnp.asarray([0.5, 0.5])
+
+
+def _joint_next_x(*, shock: FloatND) -> FloatND:
+    return shock
+
+
+def _age_support(*, age: Age) -> FloatND:
+    return jnp.asarray([10.0, 20.0]) + age
+
+
+def _age_support_truth(*, age: Age) -> FloatND:
+    # A legal whole-kernel phase difference with the identical support schema.
+    return jnp.asarray([10.0, 20.0]) + age + 4.0
+
+
+def _period_support(*, period: Period) -> FloatND:
+    return jnp.asarray([10.0, 20.0]) + period
+
+
+def _period_support_truth(*, period: Period) -> FloatND:
+    return jnp.asarray([10.0, 20.0]) + period + 4.0
+
+
+def _clock_joint(*, support: Callable[..., FloatND]) -> lcm.JointTransition:
+    return lcm.JointTransition(
+        support_size=2,
+        support=support,
+        probabilities=_joint_probabilities,
+        outputs={"x": _joint_next_x},
+    )
+
+
+def _joint_clock_model(
+    *,
+    clock: Literal["age", "period"],
+    source_period: int,
+    origin: int,
+    joint: lcm.JointTransition | lcm.Phased,
+) -> lcm.Model:
+    # The only edge ends at the explicit final slot. Earlier slots are unused
+    # for a late start; no missing transition or unreachable target is involved.
+    n_periods = source_period + 2
+    source_coordinate = origin + source_period
+    clock_kwargs: dict[str, Any] = (
+        {"n_periods": n_periods}
+        if clock == "period"
+        else {
+            "ages": lcm.AgeGrid(
+                start=origin,
+                inclusive_stop=origin + n_periods - 1,
+                step="Y",
+            )
+        }
+    )
+    initial_nodes = (
+        lcm.InitialNodes(by_period={source_period: "work"})
+        if clock == "period"
+        else lcm.InitialNodes(by_age={source_coordinate: "work"})
+    )
+    selector = (
+        lcm.Periods(values=(source_period,))
+        if clock == "period"
+        else (source_coordinate,)
+    )
+    return lcm.Model(
+        **clock_kwargs,
+        regimes={
+            "work": lcm.Regime(
+                functions={"utility": _joint_zero},
+                joint_transitions={"done": {"shock": joint}},
+            ),
+            "done": lcm.Regime(
+                states={"x": lcm.LinSpacedGrid(start=0, stop=100, n_points=3)},
+                functions={"utility": _joint_terminal_utility},
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=initial_nodes,
+        edges={"work": {"done": selector}},
+        fixed_params={"discount_factor": 1.0},
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+@pytest.mark.parametrize("source_period", [0, 2])
+@pytest.mark.parametrize("bad_role", ["ordinary", "solve", "simulate"])
+def test_period_clock_rejects_age_support_at_construction(
+    *, source_period: int, bad_role: str
+) -> None:
+    """Every reachable support provider must obey the declared clock kind.
+
+    Validation precedes the choice of log level and execution entry point,
+    covering both phases and every admissible starting period.
+    """
+    bad = _clock_joint(support=_age_support)
+    good = _clock_joint(support=_period_support)
+    joint = (
+        bad
+        if bad_role == "ordinary"
+        else lcm.Phased(
+            solve=bad if bad_role == "solve" else good,
+            simulate=bad if bad_role == "simulate" else good,
+        )
+    )
+    with pytest.raises(ModelInitializationError, match="age"):
+        _joint_clock_model(
+            clock="period",
+            source_period=source_period,
+            origin=0,
+            joint=joint,
+        )
+
+
+@pytest.mark.parametrize("log_level", ["off", "debug"])
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize(
+    ("clock", "origin", "source_period", "coordinate", "expected_value"),
+    [
+        ("period", 0, 0, 0.0, 15.0),
+        ("period", 0, 2, 2.0, 17.0),
+        ("age", 0, 2, 2.0, 17.0),
+        ("age", 40, 1, 41.0, 56.0),
+        ("age", 70, 1, 71.0, 86.0),
+    ],
+)
+def test_valid_clock_support_preserves_solve_and_simulation(
+    *,
+    log_level: Literal["off", "debug"],
+    phased: bool,
+    clock: Literal["age", "period"],
+    origin: int,
+    source_period: int,
+    coordinate: float,
+    expected_value: float,
+) -> None:
+    """Keep valid age/period support and legal perceived/realized differences.
+
+    With zero flow, discount one, and terminal V(x)=x, the solve expectation is
+    ((10 + coordinate) + (20 + coordinate)) / 2. Its reference above is literal.
+    The legal Phased case adds four only to realized support. This checks the
+    simulation phase independently without relying on random sample averages.
+    """
+    support = _age_support if clock == "age" else _period_support
+    truth = _age_support_truth if clock == "age" else _period_support_truth
+    joint = (
+        lcm.Phased(
+            solve=_clock_joint(support=support), simulate=_clock_joint(support=truth)
+        )
+        if phased
+        else _clock_joint(support=support)
+    )
+    model = _joint_clock_model(
+        clock=clock,
+        source_period=source_period,
+        origin=origin,
+        joint=joint,
+    )
+    assert (model.ages is None) == (clock == "period")
+    solution = model.solve(params={}, log_level=log_level)
+    actual_value = np.asarray(solution.value(period=source_period, regime="work"))
+    np.testing.assert_array_almost_equal(
+        actual_value, expected_value, decimal=DECIMAL_PRECISION
+    )
+
+    n_subjects = 3
+    initial_time = (
+        jnp.full(n_subjects, source_period, dtype=jnp.int32)
+        if clock == "period"
+        else jnp.full(n_subjects, coordinate)
+    )
+    simulation = model.simulate(
+        params={},
+        initial_conditions={
+            clock: initial_time,
+            "regime_id": jnp.full(n_subjects, RegimeId.work, dtype=jnp.int32),
+        },
+        solution=solution,
+        seed=123,
+        log_level=log_level,
+    )
+    frame = simulation.to_dataframe(use_labels=False)
+    assert len(frame) == 2 * n_subjects
+    np.testing.assert_array_equal(
+        np.sort(frame["period"].to_numpy()),
+        np.repeat([source_period, source_period + 1], n_subjects),
+    )
+    assert ("age" in frame.columns) == (clock == "age")
+    terminal = frame.loc[frame["period"] == source_period + 1]
+    assert len(terminal) == n_subjects
+    offset = 4.0 if phased else 0.0
+    expected_nodes = np.asarray(
+        [10.0 + coordinate + offset, 20.0 + coordinate + offset]
+    )
+    assert np.isin(terminal["x"].to_numpy(), expected_nodes).all()
+    np.testing.assert_array_equal(terminal["value"], terminal["x"])
