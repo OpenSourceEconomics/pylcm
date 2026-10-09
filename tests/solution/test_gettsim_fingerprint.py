@@ -49,6 +49,15 @@ _BACKEND_DEPENDENCIES = ("ttsim-backend", "numpy", "jax", "jaxlib")
 _OPERATION_DEPENDENCIES = (
     ("dags.tree.tree_utils.flatten_to_qnames", ("dags", "flatten-dict")),
     *(
+        (f"dags.signature.{name}", ("dags",))
+        for name in (
+            "_fail_if_too_many_positional_arguments",
+            "_fail_if_duplicated_arguments",
+            "_fail_if_invalid_keyword_arguments",
+            "_fail_if_missing_arguments",
+        )
+    ),
+    *(
         (
             f"ttsim.tt.aggregation.{name}",
             (*_BACKEND_DEPENDENCIES, "numpy-groupies", "numba", "llvmlite"),
