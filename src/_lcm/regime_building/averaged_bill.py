@@ -695,9 +695,14 @@ class _AveragedBillReader:
 
         supports = [support for _, support in self.conditioners]
         combos = list(itertools.product(*supports))
+        # Integer codes take the engine's integer dtype, booleans stay booleans,
+        # matching the values the conditioners take at a source point.
         condition_values = {
-            name: jnp.asarray([combo[i] for combo in combos])
-            for i, (name, _) in enumerate(self.conditioners)
+            name: jnp.asarray(
+                [combo[i] for combo in combos],
+                dtype=bool if isinstance(support[0], bool) else jnp.int32,
+            )
+            for i, (name, support) in enumerate(self.conditioners)
         }
         kept_sizes = [draw.size for draw in self.kept]
         kept_combos = list(itertools.product(*(range(n) for n in kept_sizes)))
