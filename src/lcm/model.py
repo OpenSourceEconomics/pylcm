@@ -290,7 +290,12 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
-from lcm.transition import ModelEdges, PhaseEdges, Transition
+from lcm.transition import (
+    ModelEdges,
+    PhaseEdges,
+    Transition,
+    snapshot_transition_containers,
+)
 from lcm.typing import (
     Bool1D,
     FloatND,
@@ -692,8 +697,10 @@ class Model:
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
-        self._edges = cast("ModelEdges", edges)
-        laws, graph_edges = bind_edge_laws(edges=edges, regimes=regimes, ages=ages)
+        self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        laws, graph_edges = bind_edge_laws(
+            edges=self._edges, regimes=regimes, ages=ages
+        )
         # The transitions as declared, before any age selects among them: the
         # `edges` parameter template and its Series conversion read these.
         self._declared_transitions = collect_declared_transitions(self._edges)

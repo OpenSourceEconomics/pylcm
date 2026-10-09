@@ -194,7 +194,26 @@ class Transition:
             )
         else:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
+        object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
+
+
+def snapshot_transition_containers(value: object) -> object:
+    """Copy edge and law mappings, including phase variants, preserving callables.
+
+    A mapping proxy may still view a caller-owned dictionary, so it also needs
+    a copy. Transition and ByAge declarations own their containers at construction.
+    """
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: snapshot_transition_containers(item) for key, item in value.items()}
+        )
+    if isinstance(value, Phased):
+        return Phased(
+            solve=snapshot_transition_containers(value.solve),
+            simulate=snapshot_transition_containers(value.simulate),
+        )
+    return value
 
 
 def law_names_its_targets(law: object) -> bool:
@@ -671,10 +690,15 @@ class ByAge:
             _fail_if_not_a_nonterminal_law(law)
         for selector in cases:
             _fail_if_invalid_age_selector(selector)
-        self._cases: tuple[tuple[object, object], ...] = tuple(cases.items())
+        self._cases: tuple[tuple[object, object], ...] = tuple(
+            (selector, snapshot_transition_containers(law))
+            for selector, law in cases.items()
+        )
         # Stored as `None` rather than the signature sentinel, so the model
         # fingerprint sees plain data.
-        self._default = None if default is _MISSING else default
+        self._default = (
+            None if default is _MISSING else snapshot_transition_containers(default)
+        )
         self._until: _Until | None = None
 
     @classmethod
@@ -708,8 +732,8 @@ class ByAge:
         return cls._from_until(
             until=_Until(
                 stop_age_exclusive=stop_age_exclusive,
-                law=law,
-                then=then,
+                law=snapshot_transition_containers(law),
+                then=snapshot_transition_containers(then),
                 start_age_inclusive=start_age_inclusive,
             )
         )

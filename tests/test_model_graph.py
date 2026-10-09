@@ -1,5 +1,9 @@
 """Explicit model topology separates admissible edges from transition kernels."""
 
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import cast
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -507,3 +511,108 @@ def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
     model = _phased_graph_model({0: "work"})
     rebuilt = _phased_graph_model(model.initial_nodes)
     assert rebuilt.initial_nodes == frozenset({(0, "work")})
+
+
+def _declaration_model(*, edges: object, enable_jit: bool) -> Model:
+    return Model(
+        regimes={
+            "work": Regime(functions={"utility": lambda: jnp.asarray(1.0)}),
+            "perceived": Regime(functions={"utility": lambda: jnp.asarray(10.0)}),
+            "realized": Regime(functions={"utility": lambda: jnp.asarray(20.0)}),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_GraphRegimeId,
+        initial_nodes=((0, "work"),),
+        edges=edges,
+        enable_jit=enable_jit,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("container", ["dict", "proxy", "phased"])
+@pytest.mark.parametrize("mutation", ["outer", "inner"])
+def test_declared_edges_snapshot_reconstructs_original_value(
+    *, enable_jit: bool, container: str, mutation: str
+) -> None:
+    """Caller topology edits cannot change the published model configuration."""
+    targets = {"perceived": 0}
+    edges = {"work": targets}
+    declaration = (
+        MappingProxyType(edges)
+        if container == "proxy"
+        else Phased(solve=edges, simulate=edges)
+        if container == "phased"
+        else edges
+    )
+    model = _declaration_model(edges=declaration, enable_jit=enable_jit)
+    if mutation == "outer":
+        edges["work"] = {"realized": 0}
+    else:
+        targets.clear()
+        targets["realized"] = 0
+    twin = _declaration_model(edges=model.edges, enable_jit=enable_jit)
+    np.testing.assert_array_equal(
+        [
+            specimen.solve(params={"discount_factor": 0.5}, log_level="debug").values[
+                0
+            ]["work"]
+            for specimen in (model, twin)
+        ],
+        [6.0, 6.0],
+    )
+
+
+@pytest.mark.parametrize(
+    "wrapper", ["plain", "proxy", "case", "default", "until", "phased"]
+)
+def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
+    """Nested probability mappings are owned before a model binds their laws."""
+    low = StochasticTransition(func=lambda: jnp.asarray(0.25))
+    high = StochasticTransition(func=lambda: jnp.asarray(0.75))
+    probabilities = {"perceived": low, "realized": high}
+    laws = {
+        "plain": probabilities,
+        "proxy": MappingProxyType(probabilities),
+        "case": ByAge(cases={0: probabilities}),
+        "default": ByAge(cases={}, default=probabilities),
+        "until": ByAge.until(
+            stop_age_exclusive=1, law=probabilities, then=probabilities
+        ),
+        "phased": Phased(solve=probabilities, simulate=probabilities),
+    }
+    transition = Transition(law=laws[wrapper])
+    probabilities["perceived"] = StochasticTransition(func=lambda: jnp.asarray(1.0))
+    probabilities["realized"] = StochasticTransition(func=lambda: jnp.asarray(0.0))
+    model = _declaration_model(edges={"work": transition}, enable_jit=False)
+    np.testing.assert_array_equal(
+        model.solve(params={"discount_factor": 0.5}, log_level="debug").values[0][
+            "work"
+        ],
+        9.75,
+    )
+
+
+def test_declared_probability_law_preserves_callable_identity() -> None:
+    """Snapshotting containers leaves the user's callable unchanged."""
+    probability = StochasticTransition(func=lambda: jnp.asarray(1.0))
+    transition = Transition(law={"perceived": probability})
+    assert (
+        cast("Mapping[str, StochasticTransition]", transition.law)["perceived"].func
+        is probability.func
+    )
+
+
+def test_declared_probability_law_is_read_only() -> None:
+    """A published probability mapping cannot be edited in place."""
+    transition = Transition(
+        law={"perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))}
+    )
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", transition.law)["perceived"] = "realized"
+
+
+def test_declared_edge_mapping_is_read_only() -> None:
+    """A model publishes immutable declarations as well as an immutable graph."""
+    model = _declaration_model(edges={"work": {"perceived": 0}}, enable_jit=False)
+    with pytest.raises(TypeError):
+        cast("dict[str, dict[str, int]]", model.edges)["work"]["realized"] = 0
