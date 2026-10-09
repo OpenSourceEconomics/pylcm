@@ -37,7 +37,10 @@ from lcm import (
     InvariantBlockSchedule,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LogSpacedGrid,
     Model,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
     Regime,
     StochasticTransition,
     Transition,
@@ -45,6 +48,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
+from lcm.grids import GridBreakpoint
 from lcm.typing import DiscreteState, ScalarInt
 from tests.conftest import assert_agrees_to_ulp, assert_general_values_agree
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
@@ -100,7 +104,35 @@ def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_i
     )
 
 
-def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
+def _regime(
+    *,
+    source: int,
+    identity: bool,
+    fixed_type: bool = False,
+    bounds: tuple[float, float] = (-4, 19),
+) -> Regime:
+    """A living regime whose savings land inside the closed asset `bounds`.
+
+    Next-period assets mirror current assets around the middle of `bounds`, so
+    every grid node on `bounds` keeps a feasible decision.
+    """
+    low, high = bounds
+    shift = low + high - 15
+    landing = _fixed_type_landing if fixed_type else _landing
+    if shift:
+        base = landing
+
+        def landing(*, assets, decision, pref_type, spousal_income):
+            return shift + base(
+                assets=assets,
+                decision=decision,
+                pref_type=pref_type,
+                spousal_income=spousal_income,
+            )
+
+        if fixed_type:
+            landing.__annotations__["pref_type"] = DiscreteState
+
     def utility(*, assets, decision, pref_type, spousal_income):
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
@@ -121,9 +153,9 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": utility,
-            "landing": _fixed_type_landing if fixed_type else _landing,
+            "landing": landing,
         },
-        constraints={"feasible": lambda landing: (landing >= -4) & (landing <= 19)},
+        constraints={"feasible": lambda landing: (landing >= low) & (landing <= high)},
         state_transitions={
             "assets": fixed_transition("assets")
             if identity
@@ -144,6 +176,7 @@ def _model(
     budget: int | Literal["device"] | None = 2**30,
     identity: bool = False,
     grid: Any = None,
+    bounds: tuple[float, float] = (-4, 19),
     extra_shard: bool = False,
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
@@ -151,8 +184,12 @@ def _model(
 ) -> Model:
     return Model(
         regimes={
-            "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
-            "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
+            "r0": _regime(
+                source=0, identity=identity, fixed_type=fixed_type, bounds=bounds
+            ),
+            "r1": _regime(
+                source=1, identity=identity, fixed_type=fixed_type, bounds=bounds
+            ),
             "terminal": Regime(
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
@@ -688,19 +725,50 @@ def test_unsupported_continuous_sharding_refuses_at_construction(
         )
 
 
-def test_nonuniform_fixed_grid_shards_solve_and_simulate_like_one_device() -> None:
-    """Sharding a non-uniform fixed-point grid partitions the solve without changing
-    it: values, policies and the simulated panel agree with the one-device solve.
+_NONUNIFORM_GRIDS = {
+    # Dense near the borrowing limit, sparse at the top, like a sinh asset grid.
+    "fixed_irregular": IrregSpacedGrid(
+        points=tuple((-4 + 23 * np.linspace(0, 1, 24) ** 2).tolist())
+    ),
+    # Log grids need positive assets, so their models save inside [1, 19].
+    "log": LogSpacedGrid(start=1, stop=19, n_points=24),
+    "piecewise_linear": PiecewiseLinSpacedGrid(
+        start=-4,
+        stop=19,
+        breakpoints=(GridBreakpoint(value=2.0),),
+        points_per_segment=(12, 12),
+    ),
+    "piecewise_log": PiecewiseLogSpacedGrid(
+        start=1,
+        stop=19,
+        breakpoints=(GridBreakpoint(value=4.0),),
+        points_per_segment=(12, 12),
+    ),
+}
+
+
+@pytest.mark.parametrize("grid", sorted(_NONUNIFORM_GRIDS))
+def test_nonuniform_fixed_grid_shards_solve_and_simulate_like_one_device(
+    *, grid: str
+) -> None:
+    """Sharding a grid with fixed non-uniform nodes partitions the solve without
+    changing it: values and the simulated panel agree with the one-device solve.
     """
     _require_eight()
     params = {"discount_factor": 0.5}
-    # Dense near the borrowing limit, sparse at the top, like a sinh asset grid.
-    points = tuple((-4 + 23 * np.linspace(0, 1, 24) ** 2).tolist())
-    reference_model = _model(
-        devices=(0,), sharded=False, grid=IrregSpacedGrid(points=points)
-    )
-    model = _model(devices=tuple(range(8)), grid=IrregSpacedGrid(points=points))
+    assets = _NONUNIFORM_GRIDS[grid]
+    points = np.asarray(assets.to_jax()).tolist()
+    bounds = (points[0], points[-1])
+    reference_model = _model(devices=(0,), sharded=False, grid=assets, bounds=bounds)
+    model = _model(devices=tuple(range(8)), grid=assets, bounds=bounds)
     reference_solution = reference_model.solve(params=params, log_level="off")
+    # Every node keeps a feasible decision whose landing lies on the grid, so a
+    # non-finite value would be a defect, not an infeasible state.
+    assert all(
+        np.isfinite(value).all()
+        for arrays in reference_solution.values.values()
+        for value in arrays.values()
+    )
     solution = model.solve(params=params, log_level="off")
     for period, arrays in reference_solution.values.items():
         for regime, expected in arrays.items():
