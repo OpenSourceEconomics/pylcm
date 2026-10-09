@@ -43,7 +43,9 @@ from _lcm.grids import (
     Grid,
     IrregSpacedGrid,
     LinSpacedGrid,
+    LogSpacedGrid,
     PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
 )
 from _lcm.model_graph import (
     ModelGraph,
@@ -4479,8 +4481,8 @@ def _validate_sharded_state_capability(
         return None
     message = (
         f"ExecutionConfig.sharded_states {sorted(sharded_states)!r}: "
-        "Continuous sharding requires one concrete model-level LinSpacedGrid or "
-        "fixed-point IrregSpacedGrid as "
+        "Continuous sharding requires one model-level continuous grid with fixed "
+        "nodes (linear, log, piecewise or fixed-point irregular) as "
         "the sole sharded state, retained in every regime, with singleton hard-max "
         "GridSearch. Unsharded states may include one static piecewise-linear "
         "coordinate, concrete discrete grids, fixed unfolded Gauss-Hermite "
@@ -4514,15 +4516,24 @@ def _validate_sharded_state_capability(
     return name
 
 
+_FIXED_NODE_GRID_TYPES = (
+    LinSpacedGrid,
+    LogSpacedGrid,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+)
+
+
 def _is_concrete_sharded_grid(grid: object) -> bool:
     """Whether a continuous grid's nodes are fixed when the model is built.
 
     Every device reads the next-period values through the full grid, so the
-    spacing of the nodes is irrelevant; points supplied at runtime are not.
+    spacing of the nodes does not matter. Only an irregular grid whose points
+    are supplied at runtime is refused.
     """
-    if type(grid) is LinSpacedGrid:
-        return True
-    return type(grid) is IrregSpacedGrid and not grid.pass_points_at_runtime
+    if type(grid) is IrregSpacedGrid:
+        return not grid.pass_points_at_runtime
+    return type(grid) in _FIXED_NODE_GRID_TYPES
 
 
 def _supports_continuous_sharding_vocabulary(
