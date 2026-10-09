@@ -5,6 +5,8 @@ parity test actually calls and requires it to be rejected, so a comparator that
 admits the defect is caught here rather than by a silently green parity test.
 """
 
+from collections.abc import Iterator
+from functools import partial
 from itertools import product
 from types import SimpleNamespace
 
@@ -123,16 +125,23 @@ def test_value_gate_rejects_the_recorded_cancellation_pair() -> None:
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_axis_width_gate_never_borrows_another_elements_magnitude(
-    *, dtype: type[np.floating]
+    *, dtype: type[np.floating], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The axis-width operand bound holds each element to its own operands.
+    """The real axis-width parity test holds an ordinary leaf to its own steps.
 
-    Each element is its own sole operand here, so its bound is its own eight
-    steps however large another element of the leaf is. At scale / 64, eight
-    scale spacings are 512 of the small value's own steps. The bound must
-    accept eight, and reject nine, sixteen and 512 regardless of sign, scale,
-    element order or leaf shape.
+    No solve runs: two well-formed solution views supply the exact result leaves
+    at a leaf other than the cancellation leaf. At scale / 64, eight scale
+    spacings are 512 of the small value's own steps. The real test must accept
+    eight, and reject nine, sixteen and 512 regardless of sign, scale, element
+    order or leaf shape.
     """
+
+    def supply_solution(
+        *, config: object, solutions: Iterator[SimpleNamespace]
+    ) -> tuple[dict[object, object], SimpleNamespace]:
+        del config
+        return {}, next(solutions)
+
     for sign, exponent, steps, reverse, shape in product(
         (-1, 1),
         (-16, 0, 16),
@@ -148,69 +157,21 @@ def test_axis_width_gate_never_borrows_another_elements_magnitude(
         if reverse:
             expected, got = expected[::-1], got[::-1]
         expected, got = expected.reshape(shape), got.reshape(shape)
+        solutions = iter(
+            SimpleNamespace(_engine_view=SimpleNamespace(values={1: {"work": leaf}}))
+            for leaf in (expected, got)
+        )
 
-        def check(*, got: np.ndarray, expected: np.ndarray) -> None:
-            axis_parity._assert_within_operand_rounding_bound(
-                got=got,
-                expected=expected,
-                flow=expected.astype(np.float64),
-                continuation=np.zeros(expected.shape),
-                n_ulp=8,
-                err_msg="",
-            )
-
+        monkeypatch.setattr(
+            axis_parity,
+            "_solve_and_collect_widths",
+            partial(supply_solution, solutions=solutions),
+        )
         if steps <= 8:
-            check(got=got, expected=expected)
+            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
         else:
             with pytest.raises(AssertionError):
-                check(got=got, expected=expected)
-
-
-@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["fp32", "fp64"])
-@pytest.mark.parametrize(
-    ("steps", "accepted"),
-    [
-        pytest.param(8, True, id="eight-accepted"),
-        pytest.param(9, False, id="nine-rejected"),
-        pytest.param(12, False, id="twelve-rejected"),
-        pytest.param(13, False, id="thirteen-rejected"),
-    ],
-)
-def test_axis_width_gate_holds_an_ordinary_leaf_to_eight_of_its_own_steps(
-    *,
-    dtype: type[np.floating],
-    steps: int,
-    accepted: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An ordinary value may move eight of its own steps, never nine.
-
-    The leaf `(1, "work")` holds `3/2`, the exact sum of a flow of `1` and a
-    continuation of `1/2`. Eight spacings of each operand are twelve steps of
-    the value, so an operand-rounding allowance would admit nine and twelve
-    steps; the real parity test must not.
-    """
-    reference = np.asarray([1.5], dtype=dtype)
-    actual = reference.copy()
-    for _ in range(steps):
-        actual = np.nextafter(actual, np.asarray(np.inf, dtype=dtype))
-    solutions = iter(
-        SimpleNamespace(_engine_view=SimpleNamespace(values={1: {"work": leaf}}))
-        for leaf in (reference, actual)
-    )
-    monkeypatch.setattr(
-        axis_parity, "_solve_and_collect_widths", lambda **_: ({}, next(solutions))
-    )
-    monkeypatch.setattr(
-        axis_parity,
-        "_bellman_operands",
-        lambda **_: (np.asarray([1.0]), np.asarray([0.5])),
-    )
-    if accepted:
-        axis_parity.test_a_per_regime_width_preserves_the_solved_values()
-    else:
-        with pytest.raises(AssertionError):
-            axis_parity.test_a_per_regime_width_preserves_the_solved_values()
+                axis_parity.test_a_per_regime_width_preserves_the_solved_values()
 
 
 @pytest.mark.parametrize(("steps", "accepted"), [(16, True), (512, False)])
