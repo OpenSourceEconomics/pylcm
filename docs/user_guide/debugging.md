@@ -413,10 +413,13 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
   --- a malformed boundary or piece, hidden branching caught by the smoothness gate, or
   a declaration outside the supported case-piece scope.
 
+- **`ModelIdentityError`**: A durable model has no binding seal, or an ephemeral model
+  is used outside its originating process. Build a new durable model, or restore the
+  ephemeral model and solve it again in the current process.
+
 - **`ModelSealError`**: A name one of the model's callables reads was rebound after the
-  model was built. The model captures its callables together with the globals and
-  closure cells they read, and refuses to solve or simulate against a rebinding rather
-  than produce a result its durable identity would accept for the wrong model.
+  model was built. This subclass of `ModelIdentityError` names the changed binding.
+  Build a new model and solve it again after changing captured code or data.
 
 ### Parameters, inputs, and results
 
@@ -437,16 +440,17 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 
 - **`UnsupportedOperationError`**: A valid model requests a runtime operation pylcm does
   not support, such as simulating a regime whose solver declares its decision
-  irreproducible.
+  irreproducible, or public period capture or replay with an ephemeral model.
 
 ### Planning and execution
 
 - **`ExecutionPlanningError`**: The requested execution policy cannot produce a valid
-  plan. This covers every device-memory budget, axis-width, device-selection and
-  sharding refusal, so it is the exception a tuning run meets most often. A budget
-  refusal names the effective budget and where it came from --- the request, the request
-  capped by the device headroom, or the device default --- and lists what to change to
-  fit; see [Performance and memory tuning](tuning.md#set-a-device-memory-budget).
+  plan. Component planning, workers, and collection raise it for an ephemeral model.
+  This covers every device-memory budget, axis-width, device-selection and sharding
+  refusal, so it is the exception a tuning run meets most often. A budget refusal names
+  the effective budget and its source: the request, the request capped by the device
+  headroom, or the device default. It lists what to change to fit; see
+  [Performance and memory tuning](tuning.md#set-a-device-memory-budget).
 
 - **`FunctionDispatchError`**: A function cannot be dispatched over the variables it is
   asked to map --- a positional-only parameter, or a requested variable absent from the

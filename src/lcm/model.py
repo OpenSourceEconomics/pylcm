@@ -252,6 +252,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    ModelIdentityError,
     ModelInitializationError,
     UnsupportedOperationError,
 )
@@ -643,6 +644,7 @@ class Model:
                 regimes.
             durable_identity: Whether to require a persistable semantic identity.
                 Set to `False` for same-runtime, same-model solution use.
+                Component jobs and public period capture/replay require `True`.
             initial_nodes: The admissible starting age-regime pairs, as a
                 nonempty sequence or set of `(age, regime)` pairs. A mapping
                 from age selectors to regime names also selects admissible
@@ -1106,12 +1108,23 @@ class Model:
         if self.durable_identity:
             bindings = self._sealed_bindings
             if bindings is None:
-                raise RuntimeError("A durable model has no binding seal.")
+                raise ModelIdentityError(
+                    "A durable model has no binding seal. Build a new Model before use."
+                )
             bindings.fail_if_moved()
         elif self._identity_process_id != os.getpid():
-            raise InvalidSimulationInputError(
+            raise ModelIdentityError(
                 "An ephemeral model must be restored before use in another process."
             )
+
+    def _fail_if_ephemeral_operation(self, *, operation: str) -> None:
+        """Require durable identity for public period archives."""
+        if not self.durable_identity:
+            msg = (
+                f"Public {operation} cannot use an ephemeral model. Build the model "
+                "with durable_identity=True, or use ordinary local solve()/simulate()."
+            )
+            raise UnsupportedOperationError(msg)
 
     def __repr__(self) -> str:
         """Summarize the model; mention pruning when any regime was pruned."""
@@ -1360,13 +1373,20 @@ class Model:
             log_path: Optional directory for diagnostic snapshots.
             log_keep_n_latest: Maximum snapshots to retain on disk.
             period_capture: Optional atomic selected-period inputs and references.
-                Requires actual GPU buffer-assignment metadata before publishing
-                the selected entry; unsupported runtime metadata is refused.
+                Requires durable identity. GPU capture also requires actual
+                buffer-assignment metadata before publishing the selected entry;
+                unsupported runtime metadata is refused.
 
         Returns:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
+
+        Raises:
+            ModelIdentityError: The model's runtime identity is invalid.
+            UnsupportedOperationError: Public period capture uses an ephemeral model.
         """
+        if period_capture is not None:
+            self._fail_if_ephemeral_operation(operation="period_capture")
         self._check_identity_runtime()
         if self._solves_block_major and log_path is not None:
             msg = (
@@ -1429,13 +1449,19 @@ class Model:
     ) -> CapturedPeriodReplay:
         """Replay one captured period after binding it to this fresh public model.
 
+        Public replay requires durable identity.
         Model, grids, parameters, source, runtime and execution identities must
         agree before compilation. Recorded layouts, widths, optimized HLO and
         compiler admission must agree before dispatch. An entry-only capture
         requires `require_reference=False` and cannot establish parity.
         GPU replay requires actual serialized buffer-assignment metadata.
         Missing runtime metadata is refused before selected-period dispatch.
+
+        Raises:
+            ModelIdentityError: The model's runtime identity is invalid.
+            UnsupportedOperationError: The model has ephemeral identity.
         """
+        self._fail_if_ephemeral_operation(operation="replay_period")
         self._check_identity_runtime()
         flat_params = self._process_params(params)
         return replay_public_period(
@@ -3993,6 +4019,8 @@ class Model:
                 age-specialized function while subjects start away from the
                 regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
+            ModelIdentityError: If the durable seal is absent or the ephemeral model
+                belongs to another process.
 
         """
         canonical, flat_params = self._canonical_feasibility_inputs(
@@ -4041,6 +4069,8 @@ class Model:
                 age-specialized function while subjects start away from the
                 regime's representative age.
             ModelSealError: If a binding captured at `Model(...)` has moved.
+            ModelIdentityError: If the durable seal is absent or the ephemeral model
+                belongs to another process.
 
         """
         canonical, flat_params = self._canonical_feasibility_inputs(

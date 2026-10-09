@@ -14,6 +14,12 @@ The functions manage the plan and results. Your launcher starts the worker proce
 supplies their job indices, waits for them to succeed, and starts the collector. They do
 not allocate nodes or create a distributed JAX runtime.
 
+Planning, running, and collecting component jobs require
+`Model(..., durable_identity=True)`, the default. These operations raise
+`ExecutionPlanningError` for an ephemeral model before accessing campaign files. Use
+ordinary local `solve()` and `simulate()` with an ephemeral model, or build a durable
+model for a component campaign.
+
 ## Build the same block-major model in every process
 
 Continue the model definition in
