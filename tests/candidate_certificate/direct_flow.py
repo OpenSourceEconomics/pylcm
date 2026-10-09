@@ -402,7 +402,7 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "e678e3aa5bdfd0ce21697b3e36f298aafb8bb159db0d0f5065f6b74506c80e9d",
     SIMULATION_RUNTIME_SOURCE: "9341f2f4a9e387d73c10a442c9ab5677bcaeacc586a2f2b34c94dff8f5e48411",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "94410a462b896992ae1c842fc2e1ffff00c98c33f383398024bccf80fa783f9c",
+    ARGMAX_SOURCE: "681a7fe6d5a31497945ade5190da4134abd344d92bf5905345f5547d296c693a",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "00b45b53cc1dc7d4969a1c568971dd8e40d49fc6465995ddbb1de4c168e7b688",
     PROCESSING_SOURCE: "b41aeb3cd6a76565b9a072c43954519e476248720e18faf91857eb8f45b7742f",
@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "e4817cfc29f7125b9a0ddfb50a5228f293880f86de63d4b3db9a27a64a798282",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "03fa209a32de08659bdc160f4c9485e49e1762ee86c9b575a03d72598b51b527",
+    MODEL_SOURCE: "537bcac83f5960df1176e585ca77ad1aa342d1c4ba06e8bb27cc92c8738c007a",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "8a3d59d953a707276ed65bad005b85ab8738b38017197967afee2448a5bf4667",
     PERIOD_REPLAY_SOURCE: "4e9a27efa20e18ce0529ce4b7e6cff0e5d8ffb4baeb08e25d8fb898e8d78adaf",
@@ -451,7 +451,7 @@ _SOURCE_SEALS = {
     VARIABLES_SOURCE: "56717d47393bfe3f554dffe269965366491ba0e9e958250f55ad83ccc114e139",
     PARAMS_REGIME_TEMPLATE_SOURCE: "68e4e9d4076b736c956e1775cd1f230dc21d2f07bd99e1cfbd3c15d87e933dcb",
     PARAMS_PROCESSING_SOURCE: "365fcc4bf215b1c5d69aa5b77f04fd7ae6f80add2974f8235374da4f39f634db",
-    DTYPES_SOURCE: "1d2a7db953deb65f45e77923f0104faa11298c01f9e05cb2e623404b84ae7bd1",
+    DTYPES_SOURCE: "8d0f33deb70c05571c6b62bd85987175ff29f9e05d2a24e56213f540ff083ef1",
     NAMESPACE_SOURCE: "8d24bf94013b056001d150ced0c66c24e8534c1573972beefe63eeeb4ba9333b",
     PANDAS_UTILS_SOURCE: "af64796c54b7a2bd2ab9760a2cc541c5f0cb5f5488e94dfa850bf26c2ca89152",
     MODEL_PROCESSING_SOURCE: "022c2d21310ba5c16e634c7a80a86dae00e36fef6681d1060381ed59cc1f7f53",
@@ -495,7 +495,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {
             "CanonicalArrayWriter.__call__": "909bf3b8d82f3612f5246d4c2a152acd55505894f856567f0b1bcbaa343a390b",
             "canonical_float_dtype": "ff7daf524547e5f62b1d854c3a2a606c3b5903f3a436eb4e8a087a0fda2ca3fe",
-            "safe_to_int_dtype": "86a320656f3eeda21585f62873741bcff8d92b336364b48c920261c503a0d152",
+            "safe_to_int_dtype": "74788b1b7b4e09e53cade8a700ab096ca18d3722697dbe34a1ac64c2c0d2ccc5",
             "safe_to_float_dtype": "9ccfddda18e625106d7d9cd4be5fda4319583cb9e665efc24b16bdd2dc169a07",
         },
     ),
@@ -1002,7 +1002,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "572034eaf6aa996e09d6095b914ad94b7034a3f880d32c276d15c3b5f705f926",
+        "2fb0a897cd0776bf79b2e28743a57bfcef17f440b8918a70fe78d3258248bb84",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
@@ -6404,14 +6404,16 @@ return _paired_max(values, ids, initial_arr)
 """
     expected_pair_jvp = r"""values, ids, initial = primals
 values = jax.lax.optimization_barrier(values)
-values_dot = tangents[0]
+values_dot, _, initial_dot = tangents
 best, best_id = _paired_max(values, ids, initial)
 attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
 count = jnp.sum(attains, axis=-1)
+elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
+initial_dot = jnp.broadcast_to(initial_dot, best.shape)
 best_dot = jnp.where(
     count > 0,
-    jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1),
-    jnp.zeros_like(best),
+    jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+    initial_dot,
 )
 return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
 """
@@ -6448,8 +6450,8 @@ return a.transpose((*front_axes, *axes))
         node=pair_jvp, names=("primals", "tangents")
     ) or not _body_matches(node=pair_jvp, expected_source=expected_pair_jvp):
         errors.append(
-            "argmax reducer: the paired max's tangent is not the tie-averaged "
-            "max tangent"
+            "argmax reducer: the paired max's tangent is not `jnp.max`'s "
+            "tie-averaged tangent"
         )
     tangent_wiring = [
         statement

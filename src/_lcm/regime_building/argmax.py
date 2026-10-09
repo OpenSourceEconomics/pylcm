@@ -99,9 +99,14 @@ def max_and_smallest_id(
     no value equal to the max. When `initial` exceeds every value the id is
     `NO_ID`; mask an element out by giving it the lowest value and `NO_ID`.
 
-    A floating max differentiates like `jnp.max`: its tangent is the average of
-    the tangents of the elements equal to it, and zero when `initial` exceeds
-    every element. The id carries no derivative.
+    A floating max differentiates like `jnp.max` with the same `initial`:
+    - no tie with `initial`: the average of the tangents of the elements equal
+      to the max;
+    - `initial` equal to the max: half that average plus half the tangent of
+      `initial`;
+    - `initial` above every element: the tangent of `initial`.
+
+    The id carries no derivative.
     """
     initial_arr = jnp.asarray(initial, dtype=values.dtype)
     if jnp.issubdtype(values.dtype, jnp.floating):
@@ -127,27 +132,29 @@ def _paired_max_jvp(
     primals: tuple[FloatND, IntND, FloatND],
     tangents: tuple[FloatND, jax.Array | np.ndarray, FloatND],
 ) -> tuple[tuple[FloatND, IntND], tuple[FloatND, np.ndarray]]:
-    """Average the tangents of the elements equal to the max.
+    """Average the tangents of the elements equal to the max, as `jnp.max` does.
 
     The id's tangent, in and out, is JAX's `float0` zero tangent of an integer.
 
-    The tangent is linear in the value tangent with weights fixed by the
-    primals, so reverse mode transposes it. `{-0, +0}` compare equal, so a
-    signed-zero tie averages both elements whatever sign the max carries. The
-    max and the equality test read one materialized copy of the values: a
-    producer the compiler evaluated once per use could round differently and
-    leave no element equal to the max.
+    The tangent is linear in the value and `initial` tangents with weights
+    fixed by the primals, so reverse mode transposes it. `{-0, +0}` compare
+    equal, so a signed-zero tie averages both elements whatever sign the max
+    carries. The max and the equality test read one materialized copy of the
+    values: a producer the compiler evaluated once per use could round
+    differently and leave no element equal to the max.
     """
     values, ids, initial = primals
     values = jax.lax.optimization_barrier(values)
-    values_dot = tangents[0]
+    values_dot, _, initial_dot = tangents
     best, best_id = _paired_max(values, ids, initial)
     attains = (values == best[..., jnp.newaxis]).astype(values.dtype)
     count = jnp.sum(attains, axis=-1)
+    elements_dot = jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1)
+    initial_dot = jnp.broadcast_to(initial_dot, best.shape)
     best_dot = jnp.where(
         count > 0,
-        jnp.sum(values_dot * attains, axis=-1) / jnp.maximum(count, 1),
-        jnp.zeros_like(best),
+        jnp.where(initial == best, (elements_dot + initial_dot) / 2, elements_dot),
+        initial_dot,
     )
     return (best, best_id), (best_dot, np.zeros(best_id.shape, dtype=float0))
 

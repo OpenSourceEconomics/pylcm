@@ -114,3 +114,16 @@ def test_safe_to_float_dtype_no_overflow_check_when_upcasting(x64_enabled: None)
     arr = jnp.asarray([0.1, 0.2], dtype=jnp.float32)
     out = safe_to_float_dtype(value=arr, name="x")
     assert out.dtype == jnp.float64
+
+
+@pytest.mark.parametrize("value", [np.asarray([0.5, 1.5]), np.asarray([1.0, 2.25])])
+def test_safe_to_int_dtype_raises_on_fractional_values(value: np.ndarray):
+    """A float array with a non-integral element raises `ValueError` naming the leaf."""
+    with pytest.raises(ValueError, match="wealth"):
+        safe_to_int_dtype(value=value, name="wealth")
+
+
+def test_safe_to_int_dtype_takes_integral_floats():
+    """A float array of whole numbers converts to the same `int32` codes."""
+    out = safe_to_int_dtype(value=np.asarray([0.0, 2.0]), name="x")
+    assert out.tolist() == [0, 2]
