@@ -96,7 +96,7 @@ def test_initial_nodes_are_exact_on_fractional_clocks(
 ) -> None:
     """Starts land on the exact grid coordinates the selector names."""
     model = _model(ages=ages, initial_nodes=initial_nodes)
-    assert model.initial_nodes == frozenset((age, "working") for age in expected)
+    assert model.graph.initial_nodes == frozenset((age, "working") for age in expected)
 
 
 @pytest.mark.parametrize(

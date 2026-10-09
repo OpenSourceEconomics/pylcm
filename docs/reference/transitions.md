@@ -31,6 +31,12 @@ errors.
 
 ## Regime transitions and graph support
 
+`Model` snapshots its edge mappings, and `Transition` and `ByAge` snapshot their nested
+law mappings, including phase-specific mappings. These published mappings are read-only.
+Reusing a source dictionary for another model cannot change an existing model's
+declarations. Callables keep their identity; their captured data must remain unchanged
+while the model is in use.
+
 `Model(edges=...)` declares every regime transition, structure and law; a `Regime`
 declares none. A source maps to either
 

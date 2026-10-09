@@ -15,6 +15,7 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts         |
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
