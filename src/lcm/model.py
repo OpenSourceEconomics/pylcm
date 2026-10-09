@@ -3713,7 +3713,7 @@ class Model:
                         initial_conditions=states, multiple=alignment
                     )
                     allocations.publish(stage="initial", tree=states)
-            lookup = self._lookup_policy(
+            return self._lookup_policy(
                 params=params,
                 solution=solution,
                 period=period,
@@ -3722,16 +3722,11 @@ class Model:
                 action_grids=action_grids,
                 allocations=allocations,
                 return_action_values=return_action_values,
-            )
-            if not states or len(next(iter(states.values()))) == n_rows:
-                return lookup
-            return PolicyLookup(
-                actions=MappingProxyType(
-                    {name: each[:n_rows] for name, each in lookup.actions.items()}
+                n_query_rows=(
+                    n_rows
+                    if states and len(next(iter(states.values()))) != n_rows
+                    else None
                 ),
-                value=lookup.value[:n_rows],
-                Q=None if lookup.Q is None else lookup.Q[:n_rows],
-                F=None if lookup.F is None else lookup.F[:n_rows],
             )
         finally:
             if allocations is not None:
@@ -3748,13 +3743,14 @@ class Model:
         action_grids: Mapping[ActionName, jax.Array] | None,
         allocations: SimulationEntryAllocations | None,
         return_action_values: bool,
+        n_query_rows: int | None,
     ) -> PolicyLookup:
         """Run a validated lookup under the call's entry owner, if budgeted.
 
         A budgeted call admits parameter conversion, process grids, solution
-        materialization, the decision program and action decoding against the
-        original inputs, every retained owner of `solution` and the call's own
-        arrays.
+        materialization, the decision program, action decoding and trimming the
+        padded rows to `n_query_rows` against the original inputs, every retained
+        owner of `solution` and the call's own arrays. `None` keeps every row.
         """
         regime = self._regimes[regime_name]
         flat_params = (
@@ -3930,7 +3926,13 @@ class Model:
             )
             jax.block_until_ready(actions)
             unit.close()
-        return PolicyLookup(actions=actions, value=value, Q=Q, F=F)
+        return _trim_lookup_rows(
+            lookup=PolicyLookup(actions=actions, value=value, Q=Q, F=F),
+            n_rows=n_query_rows,
+            allocations=allocations,
+            unit=unit,
+            call_roots=(states, space.states, grids, outputs),
+        )
 
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
@@ -4753,3 +4755,94 @@ def _lookup_live_footprint(
     return union_buffer_footprints(
         footprints=(allocations.snapshot(), measure_buffer_footprint(tree=call_roots))
     )
+
+
+def _trim_lookup_rows(
+    *,
+    lookup: PolicyLookup,
+    n_rows: int | None,
+    allocations: SimulationEntryAllocations | None,
+    unit: SimulationUnitExecutor | None,
+    call_roots: object,
+) -> PolicyLookup:
+    """Keep the leading `n_rows` rows of every lookup output; `None` keeps all.
+
+    A budgeted lookup admits each trimmed output before allocating it.
+    """
+    if n_rows is None:
+        return lookup
+    if allocations is None or unit is None:
+        return PolicyLookup(
+            actions=MappingProxyType(
+                {name: each[:n_rows] for name, each in lookup.actions.items()}
+            ),
+            value=lookup.value[:n_rows],
+            Q=None if lookup.Q is None else lookup.Q[:n_rows],
+            F=None if lookup.F is None else lookup.F[:n_rows],
+        )
+    return _admit_trimmed_lookup_rows(
+        lookup=lookup,
+        n_rows=n_rows,
+        allocations=allocations,
+        unit=unit,
+        call_roots=call_roots,
+    )
+
+
+def _admit_trimmed_lookup_rows(
+    *,
+    lookup: PolicyLookup,
+    n_rows: int,
+    allocations: SimulationEntryAllocations,
+    unit: SimulationUnitExecutor,
+    call_roots: object,
+) -> PolicyLookup:
+    """Trim a budgeted lookup's padded rows, admitting each trimmed output first.
+
+    The trimmed rows no longer split evenly over the subject devices, so a trimmed
+    output may be held whole on every device. Each trim is admitted in that
+    resulting layout against the entry owner's inventory, the call's arrays, the
+    still-live padded outputs and the outputs trimmed before it, and refused
+    before allocation when it does not fit the budget.
+    """
+    kept: list[jax.Array] = []
+
+    def trim(array: jax.Array) -> jax.Array:
+        result = cast(
+            "jax.Array",
+            allocations.operations.dispatch(
+                function=_leading_rows,
+                arguments={"array": array},
+                static_arguments={"n_rows": n_rows},
+                subject_arg_names=("array",),
+                devices=unit.runtime.subject_devices,
+                live_footprint=functools.partial(
+                    _lookup_live_footprint,
+                    allocations=allocations,
+                    call_roots=(
+                        call_roots,
+                        tuple(lookup.actions.values()),
+                        (lookup.value, lookup.Q, lookup.F),
+                        kept,
+                    ),
+                ),
+                budget_devices=unit.budget_devices,
+                budget_bytes=allocations.budget_bytes,
+            ),
+        )
+        kept.append(result)
+        return result
+
+    return PolicyLookup(
+        actions=MappingProxyType(
+            {name: trim(each) for name, each in lookup.actions.items()}
+        ),
+        value=trim(lookup.value),
+        Q=None if lookup.Q is None else trim(lookup.Q),
+        F=None if lookup.F is None else trim(lookup.F),
+    )
+
+
+def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
+    """Return the leading `n_rows` rows of `array`."""
+    return array[:n_rows]
