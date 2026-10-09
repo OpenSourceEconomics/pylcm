@@ -172,6 +172,38 @@ def test_managed_scalar_constant_and_result_target() -> None:
     np.testing.assert_allclose(frame["utility"], [2.0, 2.0, 8.0])
 
 
+def _flow_with_bonus(*, wage: FloatND, bonus: FloatND) -> FloatND:
+    return wage + bonus
+
+
+def _bonus(*, period: Period) -> FloatND:
+    return jnp.asarray(period, dtype=float)
+
+
+def test_temporal_function_shares_period_with_annotated_regime_function() -> None:
+    """A temporal function without `period` composes with one annotating `period`."""
+    model = lcm.Model(
+        n_periods=3,
+        regimes={
+            "work": lcm.Regime(
+                functions={
+                    "utility": lcm.time_varying_params("wage")(_flow_with_bonus),
+                    "bonus": _bonus,
+                }
+            ),
+            "done": lcm.Regime(functions={"utility": _terminal}),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "work"}),
+        edges={
+            "work": {"work": lcm.Periods(values=(0,)), "done": lcm.Periods(values=(1,))}
+        },
+        fixed_params={"discount_factor": 0.5},
+    )
+    result = model.solve(params={"wage": 2.0}, log_level="off")
+    np.testing.assert_allclose(result.values[0]["work"], 5.5)
+
+
 def test_raw_manual_period_array_is_rejected() -> None:
     with pytest.raises(lcm.exceptions.InvalidParamsError, match=r"label|TimeVarying"):
         _model(manual=True).solve(
