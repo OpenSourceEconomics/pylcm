@@ -40,9 +40,10 @@ from _lcm.execution.execution_plan import (
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid, PiecewiseLinSpacedGrid
 from _lcm.model_graph import (
     ModelGraph,
+    bind_edge_laws,
+    collect_declared_transitions,
     naming_cells_without_edges,
     prepare_graph,
-    resolve_graph_edges,
 )
 from _lcm.model_processing import (
     _validate_param_types,
@@ -55,11 +56,13 @@ from _lcm.pandas_utils import (
     has_series,
     initial_conditions_from_dataframe,
 )
+from _lcm.params.edges import regime_kernel_params
 from _lcm.params.processing import (
     broadcast_to_template,
     cast_params_to_canonical_dtypes,
     materialize_granular_transition_params,
 )
+from _lcm.params.regime_template import create_edge_vocabulary
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -102,6 +105,7 @@ from _lcm.regime_building.schedules import (
     lower_demanded_transitions,
     resolve_initial_nodes,
 )
+from _lcm.regime_law import RegimeLaws, bind_regime_law
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
@@ -222,6 +226,10 @@ from _lcm.typing import (
     RegimeNamesToIds,
     StateName,
 )
+from _lcm.user_regime_validation import (
+    fail_if_a_folded_conditioner_can_move,
+    validate_regimes,
+)
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -246,9 +254,11 @@ from lcm.exceptions import (
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
+from lcm.initial_nodes import InitialNodes, UserInitialNodes
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.lowering import LoweredPeriodCandidate, PeriodCandidate
 from lcm.period_capture import CapturedPeriodReplay, PeriodCapture
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.result import PolicyLookup, SimulationResult
 from lcm.solver_api import (
@@ -281,11 +291,17 @@ from lcm.solver_api import (
     _same_exact_artifact_contract,
 )
 from lcm.solvers import GridSearch
+from lcm.transition import (
+    ModelEdges,
+    PhaseEdges,
+    Transition,
+    snapshot_transition_containers,
+)
 from lcm.typing import (
     Bool1D,
     FloatND,
-    InitialNodes,
     IntND,
+    Phase,
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
@@ -548,8 +564,8 @@ class Model:
     reachability: ModelReachability
     """Static solution and simulation regime graphs."""
 
-    initial_nodes: frozenset[tuple[object, RegimeName]]
-    """Exact admissible starting age-regime pairs."""
+    initial_nodes: InitialNodes
+    """Immutable admissible starting nodes, keyed by exact age."""
 
     @property
     def graph(self) -> ModelGraph:
@@ -612,7 +628,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
-        initial_nodes: InitialNodes,
+        initial_nodes: UserInitialNodes,
         edges: object,
     ) -> None:
         """Initialize the Model.
@@ -620,25 +636,27 @@ class Model:
         Args:
             regimes: Mapping of regime names to user-provided `Regime`
                 instances. Stored as `self.user_regimes` after merging in
-                any model-level `derived_categoricals`, with each transition
-                kept as declared; the canonical processed form is exposed as
-                `self._regimes`.
+                any model-level `derived_categoricals`; the canonical processed
+                form is exposed as `self._regimes`.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to JIT-compile the functions of the internal
                 regimes.
-            initial_nodes: The admissible starting age-regime pairs, as a
-                nonempty sequence or set of `(age, regime)` pairs. A mapping
-                from age selectors to regime names also selects admissible
-                pairs. Published as the exact pairs in `self.initial_nodes`,
-                which this argument accepts back. Required: there is no
-                default starting universe.
+            initial_nodes: Admissible starts as `InitialNodes(by_age=...)`.
+                Legacy exact `(age, regime)` pairs and selector mappings are
+                also accepted. Published as a normalized `InitialNodes` in
+                `self.initial_nodes`, which this argument accepts back; expanded
+                pairs are in `self.graph.initial_nodes`. Required, with no default.
             edges: Mapping from source regime to destination regime to source-age
                 selector. A bare mapping broadcasts to both phases; `Phased`
                 declares perceived solve and realized simulation topology separately.
-                The edge lands at the next grid age. Stored as an immutable,
-                validated graph in `self.graph`.
+                The edge lands at the next grid age. A source with several
+                destinations at some age maps to `Transition(targets=..., law=...)`,
+                whose law chooses among them; a regime with no outgoing edges is
+                terminal. Kept as declared, laws included, in `self.edges`, which
+                this argument accepts back; stored as an immutable, validated
+                graph in `self.graph`.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with
@@ -676,6 +694,15 @@ class Model:
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        # The graph declares every regime transition: bind each source's law
+        # from its edges before anything reads the regimes.
+        self._edges = cast("ModelEdges", snapshot_transition_containers(edges))
+        laws, graph_edges = bind_edge_laws(
+            edges=self._edges, regimes=regimes, ages=ages
+        )
+        # The transitions as declared, before any age selects among them: the
+        # `edges` parameter template and its Series conversion read these.
+        self._declared_transitions = collect_declared_transitions(self._edges)
         # A Markov state that declares a fixed component is carried as two states
         # (group and position within it) before anything else reads the regimes.
         (
@@ -687,6 +714,7 @@ class Model:
             self._fixed_component_splits,
         ) = factor_fixed_components(
             regimes=regimes,
+            laws=laws,
             fixed_params=self.fixed_params,
             states=states,
             state_transitions=state_transitions,
@@ -721,23 +749,17 @@ class Model:
             StructuralBlueprintCache()
         )
 
-        # The declared starts and Model.edges provide roots and support.
-        # Numerical regime_transitions and ByAge select the available laws.
+        # The declared starts and Model.edges provide roots, support and laws.
         # One canonical coverage schedule carries the resulting solve demand
         # through pruning, validation and model-structure preparation; only
         # demanded laws are lowered to the engine's period-independent form.
         resolved_initial_nodes = resolve_initial_nodes(
             initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=ages
         )
-        graph_edges = resolve_graph_edges(edges=edges, regimes=regimes, ages=ages)
         regime_names_to_ids = {
             name: int(code)
             for name, code in get_field_names_and_values(regime_id_class).items()
         }
-        user_transitions = {
-            name: regime.regime_transitions for name, regime in regimes.items()
-        }
-
         model_slots = {
             "functions": functions,
             "constraints": constraints,
@@ -748,10 +770,18 @@ class Model:
         validate_model_slots(model_slots=model_slots)
         merged_regimes, broadcast_variables = merge_model_slots(
             user_regimes=regimes,
+            laws=laws,
             model_slots=model_slots,
         )
+        validate_regimes(regimes=merged_regimes, laws=laws)
+        # What each regime declares before demand prunes any: a declared law
+        # reads these as variables at every horizon, never as parameters, and a
+        # Series indexed by one keeps its labels.
+        declared_edge_vocabulary = create_edge_vocabulary(merged_regimes)
+        self._declared_edge_vocabulary = declared_edge_vocabulary
         prepared_graph = prepare_graph(
             regimes=merged_regimes,
+            laws=laws,
             edges=graph_edges,
             ages=ages,
             initial_nodes=resolved_initial_nodes,
@@ -760,11 +790,22 @@ class Model:
         merged_regimes, schedules = prepared_graph.regimes, prepared_graph.schedules
         self._cells_without_edges = prepared_graph.cells_without_edges
         # Lowering reads only the demanded periods, so a case no required
-        # problem selects contributes no argument, parameter or kernel.
+        # problem selects contributes no runtime argument or kernel. Its free
+        # parameters keep their slots: the `edges` template reads the
+        # declarations.
         demanded_transitions = lower_demanded_transitions(
             schedules=schedules,
             declared_transitions=prepared_graph.declarations,
             code_by_name=regime_names_to_ids,
+        )
+        laws = MappingProxyType(
+            {
+                name: bind_regime_law(
+                    transition,
+                    gated_edges=prepared_graph.laws[name].gated_edges,
+                )
+                for name, transition in demanded_transitions.items()
+            }
         )
         # A regime no subject visits owes its backward problem only, so none of
         # its simulate-side declarations is required.
@@ -773,11 +814,12 @@ class Model:
                 regime
                 if schedules.visited_periods_by_regime[name]
                 else project_onto_solve_phase(regime)
-            ).replace(regime_transitions=demanded_transitions[name])
+            )
             for name, regime in merged_regimes.items()
         }
         pruned_regimes, self.pruned_variables = prune_broadcast_variables(
             user_regimes=merged_regimes,
+            laws=laws,
             broadcast_variables=broadcast_variables,
             koopmans_aggregator=koopmans_aggregator,
             ages=ages,
@@ -785,9 +827,18 @@ class Model:
         )
         finalized_regimes = finalize_regimes(
             user_regimes=pruned_regimes,
+            laws=laws,
             derived_categoricals=derived_categoricals,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+        )
+        # Runs on the finalized regimes, since a conditioner's law may arrive as
+        # a model-level broadcast, and against the resolved graph support: the
+        # targets each source reaches after fixed-zero pruning, at the pairs the
+        # model values or visits.
+        fail_if_a_folded_conditioner_can_move(
+            user_regimes=finalized_regimes,
+            targets_by_regime=schedules.targets_by_regime,
         )
         # A process law named in `fixed_params` means exactly what the same
         # value passed to the process constructor means, so it is bound into
@@ -796,15 +847,17 @@ class Model:
         # known. What no process could take stays a runtime parameter and
         # reaches `build_regimes_and_template` unchanged.
         (
-            self._engine_user_regimes,
+            self.user_regimes,
             residual_fixed_params,
             params_consumed_by_binder,
         ) = bind_fixed_process_laws(
             user_regimes=finalized_regimes,
             fixed_params=self.fixed_params,
         )
+        validate_regimes(regimes=self.user_regimes, laws=laws)
         validate_model_inputs(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=laws,
             regime_id_class=regime_id_class,
             broadcast_variables=broadcast_variables,
             ages=self.ages,
@@ -826,19 +879,18 @@ class Model:
             device_pool_limit_bytes=visible_device_pool_limits(),
             state_names=frozenset(states)
             | frozenset(
-                name
-                for regime in self._engine_user_regimes.values()
-                for name in regime.states
+                name for regime in self.user_regimes.values() for name in regime.states
             ),
-            regime_names=frozenset(self._engine_user_regimes),
+            regime_names=frozenset(self.user_regimes),
         )
         _fail_if_a_sharded_state_is_pruned(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             pruned_variables=self.pruned_variables,
             sharded_states=self._execution.sharded_states,
         )
         continuous_sharded_state = _validate_sharded_state_capability(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=laws,
             model_states=states,
             sharded_states=self._execution.sharded_states,
         )
@@ -846,21 +898,25 @@ class Model:
             self._execution, continuous_sharded_state=continuous_sharded_state
         )
         fail_if_invariant_blocking_route_is_unsupported(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=laws,
             block_widths=self._execution.invariant_block_widths,
             sharded_states=self._execution.sharded_states,
             schedule=self._execution.invariant_block_schedule,
         )
         self._execution = _with_action_partition_ceilings(
-            execution=self._execution, user_regimes=self._engine_user_regimes
+            execution=self._execution, user_regimes=self.user_regimes, laws=laws
         )
         prepared_structure = prepare_model_structure(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=laws,
             ages=self.ages,
             active_periods_by_regime=schedules.coverage_by_regime,
             support_by_phase=schedules.support_by_phase,
             gated_source_periods=gated_source_periods(schedules=schedules),
             visited_periods_by_regime=schedules.visited_periods_by_regime,
+            declared_transitions=self._declared_transitions,
+            declared_edge_vocabulary=declared_edge_vocabulary,
         )
         self.reachability = dataclasses.replace(
             prepared_structure.reachability,
@@ -878,19 +934,12 @@ class Model:
             initial_nodes=resolved_initial_nodes,
             reachability=self.reachability,
             pruned_edges=prepared_graph.pruned_edges,
+            laws=laws,
         )
-        # Public regimes keep each transition as declared; the engine copy
-        # holds the lowered law every internal consumer reads.
-        self.user_regimes = MappingProxyType(
-            {
-                name: regime.replace(regime_transitions=user_transitions[name])
-                for name, regime in self._engine_user_regimes.items()
-            }
-        )
-        self.initial_nodes = resolved_initial_nodes
+        self.initial_nodes = InitialNodes._from_pairs(resolved_initial_nodes)  # noqa: SLF001
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
@@ -901,10 +950,11 @@ class Model:
             execution=self._execution,
         )
         self._regimes = admit_invariant_blocking(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regimes=self._regimes,
+            laws=laws,
             reachability=self.reachability,
-            initial_nodes=self.initial_nodes,
+            initial_nodes=resolved_initial_nodes,
             ages=self.ages,
             fixed_component_splits=self._fixed_component_splits,
             block_widths=self._execution.invariant_block_widths,
@@ -946,13 +996,67 @@ class Model:
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         self._solution_param_projection: SolutionParamProjection = (
             solution_param_projection(self._regimes)
         )
         self._seal()
+
+    @property
+    def edges(self) -> ModelEdges:
+        """The edges exactly as declared in `Model(edges=...)`, laws included."""
+        return self._edges
+
+    @property
+    def declared_transitions(self) -> Mapping[Phase, Mapping[RegimeName, Transition]]:
+        """Each source declared as a `Transition`, by phase and source.
+
+        - Edges declared for both phases give both phases the same `Transition`.
+        - `Phased` edges give each phase the `Transition` that phase declares.
+
+        A `Transition` declared with `targets` is returned as declared. One whose
+        law names its targets is returned with the targets derived from that law
+        and its gates in that phase, each at its exact source ages; its law and
+        gates are the declared objects. A source without a `Transition` in a
+        phase is absent from that phase. `model.graph.laws` holds each law as
+        bound to the graph.
+        """
+        edges = self._edges
+        phase_edges: dict[Phase, PhaseEdges] = (
+            {"solve": edges.solve, "simulate": edges.simulate}
+            if isinstance(edges, Phased)
+            else {"solve": edges, "simulate": edges}
+        )
+        graph_edges = {
+            "solve": self._graph.edges.solve,
+            "simulate": self._graph.edges.simulate,
+        }
+        return MappingProxyType(
+            {
+                phase: MappingProxyType(
+                    {
+                        source: (
+                            declaration
+                            if declaration.targets is not None
+                            else dataclasses.replace(
+                                declaration,
+                                targets={
+                                    target: tuple(sorted(source_ages))
+                                    for target, source_ages in graph_edges[phase][
+                                        source
+                                    ].items()
+                                },
+                            )
+                        )
+                        for source, declaration in declared.items()
+                        if isinstance(declaration, Transition)
+                    }
+                )
+                for phase, declared in phase_edges.items()
+            }
+        )
 
     @property
     def execution_devices(self) -> tuple[int, ...]:
@@ -975,7 +1079,8 @@ class Model:
             self._model_structure_fingerprint: str = fingerprint_model_structure(
                 ages=self.ages,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
+                laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 binding_recorder=recorder,
             )
@@ -997,7 +1102,7 @@ class Model:
             else ""
         )
         return (
-            f"Model(n_regimes={len(self._engine_user_regimes)}, "
+            f"Model(n_regimes={len(self.user_regimes)}, "
             f"n_periods={self.n_periods}{pruned_part})"
         )
 
@@ -1033,6 +1138,9 @@ class Model:
         callables read.
         """
         self.__dict__.update(state)
+        stored_initial_nodes = state.get("initial_nodes")
+        if isinstance(stored_initial_nodes, frozenset):
+            self.initial_nodes = InitialNodes._from_pairs(stored_initial_nodes)  # noqa: SLF001
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
         self._simulate_runtime_regimes = {}
@@ -1104,7 +1212,8 @@ class Model:
         return fingerprint_model(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
@@ -1122,7 +1231,8 @@ class Model:
         return fingerprint_model_programs(
             ages=self.ages,
             regimes=self._regimes,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
+            laws=self._graph.laws,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
@@ -1133,7 +1243,10 @@ class Model:
         """Get a human-readable params template.
 
         Return a nested dict showing which parameters each function in each
-        regime expects.
+        regime expects. The `edges` branch lists each edge parameter at its
+        declaration path, the most specific level. Any single level may supply a
+        slot instead: the declaration path, `params["edges"][source][arg]`, or
+        the model level.
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
@@ -1537,7 +1650,7 @@ class Model:
                 internal_result=internal_result,
                 retention=preparation.retention,
                 regimes=self._regimes,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 n_periods=self.n_periods,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
@@ -2147,11 +2260,11 @@ class Model:
                 f"{type(user_regime.solver).__module__}."
                 f"{type(user_regime.solver).__qualname__}"
             )
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_solver_identities = {
             regime_name: user_regime.solver.identity
-            for regime_name, user_regime in self._engine_user_regimes.items()
+            for regime_name, user_regime in self.user_regimes.items()
         }
         expected_replay_routes = {
             regime_name: _replay_route_identity(regime.simulation.replay_route)
@@ -2593,7 +2706,9 @@ class Model:
             if route is None:
                 continue
             base_state_action_space = regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=regime_name
+                ),
                 process_grid_resolver=process_grid_resolver,
             )
             for period in regime.active_periods:
@@ -2866,9 +2981,7 @@ class Model:
             if route.replay_mode is not ReplayMode.UNSUPPORTED:
                 continue
             if isinstance(route, UnsupportedReplayRoute):
-                solver_name = type(
-                    self._engine_user_regimes[regime_name].solver
-                ).__name__
+                solver_name = type(self.user_regimes[regime_name].solver).__name__
                 reasons.append(
                     f"'{regime_name}': its solver '{solver_name}' declares that its "
                     "solved decision cannot be reproduced in simulation"
@@ -3017,7 +3130,9 @@ class Model:
                 if process_grid_resolver is not None:
                     for regime_name, regime in self._regimes.items():
                         regime.solution.resolve_process_grids(
-                            regime_params=flat_params[regime_name],
+                            regime_params=regime_kernel_params(
+                                flat_params, regime_name=regime_name
+                            ),
                             process_grid_resolver=process_grid_resolver,
                         )
                     process_grid_resolver.seal()
@@ -3073,13 +3188,13 @@ class Model:
                 initial_conditions = split_initial_conditions(
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
-                    user_regimes=self._engine_user_regimes,
+                    user_regimes=self.user_regimes,
                     regime_names_to_ids=self.regime_names_to_ids,
                 )
                 if isinstance(initial_conditions, pd.DataFrame):
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
-                        user_regimes=self._engine_user_regimes,
+                        user_regimes=self.user_regimes,
                         regime_names_to_ids=self.regime_names_to_ids,
                         array_writer=entry_allocations,
                     )
@@ -3556,7 +3671,8 @@ class Model:
         if resolver is not None:
             for name, each in self._regimes.items():
                 each.solution.resolve_process_grids(
-                    regime_params=flat_params[name], process_grid_resolver=resolver
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
+                    process_grid_resolver=resolver,
                 )
             resolver.seal()
         resolved = self._resolve_solution_result(
@@ -3665,7 +3781,7 @@ class Model:
                         flat_params=flat_params,
                         period=period,
                     ),
-                    params=flat_params[regime_name],
+                    params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period),
                     age=self.ages.values[period],  # noqa: PD011
                 ),
@@ -3744,7 +3860,9 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
         states = regime.solution.state_action_space(
-            regime_params=self._process_params(params)[regime_name]
+            regime_params=regime_kernel_params(
+                self._process_params(params), regime_name=regime_name
+            )
         ).states
         if state_name not in states:
             msg = f"Regime {regime_name!r} has no state {state_name!r}; known: "
@@ -3874,13 +3992,13 @@ class Model:
         initial_conditions = split_initial_conditions(
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
-            user_regimes=self._engine_user_regimes,
+            user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         canonical = canonicalize_initial_conditions(
@@ -3964,7 +4082,9 @@ class Model:
         period_by_age: dict[object, int] = {
             age: p for p, age in enumerate(self.ages.exact_values)
         }
-        permitted = {(period_by_age[age], name) for age, name in self.initial_nodes}
+        permitted = {
+            (period_by_age[age], name) for age, name in self.graph.initial_nodes
+        }
         refused = sorted(pairs - permitted)
         if refused:
             details = "\n".join(
@@ -4054,9 +4174,12 @@ class Model:
             flat_params = convert_series_in_params(
                 flat_params=flat_params,
                 ages=self.ages,
-                user_regimes=self._engine_user_regimes,
+                user_regimes=self.user_regimes,
+                laws=self._graph.laws,
                 regime_names_to_ids=self.regime_names_to_ids,
                 array_writer=array_writer,
+                declared_transitions=self._declared_transitions,
+                declared_vocabulary=self._declared_edge_vocabulary,
             )
         if array_writer is not None:
             # The completed mapping takes ownership of any admitted Series leaves
@@ -4186,6 +4309,7 @@ def _readable_template(value: object) -> object:
 def _validate_sharded_state_capability(
     *,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     model_states: Mapping[str, object],
     sharded_states: frozenset[StateName],
 ) -> StateName | None:
@@ -4233,7 +4357,7 @@ def _validate_sharded_state_capability(
             )
             or type(regime.solver) is not GridSearch
             or regime.stakeholders is not None
-            or regime.gated_edges
+            or laws[regime_name].gated_edges
             or regime.value_constraints
             or regime.same_period_refs
             or regime.taste_shocks is not None
@@ -4303,6 +4427,7 @@ def _with_action_partition_ceilings(
     *,
     execution: ResolvedExecution,
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
 ) -> ResolvedExecution:
     """Admit an `action_partitions` request and record its width ceilings.
 
@@ -4321,6 +4446,7 @@ def _with_action_partition_ceilings(
     )
     fail_if_action_partition_route_is_unsupported(
         user_regimes=user_regimes,
+        laws=laws,
         action_partitions=execution.action_partitions,
         sharded_states=execution.sharded_states,
         continuous_sharded_state=execution.continuous_sharded_state,

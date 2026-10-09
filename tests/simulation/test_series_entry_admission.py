@@ -45,8 +45,11 @@ def test_series_uploads_use_the_entry_writer(
         pandas_utils.convert_series_in_params,
         flat_params={"working_life": {key: value}},
         user_regimes=model.user_regimes,
+        laws=model.graph.laws,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
+        declared_transitions=model._declared_transitions,
+        declared_vocabulary=model._declared_edge_vocabulary,
     )
     expected = convert()
     owner = _owner(budget=2**20 if fits else 1)

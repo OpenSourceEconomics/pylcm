@@ -28,11 +28,9 @@ import pytest
 from scipy.stats import norm
 
 from _lcm.grids import Grid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     ExecutionConfig,
     LinSpacedGrid,
     LogNormalIIDProcess,
@@ -40,14 +38,13 @@ from lcm import (
     NormalIIDProcess,
     NormalMixtureIIDProcess,
     Regime,
-    StochasticTransition,
+    Transition,
     UniformIIDProcess,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -66,14 +63,6 @@ def _shock_utility(shock: ScalarFloat) -> FloatND:
 
 def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
     return shock**2
-
-
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
-def _target_id() -> ScalarInt:
-    return RegimeId.target
 
 
 def _gauss_hermite(n_points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -115,23 +104,16 @@ def _build_model(
     *,
     process: Grid,
     target_utility: Callable[..., FloatND],
-    coarse: bool,
     enable_jit: bool,
 ) -> Model:
     """Build a source whose declared target's only state is `process`."""
-    transition = (
-        _SupportedDeterministicTransition(func=_target_id, targets=("target",))
-        if coarse
-        else {"target": StochasticTransition(func=_one_probability)}
-    )
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions=transition,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"shock": process},
                 functions={"utility": target_utility},
             ),
@@ -150,11 +132,9 @@ def _source_value(*, model: Model, params: dict) -> float:
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
 
 
-@pytest.mark.parametrize("coarse", [False, True], ids=["granular", "coarse"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
     *,
-    coarse: bool,
     enable_jit: bool,
 ) -> None:
     """`E[shock**2]` is the variance, not the unweighted mean of the squared nodes.
@@ -169,7 +149,6 @@ def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
     model = _build_model(
         process=NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0),
         target_utility=_squared_shock_utility,
-        coarse=coarse,
         enable_jit=enable_jit,
     )
     got = _source_value(
@@ -178,7 +157,6 @@ def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },
@@ -198,7 +176,6 @@ def test_lognormal_gauss_hermite_entry_weights_an_asymmetric_law() -> None:
     model = _build_model(
         process=LogNormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0),
         target_utility=_shock_utility,
-        coarse=False,
         enable_jit=False,
     )
     got = _source_value(
@@ -207,7 +184,6 @@ def test_lognormal_gauss_hermite_entry_weights_an_asymmetric_law() -> None:
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },
@@ -234,7 +210,6 @@ def test_binned_normal_entry_weights_a_nonlinear_payoff() -> None:
             n_points=5, gauss_hermite=False, mu=-0.2, sigma=0.8, n_std=2.5
         ),
         target_utility=_squared_shock_utility,
-        coarse=False,
         enable_jit=False,
     )
     got = _source_value(
@@ -243,7 +218,6 @@ def test_binned_normal_entry_weights_a_nonlinear_payoff() -> None:
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },
@@ -284,7 +258,6 @@ def test_normal_mixture_entry_weights_a_bimodal_law() -> None:
             sigma2=sigma2,
         ),
         target_utility=_squared_shock_utility,
-        coarse=False,
         enable_jit=False,
     )
     got = _source_value(
@@ -293,7 +266,6 @@ def test_normal_mixture_entry_weights_a_bimodal_law() -> None:
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },
@@ -310,7 +282,6 @@ def test_a_uniform_law_prices_identically_either_way() -> None:
     model = _build_model(
         process=UniformIIDProcess(n_points=4, start=0.0, stop=3.0),
         target_utility=_shock_utility,
-        coarse=True,
         enable_jit=False,
     )
     got = _source_value(
@@ -319,7 +290,6 @@ def test_a_uniform_law_prices_identically_either_way() -> None:
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },
@@ -340,12 +310,10 @@ def test_the_entry_law_decides_the_action() -> None:
         return 1.5 + 0.0 * wealth
 
     stay = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
         functions={"utility": _stay_utility},
     )
     enter = Regime(
-        regime_transitions=None,
         states={
             "shock": NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0)
         },
@@ -361,16 +329,19 @@ def test_the_entry_law_decides_the_action() -> None:
     def _choose(go: ScalarInt) -> ScalarInt:
         return jnp.where(go == 1, _ThreeRegimeId.enter, _ThreeRegimeId.stay)
 
+    source_law = DeterministicTransition(func=_choose)
     source = Regime(
-        regime_transitions=_SupportedDeterministicTransition(
-            func=_choose, targets=("stay", "enter")
-        ),
         actions={"go": LinSpacedGrid(start=0, stop=1, n_points=2)},
         state_transitions={"wealth": {"stay": lambda: jnp.asarray(1.0)}},
         functions={"utility": _zero_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"source": source, "stay": stay, "enter": enter},
+        edges={
+            "source": Transition(
+                targets={"stay": (20, 21), "enter": (20, 21)}, law=source_law
+            )
+        },
         ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=_ThreeRegimeId,
         enable_jit=False,
@@ -384,7 +355,6 @@ def test_the_entry_law_decides_the_action() -> None:
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
                 "next_wealth": {},
-                "next_regime": {},
             },
             "stay": {"utility": {}},
             "enter": {"utility": {}},
@@ -407,7 +377,6 @@ def test_a_law_supplied_at_runtime_cannot_be_entered() -> None:
         _build_model(
             process=NormalIIDProcess(n_points=3, gauss_hermite=True),
             target_utility=_shock_utility,
-            coarse=True,
             enable_jit=False,
         )
 
@@ -422,14 +391,12 @@ def test_entry_draws_come_from_the_process_law_not_from_its_solver_nodes() -> No
     model = _build_model(
         process=UniformIIDProcess(n_points=4, start=0.0, stop=3.0),
         target_utility=_shock_utility,
-        coarse=True,
         enable_jit=False,
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "next_regime": {},
         },
         "target": {"utility": {}},
     }
@@ -459,17 +426,14 @@ def _build_explicit_entry_model(
     def _enter_at() -> ScalarFloat:
         return jnp.asarray(entry_value)
 
-    return with_fixture_graph(
+    return Model(
+        edges={"source": {"target": (20, 21)}},
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions={"shock": {"target": _enter_at}},
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3,
@@ -494,7 +458,7 @@ _EXPLICIT_ENTRY_PARAMS = {
     "source": {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
-        "target": {"next_regime": {}, "next_shock": {}},
+        "target": {"next_shock": {}},
     },
     "target": {"utility": {}},
 }
@@ -559,14 +523,12 @@ def test_explicit_entry_beats_the_processs_own_law() -> None:
                 n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
             ),
             target_utility=_squared_shock_utility,
-            coarse=False,
             enable_jit=False,
         ),
         params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
-                "next_regime": {},
             },
             "target": {"utility": {}},
         },

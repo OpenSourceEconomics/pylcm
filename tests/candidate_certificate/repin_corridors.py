@@ -6,17 +6,17 @@
 per-callable AST digests and the per-module transport surfaces. Those are what
 exit code 2 reports, and this tool is the named next step for them.
 
-The contract is narrow on purpose. Every pin is attributed to the certified
-source it describes, and only pins owned by the sources named on the command
-line are rewritten:
+Every pin stands once, in the `_CORRIDOR_PINS` store of `direct_flow.py`, keyed
+by the certified source it describes; the certificate families select their
+subsets from that store by name. The contract is narrow on purpose: only pins
+owned by the sources named on the command line are rewritten, each at its own
+entry in the store.
 
 - a pin owned by a source that was **not** named must still match the tree; if
   one drifted, an unintended edit reached a certified source and the run is
   refused without writing anything;
-- a name pinned to two *different* digests, or a pin this tool cannot attribute
-  to exactly one source, is refused rather than guessed at. One source is
-  referenced by several contract dicts, so a repeated pin of the same digest is
-  one fact and is rewritten everywhere it stands;
+- a name stored twice with *different* digests is refused rather than guessed
+  at;
 - field tuples, enum bodies, binding counts and `expected_imports` entries are
   reviewable prose, so they are never rewritten. A remaining verifier error is
   reported by name for a hand edit.
@@ -25,8 +25,9 @@ Digests are recomputed with `direct_flow.py`'s own helpers, never with a local
 reimplementation, so a change to how the certificate hashes a callable cannot
 silently disagree with how this tool re-pins it.
 
-Anchors are named by search string, not by line number: line numbers in
-`direct_flow.py` move whenever a seal is added.
+A pin is identified by its source and name; the line it stands on is read
+afresh on every run, because line numbers in `direct_flow.py` move whenever a
+seal is added.
 
 Exit codes:
 
@@ -40,24 +41,19 @@ import argparse
 import ast
 import importlib.util
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import TypeGuard
 
 DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
 _DIGEST_LENGTH = 64
-_VERIFY_FUNCTION = "verify_direct_candidate_flow"
+_STORE = "_CORRIDOR_PINS"
 
 
 @dataclass(frozen=True)
 class CorridorPin:
-    """One recomputable anchor in `direct_flow.py`.
-
-    A pin is identified by the digest literal standing in the file, never by a
-    line number, because adding a seal moves every line below it.
-    """
+    """One recomputable anchor in the pin store of `direct_flow.py`."""
 
     source: str
     """Repository-relative path of the certified source this pin describes."""
@@ -70,6 +66,12 @@ class CorridorPin:
 
     pinned: str
     """The digest literal currently written in `direct_flow.py`."""
+
+    line: int
+    """1-based line of the digest literal in `direct_flow.py`, read on this run."""
+
+    column: int
+    """0-based offset of the literal's opening quote on that line."""
 
 
 @dataclass(frozen=True)
@@ -86,26 +88,62 @@ class RepinOutcome:
     """Messages naming pins this tool refuses to touch."""
 
 
-def collect_pins(*, repo_root: Path) -> tuple[CorridorPin, ...]:
-    """Return every recomputable corridor pin, attributed to its source."""
-    direct_flow_path = repo_root / DIRECT_FLOW_PATH
-    tree = ast.parse(direct_flow_path.read_text(encoding="utf-8"))
-    module = _load_direct_flow(root=repo_root)
-    sources_by_function = _sources_by_function(tree=tree)
-    pins = [*_nested_contract_pins(tree=tree, module=module)]
-    pins.extend(_bare_contract_pins(tree=tree, sources_by_function=sources_by_function))
+def collect_pins(*, tree: ast.Module, module: ModuleType) -> tuple[CorridorPin, ...]:
+    """Return every corridor pin in the store, attributed to its source.
+
+    The store is `{source: (surface or None, {qualname: digest})}`; the source key
+    is a module-level `*_SOURCE` constant, resolved against the loaded module
+    rather than guessed.
+
+    Args:
+        tree: The parsed `direct_flow.py`.
+        module: The same file, loaded.
+
+    """
+    store = _store(tree)
+    pins: list[CorridorPin] = []
+    for key_node, value_node in zip(store.keys, store.values, strict=True):
+        source = _resolve_source_key(node=key_node, module=module)
+        if source is None or not isinstance(value_node, ast.Tuple):
+            continue
+        if len(value_node.elts) != 2:
+            continue
+        surface_node, inner_node = value_node.elts
+        surface = _digest_literal(surface_node)
+        if surface is not None:
+            pins.append(
+                CorridorPin(
+                    source=source,
+                    kind="module surface",
+                    name=source,
+                    pinned=surface,
+                    line=surface_node.lineno,
+                    column=surface_node.col_offset,
+                )
+            )
+        if isinstance(inner_node, ast.Dict):
+            pins.extend(_callable_pins(source=source, contracts=inner_node))
     return tuple(pins)
 
 
 def evaluate(*, repo_root: Path, changed_sources: frozenset[str]) -> RepinOutcome:
-    """Recompute every pin and split the drift into in-scope and out-of-scope."""
+    """Recompute every pin and split the drift into in-scope and out-of-scope.
+
+    `direct_flow.py` is read once per evaluation, so the pins and the helpers
+    that recompute them come from one snapshot of the file.
+    """
     module = _load_direct_flow(root=repo_root)
+    direct_flow_tree = ast.parse(
+        (repo_root / DIRECT_FLOW_PATH).read_text(encoding="utf-8")
+    )
     trees: dict[str, ast.Module] = {}
     drifted: list[tuple[CorridorPin, str]] = []
     foreign: list[tuple[CorridorPin, str]] = []
     ambiguous: list[str] = []
 
-    for pin, conflicting in _distinct_pins(collect_pins(repo_root=repo_root)):
+    for pin, conflicting in _distinct_pins(
+        collect_pins(tree=direct_flow_tree, module=module)
+    ):
         if conflicting:
             ambiguous.append(
                 f"{pin.source}::{pin.name}: pinned to {len(conflicting)} different "
@@ -133,12 +171,10 @@ def evaluate(*, repo_root: Path, changed_sources: frozenset[str]) -> RepinOutcom
 def _distinct_pins(
     pins: Sequence[CorridorPin],
 ) -> list[tuple[CorridorPin, tuple[str, ...]]]:
-    """Collapse repeated pins of one fact; flag names pinned to two facts.
+    """Flag a name stored twice with two different digests.
 
-    One certified source is referenced by several contract dicts, so the same
-    module surface or callable digest is written more than once. Those repeats
-    denote one fact and are rewritten together. Two *different* digests under
-    one name do not, and this tool refuses them rather than picking one.
+    A dict literal can repeat a key. Two *different* digests under one name
+    denote two facts, and this tool refuses them rather than picking one.
     """
     grouped: dict[tuple[str, str, str], list[CorridorPin]] = {}
     for pin in pins:
@@ -151,12 +187,23 @@ def _distinct_pins(
 
 
 def rewrite(*, repo_root: Path, outcome: RepinOutcome) -> int:
-    """Replace each drifted digest literal in place; return the pins rewritten."""
+    """Replace each drifted digest at its own store entry; return the pins rewritten.
+
+    Two sources can pin callables with identical bodies, so one digest may stand
+    under several names. Rewriting by position touches only the drifted entry.
+    """
     path = repo_root / DIRECT_FLOW_PATH
-    text = path.read_text(encoding="utf-8")
+    lines = path.read_text(encoding="utf-8").split("\n")
     for pin, recomputed in outcome.drifted:
-        text = text.replace(pin.pinned, recomputed)
-    path.write_text(text, encoding="utf-8")
+        line = lines[pin.line - 1]
+        start = pin.column + 1
+        if line[start : start + _DIGEST_LENGTH] != pin.pinned:
+            raise ValueError(
+                f"{DIRECT_FLOW_PATH}:{pin.line}: expected {pin.pinned} for "
+                f"{pin.source}::{pin.name}"
+            )
+        lines[pin.line - 1] = line[:start] + recomputed + line[start + _DIGEST_LENGTH :]
+    path.write_text("\n".join(lines), encoding="utf-8")
     return len(outcome.drifted)
 
 
@@ -285,38 +332,22 @@ def _digest_literal(node: ast.expr | None) -> str | None:
     return value if all(c in "0123456789abcdef" for c in value) else None
 
 
-def _nested_contract_pins(*, tree: ast.Module, module: ModuleType) -> list[CorridorPin]:
-    """Return pins from `{source: (surface, {qualname: digest})}` literals.
-
-    The source key is either a path string or a module-level `*_SOURCE`
-    constant, which is resolved against the loaded module rather than guessed.
-    """
-    pins: list[CorridorPin] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Dict):
+def _store(tree: ast.Module) -> ast.Dict:
+    """Return the literal dict assigned to the pin store."""
+    for statement in tree.body:
+        if isinstance(statement, ast.AnnAssign):
+            target = statement.target
+        elif isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+        else:
             continue
-        for key_node, value_node in zip(node.keys, node.values, strict=True):
-            source = _resolve_source_key(node=key_node, module=module)
-            if source is None or not isinstance(value_node, ast.Tuple):
-                continue
-            if len(value_node.elts) != 2:
-                continue
-            surface_node, inner_node = value_node.elts
-            if not isinstance(inner_node, ast.Dict):
-                continue
-            surface = _digest_literal(surface_node)
-            if surface is None:
-                continue
-            pins.append(
-                CorridorPin(
-                    source=source,
-                    kind="module surface",
-                    name=source,
-                    pinned=surface,
-                )
-            )
-            pins.extend(_callable_pins(source=source, contracts=inner_node))
-    return pins
+        if (
+            isinstance(target, ast.Name)
+            and target.id == _STORE
+            and isinstance(statement.value, ast.Dict)
+        ):
+            return statement.value
+    raise ValueError(f"{DIRECT_FLOW_PATH} has no literal {_STORE} store")
 
 
 def _resolve_source_key(*, node: ast.expr | None, module: ModuleType) -> str | None:
@@ -342,175 +373,11 @@ def _callable_pins(*, source: str, contracts: ast.Dict) -> list[CorridorPin]:
                 kind="callable",
                 name=key_node.value,
                 pinned=digest,
+                line=value_node.lineno,
+                column=value_node.col_offset,
             )
         )
     return pins
-
-
-def _bare_contract_pins(
-    *, tree: ast.Module, sources_by_function: Mapping[str, frozenset[str]]
-) -> list[CorridorPin]:
-    """Return pins from `contracts={...}` passed straight to the digest checker.
-
-    Such a dict names no source of its own; the source is the one the enclosing
-    verifier function is applied to in `verify_direct_candidate_flow`. A
-    function applied to several sources cannot attribute its bare pins, so its
-    pins are dropped here and the enclosing source is repaired by hand.
-    """
-    pins: list[CorridorPin] = []
-    for function in ast.walk(tree):
-        if not isinstance(function, ast.FunctionDef):
-            continue
-        owned = sources_by_function.get(function.name, frozenset())
-        if len(owned) != 1:
-            continue
-        source = next(iter(owned))
-        for node in ast.walk(function):
-            if not _is_exact_callable_call(node):
-                continue
-            for keyword in node.keywords:
-                if keyword.arg == "contracts" and isinstance(keyword.value, ast.Dict):
-                    pins.extend(_callable_pins(source=source, contracts=keyword.value))
-    return pins
-
-
-def _is_exact_callable_call(node: ast.AST) -> TypeGuard[ast.Call]:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_exact_callable_errors"
-    )
-
-
-def _sources_by_function(*, tree: ast.Module) -> dict[str, frozenset[str]]:
-    """Map each verifier helper to the certified sources it is applied to.
-
-    Read off `verify_direct_candidate_flow`, which parses each certified source
-    once into `parsed` and then hands the resulting tree to its helpers. A
-    helper reached with two different trees owns two sources, and this tool
-    then declines to attribute its bare pins.
-    """
-    verify = next(
-        (
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == _VERIFY_FUNCTION
-        ),
-        None,
-    )
-    if verify is None:
-        return {}
-    constants = _module_string_constants(tree=tree)
-    bindings: dict[str, frozenset[str]] = {}
-    _bind_trees(statements=verify.body, constants=constants, bindings=bindings)
-
-    owners: dict[str, set[str]] = {}
-    for node in ast.walk(verify):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
-            continue
-        arguments = [*node.args, *(kw.value for kw in node.keywords)]
-        for argument in arguments:
-            if isinstance(argument, ast.Name) and argument.id in bindings:
-                owners.setdefault(node.func.id, set()).update(bindings[argument.id])
-    return {name: frozenset(sources) for name, sources in owners.items()}
-
-
-def _module_string_constants(*, tree: ast.Module) -> dict[str, str]:
-    constants: dict[str, str] = {}
-    for statement in tree.body:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        value = statement.value
-        if (
-            isinstance(target, ast.Name)
-            and isinstance(value, ast.Constant)
-            and isinstance(value.value, str)
-        ):
-            constants[target.id] = value.value
-    return constants
-
-
-def _bind_trees(
-    *,
-    statements: Sequence[ast.stmt],
-    constants: Mapping[str, str],
-    bindings: dict[str, frozenset[str]],
-    loop_sources: frozenset[str] | None = None,
-) -> None:
-    """Record which parsed source each local tree variable holds."""
-    for statement in statements:
-        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
-            target = statement.targets[0]
-            sources = _parsed_get_sources(
-                node=statement.value, constants=constants, loop_sources=loop_sources
-            )
-            if isinstance(target, ast.Name) and sources:
-                bindings[target.id] = bindings.get(target.id, frozenset()) | sources
-        if isinstance(statement, ast.For):
-            iterated = _iterated_sources(node=statement.iter, constants=constants)
-            _bind_trees(
-                statements=statement.body,
-                constants=constants,
-                bindings=bindings,
-                loop_sources=iterated,
-            )
-        elif isinstance(statement, ast.If):
-            for branch in (statement.body, statement.orelse):
-                _bind_trees(
-                    statements=branch,
-                    constants=constants,
-                    bindings=bindings,
-                    loop_sources=loop_sources,
-                )
-
-
-def _parsed_get_sources(
-    *,
-    node: ast.expr,
-    constants: Mapping[str, str],
-    loop_sources: frozenset[str] | None,
-) -> frozenset[str]:
-    """Return the sources a `parsed.get(...)` expression can yield."""
-    if not _is_parsed_get(node):
-        return frozenset()
-    argument = node.args[0]
-    if isinstance(argument, ast.Name):
-        if argument.id in constants:
-            return frozenset({constants[argument.id]})
-        return loop_sources or frozenset()
-    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-        return frozenset({argument.value})
-    return frozenset()
-
-
-def _is_parsed_get(node: ast.expr) -> TypeGuard[ast.Call]:
-    """Report whether `node` is a `parsed.get(<key>)` call with a key."""
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and _name_is(node=node.func.value, expected="parsed")
-        and bool(node.args)
-    )
-
-
-def _name_is(*, node: ast.expr, expected: str) -> bool:
-    return isinstance(node, ast.Name) and node.id == expected
-
-
-def _iterated_sources(
-    *, node: ast.expr, constants: Mapping[str, str]
-) -> frozenset[str]:
-    if not isinstance(node, ast.Tuple | ast.List | ast.Set):
-        return frozenset()
-    sources: set[str] = set()
-    for element in node.elts:
-        if isinstance(element, ast.Name) and element.id in constants:
-            sources.add(constants[element.id])
-        elif isinstance(element, ast.Constant) and isinstance(element.value, str):
-            sources.add(element.value)
-    return frozenset(sources)
 
 
 def _report_hand_edits(*, repo_root: Path) -> None:

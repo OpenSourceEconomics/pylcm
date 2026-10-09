@@ -217,7 +217,9 @@ def test_last_living_age_enters_dead_and_terminal_has_no_carried_pension() -> No
         RegimeId.dead
     )
     dead = build_dead_regime()
-    assert dead.regime_transitions is None
+    # A state-law check: the dead regime carries no law of motion, so no pension
+    # is carried into it. Graph terminality belongs to the assembled model's edges.
+    assert not dead.state_transitions
     assert dead.states["pension_wealth"] is None
     assert not dead.actions
     assert dead.active(95)

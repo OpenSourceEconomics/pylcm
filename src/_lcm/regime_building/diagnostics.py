@@ -103,7 +103,7 @@ def _build_compute_intermediates_per_period(
             regime, or `None`.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
 
     Returns:
         Immutable mapping of period index to fused closure.

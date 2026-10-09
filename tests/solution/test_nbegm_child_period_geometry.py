@@ -104,7 +104,6 @@ def _wage_grid_model(
         return_liquid=0.0,
         income=1.0,
         subsidy_high=0.5,
-        final_age_alive=2.0,
         wage_persistence=wage_persistence,
     )
     return model, params
@@ -154,7 +153,6 @@ def _income_closure_model(*, increment: float) -> tuple[Any, dict[str, Any]]:
                 "subsidy_high": 5.0,
                 "fpl_cliff": jnp.asarray([11.0, 11.0]),
             },
-            "final_age_alive": 2.0,
         }
     }
     return model, params

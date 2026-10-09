@@ -27,7 +27,7 @@ from _lcm.solution.nbegm import (
 from _lcm.solution.preconditions import check_solver_params
 from lcm.exceptions import RegimeInitializationError
 from lcm.model import Model
-from lcm.transition import ByAge, StochasticTransition
+from lcm.transition import ByAge, StochasticTransition, Transition
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
 
 
@@ -112,7 +112,8 @@ def test_transition_prob_piecewise_constant_in_liquid_builds() -> None:
         transition_reads_liquid=True,
         transition_smooth=False,
     )
-    schedule = cast("ByAge", model.user_regimes["alive"].regime_transitions)
+    alive_edge = cast("Mapping[str, Transition]", model.edges)["alive"]
+    schedule = cast("ByAge", alive_edge.law)
     transition = cast("Mapping[str, StochasticTransition]", schedule.laws[0])
     assert "liquid" in inspect.signature(transition["alive"].func).parameters
 

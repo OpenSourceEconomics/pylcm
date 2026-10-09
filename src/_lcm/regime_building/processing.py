@@ -87,9 +87,15 @@ from _lcm.grids import (
 )
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
+from _lcm.params.edges import (
+    is_gated_cell_slot,
+    regime_kernel_params,
+)
 from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import (
-    _gated_edge_entries,
+    EdgeVocabulary,
+    create_edge_params_template,
+    create_edge_vocabulary,
     create_regime_params_template,
 )
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
@@ -154,6 +160,7 @@ from _lcm.regime_building.phases import (
     normalize_all_regime_phases,
     phase_variation_paths,
 )
+from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.simulation.program_types import (
     _PerSubjectFunction,
     route_output_roles,
@@ -232,6 +239,7 @@ from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
     EconFunctionsMapping,
+    EdgeParamsTemplate,
     EGMCarryProducer,
     FlatParams,
     FunctionName,
@@ -286,8 +294,8 @@ from lcm.solvers import (
     Solver,
     UniformObservedFixedCost,
 )
-from lcm.transition import JointTransition, StochasticTransition
-from lcm.typing import Float1D, FloatND, Int1D, IntND, UserFunction
+from lcm.transition import JointTransition, StochasticTransition, Transition
+from lcm.typing import Float1D, FloatND, Int1D, IntND, ParameterName, UserFunction
 
 type _TransitionBundles = dict[
     RegimeName, dict[TransitionFunctionName, UserFunction | _CoarseTransitionCell]
@@ -300,6 +308,9 @@ class PreparedModelStructure:
 
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """Age-normalized user regimes used for phase compilation."""
+
+    laws: RegimeLaws
+    """Each regime's law, bound from `Model(edges=...)`, by regime name."""
 
     phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
     """Age-normalized phase declarations."""
@@ -322,10 +333,19 @@ class PreparedModelStructure:
     """Per `(source, target)` gated edge, the source periods whose selected law
     declares the gate."""
 
+    declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
+    """Per source regime, its `Transition` declarations in `Model(edges=...)`,
+    which the `edges` parameter template is read off."""
+
+    declared_edge_vocabulary: MappingProxyType[RegimeName, EdgeVocabulary]
+    """Per regime, the names it declares before demand prunes any, which the
+    declared laws read as variables rather than parameters."""
+
 
 def prepare_model_structure(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     ages: AgeGrid,
     active_periods_by_regime: MappingProxyType[RegimeName, tuple[int, ...]],
     support_by_phase: Mapping[
@@ -334,6 +354,8 @@ def prepare_model_structure(
     gated_source_periods: MappingProxyType[
         tuple[RegimeName, RegimeName], tuple[int, ...]
     ],
+    declared_transitions: Mapping[RegimeName, tuple[Transition, ...]],
+    declared_edge_vocabulary: Mapping[RegimeName, EdgeVocabulary],
     visited_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> PreparedModelStructure:
     """Prepare normalized declarations and static phase graphs once.
@@ -342,9 +364,11 @@ def prepare_model_structure(
     are the coverage, the per-period targets and the per-edge gated source
     periods resolved once from the declarations by the caller;
     `visited_periods_by_regime` are the periods a subject can occupy, where the
-    simulate graph is active.
+    simulate graph is active. `declared_transitions` are the `Transition`s as
+    `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
+    each regime declares before demand prunes any.
     """
-    raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes)
+    raw_phase_specs = normalize_all_regime_phases(user_regimes=user_regimes, laws=laws)
     age_normalization = normalize_age_specialization(
         user_regimes=user_regimes,
         phased_specs=raw_phase_specs,
@@ -358,23 +382,22 @@ def prepare_model_structure(
             n_periods=ages.n_periods,
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=support_by_phase,
-            terminal_regimes={
-                regime_name
-                for regime_name, regime in user_regimes.items()
-                if regime.terminal
-            },
+            terminal_regimes={name for name, law in laws.items() if law.terminal},
             visited_periods_by_regime=visited_periods_by_regime,
         )
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
     return PreparedModelStructure(
         representative_user_regimes=age_normalization.representative_user_regimes,
+        laws=laws,
         phased_specs=phased_specs,
         grid_schedule=age_normalization.grid_schedule,
         period_regimes=age_normalization.period_regimes,
         reachability=reachability,
         active_periods_by_regime=active_periods_by_regime,
         gated_source_periods=gated_source_periods,
+        declared_transitions=MappingProxyType(dict(declared_transitions)),
+        declared_edge_vocabulary=MappingProxyType(dict(declared_edge_vocabulary)),
     )
 
 
@@ -416,6 +439,7 @@ def process_regimes(
         execution_over_visible_devices() if execution is None else execution
     )
     representative_user_regimes = prepared_structure.representative_user_regimes
+    laws = prepared_structure.laws
     phased_specs = prepared_structure.phased_specs
     grid_schedule = prepared_structure.grid_schedule
     reachability = prepared_structure.reachability
@@ -451,8 +475,11 @@ def process_regimes(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=representative_user_regimes,
+                laws=laws,
                 solve_functions=phased_specs[regime_name].solution.functions,
-                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
+                phase_variation_paths=phase_variation_paths(
+                    user_regime=user_regime, law=laws[regime_name]
+                ),
                 solution_reachability=reachability.solution,
             )
         )
@@ -486,9 +513,10 @@ def process_regimes(
     }
     _fail_if_collective_regime_targets_unsupported(
         user_regimes=user_regimes,
+        laws=laws,
         nested_transitions_by_regime=solve_nested_transitions,
     )
-    _validate_categoricals(representative_user_regimes)
+    _validate_categoricals(representative_user_regimes, laws=laws)
 
     regime_to_variables = MappingProxyType(
         {
@@ -508,6 +536,7 @@ def process_regimes(
             for regime_name, user_regime in representative_user_regimes.items()
         }
     )
+    _validate_all_conditioned_processes(all_grids=all_grids)
     # Only a state can be entered: entry places a next-period value on the
     # target's support, and an action is chosen inside the target's own period,
     # so it has no axis in that regime's value function to place anything on.
@@ -616,6 +645,7 @@ def process_regimes(
     # before any kernel is built.
     _fail_if_gated_edges_invalid(
         user_regimes=user_regimes,
+        laws=laws,
         representative_user_regimes=representative_user_regimes,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regimes_to_active_periods=regimes_to_active_periods,
@@ -636,7 +666,7 @@ def process_regimes(
     # ahead of a short projection therefore needs the endpoint-existence checks
     # split out of `_fail_if_gated_edges_invalid` first, not the two calls
     # swapped.
-    _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes)
+    _fail_if_folded_regime_is_same_period_endpoint(user_regimes=user_regimes, laws=laws)
 
     # The regimes a continuation-based solver can transition into. Only these
     # owe a continuation carry, so only these get the engine-side carry producer
@@ -663,12 +693,15 @@ def process_regimes(
     # pension factor the source itself never reads); the kernel binds them from
     # the union of the source and its reachable carry targets' fixed params.
     # A gated edge's callables are discovered against the ONE regime they run on,
-    # so the per-regime breakdown is passed alongside the model-wide union the
-    # `next_<state>` classification needs.
-    state_names_by_regime = MappingProxyType(
+    # so the edge template reads a per-regime vocabulary. It joins the
+    # representative regime's names with those the regime declares before demand
+    # prunes any: a declared law, and a regime function nothing demands, keeps
+    # every variable it reads as a variable.
+    runtime_edge_vocabulary = create_edge_vocabulary(representative_user_regimes)
+    edge_vocabulary = MappingProxyType(
         {
-            other_name: frozenset(other.states)
-            for other_name, other in representative_user_regimes.items()
+            name: vocabulary | prepared_structure.declared_edge_vocabulary[name]
+            for name, vocabulary in runtime_edge_vocabulary.items()
         }
     )
     regime_to_params_template = MappingProxyType(
@@ -680,15 +713,30 @@ def process_regimes(
             # the role that reads it rather than mistaken for a parameter.
             regime_name: create_regime_params_template(
                 user_regime=user_regime,
+                law=laws[regime_name],
                 other_regime_state_names=frozenset(
                     state_name
                     for other_name, other in representative_user_regimes.items()
                     if other_name != regime_name
                     for state_name in other.states
                 ),
-                state_names_by_regime=state_names_by_regime,
+                declared_variables=edge_vocabulary[regime_name].variables,
             )
             for regime_name, user_regime in representative_user_regimes.items()
+        }
+    )
+    # Read off the declared laws rather than the bound ones, so the slots do not
+    # depend on the horizon or on the cells a fixed zero prunes.
+    regime_to_edge_params_template = MappingProxyType(
+        {
+            regime_name: create_edge_params_template(
+                source=regime_name,
+                declared_transitions=prepared_structure.declared_transitions.get(
+                    regime_name, ()
+                ),
+                vocabulary_by_regime=edge_vocabulary,
+            )
+            for regime_name in representative_user_regimes
         }
     )
     regime_to_granular_param_expansions = MappingProxyType(
@@ -711,14 +759,12 @@ def process_regimes(
     )
     regime_to_flat_param_names = MappingProxyType(
         {
-            regime_name: _without_gated_edge_params(
-                names=_engine_flat_param_names(
-                    regime_params_template=regime_to_params_template[regime_name],
-                    granular_param_expansions=regime_to_granular_param_expansions[
-                        regime_name
-                    ],
-                ),
-                user_regime=representative_user_regimes[regime_name],
+            regime_name: _engine_flat_param_names(
+                regime_params_template=regime_to_params_template[regime_name],
+                granular_param_expansions=regime_to_granular_param_expansions[
+                    regime_name
+                ],
+                edge_params_template=regime_to_edge_params_template[regime_name],
             )
             for regime_name in user_regimes
         }
@@ -745,10 +791,12 @@ def process_regimes(
         regime_to_flat_param_names=regime_to_flat_param_names,
         regime_to_granular_param_expansions=regime_to_granular_param_expansions,
         regime_to_params_template=regime_to_params_template,
+        regime_to_edge_params_template=regime_to_edge_params_template,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         regime_to_variables=regime_to_variables,
         regimes_to_active_periods=regimes_to_active_periods,
         representative_user_regimes=representative_user_regimes,
+        laws=laws,
         simulate_nested_transitions=simulate_nested_transitions,
         solve_nested_transitions=solve_nested_transitions,
         specs=specs,
@@ -768,6 +816,7 @@ def process_regimes(
         canonical_regimes=canonical_regimes,
         gated_source_periods=prepared_structure.gated_source_periods,
         user_regimes=user_regimes,
+        laws=laws,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         period_to_regime_v_interp=period_to_regime_v_interp,
         grid_schedule=grid_schedule,
@@ -789,6 +838,7 @@ def process_regimes(
             ),
             gated_source_periods=prepared_structure.gated_source_periods,
             user_regimes=user_regimes,
+            laws=laws,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             period_to_regime_v_interp=period_to_regime_v_interp,
             grid_schedule=grid_schedule,
@@ -949,6 +999,9 @@ class _CanonicalRegimeBuilder:
     regime_to_params_template: MappingProxyType[RegimeName, RegimeParamsTemplate]
     """Immutable mapping of regime names to their parameter templates."""
 
+    regime_to_edge_params_template: MappingProxyType[RegimeName, EdgeParamsTemplate]
+    """Immutable mapping of source regime names to their `edges` templates."""
+
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo]
     """Immutable mapping of regime names to their value-function state space info."""
 
@@ -960,6 +1013,9 @@ class _CanonicalRegimeBuilder:
 
     representative_user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """Immutable mapping of regime names to their age-normalized user regimes."""
+
+    laws: RegimeLaws
+    """Each regime's law, bound from `Model(edges=...)`, by regime name."""
 
     simulate_nested_transitions: Mapping[RegimeName, _TransitionBundles]
     """Mapping of regime names to their simulate-phase per-target transition bundles."""
@@ -1030,6 +1086,7 @@ class _CanonicalRegimeBuilder:
         for regime_name, user_regime in self.representative_user_regimes.items():
             spec = self.specs[regime_name]
             regime_params_template = self.regime_to_params_template[regime_name]
+            edge_params_template = self.regime_to_edge_params_template[regime_name]
             granular_param_expansions = self.regime_to_granular_param_expansions[
                 regime_name
             ]
@@ -1054,7 +1111,7 @@ class _CanonicalRegimeBuilder:
             # induction has already solved that period, so these regimes need
             # no ordering constraint, only their own grid params threaded to
             # the kernel beside the rolled V arrays.
-            edge_reference_regimes = _edge_reference_regimes(user_regime=user_regime)
+            edge_reference_regimes = _edge_reference_regimes(law=self.laws[regime_name])
             # One resolution, both phases: the value-aware feasibility mask the
             # solved value function applied is the mask the simulated argmax
             # chooses under, so the two phases share the object rather than each
@@ -1073,6 +1130,7 @@ class _CanonicalRegimeBuilder:
             )
             invariant_bindings = bound_state_names(
                 user_regime=user_regime,
+                law=self.laws[regime_name],
                 block_widths=self.invariant_block_widths,
                 state_names=self.state_action_spaces[regime_name].state_names,
             )
@@ -1098,6 +1156,7 @@ class _CanonicalRegimeBuilder:
                 # so the representative grid answers it exactly. Node *values*,
                 # which do vary by age, come from the period's own axes.
                 user_regimes=self.representative_user_regimes,
+                laws=self.laws,
                 declared_regime_transition=self.phased_specs[
                     regime_name
                 ].solution.regime_transition,
@@ -1106,6 +1165,7 @@ class _CanonicalRegimeBuilder:
                 all_grids=self.all_grids,
                 state_grids=self.state_grids,
                 regime_params_template=regime_params_template,
+                edge_params_template=edge_params_template,
                 granular_param_expansions=granular_param_expansions,
                 regime_to_flat_param_names=self.regime_to_flat_param_names,
                 regime_names_to_ids=self.regime_names_to_ids,
@@ -1130,7 +1190,7 @@ class _CanonicalRegimeBuilder:
                 pareto_weights=pareto_weights,
                 same_period_ref_regimes=same_period_ref_regimes,
                 edge_reference_regimes=edge_reference_regimes,
-                edge_target_regimes=tuple(user_regime.gated_edges),
+                edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
                 fold_state_names=fold_state_names,
                 invariant_bindings=invariant_bindings,
                 action_partitions=self.action_partitions.get(regime_name, 1),
@@ -1143,6 +1203,7 @@ class _CanonicalRegimeBuilder:
             simulation = _build_simulation_phase(
                 spec=spec,
                 user_regime=user_regime,
+                law=self.laws[regime_name],
                 regime_name=regime_name,
                 solution_reachability=self.reachability.solution,
                 simulation_reachability=self.reachability.simulation,
@@ -1150,6 +1211,7 @@ class _CanonicalRegimeBuilder:
                 all_grids=self.all_grids,
                 state_grids=self.state_grids,
                 regime_params_template=regime_params_template,
+                edge_params_template=edge_params_template,
                 granular_param_expansions=granular_param_expansions,
                 regime_names_to_ids=self.regime_names_to_ids,
                 variables=self.regime_to_variables[regime_name],
@@ -1196,9 +1258,10 @@ class _CanonicalRegimeBuilder:
 
             canonical_regimes[regime_name] = Regime(
                 name=regime_name,
-                terminal=spec.terminal,
+                terminal=self.laws[regime_name].terminal,
                 active_periods=tuple(self.regimes_to_active_periods[regime_name]),
                 regime_params_template=regime_params_template,
+                edge_params_template=edge_params_template,
                 solution=solution,
                 simulation=simulation,
                 stochastic_state_transitions=stochastic_state_transitions,
@@ -1449,6 +1512,7 @@ def _attach_gated_edge_folds(
     canonical_regimes: dict[RegimeName, Regime],
     gated_source_periods: Mapping[tuple[RegimeName, RegimeName], tuple[int, ...]],
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -1458,7 +1522,7 @@ def _attach_gated_edge_folds(
 ) -> dict[RegimeName, Regime]:
     """Resolve and compile each source regime's gated-edge folds.
 
-    For every source regime declaring `gated_edges`, resolve each user
+    For every source regime with gated edges, resolve each user
     `GatedEdge` to its engine form and build the `Wbar` producer on the target
     regime's grid (reading the target's processed functions), plus one per-leg
     FALLBACK state projector and a gate evaluator for simulate routing (see
@@ -1490,11 +1554,12 @@ def _attach_gated_edge_folds(
     projection functions with the target's DAG and interpolates nothing, so no
     grid's nodes enter it.
     """
-    for source_name, user_regime in user_regimes.items():
-        if not user_regime.gated_edges:
+    for source_name in user_regimes:
+        gated_edges = laws[source_name].gated_edges
+        if not gated_edges:
             continue
         resolved: dict[RegimeName, ResolvedGatedEdge] = {}
-        for target_name, edge in user_regime.gated_edges.items():
+        for target_name, edge in gated_edges.items():
             resolved_edge = _resolve_gated_edge(
                 source_name=source_name,
                 target_name=target_name,
@@ -1622,9 +1687,8 @@ def _attach_gated_edge_folds(
                     leg,
                     fallback_state_projector=build_fallback_state_projector(
                         ref=leg.realized_fallback,
-                        entry_phase=(
-                            "solve" if leg.simulate_fallback is None else "simulate"
-                        ),
+                        route=leg.route,
+                        phase=None if leg.simulate_fallback is None else "simulate",
                         # A routed row lands in the fallback regime as a
                         # SIMULATED subject, so it owes a coordinate on every
                         # state that regime carries in simulation — the states
@@ -1807,6 +1871,7 @@ def _resolve_gated_edge(
         leg = edge.legs[leg_key]
         legs.append(
             ResolvedStakeholderRoute(
+                route=leg_key,
                 source_stakeholder=source_stakeholder,
                 target_component_index=(
                     None
@@ -1848,7 +1913,7 @@ def _resolve_gated_edge(
 
 
 def _edge_reference_regimes(
-    *, user_regime: UserRegime, targets: Collection[RegimeName] | None = None
+    *, law: RegimeLaw, targets: Collection[RegimeName] | None = None
 ) -> tuple[RegimeName, ...]:
     """Return the regimes one regime's gated edges read a projected value from.
 
@@ -1858,7 +1923,7 @@ def _edge_reference_regimes(
     the source's own kernel.
 
     Args:
-        user_regime: The finalized user regime whose edges are inspected.
+        law: The regime's law, bound from `Model(edges=...)`.
         targets: The edge targets to inspect, or `None` for every declared
             edge. A period reads only the edges landing in a target solved at
             that period, so its reference set is the union over those edges.
@@ -1868,20 +1933,9 @@ def _edge_reference_regimes(
 
     """
     names: list[RegimeName] = []
-    for target, edge in user_regime.gated_edges.items():
-        if targets is not None and target not in targets:
-            continue
-        names.extend(ref.regime for ref in edge.gate_refs.values())
-        for leg in edge.legs.values():
-            fallback = leg.fallback
-            names.extend(
-                side.regime
-                for side in (
-                    (fallback.solve, fallback.simulate)
-                    if isinstance(fallback, Phased)
-                    else (fallback,)
-                )
-            )
+    for target, edge in law.gated_edges.items():
+        if targets is None or target in targets:
+            names.extend(edge.reference_regimes(phases=("solve", "simulate")))
     return tuple(dict.fromkeys(names))
 
 
@@ -1951,6 +2005,7 @@ def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
 def _fail_if_collective_regime_targets_unsupported(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     nested_transitions_by_regime: Mapping[RegimeName, _TransitionBundles],
 ) -> None:
     """Reject regime transitions mixing collective and mismatched stakeholders.
@@ -1967,6 +2022,7 @@ def _fail_if_collective_regime_targets_unsupported(
 
     Args:
         user_regimes: Mapping of regime names to finalized user regimes.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         nested_transitions_by_regime: Per-regime solve-phase transition
             bundles; their keys are the regime's reachable targets.
 
@@ -1976,7 +2032,7 @@ def _fail_if_collective_regime_targets_unsupported(
 
     """
     for regime_name, user_regime in user_regimes.items():
-        if user_regime.terminal:
+        if laws[regime_name].terminal:
             continue
         for target_regime_name in nested_transitions_by_regime.get(regime_name, {}):
             target_regime = user_regimes.get(target_regime_name)
@@ -1987,7 +2043,7 @@ def _fail_if_collective_regime_targets_unsupported(
             # A target reached through a DECLARED gated
             # edge is exempt — the edge folds a gated continuation object matching
             # the SOURCE's stakeholder layout, so the mixed-topology read is safe.
-            if target_regime_name in user_regime.gated_edges:
+            if target_regime_name in laws[regime_name].gated_edges:
                 continue
             if user_regime.stakeholders != target_regime.stakeholders:
                 msg = (
@@ -2203,6 +2259,7 @@ def _fail_if_same_period_ref_unreadable(
 def _fail_if_gated_edges_invalid(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -2223,8 +2280,8 @@ def _fail_if_gated_edges_invalid(
     Raises:
         ModelInitializationError: On the first violated declaration.
     """
-    for regime_name, user_regime in user_regimes.items():
-        for target_name, edge in user_regime.gated_edges.items():
+    for regime_name in user_regimes:
+        for target_name, edge in laws[regime_name].gated_edges.items():
             prefix = (
                 f"Regime {regime_name!r}, value-dependent transition into "
                 f"{target_name!r}: "
@@ -2609,7 +2666,7 @@ class _SamePeriodRefSearch:
 
 
 def _fail_if_folded_regime_is_same_period_endpoint(
-    *, user_regimes: Mapping[RegimeName, UserRegime]
+    *, user_regimes: Mapping[RegimeName, UserRegime], laws: RegimeLaws
 ) -> None:
     """Reject `fold=True` on a regime read nodewise by another gate/reference.
 
@@ -2666,9 +2723,7 @@ def _fail_if_folded_regime_is_same_period_endpoint(
             same-period reference) make the fold unsafe.
     """
     gated_edge_targets: set[RegimeName] = {
-        target_name
-        for regime in user_regimes.values()
-        for target_name in regime.gated_edges
+        target_name for law in laws.values() for target_name in law.gated_edges
     }
     # Build the reference set from each resolved edge's COMPLETE reference
     # set (fallbacks + gate_refs), rather than re-enumerating `edge.legs` /
@@ -2682,8 +2737,8 @@ def _fail_if_folded_regime_is_same_period_endpoint(
         for ref in regime.same_period_refs.values()
     } | {
         reference_name
-        for source_name, regime in user_regimes.items()
-        for target_name, edge in regime.gated_edges.items()
+        for source_name, law in laws.items()
+        for target_name, edge in law.gated_edges.items()
         for reference_name in _resolve_gated_edge(
             source_name=source_name,
             target_name=target_name,
@@ -2704,7 +2759,7 @@ def _fail_if_folded_regime_is_same_period_endpoint(
 
         roles: list[str] = []
         if regime_name in gated_edge_targets:
-            roles.append("the TARGET of another regime's `gated_edges`")
+            roles.append("the TARGET of another regime's gated edge")
         if regime_name in same_period_reference_regimes:
             roles.append(
                 "a same-period REFERENCE (named by another regime's "
@@ -3218,12 +3273,14 @@ def _build_solution_phase(  # noqa: PLR0915
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     declared_regime_transition: object,
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_to_flat_param_names: MappingProxyType[RegimeName, frozenset[str]],
     regime_names_to_ids: RegimeNamesToIds,
@@ -3266,6 +3323,7 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        laws: Each regime's law, bound from `Model(edges=...)`, by regime name.
         declared_regime_transition: Solve transition before temporal filtering.
         phase_reachability: Static graph for the solution phase.
         nested_transitions: Per-target transition bundles for internal
@@ -3313,7 +3371,7 @@ def _build_solution_phase(  # noqa: PLR0915
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
 
     Returns:
         The complete solve functions container beside the solver, kernels and
@@ -3323,6 +3381,7 @@ def _build_solution_phase(  # noqa: PLR0915
     flat_param_names = _engine_flat_param_names(
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
+        edge_params_template=edge_params_template,
     )
 
     routing = _route_constraints(
@@ -3350,6 +3409,7 @@ def _build_solution_phase(  # noqa: PLR0915
         all_grids=all_grids,
         state_grids=state_grids,
         regime_params_template=regime_params_template,
+        edge_params_template=edge_params_template,
         variables=variables,
         fold_only_regimes=fold_only_regimes,
         phase_reachability=phase_reachability,
@@ -3384,7 +3444,7 @@ def _build_solution_phase(  # noqa: PLR0915
     # their periods were grouped by; `None` where one closure serves every period.
     decision_group_key: _PeriodGroupKey | None = None
     zero_node = _is_zero_node_regime(
-        spec=spec,
+        law=laws[regime_name],
         regime_name=regime_name,
         regimes_to_active_periods=regimes_to_active_periods,
     )
@@ -3395,7 +3455,7 @@ def _build_solution_phase(  # noqa: PLR0915
         validation_regime_transition_probs = None
         Q_and_F_functions = MappingProxyType({})
         compute_intermediates = MappingProxyType({})
-    elif spec.terminal:
+    elif laws[regime_name].terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
         if stakeholders is not None:
@@ -3450,7 +3510,7 @@ def _build_solution_phase(  # noqa: PLR0915
             compute_regime_transition_probs=compute_regime_transition_probs,
             functions=core.functions,
             grids=all_grids[regime_name],
-            regime_params_template=regime_params_template,
+            edge_params_template=edge_params_template,
             regime_names_to_ids=regime_names_to_ids,
             flat_param_names=flat_param_names,
             enable_jit=enable_jit,
@@ -3544,9 +3604,10 @@ def _build_solution_phase(  # noqa: PLR0915
         regime_name=regime_name,
         ages=ages,
         user_regimes=user_regimes,
+        laws=laws,
         solve_functions=spec.solution.functions,
         phase_variation_paths=phase_variation_paths(
-            user_regime=user_regimes[regime_name]
+            user_regime=user_regimes[regime_name], law=laws[regime_name]
         ),
         state_action_space=state_action_space,
         solution_reachability=phase_reachability,
@@ -3625,6 +3686,7 @@ def _build_solution_phase(  # noqa: PLR0915
     # of the continuation it is being asked to emit.
     egm_carry_producer, egm_carry_template = _build_egm_child_carry_producer(
         user_regime=user_regimes[regime_name],
+        law=laws[regime_name],
         functions=core.functions,
         variables=variables,
         grids=all_grids[regime_name],
@@ -3713,7 +3775,7 @@ def _build_solution_phase(  # noqa: PLR0915
         period_signatures=_build_period_signatures(
             active_periods=solution_active_periods,
             decision_group_key=decision_group_key,
-            user_regime=user_regimes[regime_name],
+            law=laws[regime_name],
             grid_schedule=grid_schedule,
         ),
         solver_period_group_keys=MappingProxyType(
@@ -3790,19 +3852,19 @@ def _simulated_periods(
 
 def _is_zero_node_regime(
     *,
-    spec: PhasedRegimeSpec,
+    law: RegimeLaw,
     regime_name: RegimeName,
     regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
 ) -> bool:
     """Whether `regime_name` is nonterminal and no required problem solves it."""
-    return not spec.terminal and not regimes_to_active_periods[regime_name]
+    return not law.terminal and not regimes_to_active_periods[regime_name]
 
 
 def _build_period_signatures(
     *,
     active_periods: tuple[int, ...],
     decision_group_key: _PeriodGroupKey | None,
-    user_regime: UserRegime,
+    law: RegimeLaw,
     grid_schedule: AgeGridSchedule | None,
 ) -> MappingProxyType[int, Hashable]:
     """Record the signature the engine's per-period groupings assigned each period.
@@ -3830,7 +3892,7 @@ def _build_period_signatures(
         active_periods: The regime's active periods.
         decision_group_key: The per-period key the regime's Q-and-F closures were
             grouped by, or `None` where they are period-invariant.
-        user_regime: The finalized user regime, read for its gated edges.
+        law: The regime's law, read for its gated edges.
         grid_schedule: Age-specialized grid schedule, or `None`.
 
     Returns:
@@ -3851,7 +3913,7 @@ def _build_period_signatures(
             (
                 "gated-edges",
                 _gated_edge_group_components(
-                    user_regime=user_regime, grid_schedule=grid_schedule, period=period
+                    law=law, grid_schedule=grid_schedule, period=period
                 ),
             ),
         )
@@ -3863,7 +3925,7 @@ def _build_period_signatures(
 
 
 def _gated_edge_group_components(
-    *, user_regime: UserRegime, grid_schedule: AgeGridSchedule | None, period: int
+    *, law: RegimeLaw, grid_schedule: AgeGridSchedule | None, period: int
 ) -> Hashable:
     """Fingerprint both objects the gated-edge grouping compiles for one period.
 
@@ -3881,7 +3943,7 @@ def _gated_edge_group_components(
     keeps the component at least as fine as the grouping it stands for.
 
     Args:
-        user_regime: The finalized user regime, read for its gated edges.
+        law: The regime's law, read for its gated edges.
         grid_schedule: Age-specialized grid schedule, or `None`.
         period: The source regime's period.
 
@@ -3890,14 +3952,12 @@ def _gated_edge_group_components(
         regime declaring no gated edge.
 
     """
-    if not user_regime.gated_edges:
+    if not law.gated_edges:
         return None
     landing_period = period + 1
     components: list[Hashable] = []
-    for target in sorted(user_regime.gated_edges):
-        read_regimes = _edge_reference_regimes(
-            user_regime=user_regime, targets=(target,)
-        )
+    for target in sorted(law.gated_edges):
+        read_regimes = _edge_reference_regimes(law=law, targets=(target,))
         components.append(
             (
                 target,
@@ -3973,7 +4033,7 @@ class _TerminalCarryPeriodKernel:
         regime's fixed params here — matching the base adapter's core binding.
         """
         regime_fixed = dict(
-            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+            regime_kernel_params(fixed_flat_params, regime_name=self.regime_name)
         )
         base = self.base.with_fixed_params(fixed_flat_params=fixed_flat_params)
         carry_producer = self.carry_producer
@@ -4035,7 +4095,7 @@ class _TerminalCarryPeriodKernel:
         carry = self.carry_producer(
             V_arr=jnp.asarray(output.value),
             **state_action_space.states,
-            **flat_params[self.regime_name],
+            **regime_kernel_params(flat_params, regime_name=self.regime_name),
             period=jnp.int32(period),
             age=ages.values[period],
         )
@@ -4052,8 +4112,8 @@ def _edge_and_same_period_kwargs(
 ) -> dict[str, object]:
     """Relay only the optional kernel arguments the caller actually supplied.
 
-    The solve loop passes `edge_regime_to_V_arr` to a source declaring
-    `gated_edges` and `same_period_regime_to_V_arr` to one declaring
+    The solve loop passes `edge_regime_to_V_arr` to a source with
+    gated edges and `same_period_regime_to_V_arr` to one declaring
     `same_period_refs`, and neither to any other regime. A decorator around a
     period kernel forwards what it was handed rather than always naming both,
     so a base kernel whose signature declares neither is called exactly as the
@@ -4070,6 +4130,7 @@ def _edge_and_same_period_kwargs(
 def _build_egm_child_carry_producer(
     *,
     user_regime: UserRegime,
+    law: RegimeLaw,
     functions: EconFunctionsMapping,
     variables: Variables,
     grids: MappingProxyType[StateOrActionName, Grid],
@@ -4113,7 +4174,7 @@ def _build_egm_child_carry_producer(
     )
     continuous_state_names = tuple(variables.continuous_state_names)
     euler_state_name = next(iter(user_regime.states), None)
-    if user_regime.terminal:
+    if law.terminal:
         has_only_fixed_discrete_states = all(
             not isinstance(grids[name], _ContinuousStochasticProcess)
             for name in discrete_state_names
@@ -4199,6 +4260,7 @@ def _validated_bound_nnbegm(
     solver: Solver,
     regime_name: RegimeName,
     user_regime: UserRegime,
+    law: RegimeLaw,
 ) -> _BoundNNBEGM | None:
     """Return a bound NNBEGM after validating replay-phase invariance."""
     if not isinstance(solver, NNBEGM):
@@ -4210,7 +4272,7 @@ def _validated_bound_nnbegm(
 
     _fail_if_nnbegm_phase_variation(
         regime_name=regime_name,
-        variations=phase_variation_paths(user_regime=user_regime),
+        variations=phase_variation_paths(user_regime=user_regime, law=law),
     )
     return cast("_BoundNNBEGM", solver)
 
@@ -4290,6 +4352,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
+    law: RegimeLaw,
     regime_name: RegimeName,
     solution_reachability: PhaseReachability,
     simulation_reachability: PhaseReachability,
@@ -4297,6 +4360,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
     regime_names_to_ids: RegimeNamesToIds,
     variables: Variables,
@@ -4352,6 +4416,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         spec: The regime's per-phase specification.
         user_regime: The finalized user regime, scanned for `Phased`
             declarations by the policy-replay gate.
+        law: The regime's law, bound from `Model(edges=...)`.
         regime_name: The name of the regime.
         nested_transitions: Per-target transition bundles for internal
             processing.
@@ -4402,7 +4467,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
         invariant_bindings: Blocked states the regime carries. When non-empty,
             the regime also declares a type-local decision whose continuation
             reads drop each such state's axis, for forward simulation grouped
@@ -4425,6 +4490,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     flat_param_names = _engine_flat_param_names(
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
+        edge_params_template=edge_params_template,
     )
 
     routing = _route_constraints(
@@ -4452,6 +4518,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         all_grids=all_grids,
         state_grids=state_grids,
         regime_params_template=regime_params_template,
+        edge_params_template=edge_params_template,
         variables=variables,
         fold_only_regimes=fold_only_regimes,
         phase_reachability=simulation_reachability,
@@ -4533,7 +4600,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         MappingProxyType({})
     )
     if _is_zero_node_regime(
-        spec=spec,
+        law=law,
         regime_name=regime_name,
         regimes_to_active_periods=simulated_periods,
     ):
@@ -4542,7 +4609,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         per_subject_route = None
         realized_validation_probs = None
         Q_and_F_functions = MappingProxyType({})
-    elif spec.terminal:
+    elif law.terminal:
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None
@@ -4734,7 +4801,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # declarations, no taste shocks, no process or passive continuous-state row
     # axes, and the single-post-state kernel.
     phase_invariant = (
-        not regime_declares_phased(user_regime) and not spec.carried_only_state_names
+        not regime_declares_phased(user_regime, law=law)
+        and not spec.carried_only_state_names
     )
     own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
@@ -4743,6 +4811,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         solver=solver,
         regime_name=regime_name,
         user_regime=user_regime,
+        law=law,
     )
     if bound_nnbegm is not None and phase_invariant and not has_taste_shocks:
         replay_actions = frozenset(
@@ -4887,7 +4956,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             euler_state_name=bound_solver.continuous_state,
         )
         and not savings_stage_reads_euler_state(
-            user_regime=user_regime, solver=bound_solver
+            user_regime=user_regime, law=law, solver=bound_solver
         )
     ):
         row_discrete_state_names = _get_discrete_state_names(
@@ -4970,7 +5039,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         per_subject_route=per_subject_route,
         simulation_state_names=simulation_variables.state_names,
         active_periods=tuple(simulated_periods[regime_name]),
-        has_gated_edges=bool(user_regime.gated_edges),
+        has_gated_edges=bool(law.gated_edges),
         type_local_Q_and_F_functions=type_local_Q_and_F_functions,
         type_local_per_subject_decisions=type_local_per_subject_decisions,
     )
@@ -5001,7 +5070,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         edge_reference_regimes_by_period=MappingProxyType(
             {
                 period: _edge_reference_regimes(
-                    user_regime=user_regime,
+                    law=law,
                     targets=tuple(
                         target
                         for target, schedule in gated_continuations.items()
@@ -5119,14 +5188,15 @@ def _fail_if_solver_cannot_consume_transition_local_lotteries(
     )
 
 
-def regime_declares_phased(user_regime: UserRegime) -> bool:
+# keyword-only-exempt: primary-argument=user_regime
+def regime_declares_phased(user_regime: UserRegime, *, law: RegimeLaw) -> bool:
     """Whether the regime has genuine solve/simulate declaration variation.
 
     ``Phased(solve=value, simulate=value)`` is invariant because both sides are
     the same object. The complete public phase grammar, including the Koopmans
     aggregator, is classified by the shared phase-normalization helper.
     """
-    return bool(phase_variation_paths(user_regime=user_regime))
+    return bool(phase_variation_paths(user_regime=user_regime, law=law))
 
 
 @dataclass(frozen=True)
@@ -5309,6 +5379,7 @@ def _process_regime_core(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     state_grids: MappingProxyType[RegimeName, MappingProxyType[StateName, Grid]],
     regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
     variables: Variables,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
     phase_reachability: PhaseReachability,
@@ -5488,7 +5559,6 @@ def _process_regime_core(
         # axis stays integrated out where it was.
         if phase_name != "solution" or not getattr(grid, "fold", False)
     }
-    _validate_all_conditioned_processes(all_grids=all_grids)
     # A process the source carries is transitioned from its current value. One
     # it does not carry is entered at its own law -- unless the source declared
     # an explicit entry law for it, which is the more specific statement and
@@ -5727,7 +5797,7 @@ def _process_regime_core(
 
     next_regime_func, next_regime_cells = _process_next_regime_cells(
         next_regime_cells_by_target=next_regime_cells_by_target,
-        regime_params_template=regime_params_template,
+        edge_params_template=edge_params_template,
     )
 
     processed_koopmans_aggregator = (
@@ -6251,7 +6321,7 @@ def _process_next_regime_cells(
     next_regime_cells_by_target: Mapping[
         RegimeName, UserFunction | _CoarseTransitionCell
     ],
-    regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
 ) -> tuple[
     TransitionFunction | None, MappingProxyType[RegimeName, EconFunction] | None
 ]:
@@ -6261,15 +6331,19 @@ def _process_next_regime_cells(
 
     - empty mapping (terminal regime) ⇒ `(None, None)`
     - `_CoarseTransitionCell` cells ⇒ the shared underlying transition is
-      processed once under the `next_regime` template key, so the engine
-      evaluates it once and indexes per target
+      returned once, so the engine evaluates it once and indexes per target
     - `StochasticTransition` cells (user per-target dict) ⇒ each cell is
-      processed under its nested `template[target]["next_regime"]` branch
+      returned with its parameters renamed to their edge slots
+
+    A law's parameters bind from `flat_params["edges"][source]` by key. A law
+    over all targets reads them under their own names, which are their keys; a
+    per-target cell reads them under `<target>__<param>`, unless the parameter
+    is declared by a law over all targets.
 
     Args:
         next_regime_cells_by_target: The canonical regime-transition cells,
             keyed by target regime name.
-        regime_params_template: The regime's parameter template.
+        edge_params_template: The source's branch of the `edges` template.
 
     Returns:
         Tuple of the processed coarse transition (`None` unless coarse) and
@@ -6286,23 +6360,48 @@ def _process_next_regime_cells(
             and cell.underlying is first_cell.underlying
             for cell in cells
         ), "Coarse regime-transition cells must share one underlying object."
-        next_regime_func = _rename_params_to_qnames(
-            func=cast("UserFunction", first_cell.underlying),
-            regime_params_template=regime_params_template,
-            param_key="next_regime",
-        )
-        return next_regime_func, None
+        return cast("TransitionFunction", first_cell.underlying), None
     next_regime_cells = MappingProxyType(
         {
-            target_regime_name: _rename_params_to_qnames(
+            target_regime_name: _with_cell_param_keys(
                 func=cast("UserFunction", cell),
-                regime_params_template=regime_params_template,
-                param_key=qname_from_tree_path((target_regime_name, "next_regime")),
+                target_regime_name=target_regime_name,
+                edge_params_template=edge_params_template,
             )
             for target_regime_name, cell in next_regime_cells_by_target.items()
         }
     )
     return None, next_regime_cells
+
+
+def _with_cell_param_keys(
+    *,
+    func: UserFunction,
+    target_regime_name: RegimeName,
+    edge_params_template: EdgeParamsTemplate,
+) -> EconFunction:
+    """Rename a per-target cell's parameters to their edge-slot keys.
+
+    Args:
+        func: The cell's callable.
+        target_regime_name: The target the cell selects.
+        edge_params_template: The source's branch of the `edges` template.
+
+    Returns:
+        The cell with its parameters renamed, or `func` when it reads none.
+
+    """
+    if getattr(func, "_lcm_internal_no_params", False):
+        return cast("EconFunction", func)
+    target_branch = edge_params_template.get(target_regime_name)
+    target_branch = target_branch if isinstance(target_branch, Mapping) else {}
+    mapper: dict[ParameterName, str] = {}
+    for arg in get_union_of_args([func]):
+        if isinstance(target_branch.get(arg), str):
+            mapper[arg] = qname_from_tree_path((target_regime_name, arg))
+    if not mapper:
+        return cast("EconFunction", func)
+    return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 
 def _build_validation_regime_transition_probs(
@@ -6311,7 +6410,7 @@ def _build_validation_regime_transition_probs(
     compute_regime_transition_probs: RegimeTransitionFunction,
     functions: EconFunctionsMapping,
     grids: MappingProxyType[StateOrActionName, Grid],
-    regime_params_template: RegimeParamsTemplate,
+    edge_params_template: EdgeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
     flat_param_names: frozenset[str],
     enable_jit: bool,
@@ -6325,7 +6424,7 @@ def _build_validation_regime_transition_probs(
             "Mapping[RegimeName, UserFunction | _CoarseTransitionCell]",
             declared_regime_transition,
         ),
-        regime_params_template=regime_params_template,
+        edge_params_template=edge_params_template,
     )
     assert declared_cells is not None  # noqa: S101
     return build_regime_transition_probs_functions(
@@ -6506,12 +6605,17 @@ def _engine_flat_param_names(
     *,
     regime_params_template: RegimeParamsTemplate,
     granular_param_expansions: MappingProxyType[FunctionName, tuple[str, ...]],
+    edge_params_template: EdgeParamsTemplate,
 ) -> frozenset[str]:
     """Return the regime's flat param names in the engine's binding vocabulary.
 
     Template names whose function key has a granular expansion are replaced
     by their per-target spellings (`<target>__<law>__<param>`); everything
-    else passes through unchanged.
+    else passes through unchanged. A source's kernels evaluate its
+    regime-transition law, so its law's edge slots join the vocabulary under
+    their `flat_params["edges"][source]` keys. The gate and projection slots do
+    not: the edge fold binds those on the target's grid, and no regime kernel
+    reads them.
     """
     names: set[str] = set()
     for name in get_flat_param_names(regime_params_template):
@@ -6523,47 +6627,28 @@ def _engine_flat_param_names(
             )
         else:
             names.add(name)
-    return frozenset(names)
+    return frozenset(names) | _law_param_names(
+        edge_params_template=edge_params_template
+    )
 
 
-def _without_gated_edge_params(
-    *, names: frozenset[str], user_regime: UserRegime
-) -> frozenset[str]:
-    """Drop the flat names a source's gated-edge callables bind their params under.
+def _law_param_names(*, edge_params_template: EdgeParamsTemplate) -> frozenset[str]:
+    """Return the flat names of a source's regime-transition law parameters.
 
-    A gate predicate and the projections of an edge's gate references and leg
-    fallbacks are evaluated by the edge fold on the TARGET regime's grid, bound
-    by name from `flat_params[source]` (`_evaluate_edge_fold`). No regime's own
-    kernel reads them, so they do not belong in the vocabulary a kernel builder
-    is told a regime may bind — an endogenous-grid parent, which is allowed to
-    reach its target's parameters, would otherwise accept a target function
-    reading a name nothing supplies there.
-
-    Their template entries nest under the edge's target regime, so their flat
-    names are `<target>__<entry>__<param>`; the `<target>__<entry>` prefixes are
-    collected off the same builder the params template files them with, so the
-    two spellings cannot drift apart.
+    These are the edge slots outside a gate's predicate, references and routes:
+    a law over all targets and a per-target cell.
 
     Args:
-        names: The regime's flat param names in the engine's vocabulary.
-        user_regime: The finalized user regime, read for its `gated_edges`.
+        edge_params_template: The source's branch of the `edges` template.
 
     Returns:
-        Frozenset of the names, less every gated-edge callable's parameters.
+        Frozenset of the slots' keys in `flat_params["edges"][source]`.
 
     """
-    if not user_regime.gated_edges:
-        return names
-    edge_prefixes = {
-        # The template key is `<entry>__<target>`; the params it collects nest
-        # the other way round, under the target regime.
-        qname_from_tree_path(tuple(reversed(tree_path_from_qname(template_key))))
-        for template_key, _func in _gated_edge_entries(user_regime).values()
-    }
     return frozenset(
         name
-        for name in names
-        if qname_from_tree_path(tree_path_from_qname(name)[:2]) not in edge_prefixes
+        for name in get_flat_param_names(edge_params_template)
+        if not is_gated_cell_slot(name)
     )
 
 
@@ -7266,8 +7351,9 @@ def _get_explicit_entry_weights_for_process(
     return explicit_entry_weights
 
 
+# keyword-only-exempt: primary-argument=user_regimes
 def _validate_categoricals(
-    user_regimes: Mapping[RegimeName, UserRegime],
+    user_regimes: Mapping[RegimeName, UserRegime], *, laws: RegimeLaws
 ) -> None:
     """Validate that simple transitions don't span mismatched discrete grids.
 
@@ -7290,7 +7376,7 @@ def _validate_categoricals(
     error_messages: list[str] = []
 
     for source_name, source_regime in user_regimes.items():
-        if source_regime.terminal:
+        if laws[source_name].terminal:
             continue
 
         for state_name, raw in source_regime.state_transitions.items():
@@ -7790,36 +7876,70 @@ def _wrap_regime_transition_probs(
     )
     regime_names = [name for _, name in regime_names_by_id]
 
-    # `wrapped` converts `func`'s probability array into a regime-name → prob
-    # mapping. The return annotation describes that mapping; `func`'s own
-    # return annotation (a bare probability array) does not survive the
-    # conversion and must not be carried through.
+    # The return annotation describes the regime-name → probability mapping;
+    # `func`'s own return annotation (a bare probability array) does not
+    # survive the conversion and must not be carried through.
     annotations = get_annotations(func)
     annotations.pop("return", None)
-    return_annotation = MappingProxyType[RegimeName, FloatND]
-
-    @with_signature(
-        args=annotations,
-        return_annotation=return_annotation,
+    return _RegimeTransitionProbsByName(
+        func=func, regime_names=tuple(regime_names), annotations=annotations
     )
-    @functools.wraps(func)
-    def wrapped(
-        *args: FloatND | IntND | int,
-        **kwargs: FloatND | IntND | int,
-    ) -> MappingProxyType[RegimeName, FloatND]:
-        result = func(*args, **kwargs)
-        _fail_if_not_one_entry_per_regime(result=result, n_regimes=len(regime_names))
-        # Convert array to dict using ordering by regime id
-        return MappingProxyType(
-            {name: result[idx] for idx, name in enumerate(regime_names)}
+
+
+@dataclass(frozen=True, eq=False, kw_only=True)
+class _RegimeTransitionProbsByName:
+    """A regime-probability vector as a regime-name → probability mapping.
+
+    A frozen callable instance rather than a nested function: the beartype claw
+    memoizes every function it decorates, so a function defined per model build
+    would pin that build's transition after the model is dropped.
+    """
+
+    func: TransitionFunction
+    """The transition, returning one probability per regime id."""
+    regime_names: tuple[RegimeName, ...]
+    """The regime names in regime-id order."""
+    # Annotation objects: classes, aliases or strings, whatever the callable declares.
+    annotations: Mapping[ParameterName, object]
+    """The transition's argument annotations, without its return."""
+
+    def __post_init__(self) -> None:
+        return_annotation = MappingProxyType[RegimeName, FloatND]
+        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
+            value = getattr(self.func, name, None)
+            if value is not None:
+                object.__setattr__(self, name, value)
+        object.__setattr__(self, "__wrapped__", self.func)
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        name,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        annotation=annotation,
+                    )
+                    for name, annotation in self.annotations.items()
+                ],
+                return_annotation=return_annotation,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "__annotations__",
+            {**self.annotations, "return": return_annotation},
         )
 
-    # Pin `__annotations__` on the final wrapper: `concatenate_functions`
-    # reads `__annotations__` (not `__signature__`) to reconcile the DAG, and
-    # the decorator stack can drop them when `func` carries deferred (PEP 649)
-    # annotations through `functools.wraps`.
-    wrapped.__annotations__ = {**annotations, "return": return_annotation}
-    return wrapped
+    @no_type_check
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        result = self.func(*args, **kwargs)
+        _fail_if_not_one_entry_per_regime(
+            result=result, n_regimes=len(self.regime_names)
+        )
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(self.regime_names)}
+        )
 
 
 def _fail_if_not_one_entry_per_regime(*, result: FloatND, n_regimes: int) -> None:
@@ -8241,7 +8361,7 @@ def _build_Q_and_F_per_period(
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
-            regime declaring no `gated_edges`.
+            regime without gated edges.
 
     Returns:
         Immutable mapping of period index to the per-period Q-and-F closure.
@@ -8446,35 +8566,17 @@ def _build_per_subject_decisions_per_period(
     for period, Q_and_F in Q_and_F_functions.items():
         q_id = id(Q_and_F)
         if q_id not in built:
-            built[q_id] = _argmax_reducer(
+            built[q_id] = get_argmax_and_max_Q_over_a(
                 Q_and_F=Q_and_F,
-                state_action_space=state_action_space,
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+                n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
-
-
-def _argmax_reducer(
-    *,
-    Q_and_F: QAndFFunction,
-    state_action_space: StateActionSpace,
-    has_taste_shocks: bool,
-    stakeholders: tuple[str, ...] | None,
-    pareto_weights: ParetoWeights | None,
-) -> ArgmaxQOverAFunction:
-    """Return the canonical argmax reducer at one subject's state cell."""
-    return get_argmax_and_max_Q_over_a(
-        Q_and_F=Q_and_F,
-        action_names=state_action_space.action_names,
-        state_names=state_action_space.state_names,
-        n_discrete_action_axes=len(state_action_space.discrete_actions),
-        has_taste_shocks=has_taste_shocks,
-        stakeholders=stakeholders,
-        pareto_weights=pareto_weights,
-    )
 
 
 def _build_pointwise_Q_and_F_per_period(

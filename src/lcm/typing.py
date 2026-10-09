@@ -8,10 +8,16 @@ user-constructor methods (`Model.__init__`, `Model.solve`, `Model.simulate`,
 live in `_lcm.typing`.
 """
 
-from collections.abc import Mapping, Sequence
-from collections.abc import Set as AbstractSet
+from collections.abc import Mapping
 from fractions import Fraction
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAliasType,
+    runtime_checkable,
+)
 
 import numpy as np
 import pandas as pd
@@ -19,6 +25,13 @@ from jax import Array
 from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
+
+if TYPE_CHECKING:
+    from lcm.initial_nodes import InitialNodes, UserInitialNodes  # noqa: F401
+
+    # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
+    # `lcm.__init__` binds it here through `_bind_forward_refs`.
+    from lcm.transition import AgeSelector  # noqa: F401  (re-exported)
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -63,6 +76,7 @@ type LoopIndex = int | Int[Scalar, ""]
 # String-label aliases. Runtime-equivalent to `str`; they exist purely to make
 # signatures self-documenting about which kind of name a string slot carries.
 type RegimeName = str
+type Phase = Literal["solve", "simulate"]
 type StateName = str
 type ActionName = str
 type StateOrActionName = str
@@ -79,16 +93,6 @@ type TransitionFunctionName = str
 # Boundary form accepted by `AgeGrid.__init__` for `start`, `inclusive_stop`, and
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
-
-# Admissible starts accepted by `Model(initial_nodes=...)`: a mapping from
-# `ByAge`-style age selectors to a regime name or a sequence of names, or a
-# sequence or set of exact `(age, regime)` pairs.
-type InitialNodes = (
-    Sequence[tuple[object, str]]
-    | AbstractSet[tuple[object, str]]
-    | Mapping[object, str | Sequence[str]]
-)
-
 
 # Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching
 # the grammar `(\d+)?[YQM]` — an optional positive-integer multiplier followed
@@ -131,14 +135,14 @@ type UserParams = Mapping[str, _UserParamsNode]
 
 
 # User-facing templates keep the first regime and function/target levels
-# structurally visible to type checkers. The final extra mapping admits a joint
-# kernel's `support`/`probabilities` role before rendered annotation leaves.
+# structurally visible to type checkers; below them a branch nests as deep as its
+# declaration path does — a joint kernel's `support`/`probabilities` role, or an
+# `edges` slot's target, gate reference or route — before rendered annotation
+# leaves. The `edges` branch maps each source regime to its slots.
+type _UserFacingTemplateNode = str | dict[str, _UserFacingTemplateNode]
 type UserFacingParamsTemplate = dict[
     RegimeName,
-    dict[
-        FunctionName | RegimeName,
-        dict[str, str | dict[str, str | dict[str, str]]],
-    ],
+    dict[FunctionName | RegimeName, dict[str, _UserFacingTemplateNode]],
 ]
 
 
@@ -178,3 +182,19 @@ def __getattr__(name: str) -> object:
         return getattr(engine_typing, name)
     msg = f"module 'lcm.typing' has no attribute {name!r}"
     raise AttributeError(msg)
+
+
+def _bind_forward_refs(
+    *,
+    age_selector: TypeAliasType,
+    initial_nodes_cls: type,
+    user_initial_nodes: TypeAliasType,
+) -> None:
+    """Bind public declaration types after their modules finish importing.
+
+    The declaration modules import this module themselves. `lcm.__init__`
+    calls this helper once they are loaded to make the re-exports available.
+    """
+    globals()["AgeSelector"] = age_selector
+    globals()["InitialNodes"] = initial_nodes_cls
+    globals()["UserInitialNodes"] = user_initial_nodes

@@ -31,11 +31,10 @@ from beartype.roar import BeartypeCallHintParamViolation
 
 import tests.conftest as test_config
 from _lcm.execution.core_program import core_program_graph
-from _lcm.regime_building.transition_support import _SupportedDeterministicTransition
 from _lcm.solution import backward_induction, block_major
 from lcm import (
     AgeGrid,
-    ByAge,
+    AgeRange,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -62,7 +61,6 @@ from lcm.typing import (
 from tests.simulation import test_type_grouped_simulation as life_cycle
 from tests.solution import test_invariant_blocking as stage3
 from tests.test_models import independent_types
-from tests.test_models.graph import with_fixture_graph
 
 _BLOCK_MAJOR = InvariantBlockSchedule.BLOCK_MAJOR
 _PERIOD_MAJOR = InvariantBlockSchedule.PERIOD_MAJOR
@@ -96,7 +94,7 @@ def _life_cycle_model(
     """The grouped-simulation life cycle with a typed dead regime."""
     model = life_cycle._model(typed_dead=True, pref_law=pref_law)
     return Model(
-        edges=model.graph.edges,
+        edges=model.edges,
         regimes=model.user_regimes,
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
@@ -846,15 +844,6 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
     last_age = _LONG_AGES.exact_values[-1]
     pref_type = DiscreteGrid(category_class=_SixTypes)
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=_SupportedDeterministicTransition(
-                func=lambda: _LongRegimeId.working, targets=("working",)
-            ),
-            then=_SupportedDeterministicTransition(
-                func=lambda: _LongRegimeId.terminal, targets=("terminal",)
-            ),
-        ),
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         state_transitions={
             "wealth": _long_next_wealth,
@@ -865,15 +854,20 @@ def _long_lived_model(*, schedule: InvariantBlockSchedule, budget: int | None) -
         constraints={"affordable": _long_affordable},
     )
     terminal = Regime(
-        regime_transitions=None,
         states={"wealth": _LONG_WEALTH, "pref_type": pref_type},
         functions={"utility": _long_bequest},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working": working, "terminal": terminal},
         ages=_LONG_AGES,
         regime_id_class=_LongRegimeId,
         initial_nodes={0: "working"},
+        edges={
+            "working": {
+                "working": AgeRange(exclusive_stop=last_age - 1),
+                "terminal": last_age - 1,
+            }
+        },
         # Fixed widths lower the same programs with and without a budget, so
         # the budget only decides what is admitted.
         execution_config=_config(

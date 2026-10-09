@@ -12,16 +12,11 @@ from numpy.testing import assert_array_equal
 from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import _select_action_width_keyword
-from lcm import AgeGrid, LinSpacedGrid, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.regime import Regime
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -30,23 +25,23 @@ class _RegimeId:
     done: ScalarInt
 
 
-def _next_regime() -> ScalarInt:
-    """Move from the decision regime to its terminal target."""
-    return _RegimeId.done
-
-
 def _one_collision_utility(*, _lcm_action_block_width: ContinuousAction) -> FloatND:
     """Make one legal colliding action name observable in the value function."""
     return _lcm_action_block_width
 
 
-def _two_collision_utility(
+def _one_lookalike_utility(*, lcm_action_block_width: ContinuousAction) -> FloatND:
+    """Make one action spelled like the width keyword observable in the value."""
+    return lcm_action_block_width
+
+
+def _two_lookalike_utility(
     *,
-    _lcm_action_block_width: ContinuousAction,
-    _lcm_action_block_width_1: ContinuousAction,
+    lcm_action_block_width: ContinuousAction,
+    lcm_action_block_width_1: ContinuousAction,
 ) -> FloatND:
-    """Make two legal colliding action names observable in the value function."""
-    return _lcm_action_block_width + _lcm_action_block_width_1
+    """Make two actions spelled like the width keyword observable in the value."""
+    return lcm_action_block_width + lcm_action_block_width_1
 
 
 def _selector_model_utility(*, action: ContinuousAction) -> FloatND:
@@ -78,23 +73,15 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
         return context
 
     monkeypatch.setattr(processing, "SolverBuildContext", spy)
-    with_fixture_graph(
+    Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 actions={
                     "action": LinSpacedGrid(start=1.0, stop=3.0, n_points=3),
                 },
                 functions={"utility": _selector_model_utility},
             ),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },
@@ -102,6 +89,7 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
         regime_id_class=_RegimeId,
         enable_jit=True,
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
     acting_context = next(
@@ -127,35 +115,35 @@ def test_width_keyword_selector_covers_every_runtime_namespace(
     ("utility", "actions", "expected_width_keyword", "expected_value"),
     [
         pytest.param(
-            _one_collision_utility,
+            _one_lookalike_utility,
             {
-                "_lcm_action_block_width": LinSpacedGrid(
+                "lcm_action_block_width": LinSpacedGrid(
                     start=1.0,
                     stop=3.0,
                     n_points=3,
                 )
             },
-            "_lcm_action_block_width_1",
+            "_lcm_action_block_width",
             3.0,
-            id="base-name-collision",
+            id="base-name-lookalike",
         ),
         pytest.param(
-            _two_collision_utility,
+            _two_lookalike_utility,
             {
-                "_lcm_action_block_width": LinSpacedGrid(
+                "lcm_action_block_width": LinSpacedGrid(
                     start=1.0,
                     stop=3.0,
                     n_points=3,
                 ),
-                "_lcm_action_block_width_1": LinSpacedGrid(
+                "lcm_action_block_width_1": LinSpacedGrid(
                     start=10.0,
                     stop=20.0,
                     n_points=2,
                 ),
             },
-            "_lcm_action_block_width_2",
+            "_lcm_action_block_width",
             23.0,
-            id="two-consecutive-collisions",
+            id="two-consecutive-lookalikes",
         ),
     ],
 )
@@ -166,22 +154,14 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     expected_width_keyword: str,
     expected_value: float,
 ) -> None:
-    """Planner width selection leaves colliding action inputs model-owned."""
-    model = with_fixture_graph(
+    """Actions spelled like the planner width keyword stay model-owned inputs."""
+    model = Model(
         regimes={
             "acting": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=_next_regime, targets=("acting", "done")
-                    ),
-                    exits=("done",),
-                ),
                 actions=actions,
                 functions={"utility": utility},
             ),
             "done": Regime(
-                regime_transitions=None,
                 functions={"utility": _terminal_utility},
             ),
         },
@@ -189,6 +169,7 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
         regime_id_class=_RegimeId,
         enable_jit=True,
         initial_nodes={0: "acting"},
+        edges={"acting": {"done": 0}},
     )
 
     kernel = model._regimes["acting"].solution.period_kernels[0]

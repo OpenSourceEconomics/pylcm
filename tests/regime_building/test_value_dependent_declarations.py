@@ -1,15 +1,15 @@
-"""Collective and value-dependent choice declared inside the slots a regime has.
+"""Collective and value-dependent choice declared inside the slots that carry them.
 
-A regime says who its stakeholders are in `functions["utility"]`, what a
-value-reading feasibility constraint is in `constraints`, and where a
-value-dependent transition routes in `transition`. Nothing about the model
-changes: the declarations are lowered onto the same stakeholders, value
-constraints, references and gated edges the engine has always run, so a model
-written this way solves to the numbers the same model written the long way
-solves to.
+A regime says who its stakeholders are in `functions["utility"]` and what a
+value-reading feasibility constraint is in `constraints`; where a
+value-dependent transition routes is a `Gate` beside the source's law in
+`Model(edges=...)`.
+Nothing about the model changes: the declarations are lowered onto the same
+stakeholders, value constraints, references and gated edges the engine has
+always run, so a model written this way solves to the numbers the same model
+written the long way solves to.
 """
 
-import inspect
 from collections.abc import Mapping
 from typing import cast
 
@@ -21,26 +21,28 @@ from beartype.door import is_bearable
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
+from _lcm.regime_law import RegimeLaw, bind_regime_law
 from lcm import (
     AgeGrid,
     AgeRange,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
+    Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    Transition,
     ValueDependentConstraint,
-    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.regime import _decomposed_transition_side
-from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, FloatND, ScalarInt, UserFunction
-from tests.conftest import DECIMAL_PRECISION
+from lcm.transition import PhaseTransitionLaw, StochasticTransition
+from lcm.typing import FloatND, ScalarInt, UserFunction
+from tests.conftest import DECIMAL_PRECISION, bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _WAGE_3,
@@ -48,6 +50,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     _ir_f,
     _ir_m,
     _make_dissolution_regimes,
+    _married_dissolution_transition,
     _no_dissolution_gate,
     _prob_one,
     _u_married_ir_f,
@@ -57,7 +60,6 @@ from tests.regime_building.test_collective_regime_simulate import (
     _u_zero,
     _u_zero_collective,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 
@@ -123,9 +125,7 @@ def test_value_dependent_constraint_keeps_its_references_local():
 
 def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
     """The target still carries its selection probability, gate or no gate."""
-    regime = _new_vocabulary_regimes()["married"]
-
-    transition = regime.decomposed_transition
+    transition = _bound_laws()["married"].decomposed_transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"married_ir"}
     assert isinstance(transition["married_ir"], StochasticTransition)
@@ -133,8 +133,7 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
 
 def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback():
     """Each source stakeholder's route keeps all four of its destinations."""
-    regime = _new_vocabulary_regimes()["married"]
-    edge = regime.gated_edges["married_ir"]
+    edge = _bound_laws()["married"].gated_edges["married_ir"]
 
     assert edge.legs["f"].target_stakeholder == "f"
     assert edge.legs["f"].solve_fallback.regime == "single_f"
@@ -149,8 +148,10 @@ def test_the_two_vocabularies_solve_to_the_same_values():
     value function has to agree array for array — including `married_ir`,
     whose participation constraints empty at the middle wage node.
     """
-    new = _solve(_new_vocabulary_regimes())
-    old = _solve(_make_dissolution_regimes())
+    new = _solve(regimes=_new_vocabulary_regimes(), married=_married_transition())
+    old = _solve(
+        regimes=_make_dissolution_regimes(), married=_married_dissolution_transition()
+    )
 
     assert set(new) == set(old)
     for period, regime_to_V in new.items():
@@ -172,17 +173,18 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
     wedge, so the model has to solve to exactly the values the unphased
     declaration solves to.
     """
-    regimes = _new_vocabulary_regimes()
-    married = regimes["married"]
-    (law,) = cast("ByAge", married.regime_transitions).laws
-    regimes["married"] = married.replace(
-        regime_transitions=ByAge(
-            cases={AgeRange(exclusive_stop=1): Phased(solve=law, simulate=law)}
-        )
+    married = _married_transition()
+    (law,) = cast("tuple[PhaseTransitionLaw]", cast("ByAge", married.law).laws)
+    phased = _solve(
+        regimes=_new_vocabulary_regimes(),
+        married=Transition(
+            law=ByAge(
+                cases={AgeRange(exclusive_stop=1): Phased(solve=law, simulate=law)}
+            ),
+            gates=married.gates,
+        ),
     )
-
-    phased = _solve(regimes)
-    unphased = _solve(_new_vocabulary_regimes())
+    unphased = _solve(regimes=_new_vocabulary_regimes(), married=married)
 
     for period, regime_to_V in phased.items():
         for regime_name, V_arr in regime_to_V.items():
@@ -194,46 +196,34 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
             )
 
 
-def _solve(regimes):
-    """Solve the dissolution miniature built from `regimes`."""
-    model = with_fixture_graph(
+def _solve(*, regimes, married: Transition):
+    """Solve the dissolution miniature built from `regimes` and `married`'s law."""
+    model = Model(
         regimes=regimes,
         ages=_AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": Transition(
+                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
+                law=married.law,
+                gates=married.gates,
+            ),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
     return model.solve(params=_PARAMS, log_level="off").values
 
 
 def _new_vocabulary_regimes() -> dict[str, Regime]:
-    """The dissolution miniature, declared in the value-dependent vocabulary."""
+    """The dissolution miniature, declared in the value-dependent vocabulary.
+
+    The regimes carry no law: `_married_transition` is the only one a model
+    needs, and `_bound_laws` binds every regime's law for inspection.
+    """
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_ir": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_no_dissolution_gate,
-                        routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_f",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_m",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            ),
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -244,13 +234,6 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     married_ir = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -279,7 +262,6 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -289,27 +271,16 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         },
     )
     single_f = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "single_f_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
-    single_m = single_f.replace(
-        regime_transitions={"single_m_terminal": StochasticTransition(func=_prob_one)},
-        functions={"utility": _u_single_m_ir},
-    )
+    single_m = single_f.replace(functions={"utility": _u_single_m_ir})
     return {
         "married": married,
         "married_ir": married_ir,
@@ -321,42 +292,66 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
     }
 
 
-def _a_value_dependent_transition() -> ValueDependentTransition:
-    """A well-formed edge declaration, for tests about where it may be written."""
-    return ValueDependentTransition(
-        probability=StochasticTransition(func=_prob_one),
-        gate=_no_dissolution_gate,
+def _married_transition() -> Transition:
+    """`married`'s age-0 transition: a gated edge into `married_ir`.
+
+    Each stakeholder's route falls back to her own single regime, so a model
+    declares `married` with `married_ir`, `single_f` and `single_m` as targets.
+    """
+    return Transition(
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "married_ir": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        gates={"married_ir": _dissolution_gate()},
+    )
+
+
+def _dissolution_gate() -> Gate:
+    """`married`'s gate into `married_ir`, each route to her own single regime."""
+    return Gate(
+        predicate=_no_dissolution_gate,
         routes={
             "f": StakeholderRoute(
                 target_stakeholder="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _identity_wage}
                 ),
-            )
+            ),
+            "m": StakeholderRoute(
+                target_stakeholder="m",
+                fallback=ProjectedRegimeValue(
+                    regime="single_m", projection={"wage": _identity_wage}
+                ),
+            ),
         },
     )
 
 
-def test_a_gate_must_be_keyed_by_the_target_it_opens():
-    """A gate is a route, so it lives in a per-target `transition` dict.
-
-    The gate says where a household goes when consent fails, and the fallback
-    is the route's. A transition naming no target names no route, so the whole
-    transition cannot be one edge.
-    """
-    with pytest.raises(RegimeInitializationError, match="per-target"):
-        Regime(
-            regime_transitions=ByAge(
-                cases={AgeRange(exclusive_stop=1): _a_value_dependent_transition()}
-            ),
-            states={"wage": _WAGE_3},
-            state_transitions={"wage": fixed_transition("wage")},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
-                )
-            },
-        )
+def _bound_laws() -> dict[str, RegimeLaw]:
+    """The dissolution miniature's laws, bound as a model binds them."""
+    laws = {
+        "married": _married_transition(),
+        "married_ir": ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "married_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        "single_f": ByAge(
+            cases={
+                AgeRange(start=1, exclusive_stop=2): {
+                    "single_f_terminal": StochasticTransition(func=_prob_one)
+                }
+            }
+        ),
+        "single_m": {"single_m_terminal": StochasticTransition(func=_prob_one)},
+    }
+    return dict(bind_laws({name: laws.get(name) for name in _new_vocabulary_regimes()}))
 
 
 def _prob_half(age: FloatND) -> FloatND:
@@ -364,147 +359,53 @@ def _prob_half(age: FloatND) -> FloatND:
     return 0.5 * jnp.ones_like(age, dtype=float)
 
 
-def _phased_edge_regime(
-    *,
-    solve_gate=_no_dissolution_gate,
-    simulate_gate=_no_dissolution_gate,
-    simulate_is_gated: bool = True,
-) -> Regime:
-    """A married regime whose edge is declared inside a `Phased` transition."""
-    route_f = StakeholderRoute(
-        target_stakeholder="f",
-        fallback=ProjectedRegimeValue(
-            regime="single_f", projection={"wage": _identity_wage}
-        ),
-    )
-    route_m = StakeholderRoute(
-        target_stakeholder="m",
-        fallback=ProjectedRegimeValue(
-            regime="single_m", projection={"wage": _identity_wage}
-        ),
-    )
-    simulate_cell = (
-        ValueDependentTransition(
-            probability=StochasticTransition(func=_prob_half),
-            gate=simulate_gate,
-            routes={"f": route_f, "m": route_m},
-        )
-        if simulate_is_gated
-        else StochasticTransition(func=_prob_half)
-    )
-    return Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): Phased(
-                    solve={
-                        "married_ir": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=solve_gate,
-                            routes={"f": route_f, "m": route_m},
+def _phased_edge_law() -> RegimeLaw:
+    """A married regime's law whose meeting probability differs by phase.
+
+    One gate, declared beside the `Phased` law, holds in both phases.
+    """
+    return bind_laws(
+        {
+            "married": Transition(
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): Phased(
+                            solve={"married_ir": StochasticTransition(func=_prob_one)},
+                            simulate={
+                                "married_ir": StochasticTransition(func=_prob_half)
+                            },
                         )
-                    },
-                    simulate={"married_ir": simulate_cell},
-                )
-            }
-        ),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+                    }
+                ),
+                gates={"married_ir": _dissolution_gate()},
             )
-        },
-    )
+        }
+    )["married"]
 
 
-def test_an_edge_declared_inside_a_phased_transition_is_derived_once():
-    """A gate may be declared per phase, and the edge it derives is one edge.
+def test_a_gate_beside_a_phased_law_is_one_edge():
+    """A law may differ by phase, and the gate beside it is one edge.
 
     The perceived meeting probability and the realized one are a legitimate
-    wedge, so `probability` may differ by phase. Everything else about the
-    edge — the gate, the routes, the references, the off-grid contract — is
-    the same edge seen twice, so the regime carries one `gated_edges` entry
-    and each phase keeps its own probability.
+    wedge, so the law may differ by phase. The gate, the routes, the
+    references and the off-grid contract are declared once beside it, so the
+    law carries one `gated_edges` entry and each phase keeps its own
+    probability.
     """
-    regime = _phased_edge_regime()
+    law = _phased_edge_law()
 
-    edge = regime.gated_edges["married_ir"]
+    edge = law.gated_edges["married_ir"]
     assert edge.gate is _no_dissolution_gate
     assert set(edge.legs) == {"f", "m"}
 
-    transition = regime.decomposed_transition
+    transition = law.decomposed_transition
     assert isinstance(transition, Phased)
     assert transition.solve["married_ir"].func is _prob_one
     assert transition.simulate["married_ir"].func is _prob_half
 
 
-def test_an_edge_declared_in_only_one_phase_is_refused():
-    """A target is value-dependent in both phases or in neither."""
-    with pytest.raises(RegimeInitializationError, match="both phases"):
-        _phased_edge_regime(simulate_is_gated=False)
-
-
-def test_two_phases_whose_gates_are_different_objects_are_refused():
-    """The gate is one callable, not two that happen to agree today."""
-
-    def _other_gate(D_target: BoolND) -> BoolND:
-        return ~D_target
-
-    with pytest.raises(RegimeInitializationError, match="gate"):
-        _phased_edge_regime(simulate_gate=_other_gate)
-
-
-def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
-    """`probability` accepts what a plain target transition entry accepts.
-
-    Lowering places the probability in a per-target cell, where the grammar
-    requires a `StochasticTransition`. A bare callable is wrapped on the way
-    through, so the declared type and the resulting grammar agree.
-    """
-    route_f = StakeholderRoute(
-        target_stakeholder="f",
-        fallback=ProjectedRegimeValue(
-            regime="single_f", projection={"wage": _identity_wage}
-        ),
-    )
-    route_m = StakeholderRoute(
-        target_stakeholder="m",
-        fallback=ProjectedRegimeValue(
-            regime="single_m", projection={"wage": _identity_wage}
-        ),
-    )
-
-    regime = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_ir": ValueDependentTransition(
-                        probability=_prob_one,
-                        gate=_no_dissolution_gate,
-                        routes={"f": route_f, "m": route_m},
-                    )
-                }
-            }
-        ),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-            )
-        },
-    )
-
-    transition = regime.decomposed_transition
-    assert isinstance(transition, Mapping)
-    cell = transition["married_ir"]
-    assert isinstance(cell, StochasticTransition)
-    assert cell.func is _prob_one
-
-
-def _derived_snapshot(regime: Regime) -> dict[str, object]:
-    """The five engine-facing facts a regime's declarations determine.
+def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> dict[str, object]:
+    """The five engine-facing facts a regime's declarations and law determine.
 
     Flattened into plain data so that two regimes built by different code paths
     — or by the same code path before and after a refactoring — compare by
@@ -525,7 +426,7 @@ def _derived_snapshot(regime: Regime) -> dict[str, object]:
                 dict(edge.gate_refs),
                 edge.off_grid,
             )
-            for target, edge in regime.gated_edges.items()
+            for target, edge in law.gated_edges.items()
         },
     }
 
@@ -599,9 +500,12 @@ def test_the_declarations_determine_every_engine_facing_fact(regime_name):
     is performed, because it names what the decomposition must produce rather
     than how.
     """
-    regime = _new_vocabulary_regimes()[regime_name]
+    snapshot = _derived_snapshot(
+        regime=_new_vocabulary_regimes()[regime_name],
+        law=_bound_laws()[regime_name],
+    )
 
-    assert _derived_snapshot(regime) == _expected_snapshots()[regime_name]
+    assert snapshot == _expected_snapshots()[regime_name]
 
 
 @pytest.mark.parametrize(
@@ -625,7 +529,6 @@ def test_a_derived_slot_cannot_be_declared(slot):
 
     with pytest.raises(TypeError, match=slot):
         Regime(
-            regime_transitions=None,
             states={"wage": _WAGE_3},
             functions={"utility": _u_zero},
             **declared,  # ty: ignore[invalid-argument-type]
@@ -645,7 +548,6 @@ def test_a_derived_slot_cannot_be_declared(slot):
 def test_a_derived_slot_cannot_be_replaced(slot):
     """`replace` reaches the declarations, not what they decompose to."""
     regime = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE_3},
         functions={"utility": _u_zero},
     )
@@ -654,30 +556,16 @@ def test_a_derived_slot_cannot_be_replaced(slot):
         regime.replace(**{slot: None})
 
 
-def test_decomposed_transition_of_an_age_schedule_satisfies_its_annotation():
-    """A dated schedule passes through decomposition as a declared return type."""
-    schedule = ByAge.until(
-        stop_age_exclusive=2,
-        law=_SupportedDeterministicTransition(func=lambda: 0, targets=("a",)),
-        then=_SupportedDeterministicTransition(func=lambda: 1, targets=("b",)),
-    )
-    hint = inspect.get_annotations(_decomposed_transition_side)["return"]
-
-    assert is_bearable(_decomposed_transition_side(schedule), hint)
-
-
 def test_decomposed_transition_of_an_age_schedule_is_its_engine_view():
     """A deterministic dated regime decomposes to one engine routing function."""
-    regime = Regime(
-        regime_transitions=ByAge.until(
+    law = bind_regime_law(
+        ByAge.until(
             stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
                 func=lambda: 0, targets=("alive", "dead")
             ),
             then="dead",
-        ),
-        states={"wage": _WAGE_3},
-        functions={"utility": _u_zero},
+        )
     )
 
-    assert is_bearable(regime.decomposed_transition, UserFunction)
+    assert is_bearable(law.decomposed_transition, UserFunction)

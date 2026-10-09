@@ -1,5 +1,7 @@
+import functools
 from collections.abc import Mapping
 
+import jax
 import numpy as np
 import pandas as pd
 import pytest
@@ -21,6 +23,13 @@ from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
 from tests.conftest import X64_ENABLED
+from tests.data.regression_tests.generate_representative_model_values import (
+    PROVENANCE,
+    REPRESENTATIVE_MODELS,
+    host_file,
+    host_fingerprint,
+    representative_outputs,
+)
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 _PRECISION_DIR = TEST_DATA / "regression_tests" / ("f64" if X64_ENABLED else "f32")
@@ -228,3 +237,104 @@ def test_model_with_different_grid_types(grid_type: str):
     assert len(df) == n_periods * 4  # 4 periods * 4 subjects
     assert "wealth" in df.columns
     assert "consumption" in df.columns
+
+
+# Complete outputs of four representative models (fixed `params["edges"]` laws,
+# gated edges) at a few small configurations: every solved value array and every
+# simulated column, with their dtypes and shapes. The archive records the commit
+# and precision it was produced at under `__provenance__/`; its module docstring
+# is the command that regenerates it.
+_STORED_MODEL_VALUES = _PRECISION_DIR / "representative_model_values.npz"
+_TOLERANCE = 1e-10 if X64_ENABLED else 1e-5
+_ON_ARCHIVE_HOST = (
+    jax.default_backend() == "cpu"
+    and host_file(_STORED_MODEL_VALUES).read_text().strip() == host_fingerprint()
+)
+
+
+@pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
+def test_representative_outputs_have_exactly_the_stored_keys(name: str):
+    """Each model produces exactly the stored value arrays and simulated columns."""
+    assert set(_outputs(name)) == set(_stored_outputs(name))
+
+
+@pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
+def test_representative_outputs_have_the_stored_dtypes_and_shapes(name: str):
+    """Each output array has the dtype and shape of its stored array."""
+    assert _dtypes_and_shapes(_outputs(name)) == _dtypes_and_shapes(
+        _stored_outputs(name)
+    )
+
+
+@pytest.mark.skipif(
+    not _ON_ARCHIVE_HOST,
+    reason="The stored bytes are the archive host's CPU results; elsewhere the float "
+    "outputs are compared within tolerance.",
+)
+@pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
+def test_representative_outputs_equal_their_stored_bytes(name: str):
+    """Each output equals its stored array byte for byte.
+
+    Signed zeros, NaN payloads and discrete labels included. The last bits of a
+    float output depend on the instructions XLA's CPU backend emits, so the bytes
+    are compared only on a host with the archive host's fingerprint.
+    """
+    assert _bytes(_outputs(name)) == _bytes(_stored_outputs(name))
+
+
+@pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
+def test_representative_float_outputs_match_their_stored_values(name: str):
+    """Each model's value arrays and float columns agree with their stored values."""
+    got = _outputs(name)
+    expected = {
+        key: value
+        for key, value in _stored_outputs(name).items()
+        if value.dtype.kind == "f"
+    }
+    np.testing.assert_allclose(
+        np.concatenate([np.ravel(got[key]) for key in expected]),
+        np.concatenate([np.ravel(value) for value in expected.values()]),
+        rtol=_TOLERANCE,
+        atol=_TOLERANCE,
+    )
+
+
+@pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
+def test_representative_discrete_outputs_equal_their_stored_values(name: str):
+    """Each model's labels and integer columns equal their stored values."""
+    got = _outputs(name)
+    expected = {
+        key: value
+        for key, value in _stored_outputs(name).items()
+        if value.dtype.kind != "f"
+    }
+    assert {key: got[key].tolist() for key in expected} == {
+        key: value.tolist() for key, value in expected.items()
+    }
+
+
+def test_stored_outputs_record_the_precision_they_are_compared_at():
+    """The archive of each precision directory was produced at that precision."""
+    with np.load(_STORED_MODEL_VALUES) as stored:
+        assert str(stored[f"{PROVENANCE}/precision"]) == ("64" if X64_ENABLED else "32")
+
+
+@functools.cache
+def _outputs(name: str) -> dict[str, np.ndarray]:
+    return representative_outputs(name)
+
+
+def _stored_outputs(name: str) -> dict[str, np.ndarray]:
+    """Return the stored arrays of one model, keyed as `representative_outputs`."""
+    with np.load(_STORED_MODEL_VALUES) as stored:
+        return {key: stored[key] for key in stored.files if key.startswith(f"{name}/")}
+
+
+def _dtypes_and_shapes(
+    arrays: Mapping[str, np.ndarray],
+) -> dict[str, tuple[str, tuple[int, ...]]]:
+    return {key: (value.dtype.str, value.shape) for key, value in arrays.items()}
+
+
+def _bytes(arrays: Mapping[str, np.ndarray]) -> dict[str, bytes]:
+    return {key: value.tobytes(order="C") for key, value in arrays.items()}

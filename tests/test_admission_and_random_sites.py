@@ -22,6 +22,7 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -32,7 +33,6 @@ from lcm.exceptions import (
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.test_demand_worklists import _phased_model
-from tests.test_models.graph import with_fixture_graph
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -59,16 +59,29 @@ def _die() -> FloatND:
     return jnp.asarray(0.5)
 
 
+def _edges(*, working_law: Any) -> dict:
+    """Survive-or-die edges for "island" and "working"; `working_law` is per age."""
+    return {
+        "island": Transition(
+            targets={"island": (25, 35, 45, 55), "dead": (25, 35, 45, 55, 65)},
+            law=ByAge.until(
+                stop_age_exclusive=75,
+                law={
+                    "island": StochasticTransition(func=_stay),
+                    "dead": StochasticTransition(func=_die),
+                },
+                then="dead",
+            ),
+        ),
+        "working": Transition(
+            targets={"working": (25, 35, 45, 55), "dead": (25, 35, 45, 55, 65)},
+            law=ByAge.until(stop_age_exclusive=75, law=working_law, then="dead"),
+        ),
+    }
+
+
 def _mortal() -> Regime:
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=75,
-            law={
-                "working": StochasticTransition(func=_stay),
-                "dead": StochasticTransition(func=_die),
-            },
-            then="dead",
-        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
@@ -77,14 +90,6 @@ def _mortal() -> Regime:
 
 def _island() -> Regime:
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=75,
-            law={
-                "island": StochasticTransition(func=_stay),
-                "dead": StochasticTransition(func=_die),
-            },
-            then="dead",
-        ),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
@@ -92,12 +97,11 @@ def _island() -> Regime:
 
 
 def _model(initial_nodes: Any) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": _mortal(),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _utility},
             ),
@@ -105,6 +109,12 @@ def _model(initial_nodes: Any) -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes=initial_nodes,
+        edges=_edges(
+            working_law={
+                "working": StochasticTransition(func=_stay),
+                "dead": StochasticTransition(func=_die),
+            }
+        ),
     )
 
 
@@ -212,19 +222,15 @@ def _laws(*, die: Any) -> dict:
 
 def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_wealth)
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=75, law=law, then="dead"
-                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _utility},
             ),
@@ -232,6 +238,7 @@ def _law_model(*, law: Any, n_wealth: int = 2) -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_edges(working_law=law),
     )
 
 
@@ -337,24 +344,15 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
         calls.append(None)
         return jnp.asarray(0.5)
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "island": _island(),
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=75,
-                    law={
-                        "working": StochasticTransition(func=counting_stay),
-                        "dead": StochasticTransition(func=_die),
-                    },
-                    then="dead",
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _utility},
             ),
@@ -362,6 +360,12 @@ def test_refused_start_raises_before_any_regime_law_is_evaluated(
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_edges(
+            working_law={
+                "working": StochasticTransition(func=counting_stay),
+                "dead": StochasticTransition(func=_die),
+            }
+        ),
     )
     # Construction may evaluate this fixed scalar law to prove support. A refused
     # simulation must not evaluate it again, including while tracing user code.
@@ -399,24 +403,15 @@ def _drift(wealth: ContinuousState) -> ContinuousState:
 
 def _drifting_model() -> Model:
     """Valid regime-law rows on the wealth grid [0, 1]; simulated wealth leaves it."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "island": _island(),
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=75,
-                    law={
-                        "working": StochasticTransition(func=_stay_with_wealth),
-                        "dead": StochasticTransition(func=_die_with_wealth),
-                    },
-                    then="dead",
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _drift},
                 functions={"utility": _utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _utility},
             ),
@@ -424,6 +419,12 @@ def _drifting_model() -> Model:
         ages=_AGES,
         regime_id_class=_Life,
         initial_nodes={25: "working"},
+        edges=_edges(
+            working_law={
+                "working": StochasticTransition(func=_stay_with_wealth),
+                "dead": StochasticTransition(func=_die_with_wealth),
+            }
+        ),
     )
 
 

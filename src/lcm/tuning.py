@@ -55,6 +55,7 @@ from _lcm.execution.hlo_fusions import (  # noqa: F401
     ReduceFusionVerdict,
     classify_reduce_fusions,
 )
+from _lcm.params.edges import flat_namespaces
 from _lcm.solution.fingerprint import _param_shape_signature
 from _lcm.version import __version__ as pylcm_version
 from lcm.exceptions import ExecutionPlanningError
@@ -714,8 +715,8 @@ def _settings_key(
     devices = {device.id: device for device in jax.devices()}
     flat_params = model._process_params(params)  # noqa: SLF001
     shapes = {
-        regime: {name: _param_shape_signature(value) for name, value in leaves.items()}
-        for regime, leaves in flat_params.items()
+        path: {name: _param_shape_signature(value) for name, value in leaves.items()}
+        for path, leaves in flat_namespaces(flat_params)
     }
     return SettingsKey(
         model_structure=model._model_structure_fingerprint,  # noqa: SLF001

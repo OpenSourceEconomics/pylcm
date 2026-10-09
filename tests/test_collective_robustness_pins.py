@@ -27,13 +27,14 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     ParetoObjective,
     Regime,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
 from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
@@ -44,7 +45,6 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.mock_regime import MockRegime
-from tests.test_models.graph import with_fixture_graph
 
 # Lifecycle of the gated-edge model: the source is active at age 0, both
 # terminal regimes from age 1 on.
@@ -67,7 +67,6 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     """A regime's Pareto weights are its own; the declaring dict cannot rewrite them."""
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
-        regime_transitions=None,
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
@@ -84,9 +83,9 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     assert objective.weights == {"f": 0.25, "m": 0.75}
 
 
-def test_mock_regime_carries_an_empty_gated_edges_mapping():
-    """A regime-shaped object with no edges declared reads as declaring none."""
-    assert dict(MockRegime().gated_edges) == {}
+def test_mock_regime_carries_no_gated_edges():
+    """A regime-shaped object carries no gated edges: they live on the source's law."""
+    assert not hasattr(MockRegime(), "gated_edges")
 
 
 def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(
@@ -144,11 +143,12 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
     while the model is being built.
     """
     with pytest.raises((PyLCMError, NotImplementedError), match="D_target"):
-        with_fixture_graph(
+        Model(
             regimes=_make_singleton_target_dissolution_gate_regimes(),
             ages=GATE_AGES,
             regime_id_class=GateRegimeId,
             initial_nodes={0: "source"},
+            edges={"source": _make_dissolution_gate_transition()},
         )
 
 
@@ -188,41 +188,54 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
 
     """
     source = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_enters_target),
-                        gate=_no_dissolution,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback",
-                                    projection={"wage": _identity_wage},
-                                ),
-                            )
-                        },
-                    ),
-                    "fallback": StochasticTransition(func=_never_entered),
-                }
-            }
-        ),
         states={"wage": GATE_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _wage_utility},
     )
     target = Regime(
-        regime_transitions=None,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _terminal_wage_utility},
     )
     fallback = Regime(
-        regime_transitions=None,
         states={"wage": GATE_WAGE_GRID},
         functions={"utility": _fallback_wage_utility},
     )
     return MappingProxyType({"source": source, "target": target, "fallback": fallback})
+
+
+def _make_dissolution_gate_transition() -> Transition:
+    """Build the source's transition: a dissolution-gated edge into `target` at age 0.
+
+    Returns:
+        The `Transition` choosing between `target`, through a gate reading the
+        target's dissolution flag, and the never-entered `fallback`.
+
+    """
+    return Transition(
+        targets={"target": 0, "fallback": 0},
+        law=ByAge(
+            cases={
+                AgeRange(exclusive_stop=1): {
+                    "target": StochasticTransition(func=_enters_target),
+                    "fallback": StochasticTransition(func=_never_entered),
+                }
+            }
+        ),
+        gates={
+            "target": Gate(
+                predicate=_no_dissolution,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            )
+        },
+    )
 
 
 def _wife_payoff(work: DiscreteAction) -> FloatND:

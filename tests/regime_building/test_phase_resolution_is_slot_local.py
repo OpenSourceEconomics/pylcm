@@ -27,19 +27,17 @@ Both cases below are asserted, so the test documents the defect AND its repair.
 import jax.numpy as jnp
 import pandas as pd
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
+    Model,
     Phased,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, Period, ScalarInt, UserFunction
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -123,13 +121,6 @@ _STATES = {
 
 def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
     live = Regime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("live", "last")
-            ),
-            exits=("last",),
-        ),
         state_transitions={"stock": carry_new_stock, "tag": tag_law},
         states=_STATES,
         actions={"move": DiscreteGrid(category_class=Move)},
@@ -137,15 +128,20 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
             "utility": service_flow,
             "new_stock": Phased(solve=_new_stock_belief, simulate=_new_stock_actual),
         },
-    ).replace()
+    )
     last = Regime(
-        regime_transitions=None,
         state_transitions={},
         states=_STATES,
         actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": flat_utility},
-    ).replace()
-    model = with_fixture_graph(
+    )
+    model = Model(
+        edges={
+            "live": Transition(
+                targets={"live": 0, "last": (0, 1)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         regimes={"live": live, "last": last},
         ages=AgeGrid(exact_values=(0, 1, 2)),
         regime_id_class=RegimeId,

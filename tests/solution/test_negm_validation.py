@@ -17,6 +17,7 @@ The cases mutate the valid kinked-toy NEGM regime one rule at a time:
 """
 
 import dataclasses
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from _lcm.egm.negm_validation import (
     validate_negm_regimes,
 )
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import bind_regime_law
 from _lcm.solution.negm import _BoundNEGM
 from lcm import (
     DiscreteGrid,
@@ -54,12 +56,22 @@ from lcm.typing import (
 )
 from tests.test_models import negm_kinked_toy
 
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
+
 _VALID = negm_kinked_toy.build_alive_regime()
+# The single regime's law: one no model has bound.
+_LAWS = MappingProxyType({"alive": _NON_TERMINAL_LAW})
 
 
 def _validate(regime: UserRegime) -> None:
     """Run the NEGM contract check on a single-regime mapping."""
-    validate_negm_regimes(user_regimes={"alive": regime})
+    validate_negm_regimes(user_regimes={"alive": regime}, laws=_LAWS)
 
 
 def test_valid_kinked_toy_negm_regime_passes_validation():
@@ -187,9 +199,9 @@ def _durable_part(new_durable: ContinuousState) -> FloatND:
 
 
 def _multiplicative_utility(
-    *, _consumption_part: FloatND, _durable_part: FloatND
+    *, consumption_part: FloatND, durable_part: FloatND
 ) -> FloatND:
-    return _consumption_part * _durable_part
+    return consumption_part * durable_part
 
 
 def test_utility_coupling_through_helper_branches_is_rejected() -> None:
@@ -197,8 +209,8 @@ def test_utility_coupling_through_helper_branches_is_rejected() -> None:
     regime = _VALID.replace(
         functions={
             **dict(_VALID.functions),
-            "_consumption_part": _consumption_part,
-            "_durable_part": _durable_part,
+            "consumption_part": _consumption_part,
+            "durable_part": _durable_part,
             "utility": _multiplicative_utility,
         },
     )
@@ -359,6 +371,7 @@ def test_negm_regime_rejects_nonlinear_certainty_equivalent():
     with pytest.raises(RegimeInitializationError, match="does not support a nonlinear"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -382,6 +395,7 @@ def test_user_defined_resources_with_a_declared_outer_cost_is_rejected():
     with pytest.raises(ModelInitializationError, match="pylcm composes"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -400,6 +414,7 @@ def test_missing_resources_base_with_a_declared_outer_cost_is_rejected():
     with pytest.raises(ModelInitializationError, match="resources_before_outer_cost"):
         finalize_regimes(
             user_regimes={"alive": regime},
+            laws=_LAWS,
             derived_categoricals={},
             koopmans_aggregator=LinearAggregator(),
             certainty_equivalent=LinearExpectation(),
@@ -426,6 +441,7 @@ def test_finalize_composes_resources_as_base_minus_outer_cost():
 
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
+        laws=_LAWS,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -458,6 +474,7 @@ def test_finalize_composes_resources_with_a_phased_base():
 
     finalized = finalize_regimes(
         user_regimes={"alive": regime},
+        laws=_LAWS,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),

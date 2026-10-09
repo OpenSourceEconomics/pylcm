@@ -20,11 +20,11 @@ from lcm import (
     Model,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -55,21 +55,13 @@ def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "source": Regime(
-                regime_transitions={
-                    "low": StochasticTransition(func=_probability_low),
-                    "high": StochasticTransition(func=_probability_high),
-                },
-                functions={"utility": _zero_utility},
-            ),
+            "source": Regime(functions={"utility": _zero_utility}),
             "low": Regime(
-                regime_transitions=None,
                 functions={"utility": _low_utility},
             ),
             "high": Regime(
-                regime_transitions=None,
                 functions={"utility": _high_utility},
             ),
         },
@@ -78,6 +70,15 @@ def _build_model() -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
+        edges={
+            "source": Transition(
+                targets={"low": 0, "high": 0},
+                law={
+                    "low": StochasticTransition(func=_probability_low),
+                    "high": StochasticTransition(func=_probability_high),
+                },
+            )
+        },
     )
 
 

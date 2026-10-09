@@ -20,12 +20,11 @@ from lcm import (
     PowerMean,
     Regime,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
@@ -67,29 +66,24 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     def _to_b() -> ScalarFloat:
         return jnp.float32(probability_b)
 
-    return with_fixture_graph(
+    source_law = {
+        "a": StochasticTransition(func=_to_a),
+        "b": StochasticTransition(func=_to_b),
+    }
+    return Model(
+        edges={"source": Transition(targets={"a": 20, "b": 20}, law=source_law)},
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={
-                        "a": StochasticTransition(func=_to_a),
-                        "b": StochasticTransition(func=_to_b),
-                    },
-                    exits=("a", "b"),
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
             "a": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_wealth},
             ),
             "b": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": _pays_ten_times},
             ),
@@ -164,27 +158,27 @@ def test_signed_cells_that_cancel_across_targets_are_refused_by_validation() -> 
 
     def _terminal() -> Regime:
         return Regime(
-            regime_transitions=None,
             states={"wealth": _WEALTH},
             functions={"utility": _pays_wealth},
         )
 
-    model = with_fixture_graph(
+    source_law = ByAge(
+        cases={
+            AgeRange(exclusive_stop=21): {
+                "live": StochasticTransition(func=_all_mass_to_live),
+                "gone_a": StochasticTransition(func=_positive_on_a_dead_target),
+                "gone_b": StochasticTransition(func=_negative_on_a_dead_target),
+            }
+        }
+    )
+    model = Model(
+        edges={
+            "source": Transition(
+                targets={"live": 20, "gone_a": 20, "gone_b": 20}, law=source_law
+            )
+        },
         regimes={
             "source": Regime(
-                regime_transitions=ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=21): {
-                            "live": StochasticTransition(func=_all_mass_to_live),
-                            "gone_a": StochasticTransition(
-                                func=_positive_on_a_dead_target
-                            ),
-                            "gone_b": StochasticTransition(
-                                func=_negative_on_a_dead_target
-                            ),
-                        }
-                    }
-                ),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": _keep},
                 functions={"utility": _no_utility},

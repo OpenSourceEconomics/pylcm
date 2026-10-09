@@ -14,7 +14,6 @@ from lcm import AgeGrid, AgeRange, ByAge, LinSpacedGrid, Model, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -29,18 +28,15 @@ def _utility(wealth: ContinuousState) -> FloatND:
 
 def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    return with_fixture_graph(
+    exit_age = ages.exact_values[-2]
+    return Model(
         regimes={
             "working": Regime(
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=ages.exact_values[-1], law="working", then="dead"
-                ),
                 states={"wealth": wealth},
                 state_transitions={"wealth": lambda wealth: wealth},
                 functions={"utility": _utility},
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": wealth},
                 functions={"utility": _utility},
             ),
@@ -48,6 +44,9 @@ def _model(*, ages: AgeGrid, initial_nodes: Any) -> Model:
         ages=ages,
         regime_id_class=_RegimeId,
         initial_nodes=initial_nodes,
+        edges={
+            "working": {"working": AgeRange(exclusive_stop=exit_age), "dead": exit_age}
+        },
     )
 
 
@@ -97,7 +96,7 @@ def test_initial_nodes_are_exact_on_fractional_clocks(
 ) -> None:
     """Starts land on the exact grid coordinates the selector names."""
     model = _model(ages=ages, initial_nodes=initial_nodes)
-    assert model.initial_nodes == frozenset((age, "working") for age in expected)
+    assert model.graph.initial_nodes == frozenset((age, "working") for age in expected)
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,7 @@ import pytest
 
 from _lcm.egm.validation import validate_dcegm_regimes
 from _lcm.regime_building.finalize import finalize_regimes
+from _lcm.regime_law import bind_regime_law
 from lcm import LinearAggregator, LinearExpectation
 from tests.test_models.ds_housing_keeper import (
     HOUSING_GRID,
@@ -33,6 +34,18 @@ from tests.test_models.ds_housing_keeper import (
     build_params,
     build_working_regime,
     dead,
+)
+
+
+def _next_regime_code() -> int:
+    """Stand in for the law of a non-terminal regime."""
+    return 0
+
+
+_NON_TERMINAL_LAW = bind_regime_law(_next_regime_code)
+
+_KEEPER_LAWS = MappingProxyType(
+    {"keeper": _NON_TERMINAL_LAW, "dead": _NON_TERMINAL_LAW}
 )
 
 
@@ -45,6 +58,7 @@ def _finalized_keeper_regimes() -> MappingProxyType:
     """
     return finalize_regimes(
         user_regimes={"keeper": build_working_regime(), "dead": dead},
+        laws=_KEEPER_LAWS,
         derived_categoricals=MappingProxyType({}),
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -59,7 +73,7 @@ def test_dcegm_accepts_utility_reading_passive_housing():
     reaching the *Euler* state (here `liquid_assets`), but a passive state is
     allowed, so `validate_dcegm_regimes` accepts the keeper regimes.
     """
-    validate_dcegm_regimes(user_regimes=_finalized_keeper_regimes())
+    validate_dcegm_regimes(user_regimes=_finalized_keeper_regimes(), laws=_KEEPER_LAWS)
 
 
 @pytest.mark.requires(device="gpu")

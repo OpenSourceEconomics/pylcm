@@ -15,21 +15,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    ByAge,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     Regime,
     StochasticTransition,
     TauchenAR1Process,
+    Transition,
     categorical,
 )
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LEAVE_AT_WEALTH = 3.0
@@ -71,24 +70,19 @@ def _enter_shock() -> FloatND:
 
 def _solve_with_bequest(bequest: float):
     """Solve a two-regime model whose terminal regime carries no state."""
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "gone")
-            ),
-            exits=("gone",),
-        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(bequest)}
-    )
-    model = with_fixture_graph(
+    gone = Regime(functions={"utility": lambda: jnp.array(bequest)})
+    model = Model(
         regimes={"alive": alive, "gone": gone},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -98,7 +92,6 @@ def _solve_with_bequest(bequest: float):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }
@@ -149,40 +142,39 @@ class _ThreeRegimeId:
 def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     """Solve a model holding a stateless regime the parent cannot reach.
 
-    `alive`'s regime transition is a per-target mapping naming only `alive` and
-    `gone`, so `limbo` is structurally unreachable from it even though `limbo` is
+    The graph gives `alive` edges only to `alive` and `gone`, so `limbo` is
+    structurally unreachable from it even though `limbo` is
     a perfectly ordinary active stateless regime with a large payoff.
     """
 
     def _leaves(*, wealth, age):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
+    alive_law = ByAge.until(
+        stop_age_exclusive=_LAST_AGE,
+        law={
+            "alive": StochasticTransition(
+                func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+            ),
+            "gone": StochasticTransition(
+                func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+            ),
+        },
+        then="gone",
+    )
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law={
-                "alive": StochasticTransition(
-                    func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-                ),
-                "gone": StochasticTransition(
-                    func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-                ),
-            },
-            exits=("gone",),
-        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(10.0)}
-    )
-    limbo = Regime(
-        regime_transitions=None, functions={"utility": lambda: jnp.array(limbo_bequest)}
-    )
-    model = with_fixture_graph(
+    gone = Regime(functions={"utility": lambda: jnp.array(10.0)})
+    limbo = Regime(functions={"utility": lambda: jnp.array(limbo_bequest)})
+    model = Model(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=_ThreeRegimeId,
         initial_nodes={20: "alive"},
@@ -192,7 +184,6 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {"alive": {}, "gone": {}},
         },
         "gone": {"utility": {}},
         "limbo": {"utility": {}},
@@ -204,8 +195,8 @@ def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
     """A stateless regime the transition never names contributes nothing.
 
     The discriminator between the two candidate rules. *Declared reachability ∩
-    activity* excludes `limbo`, because `alive`'s per-target transition does not
-    name it. The weaker rule "every regime active next period is a target" would
+    activity* excludes `limbo`, because no edge of `alive` leads to it. The
+    weaker rule "every regime active next period is a target" would
     include it, and the parent's value would move with a payoff it can never
     collect. Only a model where the two rules disagree can tell them apart, which
     is why `limbo` is active and richly paid rather than merely absent.
@@ -221,14 +212,8 @@ def _solve_with_process_only_target(level: float):
     The source supplies an explicit entry law because it does not carry the
     target's process. Once entered, the process carries its own intrinsic law.
     """
+    alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "gone")
-            ),
-            exits=("gone",),
-        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={
@@ -238,7 +223,6 @@ def _solve_with_process_only_target(level: float):
         functions={"utility": _utility},
     )
     retired = Regime(
-        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -249,8 +233,11 @@ def _solve_with_process_only_target(level: float):
         },
         functions={"utility": lambda shock: shock + level},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "gone": retired},
+        edges={
+            "alive": Transition(targets={"alive": 20, "gone": (20, 21)}, law=alive_law)
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -261,7 +248,6 @@ def _solve_with_process_only_target(level: float):
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }

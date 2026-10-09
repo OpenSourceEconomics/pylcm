@@ -375,6 +375,7 @@ class DCEGM(OneMarginSolver):
             regime_name=context.regime_name,
             user_regime=context.user_regimes[context.regime_name],
             user_regimes=context.user_regimes,
+            laws=context.laws,
             solution_reachability=context.solution_reachability,
         )
 
@@ -482,6 +483,7 @@ class DCEGM(OneMarginSolver):
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
+            laws=context.laws,
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
             constraints=context.constraints,

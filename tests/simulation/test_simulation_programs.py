@@ -16,9 +16,6 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation import programs as simulation_programs
 from _lcm.simulation.period_inputs import GATE_ROUTE, gate_reads
 from _lcm.simulation.program_types import SimulationPrograms
@@ -32,7 +29,14 @@ from _lcm.simulation.programs import (
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import ArgmaxQOverAFunction, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
-from lcm import AgeGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DeterministicTransition,
+    LinSpacedGrid,
+    Model,
+    Transition,
+    categorical,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
@@ -47,8 +51,6 @@ from lcm.typing import (
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models import taste_shocks_toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # A regime whose solve kernel streams its action product, and one whose
 # collective kernel keeps the canonical dense reducer and whose routing a host
@@ -264,13 +266,6 @@ def _branch_terminal_utility() -> FloatND:
 def _branching_regime() -> UserRegime:
     """Return one of the two regimes a subject moves between."""
     return UserRegime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=_branch_next_regime, targets=("stay", "switch", "done")
-            ),
-            exits=("done",),
-        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3)},
@@ -282,17 +277,22 @@ def _branching_regime() -> UserRegime:
 @functools.cache
 def _two_target_model() -> Model:
     """Build a model whose first period reaches two state-carrying regimes."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "stay": _branching_regime(),
             "switch": _branching_regime(),
-            "done": UserRegime(
-                regime_transitions=None, functions={"utility": _branch_terminal_utility}
-            ),
+            "done": UserRegime(functions={"utility": _branch_terminal_utility}),
         },
         regime_id_class=_BranchRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "stay"},
+        edges={
+            source: Transition(
+                targets={"stay": 0, "switch": 0, "done": (0, 1)},
+                law=DeterministicTransition(func=_branch_next_regime),
+            )
+            for source in ("stay", "switch")
+        },
     )
 
 

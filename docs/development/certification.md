@@ -52,11 +52,24 @@ literal of every `_parse` obligation in
 cannot drift from the set the certificate actually parses. Editing any certified source
 invalidates both. `check_seals.py --fix` repairs both.
 
+The inventory lists each certified source once, under `sources`. Each profile in
+`derived_policy.profiles` (`fast`, `certified`) references that list —
+`"inventory": "sources"` — and carries one explicit override slot, `exclude_sources`,
+naming inventory paths the profile drops. The slot is the only hand-maintained part of
+the file: regeneration keeps it, and the verifier refuses an exclusion that names a path
+absent from the inventory or names one twice. The profile contract and an explicit
+derived policy are compared against each profile's resolved set. `schema_version` is
+`"2"`; `generate_sources.py` upgrades a schema-1 inventory, whose profiles repeated the
+whole list, by turning each omitted path into an exclusion.
+
 **AST corridor pins.** For each certified source, `direct_flow.py` pins a *module
 transport surface* digest and a per-callable AST digest for every callable the corridor
 depends on, written as `"<Class>.<method>": "<sha256>"` entries. These are computed from
 the parsed source with docstrings stripped, so they move when the code moves and not
-when a comment does. `repin_corridors.py` recomputes them.
+when a comment does. Each pin stands once, in the `_CORRIDOR_PINS` store keyed by
+source; every certificate family selects its subset by name (`_contracts`,
+`_callable_pins`, `_surface_pin`), and a stored pin that no family selects is a verifier
+error. `repin_corridors.py` recomputes them.
 
 **Reviewable declarations.** Exact field tuples of the transport dataclasses, verbatim
 enum bodies, module-level binding counts (`expected_binding_counts`), and
@@ -121,8 +134,9 @@ failure, not a pass.
 - It rewrites only pins owned by the sources named with `--changed-source`. If a pin
   owned by any *other* certified source drifted, an unintended edit reached that source
   and the run is refused without writing anything.
-- It refuses a name pinned to two different digests, and any pin it cannot attribute to
-  exactly one source, rather than guessing.
+- It rewrites each drifted digest at its own entry in the store, so a digest that two
+  sources share because their callables are identical moves only for the named source.
+- It refuses a name stored twice with two different digests rather than guessing.
 - It never touches the reviewable declarations. When the verifier still reports errors
   after a re-pin, the tool prints them: those are field tuples, enum bodies and binding
   counts for a reviewer to edit.

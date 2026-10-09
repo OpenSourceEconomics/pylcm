@@ -327,7 +327,7 @@ def _assert_public_membership_inventory(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes={
             name: dataclasses.replace(
                 regime,
@@ -335,18 +335,18 @@ def _assert_public_membership_inventory(
                     **regime.functions,
                     "utility": (
                         _membership_terminal_utility
-                        if regime.terminal
+                        if base.graph.laws[name].terminal
                         else regime.functions["utility"]
                     ),
                 },
                 states=(
                     {**regime.states, "kind": DiscreteGrid(_MembershipKind)}
-                    if regime.terminal
+                    if base.graph.laws[name].terminal
                     else regime.states
                 ),
                 state_transitions=(
                     {}
-                    if regime.terminal
+                    if base.graph.laws[name].terminal
                     else {**regime.state_transitions, "kind": _membership_next_kind}
                 ),
             )

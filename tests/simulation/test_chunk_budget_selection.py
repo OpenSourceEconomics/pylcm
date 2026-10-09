@@ -21,7 +21,7 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
 ) -> None:
     base = _stateful_target_model()
     model = Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=dict(base.user_regimes),
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,

@@ -39,21 +39,20 @@ from lcm import (
     AgeSpecializedGrid,
     ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
@@ -191,6 +190,8 @@ def test_fallback_state_projector_names_the_state_a_short_projection_omits():
         build_fallback_state_projector(
             ref=_short_ref(),
             fallback_simulate_state_names=("principal",),
+            route="only",
+            phase=None,
             target_regime_name="src_exit",
             target_state_names=("wage",),
             target_functions=MappingProxyType({}),
@@ -222,35 +223,16 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         {"principal": _project_principal} if fallback_projects_principal else {}
     )
     src = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "src_exit": ValueDependentTransition(
-                    probability=StochasticTransition(func=_prob_one),
-                    gate=_wage_gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="annuity", projection=projection
-                            )
-                        )
-                    },
-                )
-            },
-            exits=("src_exit",),
-        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     annuity = Regime(
-        regime_transitions=None,
         states={
             "principal": AgeSpecializedGrid(
                 build=_principal_grid, signature=_principal_ceiling
@@ -258,8 +240,32 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         },
         functions={"utility": _utility_annuity},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"src": src, "src_exit": src_exit, "annuity": annuity},
+        edges={
+            "src": Transition(
+                targets={"src_exit": 0, "annuity": 0},
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "src_exit": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                gates={
+                    "src_exit": Gate(
+                        predicate=_wage_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="annuity", projection=projection
+                                )
+                            )
+                        },
+                    )
+                },
+            )
+        },
         ages=_AGES,
         regime_id_class=AgeSpecializedRegimeId,
         initial_nodes={0: "src"},
@@ -288,46 +294,16 @@ def _build_model(
         gate_ref_projection["career"] = _project_career
 
     src = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "src_exit": ValueDependentTransition(
-                        probability=StochasticTransition(func=_prob_one),
-                        gate=_gate,
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection=fallback_projection
-                                )
-                            )
-                        },
-                        gate_references={
-                            "V_fallback_ref": ProjectedRegimeValue(
-                                regime="fallback", projection=gate_ref_projection
-                            )
-                        },
-                    )
-                }
-            }
-        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
     fallback = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(start=1, exclusive_stop=2): {
-                    "fallback_exit": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={
             "wage": _WAGE,
             "career": Phased(solve=_impute_career, simulate=_CAREER),
@@ -337,16 +313,47 @@ def _build_model(
         functions={"utility": _utility_fallback},
     )
     fallback_exit = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "src": src,
             "src_exit": src_exit,
             "fallback": fallback,
             "fallback_exit": fallback_exit,
+        },
+        edges={
+            "src": Transition(
+                targets={"src_exit": 0, "fallback": 0},
+                law=ByAge(
+                    cases={
+                        AgeRange(exclusive_stop=1): {
+                            "src_exit": StochasticTransition(func=_prob_one)
+                        }
+                    }
+                ),
+                gates={
+                    "src_exit": Gate(
+                        predicate=_gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
+                                    projection=fallback_projection,
+                                )
+                            )
+                        },
+                        references={
+                            "V_fallback_ref": ProjectedRegimeValue(
+                                regime="fallback",
+                                projection=gate_ref_projection,
+                            )
+                        },
+                    )
+                },
+            ),
+            "fallback": {"fallback_exit": 1},
         },
         ages=_AGES,
         regime_id_class=RegimeId,

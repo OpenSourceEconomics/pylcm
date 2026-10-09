@@ -2,7 +2,7 @@ import dataclasses
 import logging
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
@@ -43,9 +43,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
@@ -53,8 +51,11 @@ from _lcm.solution.v_topology import (
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm import (
+    AgeRange,
     CollectiveUtility,
+    DeterministicTransition,
     ExecutionConfig,
+    Transition,
     fixed_transition,
 )
 from lcm.ages import AgeGrid
@@ -67,8 +68,27 @@ from lcm.typing import ScalarFloat, ScalarInt
 from tests.simulation._profile_comparison import (
     assert_values_agree as assert_agrees_to_ulp,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
+
+_STAY_AGES = AgeRange(exclusive_stop=4)
+_EXIT_AGES = AgeRange(exclusive_stop=5)
+
+
+def _two_source_edges(
+    *,
+    to_retirement: Callable[..., ScalarInt],
+    to_retirement_b: Callable[..., ScalarInt],
+) -> dict[str, Transition]:
+    return {
+        "working_life": Transition(
+            targets={"retirement": _EXIT_AGES, "working_life": _STAY_AGES},
+            law=DeterministicTransition(func=to_retirement),
+        ),
+        "working_life_b": Transition(
+            targets={"retirement": _EXIT_AGES, "working_life_b": _STAY_AGES},
+            law=DeterministicTransition(func=to_retirement_b),
+        ),
+    }
+
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
 # process whose JAX backends are not yet initialized (a serial run importing
@@ -170,17 +190,6 @@ def _make_correct_distributed_model(
             if exact_layout
             else LinSpacedGrid(start=1, stop=50, n_points=10)
         },
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 4, RegimeId.retirement, RegimeId.working_life
-                ),
-                targets=("working_life", "retirement"),
-            ),
-            exits=("retirement",),
-            stays=("working_life",) if one_regime_per_period else None,
-        ),
     )
 
     def retirement_utility_with_type2(*, wealth, type1, type2):
@@ -196,7 +205,6 @@ def _make_correct_distributed_model(
     )
 
     retirement = UserRegime(
-        regime_transitions=None,
         functions={"utility": retirement_utility},
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
@@ -205,7 +213,7 @@ def _make_correct_distributed_model(
         },
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, inclusive_stop=5, step="Y"),
         regime_id_class=RegimeId,
@@ -234,6 +242,18 @@ def _make_correct_distributed_model(
             ),
         ),
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": {"working_life": _STAY_AGES, "retirement": 4}
+            if one_regime_per_period
+            else Transition(
+                targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 4, RegimeId.retirement, RegimeId.working_life
+                    )
+                ),
+            )
+        },
     )
 
 
@@ -370,20 +390,9 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
     def terminal_m(*, wealth, type1):
         return 0.4 * wealth + 0.2 * type1
 
-    def next_regime(age):
-        del age
-        return RegimeId.retired
-
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working": UserRegime(
-                regime_transitions=until_exit(
-                    1,
-                    law=_SupportedDeterministicTransition(
-                        func=next_regime, targets=("working", "retired")
-                    ),
-                    exits=("retired",),
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
                 state_transitions={
                     "wealth": lambda wealth, consumption: wealth - consumption
@@ -396,7 +405,6 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
                 },
             ),
             "retired": UserRegime(
-                regime_transitions=None,
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
                 functions={
                     "utility": CollectiveUtility(
@@ -413,6 +421,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         ),
         state_transitions={"type1": fixed_transition("type1")},
         initial_nodes={0: "working"},
+        edges={"working": {"retired": 0}},
     )
 
 
@@ -452,20 +461,9 @@ def _make_wrong_distributed_model() -> Model:
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 4, RegimeId.retirement, RegimeId.working_life
-                ),
-                targets=("working_life", "retirement"),
-            ),
-            exits=("retirement",),
-        ),
     )
 
     retirement = UserRegime(
-        regime_transitions=None,
         functions={
             "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
         },
@@ -474,7 +472,7 @@ def _make_wrong_distributed_model() -> Model:
         },
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, inclusive_stop=5, step="Y"),
         regime_id_class=RegimeId,
@@ -488,6 +486,16 @@ def _make_wrong_distributed_model() -> Model:
             "type2": fixed_transition("type2"),
         },
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 4, RegimeId.retirement, RegimeId.working_life
+                    )
+                ),
+            )
+        },
     )
 
 
@@ -560,7 +568,9 @@ def _compiled_solve_kernel_hlo(
             program=declaration,
             context=CoreBuildContext(
                 state_action_space=regime.solution.state_action_space(
-                    regime_params=flat_params[regime_name]
+                    regime_params=regime_kernel_params(
+                        flat_params, regime_name=regime_name
+                    )
                 ),
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=MappingProxyType({}),
@@ -910,29 +920,12 @@ def _make_two_source_distributed_model() -> Model:
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedDeterministicTransition(
-                func=to_retirement, targets=("retirement", "working_life")
-            ),
-            exits=("retirement",),
-        ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(
-                regime_transitions=until_exit(
-                    5,
-                    law=_SupportedDeterministicTransition(
-                        func=to_retirement_b,
-                        targets=("retirement", "working_life_b"),
-                    ),
-                    exits=("retirement",),
-                )
-            ),
+            "working_life_b": working,
             "retirement": UserRegime(
-                regime_transitions=None,
                 functions={"utility": retirement_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             ),
@@ -943,6 +936,9 @@ def _make_two_source_distributed_model() -> Model:
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
         initial_nodes={0: ("working_life", "working_life_b")},
+        edges=_two_source_edges(
+            to_retirement=to_retirement, to_retirement_b=to_retirement_b
+        ),
     )
 
 
@@ -1349,25 +1345,14 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
             "wealth": lambda wealth, consumption: wealth - consumption,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age >= 4, RegimeId.retirement, RegimeId.working_life
-                ),
-                targets=("working_life", "retirement"),
-            ),
-            exits=("retirement",),
-        ),
     )
 
     retirement = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life, "retirement": retirement},
         ages=AgeGrid(start=0, inclusive_stop=5, step="Y"),
         regime_id_class=RegimeId,
@@ -1383,6 +1368,16 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
             "type2": fixed_transition("type2"),
         },
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age >= 4, RegimeId.retirement, RegimeId.working_life
+                    )
+                ),
+            )
+        },
     )
 
 
@@ -1491,20 +1486,18 @@ def test_execution_config_cannot_shard_an_action():
         actions={
             "choice": DiscreteGrid(category_class=Choice),
         },
-        regime_transitions="dead",
     )
     with pytest.raises(ExecutionPlanningError, match="choice"):
-        with_fixture_graph(
+        Model(
             regimes={
                 "alive": regime,
-                "dead": UserRegime(
-                    regime_transitions=None, functions={"utility": lambda: 0.0}
-                ),
+                "dead": UserRegime(functions={"utility": lambda: 0.0}),
             },
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=RegimeId,
             execution_config=ExecutionConfig(sharded_states=("choice",)),
             initial_nodes={0: "alive"},
+            edges={"alive": {"dead": 0}},
         )
 
 
@@ -1586,29 +1579,12 @@ def _make_two_source_partially_distributed_model() -> Model:
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        regime_transitions=until_exit(
-            5,
-            law=_SupportedDeterministicTransition(
-                func=to_retirement, targets=("retirement", "working_life")
-            ),
-            exits=("retirement",),
-        ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working,
-            "working_life_b": working.replace(
-                regime_transitions=until_exit(
-                    5,
-                    law=_SupportedDeterministicTransition(
-                        func=to_retirement_b,
-                        targets=("retirement", "working_life_b"),
-                    ),
-                    exits=("retirement",),
-                )
-            ),
+            "working_life_b": working,
             "retirement": UserRegime(
-                regime_transitions=None,
                 functions={"utility": retirement_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
             ),
@@ -1619,6 +1595,9 @@ def _make_two_source_partially_distributed_model() -> Model:
         execution_config=ExecutionConfig(sharded_states=("type1",)),
         state_transitions={"type1": fixed_transition("type1")},
         initial_nodes={0: ("working_life", "working_life_b")},
+        edges=_two_source_edges(
+            to_retirement=to_retirement, to_retirement_b=to_retirement_b
+        ),
     )
 
 

@@ -148,25 +148,29 @@ def test_raw_boolean_gate_fold_and_route_preserve_the_dissolution_decision(
         flags=flags,
     )
     roles = jnp.full(3, married.stakeholder_names_to_ids["f"], dtype=jnp.int32)
-    states, routed_ids, routed_roles = gated_routing.simulation_gate_route(
-        regime=married,
-        fold_period=1,
-        edge_values=route_values,
-        edge_flags=route_flags,
-        next_states=MappingProxyType(
-            {
-                "married_ir": MappingProxyType({"wage": jnp.array([1.0, 2.0, 3.0])}),
-                "single_f": MappingProxyType({"wage": jnp.full(3, -999.0)}),
-                "single_m": MappingProxyType({"wage": jnp.full(3, -999.0)}),
-            }
-        ),
-        regime_names_to_ids=ids,
-        new_subject_regime_ids=jnp.full(3, ids["married_ir"], dtype=jnp.int32),
-        subjects_in_regime=jnp.ones(3, dtype=bool),
-        flat_params=params,
-        own_stakeholder=roles,
-        new_own_stakeholder=roles,
-        on_derived=callback,
+    states, routed_ids, routed_roles, _closed_masks = (
+        gated_routing.simulation_gate_route(
+            regime=married,
+            fold_period=1,
+            edge_values=route_values,
+            edge_flags=route_flags,
+            next_states=MappingProxyType(
+                {
+                    "married_ir": MappingProxyType(
+                        {"wage": jnp.array([1.0, 2.0, 3.0])}
+                    ),
+                    "single_f": MappingProxyType({"wage": jnp.full(3, -999.0)}),
+                    "single_m": MappingProxyType({"wage": jnp.full(3, -999.0)}),
+                }
+            ),
+            regime_names_to_ids=ids,
+            new_subject_regime_ids=jnp.full(3, ids["married_ir"], dtype=jnp.int32),
+            subjects_in_regime=jnp.ones(3, dtype=bool),
+            flat_params=params,
+            own_stakeholder=roles,
+            new_own_stakeholder=roles,
+            on_derived=callback,
+        )
     )
     np.testing.assert_array_equal(
         routed_ids, [ids["married_ir"], ids["single_f"], ids["married_ir"]]

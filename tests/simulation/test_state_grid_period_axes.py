@@ -21,7 +21,6 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.phased import Phased
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -64,13 +63,13 @@ def _model(
     }
     if two_states:
         states["income"] = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=EndId,
         initial_nodes={roots: "end"},
+        edges={},
         regimes={
             "end": Regime(
-                regime_transitions=None,
                 states=states,
                 functions={"utility": _two_state_value if two_states else _identity},
             )
@@ -167,26 +166,24 @@ def test_a_value_only_node_is_a_valid_coordinate_request():
         signature=lambda age: age,
     )
     common = LinSpacedGrid(start=2.0, stop=4.0, n_points=2)
-    model = with_fixture_graph(
+    model = Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RouteId,
         initial_nodes={0: "source"},
+        edges=Phased(solve={"source": {"end": 0}}, simulate={"source": {"other": 0}}),
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "source": Regime(
-                regime_transitions=Phased(solve="end", simulate="other"),
                 states={"wealth": common},
                 state_transitions={"wealth": fixed_transition("wealth")},
                 functions={"utility": _identity},
             ),
             "end": Regime(
-                regime_transitions=None,
                 states={"wealth": moving},
                 functions={"utility": _identity},
             ),
             "other": Regime(
-                regime_transitions=None,
                 states={"wealth": common},
                 functions={"utility": _identity},
             ),
@@ -205,15 +202,15 @@ def test_a_value_only_node_is_a_valid_coordinate_request():
 
 def test_period_is_an_index_not_the_calendar_age():
     """`period` indexes model periods; a calendar age is rejected."""
-    model = with_fixture_graph(
+    model = Model(
         ages=AgeGrid(start=10, inclusive_stop=11, step="Y"),
         regime_id_class=EndId,
         initial_nodes={(10, 11): "end"},
+        edges={},
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         regimes={
             "end": Regime(
-                regime_transitions=None,
                 functions={"utility": _identity},
                 states={
                     "wealth": AgeSpecializedGrid(

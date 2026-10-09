@@ -23,11 +23,9 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _NEGM_SOURCE_FILE = negm.__file__
@@ -60,12 +58,10 @@ def _is_compiled_executable(obj: object) -> bool:
 
 def _model() -> Model:
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
+        edges={"working_life": {"dead": START_AGE}},
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -107,7 +103,9 @@ def _adaptive_params() -> dict[str, float]:
 def test_a_dropped_solution_releases_every_compiled_executable() -> None:
     before = _live_compiled_executables()
 
-    solution = _model().solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+    solution = _model().solve(
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
+    )
     del solution
 
     assert _live_compiled_executables() == before

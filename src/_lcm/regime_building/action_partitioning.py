@@ -15,6 +15,7 @@ from types import MappingProxyType
 from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.processing import _declared_extent
+from _lcm.regime_law import RegimeLaws
 from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS, GridSearch
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
@@ -28,6 +29,7 @@ _REMEDY = (
 def fail_if_action_partition_route_is_unsupported(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     action_partitions: Mapping[RegimeName, int],
     sharded_states: frozenset[StateName],
     continuous_sharded_state: StateName | None,
@@ -59,6 +61,7 @@ def fail_if_action_partition_route_is_unsupported(
             regime_name=regime_name,
             count=count,
             user_regimes=user_regimes,
+            laws=laws,
             sharded_states=sharded_states,
             continuous_sharded_state=continuous_sharded_state,
             n_devices=n_devices,
@@ -108,6 +111,7 @@ def _request_failures(
     regime_name: RegimeName,
     count: int,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
+    laws: RegimeLaws,
     sharded_states: frozenset[StateName],
     continuous_sharded_state: StateName | None,
     n_devices: int,
@@ -124,6 +128,7 @@ def _request_failures(
     if count == 1:
         return []
     regime = user_regimes[regime_name]
+    law = laws[regime_name]
     n_actions = _n_actions(regime=regime)
     discrete_sharded = sorted(
         name
@@ -141,14 +146,14 @@ def _request_failures(
             count > n_devices,
             f"needs {count} devices, but the model may use {n_devices}",
         ),
-        (regime.terminal, "is terminal and has no action product to share"),
+        (law.terminal, "is terminal and has no action product to share"),
         (
             not isinstance(regime.solver, GridSearch),
             f"is solved by {type(regime.solver).__name__}, not GridSearch",
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
         (regime.stakeholders is not None, "is a collective regime"),
-        (bool(regime.gated_edges), "declares gated edges"),
+        (bool(law.gated_edges), "declares gated edges"),
         (bool(regime.same_period_refs), "declares same-period references"),
         (bool(folded), f"folds the processes {folded!r}"),
         (
@@ -156,11 +161,11 @@ def _request_failures(
             f"carries the discrete sharded states {discrete_sharded!r}",
         ),
         (
-            not regime.terminal and n_actions < 2,  # noqa: PLR2004
+            not law.terminal and n_actions < 2,  # noqa: PLR2004
             f"has {n_actions} action, so there is nothing to share",
         ),
         (
-            not regime.terminal and 2 <= n_actions < count,  # noqa: PLR2004
+            not law.terminal and 2 <= n_actions < count,  # noqa: PLR2004
             f"has {n_actions} actions, fewer than its {count} devices",
         ),
         (

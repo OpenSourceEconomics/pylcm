@@ -653,8 +653,8 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         from typing import Any
         import jax.numpy as jnp
         import numpy as np
-        from lcm import (AgeGrid, DeterministicTransition,
-                         Model, Regime, UniformIIDProcess, categorical)
+        from lcm import (AgeGrid, Model, Regime, UniformIIDProcess,
+                         categorical)
         from lcm.typing import ContinuousState, FloatND, ScalarInt
         from _lcm.regime_building import Q_and_F
 
@@ -666,9 +666,6 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
         def utility(*, gamma: ContinuousState, alpha: ContinuousState,
                     beta: ContinuousState) -> FloatND:
             return gamma + 2 * alpha + 3 * beta
-
-        def next_regime(period: int) -> ScalarInt:
-            return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
         observed = []
         original = Q_and_F._build_target_continuation
@@ -689,10 +686,8 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                             'beta': UniformIIDProcess(n_points=3, start=0, stop=2),
                         },
                         functions={'utility': utility},
-                        regime_transitions=DeterministicTransition(func=next_regime),
                     ),
-                    'dead': Regime(functions={'utility': lambda: 0.0},
-                                   regime_transitions=None),
+                    'dead': Regime(functions={'utility': lambda: 0.0}),
                 },
                 ages=AgeGrid(start=0, inclusive_stop=2, step='Y'),
                 regime_id_class=RegimeId,

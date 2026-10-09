@@ -22,6 +22,7 @@ from lcm import (
     LiquidMargin,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime
@@ -157,14 +158,10 @@ def build_model(
         "liquid": {"old": young_liquid_law, "dead": young_liquid_law},
         "kind": {"old": lcm.fixed_transition("kind")},
     }
-    young_transition = ByAge(
-        cases={
-            0: {
-                "old": StochasticTransition(func=prob_to_old),
-                "dead": StochasticTransition(func=prob_young_dead),
-            }
-        }
-    )
+    young_transition = {
+        "old": StochasticTransition(func=prob_to_old),
+        "dead": StochasticTransition(func=prob_young_dead),
+    }
     # Built per branch: the NBEGM schedule solver takes its DAG role names from
     # the regime's liquid margin, which only the margin-declaring class carries.
     if isinstance(young_solver, NBEGM):
@@ -173,7 +170,6 @@ def build_model(
             states=young_states,
             state_transitions=young_state_transitions,
             constraints=young_constraints,
-            regime_transitions=young_transition,
             functions=young_functions,
             solver=young_solver,
             liquid=LiquidMargin(
@@ -189,7 +185,6 @@ def build_model(
             states=young_states,
             state_transitions=young_state_transitions,
             constraints=young_constraints,
-            regime_transitions=young_transition,
             functions=young_functions,
             solver=young_solver,
         )
@@ -206,20 +201,21 @@ def build_model(
             "kind": {"dead": lcm.fixed_transition("kind")},
         },
         constraints={"feasible": feasible},
-        regime_transitions=ByAge(
-            cases={1: {"dead": StochasticTransition(func=lambda: jnp.array(1.0))}}
-        ),
         functions=old_functions,
         solver=GridSearch(),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": bequest},
         solver=GridSearch(),
     )
     return Model(
-        edges={"young": {"old": 0, "dead": 0}, "old": {"dead": 1}},
+        edges={
+            "young": Transition(
+                targets={"old": 0, "dead": 0}, law=ByAge(cases={0: young_transition})
+            ),
+            "old": {"dead": 1},
+        },
         regimes={"young": young, "old": old, "dead": dead},
         ages=ages,
         regime_id_class=RegimeId,

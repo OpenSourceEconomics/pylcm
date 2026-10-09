@@ -1,19 +1,17 @@
 """Model with StochasticTransition on regime transitions."""
 
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -38,13 +36,6 @@ def _next_regime_probs(
 
 
 alive = UserRegime(
-    regime_transitions=until_exit(
-        62,
-        law=_SupportedStochasticTransition(
-            func=_next_regime_probs, targets=("alive", "dead")
-        ),
-        exits=("dead",),
-    ),
     states={
         "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -57,15 +48,23 @@ alive = UserRegime(
 )
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
+
+
+# Graph and law of the model: survival at 60 is drawn from `probs_array`.
+EDGES = {
+    "alive": Transition(
+        targets={"alive": 60, "dead": (60, 61)},
+        law=StochasticTransition(func=_next_regime_probs),
+    ),
+}
 
 
 def get_model() -> Model:
     """Create a model with StochasticTransition on regime transitions."""
     return Model(
-        edges={"alive": {"alive": 60, "dead": (60, 61)}},
+        edges=EDGES,
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=60, inclusive_stop=62, step="Y"),
         regime_id_class=RegimeId,

@@ -24,12 +24,11 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
-    ByAge,
     DeterministicTransition,
     LinSpacedGrid,
     Model,
     Regime,
-    StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -99,10 +98,6 @@ def next_wealth(wealth: ContinuousState) -> ContinuousState:
 
 def next_regime_dead(age: ScalarFloat) -> ScalarInt:  # noqa: ARG001
     return RegimeId.dead
-
-
-def stay_alive(age: ScalarFloat) -> ScalarFloat:  # noqa: ARG001
-    return jnp.asarray(1.0)
 
 
 def _wealth_value(*, wealth: Float1D) -> Float1D:
@@ -266,15 +261,6 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     # its own target at every one of `_N_PERIODS` acting ages, which takes one
     # more age for it to die into the terminal regime at the end, which then
     # publishes the continuation the self-looping solver reads.
-    transition = (
-        ByAge.until(
-            stop_age_exclusive=_N_PERIODS,
-            law={"alive": StochasticTransition(func=stay_alive)},
-            then={"dead": StochasticTransition(func=stay_alive)},
-        )
-        if self_looping
-        else DeterministicTransition(func=next_regime_dead)
-    )
     last_age = _N_PERIODS if self_looping else _N_PERIODS - 1
     return Model(
         edges={
@@ -287,14 +273,12 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
         else {"alive": {"dead": tuple(range(last_age))}},
         regimes={
             "alive": Regime(
-                regime_transitions=transition,
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
                 solver=solver,
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 **(
@@ -751,21 +735,22 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
     """A two-regime model whose target publishes `target_solver`'s continuation."""
     return Model(
         edges={
-            "alive": {
-                "alive": tuple(range(_N_PERIODS - 2)),
-                "dead": tuple(range(_N_PERIODS - 1)),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": tuple(range(_N_PERIODS - 2)),
+                    "dead": tuple(range(_N_PERIODS - 1)),
+                },
+                law=DeterministicTransition(func=next_regime_dead),
+            )
         },
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=next_regime_dead),
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
                 functions={"utility": utility},
                 solver=_MarginalDemandingSolver(),
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
                 solver=target_solver,
@@ -826,14 +811,16 @@ _CONSUMPTION = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
 def _choice_model(*, solver: Solver) -> Model:
     return Model(
         edges={
-            "alive": {
-                "alive": tuple(range(_N_PERIODS - 2)),
-                "dead": tuple(range(_N_PERIODS - 1)),
-            }
+            "alive": Transition(
+                targets={
+                    "alive": tuple(range(_N_PERIODS - 2)),
+                    "dead": tuple(range(_N_PERIODS - 1)),
+                },
+                law=DeterministicTransition(func=_die_at_the_end),
+            )
         },
         regimes={
             "alive": Regime(
-                regime_transitions=DeterministicTransition(func=_die_at_the_end),
                 states={"wealth": _WEALTH},
                 actions={"consumption": _CONSUMPTION},
                 state_transitions={"wealth": next_wealth},
@@ -841,7 +828,6 @@ def _choice_model(*, solver: Solver) -> Model:
                 solver=solver,
             ),
             "dead": Regime(
-                regime_transitions=None,
                 states={"wealth": _WEALTH},
                 functions={"utility": lambda wealth: 0.0 * wealth},
             ),

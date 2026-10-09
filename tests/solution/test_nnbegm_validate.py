@@ -8,9 +8,6 @@ NBEGM. Building the model must reject it either way.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -29,8 +26,6 @@ from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=4.0, n_points=3)
@@ -97,10 +92,6 @@ def terminal_utility(*, wealth: ContinuousState, illiquid: ContinuousState) -> F
     return jnp.log(wealth + illiquid + 1.0)
 
 
-def next_regime(age: int) -> ScalarInt:
-    return jnp.where(age < 25, RegimeId.alive, RegimeId.dead)
-
-
 def _inner_nbegm() -> NBEGM:
     return NBEGM(
         savings_grid=SAVINGS_GRID,
@@ -113,13 +104,6 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
         action="consumption",
         resources="resources",
         post_decision_state="liquid_savings",
-    )
-    transitions = until_exit(
-        25,
-        law=_SupportedDeterministicTransition(
-            func=next_regime, targets=("alive", "dead")
-        ),
-        exits=("dead",),
     )
     states = {"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID}
     state_transitions = {"wealth": next_wealth, "illiquid": durable_transition}
@@ -145,7 +129,6 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
@@ -161,18 +144,17 @@ def _build_model(*, solver: NBEGM | NNBEGM) -> Model:
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            regime_transitions=transitions,
             functions=functions,
             solver=solver,
             liquid=liquid,
         )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"dead": 20}},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
         fixed_params={"means_test": 5.0, "medical_expense": 1.0},

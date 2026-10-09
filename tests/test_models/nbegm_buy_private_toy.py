@@ -78,7 +78,6 @@ def build_params(
     return_liquid: float = 0.03,
     income: float = 1.0,
     premium: float = 1.5,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the buy-private one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
@@ -89,7 +88,6 @@ def build_params(
             "resources": {"premium": premium},
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

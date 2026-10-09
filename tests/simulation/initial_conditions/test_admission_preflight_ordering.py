@@ -13,10 +13,8 @@ import jax.numpy as jnp
 import pytest
 
 import _lcm.simulation.initial_conditions as initial_module
+from _lcm.params.edges import regime_kernel_params
 from _lcm.params.processing import process_params
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.simulation.initial_conditions import validate_simulation_inputs
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -27,8 +25,6 @@ from _lcm.typing import (
 from _lcm.utils.logging import LogLevel, get_logger
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     LinSpacedGrid,
     Model,
     categorical,
@@ -51,7 +47,6 @@ from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constrained_asymmetric_model,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_transition_checks import _model_with_state_probs
 
 
@@ -223,20 +218,17 @@ def test_changed_transition_params_are_validated_again_on_the_same_model() -> No
     params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
     )
+    alive_params = regime_kernel_params(params, regime_name="alive")
     valid = MappingProxyType(
         {
             **params,
-            "alive": MappingProxyType(
-                {**params["alive"], "probability": jnp.array(1.0)}
-            ),
+            "alive": MappingProxyType({**alive_params, "probability": jnp.array(1.0)}),
         }
     )
     invalid = MappingProxyType(
         {
             **params,
-            "alive": MappingProxyType(
-                {**params["alive"], "probability": jnp.array(-1.0)}
-            ),
+            "alive": MappingProxyType({**alive_params, "probability": jnp.array(-1.0)}),
         }
     )
     logger = get_logger(log_level="debug")
@@ -315,9 +307,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     def utility(consumption: ContinuousAction) -> FloatND:
         return consumption
 
-    def next_regime() -> ScalarInt:
-        return RegimeId.dead
-
     def terminal_utility(wealth: ContinuousState) -> FloatND:
         return wealth
 
@@ -325,15 +314,6 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
     actions = {"consumption": LinSpacedGrid(start=2, stop=3, n_points=2)}
     regimes = {
         name: UserRegime(
-            regime_transitions=ByAge(
-                cases={
-                    AgeRange(
-                        start=0, exclusive_stop=1
-                    ): _SupportedDeterministicTransition(
-                        func=next_regime, targets=("dead",)
-                    )
-                }
-            ),
             states=states,
             actions=actions,
             state_transitions={"wealth": lambda wealth: wealth},
@@ -346,15 +326,15 @@ def test_a_later_feasibility_typeerror_overrides_earlier_aggregated_failures() -
         )
     }
     regimes["dead"] = UserRegime(
-        regime_transitions=None,
         states=states,
         functions={"utility": terminal_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes=regimes,
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: ("first", "second")},
+        edges={"first": {"dead": 0}, "second": {"dead": 0}},
     )
     armed = True
     with pytest.raises(InvalidInitialConditionsError) as caught:

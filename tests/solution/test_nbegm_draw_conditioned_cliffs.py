@@ -161,7 +161,6 @@ def _params(
                 "law_slope": law_slope,
                 "law_offset": jnp.asarray(law_offset),
             },
-            "final_age_alive": 2.0,
         },
     }
 
@@ -572,9 +571,7 @@ def wage_seam() -> dict[str, Any]:
     model = nbegm_continuous_ride_along_toy.build_model(
         variant="nbegm", n_periods=3, n_liquid=24, n_savings=16, n_consumption=24
     )
-    params = nbegm_continuous_ride_along_toy.build_params(
-        final_age_alive=2.0, return_liquid=0.0, income=0.0
-    )
+    params = nbegm_continuous_ride_along_toy.build_params(return_liquid=0.0, income=0.0)
     return _solved_seam(model=model, params=params)
 
 
@@ -616,7 +613,7 @@ def test_continuous_co_state_targets_both_rows_the_child_blends(
                 n_savings=16,
                 n_consumption=24,
             ),
-            nbegm_continuous_ride_along_toy.build_params(final_age_alive=2.0),
+            nbegm_continuous_ride_along_toy.build_params(),
         ),
     ],
     ids=["flipped_kind", "continuous_wage"],

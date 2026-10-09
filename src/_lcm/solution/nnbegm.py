@@ -72,6 +72,7 @@ from _lcm.execution.core_program import (
     core_program_graph,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution.continuation_reads import (
     continuation_leaf_reads,
     published_continuation_templates,
@@ -1311,7 +1312,7 @@ class _NNBEGMPeriodKernel:
             RegimeInitializationError: If the outer action does not enter the
                 declared map affinely with an exactly invertible coefficient.
         """
-        params = dict(flat_params[self.regime_name])
+        params = dict(regime_kernel_params(flat_params, regime_name=self.regime_name))
         accepted = inspect.signature(self.outer_target_function).parameters
         scalar = jnp.zeros(())
         pool: dict[str, object] = {
@@ -1415,7 +1416,7 @@ class _NNBEGMPeriodKernel:
             }
         else:
             discrete_inputs = {}
-        params = dict(flat_params[self.regime_name])
+        params = dict(regime_kernel_params(flat_params, regime_name=self.regime_name))
         accepted = inspect.signature(self.outer_target_function).parameters
 
         bind = _OuterTargetArguments(
@@ -1826,7 +1827,9 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         else:
             fixed_cost_scale = _resolve_branch_scale(
                 scale_function=self.branch_scale_function,
-                regime_params=flat_params[self.regime_name],
+                regime_params=regime_kernel_params(
+                    flat_params, regime_name=self.regime_name
+                ),
                 period=period,
                 ages=ages,
             )
@@ -2539,7 +2542,7 @@ def _branch_scale_check(
             regime_name=regime_name,
             periods=periods,
             branch_aggregation_by_period=branch_aggregation_by_period,
-            regime_params=flat_params[regime_name],
+            regime_params=regime_kernel_params(flat_params, regime_name=regime_name),
             ages=ages,
         )
 

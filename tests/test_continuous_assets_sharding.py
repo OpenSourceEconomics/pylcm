@@ -28,14 +28,10 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedStochasticTransition,
-)
 from _lcm.simulation import chunk_admission
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
-    ByAge,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -43,6 +39,8 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    StochasticTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -54,7 +52,6 @@ from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
 from tests.test_continuous_assets_aca_vocabulary import _model as _process_model
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 
 
@@ -70,6 +67,24 @@ class _RegimeId:
     r0: ScalarInt
     r1: ScalarInt
     terminal: ScalarInt
+
+
+def _law(*, source: int) -> StochasticTransition:
+    """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
+
+    def probabilities(age):
+        weight = 0.25 if source == 0 else 0.75
+        return jnp.where(
+            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
+        )
+
+    return StochasticTransition(func=probabilities)
+
+
+_EDGES = {
+    "r0": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=0)),
+    "r1": Transition(targets={"r0": 0, "r1": 0, "terminal": 1}, law=_law(source=1)),
+}
 
 
 def _landing(*, assets, decision, pref_type, spousal_income):
@@ -102,22 +117,7 @@ def _regime(*, source: int, identity: bool, fixed_type: bool = False) -> Regime:
         # fixed type states the same annotation.
         utility.__annotations__["pref_type"] = DiscreteState
 
-    def probabilities(age):
-        weight = 0.25 if source == 0 else 0.75
-        return jnp.where(
-            age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
-        )
-
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=2,
-            law=_SupportedStochasticTransition(
-                func=probabilities, targets=("r0", "r1")
-            ),
-            then=_SupportedStochasticTransition(
-                func=probabilities, targets=("terminal",)
-            ),
-        ),
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": utility,
@@ -149,12 +149,11 @@ def _model(
     invariant_block_widths: dict[str, int] | None = None,
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
 ) -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "r0": _regime(source=0, identity=identity, fixed_type=fixed_type),
             "r1": _regime(source=1, identity=identity, fixed_type=fixed_type),
             "terminal": Regime(
-                regime_transitions=None,
                 functions={
                     "utility": lambda assets, pref_type, spousal_income: (
                         -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
@@ -189,6 +188,7 @@ def _model(
         ),
         # The tests start subjects in both living regimes at both living ages.
         initial_nodes={(0, 1): ("r0", "r1")},
+        edges=_EDGES,
     )
 
 
@@ -705,7 +705,6 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
 
     _require_eight()
     regime = Regime(
-        regime_transitions=None,
         states={
             "liquid": LinSpacedGrid(start=-4, stop=19, n_points=24),
             "pref_type": DiscreteGrid(_Three),
@@ -763,7 +762,7 @@ def _renamed_public_model(*, original: Model) -> Model:
         states={},
         functions=_renamed_functions(regime=terminal),
     )
-    return with_fixture_graph(
+    return Model(
         regimes=regimes,
         states={
             "liquid" if key == "assets" else key: grid
@@ -778,6 +777,7 @@ def _renamed_public_model(*, original: Model) -> Model:
             device_memory_bytes=2**30,
         ),
         initial_nodes=initial_nodes_of(model=original),
+        edges=_EDGES,
     )
 
 

@@ -30,15 +30,15 @@ from _lcm.regime_building.Q_and_F import (
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.regime_building.V import VInterpolationInfo
 from lcm import (
     AgeGrid,
+    ByAge,
+    DeterministicTransition,
     LinearAggregator,
     LinearExpectation,
     PowerMean,
+    Transition,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.model import Model
@@ -54,44 +54,44 @@ from lcm.typing import (
     Period,
     ScalarInt,
 )
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
     get_params,
+    graph_bound_working_life_transitions,
     utility,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import choose_among, until_exit
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
-    user_regimes = {
-        "working_life": working_life.replace(
-            regime_transitions=working_life_transitions(last_age=4)
-        ),
-        "dead": dead,
-    }
+    user_regimes = {"working_life": working_life, "dead": dead}
+    laws = bind_laws(
+        {
+            "working_life": graph_bound_working_life_transitions(last_age=4),
+            "dead": None,
+        }
+    )
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(idx) for idx, name in enumerate(user_regimes.keys())}
     )
     finalized_user_regimes = finalize_regimes(
         user_regimes=user_regimes,
+        laws=laws,
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
     )
     regimes = process_regimes(
-        user_regimes=lower_declarations(finalized_user_regimes, ages=ages),
+        user_regimes=finalized_user_regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         prepared_structure=build_prepared_structure(
-            user_regimes=finalized_user_regimes, ages=ages
+            user_regimes=finalized_user_regimes, laws=laws, ages=ages
         ),
     )
 
@@ -369,7 +369,7 @@ def _build_partial_coverage_model(
     """Build a model whose "work" regime covers `health` only toward "work".
 
     "retire" also carries `health`; whether the model is valid depends on
-    whether "work"'s regime transition declares "retire" reachable.
+    whether "work"'s edges declare "retire" reachable.
     """
 
     def _utility(
@@ -396,11 +396,6 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=until_exit(
-            3,
-            law=choose_among(work_transition, targets=("work", "retire", "dead")),
-            exits=("dead",),
-        ),
         functions={"utility": _utility},
     )
     retire = UserRegime(
@@ -415,22 +410,24 @@ def _build_partial_coverage_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
         },
-        regime_transitions=until_exit(
-            3,
-            law=_SupportedDeterministicTransition(
-                func=next_regime_func, targets=("work", "retire", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
-    model = with_fixture_graph(
+    model = Model(
         regimes={"work": work, "retire": retire, "dead": dead_regime},
+        edges={
+            "work": Transition(
+                targets={"work": (0, 1), "dead": (0, 1, 2)},
+                law=ByAge.until(stop_age_exclusive=3, law=work_transition, then="dead"),
+            ),
+            "retire": Transition(
+                targets={"work": (0, 1), "retire": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=next_regime_func),
+            ),
+        },
         regime_id_class=_PartialCoverageRegimeId,
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         initial_nodes={0: ("work", "retire")},
@@ -952,19 +949,20 @@ def _model_emitting_total_regime_mass(
     certainty equivalent admits.
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    to_dead = StochasticTransition(
+        func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
+    )
+    alive_law = ByAge.until(
+        stop_age_exclusive=2,
+        law={
+            "alive": StochasticTransition(
+                func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
+            ),
+            "dead": to_dead,
+        },
+        then={"dead": to_dead},
+    )
     alive = UserRegime(
-        regime_transitions=until_exit(
-            2,
-            law={
-                "alive": StochasticTransition(
-                    func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
-                ),
-                "dead": StochasticTransition(
-                    func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
-                ),
-            },
-            exits=("dead",),
-        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -972,12 +970,14 @@ def _model_emitting_total_regime_mass(
         certainty_equivalent=certainty_equivalent,
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={
+            "alive": Transition(targets={"alive": 0, "dead": (0, 1)}, law=alive_law)
+        },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_MassRegimeId,
         initial_nodes={0: "alive"},

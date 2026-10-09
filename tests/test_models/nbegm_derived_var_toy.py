@@ -132,7 +132,6 @@ def build_params(
     base_income_hi: float = 4.0,
     tax_rate: float = 0.3,
     tax_kink: float = 15.0,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the derived-income tax toy.
 
@@ -151,7 +150,6 @@ def build_params(
             "tax": {"tax_rate": tax_rate, "tax_kink": tax_kink},
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

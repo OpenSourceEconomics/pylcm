@@ -18,6 +18,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -31,6 +32,8 @@ from lcm.typing import (
     ScalarInt,
 )
 from lcm_examples.mortality import (
+    RETIREMENT_LAW,
+    WORKING_LIFE_LAW,
     LaborSupply,
     RegimeId,
     dead,
@@ -162,27 +165,29 @@ retirement = _base_retirement.replace(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
+    working_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {
+                "working_life": tuple(ages.exact_values[:-2]),
+                "retirement": tuple(ages.exact_values[:-2]),
+            }
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
+    retirement_targets = {
+        "dead": tuple(ages.exact_values[:-1]),
+        **(
+            {"retirement": tuple(ages.exact_values[:-2])}
+            if ages.exact_values[:-2]
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {
-                        "working_life": tuple(ages.exact_values[:-2]),
-                        "retirement": tuple(ages.exact_values[:-2]),
-                    }
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
-            "retirement": {
-                "dead": tuple(ages.exact_values[:-1]),
-                **(
-                    {"retirement": tuple(ages.exact_values[:-2])}
-                    if ages.exact_values[:-2]
-                    else {}
-                ),
-            },
+            "working_life": Transition(targets=working_targets, law=WORKING_LIFE_LAW),
+            "retirement": Transition(targets=retirement_targets, law=RETIREMENT_LAW),
         },
         regimes={
             "working_life": working_life,

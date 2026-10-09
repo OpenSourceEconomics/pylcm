@@ -24,7 +24,6 @@ from lcm import (
 )
 from lcm.typing import DiscreteState, FloatND, ScalarFloat, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -41,10 +40,6 @@ class Good:
 
 def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
-
-
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _process() -> NormalIIDProcess:
@@ -121,18 +116,14 @@ def test_explicit_entry_feeds_another_explicit_entry(
     target_states = _ordered(
         items=[("shock", _process()), ("other", _process())], reverse=reverse
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _two_process_utility},
             ),
@@ -142,13 +133,14 @@ def test_explicit_entry_feeds_another_explicit_entry(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "certainty_equivalent": {"risk_aversion": 2.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_other": {}},
+            "target": {"next_shock": {}, "next_other": {}},
         },
         "target": {"utility": {}},
     }
@@ -178,17 +170,13 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         items=[("shock", _process()), ("good", DiscreteGrid(category_class=Good))],
         reverse=reverse,
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _good_utility},
             ),
@@ -198,12 +186,13 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_good": {}},
+            "target": {"next_shock": {}, "next_good": {}},
         },
         "target": {"utility": {}},
     }
@@ -241,17 +230,13 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         ],
         reverse=reverse,
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions={
-                    "target": StochasticTransition(func=_one_probability)
-                },
                 state_transitions=state_transitions,
                 functions={"utility": _zero_utility},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states=target_states,
                 functions={"utility": _wealth_utility},
             ),
@@ -261,12 +246,13 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
     params = {
         "source": {
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
-            "target": {"next_regime": {}, "next_shock": {}, "next_wealth": {}},
+            "target": {"next_shock": {}, "next_wealth": {}},
         },
         "target": {"utility": {}},
     }

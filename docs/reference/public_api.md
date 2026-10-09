@@ -15,6 +15,7 @@ documentation and tests.
 | Public name                                                                                          | Canonical documentation                           |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
+| [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts         |
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
@@ -59,6 +60,7 @@ documentation and tests.
 | Public name                                                            | Canonical documentation            |
 | ---------------------------------------------------------------------- | ---------------------------------- |
 | [`lcm.StochasticTransition`](transitions.md#api-state-transitions)     | Stochastic transition wrapper      |
+| [`lcm.Transition`](transitions.md#api-regime-transitions)              | Graph edges with their regime law  |
 | [`lcm.JointTransition`](transitions.md#api-joint-transitions)          | Shared-draw joint law              |
 | [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)             | Numerical laws by exact source age |
 | [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)          | Half-open age interval             |
@@ -175,14 +177,14 @@ surfaces remain outside that top-level namespace:
 
 ## Collective regimes and value-dependent choice
 
-| Public name                                                                            | Canonical documentation                  |
-| -------------------------------------------------------------------------------------- | ---------------------------------------- |
-| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)                | One utility per stakeholder, one action  |
-| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)                    | Weighted household objective             |
-| [`lcm.ValueDependentConstraint`](collective_regimes.md#api-value-dependent-constraint) | Constraint that reads stakeholder values |
-| [`lcm.ValueDependentTransition`](collective_regimes.md#api-value-dependent-transition) | Gated transition to a target regime      |
-| [`lcm.StakeholderRoute`](collective_regimes.md#api-stakeholder-route)                  | One source stakeholder's route across it |
-| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value)         | Another regime's value, projected        |
+| Public name                                                                            | Canonical documentation                                  |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)                | One utility per stakeholder, one action                  |
+| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)                    | Weighted household objective                             |
+| [`lcm.ValueDependentConstraint`](collective_regimes.md#api-value-dependent-constraint) | Constraint that reads stakeholder values                 |
+| [`lcm.Gate`](collective_regimes.md#api-gate)                                           | Value-dependent branch on the transition into one target |
+| [`lcm.StakeholderRoute`](collective_regimes.md#api-stakeholder-route)                  | One source stakeholder's route across it                 |
+| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value)         | Another regime's value, projected                        |
 
 ## Solvers and configurations
 

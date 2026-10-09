@@ -39,18 +39,17 @@ import pytest
 
 from _lcm.egm import regime_introspection
 from _lcm.execution.core_program import core_program_graph
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    AgeRange,
     AgeSpecializedFunction,
-    ByAge,
+    DeterministicTransition,
     LiquidMargin,
     Model,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
+    Transition,
     categorical,
     outer_unchanged,
 )
@@ -58,7 +57,6 @@ from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, ResultRetention
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.negm_kinked_toy import (
     N_PERIODS,
     NEGM_SOLVER,
@@ -73,7 +71,6 @@ from tests.test_models.negm_kinked_toy import (
     resources_before_outer_cost,
     utility,
 )
-from tests.test_models.schedules import until_exit
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -132,6 +129,7 @@ def _build_model(*, helper_name: str, override) -> Model:
         functions[helper_name] = override
         if helper_name == "keep_illiquid":
             no_adjustment = "keep_illiquid"
+    alive_law = DeterministicTransition(func=next_regime)
     alive = NestedConsumptionSavingsRegime(
         states={
             "wealth": negm_kinked_toy.WEALTH_GRID,
@@ -145,13 +143,6 @@ def _build_model(*, helper_name: str, override) -> Model:
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            _FINAL_AGE_ALIVE + _AGE_STEP,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -171,8 +162,17 @@ def _build_model(*, helper_name: str, override) -> Model:
             no_adjustment=no_adjustment,
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": build_dead_regime()},
+        edges={
+            "alive": Transition(
+                targets={
+                    "alive": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE),
+                    "dead": AgeRange(exclusive_stop=_FINAL_AGE_ALIVE + _AGE_STEP),
+                },
+                law=alive_law,
+            )
+        },
         regime_id_class=RegimeId,
         ages=AgeGrid(
             start=_MIN_AGE,
@@ -308,9 +308,7 @@ _EARLY_LAST_PERIOD = 1
 _EARLY_LATE_PARAMS = {"discount_factor": 0.95, "early": {}, "late": {}}
 
 
-def _negm_regime(
-    *, keep_illiquid: Any, regime_transitions: ByAge
-) -> NestedConsumptionSavingsRegime:
+def _negm_regime(*, keep_illiquid: Any) -> NestedConsumptionSavingsRegime:
     """The kinked NEGM regime with `keep_illiquid` as its no-adjustment map.
 
     `keep_illiquid=None` keeps the durable unchanged without adjusting.
@@ -340,7 +338,6 @@ def _negm_regime(
             "consumption": negm_kinked_toy.CONSUMPTION_GRID,
             "illiquid_investment": negm_kinked_toy.ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=regime_transitions,
         functions=functions,
         solver=replace(NEGM_SOLVER),
         liquid=LiquidMargin(
@@ -369,25 +366,22 @@ def _early_late_model(*, late_keep: Any, late_start_age: int = _LATE_AGE) -> Mod
     concrete function pinned to one age. `late_start_age` below `_LATE_AGE` adds a
     root in `late` at that age, so `late` is active from there through `_LATE_AGE`.
     """
-    initial_nodes = {_MIN_AGE: "early"}
+    initial_nodes: list[tuple[object, str]] = [(_MIN_AGE, "early")]
+    late_edges: dict[str, Any] = {"dead": _LATE_AGE}
     if late_start_age < _LATE_AGE:
-        initial_nodes[late_start_age] = "late"
-    return with_fixture_graph(
+        initial_nodes.append((late_start_age, "late"))
+        late_edges["late"] = AgeRange(start=late_start_age, exclusive_stop=_LATE_AGE)
+    return Model(
+        edges={
+            "early": {"early": _MIN_AGE, "late": _MIN_AGE + _AGE_STEP},
+            "late": late_edges,
+        },
         regimes={
             "early": _negm_regime(
                 keep_illiquid=None,
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_LATE_AGE, law="early", then="late"
-                ),
             ),
             "late": _negm_regime(
                 keep_illiquid=late_keep,
-                regime_transitions=ByAge.until(
-                    stop_age_exclusive=_LATE_AGE + _AGE_STEP,
-                    law="late",
-                    then="dead",
-                    start_age_inclusive=late_start_age,
-                ),
             ),
             "dead": build_dead_regime(),
         },

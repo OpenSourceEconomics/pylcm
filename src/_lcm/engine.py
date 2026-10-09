@@ -36,6 +36,7 @@ from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
     EconFunctionsMapping,
+    EdgeParamsTemplate,
     FlatRegimeParams,
     FunctionName,
     NextStateSimulationFunction,
@@ -1255,7 +1256,14 @@ class Regime:
     """Period indices during which this regime is active."""
 
     regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
+    """Template for the parameter structure expected by this regime's functions."""
+
+    edge_params_template: EdgeParamsTemplate = MappingProxyType({})
+    """Template of the callables this regime's edges declare, as a source.
+
+    Nested by declaration path, so it is the regime's branch of
+    `params["edges"]`; empty for a source whose edges declare no parameter.
+    """
 
     solution: SolutionPhase
     """Solve-phase view: variables, grids, compiled functions, state-action space."""
@@ -1347,8 +1355,8 @@ class Regime:
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
     """This regime's gated edges keyed by TARGET regime name, or empty.
 
-    Non-empty only for a source regime declaring
-    `gated_edges`: each entry folds a gated continuation object `Wbar` on the
+    Non-empty only for a source regime with
+    gated edges: each entry folds a gated continuation object `Wbar` on the
     target regime's grid at each period's end, which this regime's continuation
     reads in place of the raw target V. Empty for every other regime.
 

@@ -20,6 +20,7 @@ from _lcm.grids.continuous import ContinuousGrid
 from _lcm.params.regime_template import create_regime_params_template
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_law import RegimeLaw
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import ActionName, FunctionName, RegimeName, StateName
@@ -28,7 +29,7 @@ from _lcm.variables import from_regime, get_grids
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NEGM
-from lcm.typing import ScalarFloat, UserFunction
+from lcm.typing import ScalarFloat, StateOrActionName, UserFunction
 
 
 def _as_dcegm(user_regime: UserRegime) -> _BoundDCEGM | None:
@@ -139,24 +140,27 @@ def _get_child_discrete_actions(
     return names, tuple(grids[name].to_jax() for name in names)
 
 
-def _get_child_resources_function(
-    *, regime_name: RegimeName, user_regime: UserRegime
-) -> Callable[..., ScalarFloat]:
-    """Build the closed-over resources map of one carry target.
+def _get_child_resources(
+    *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
+) -> tuple[Callable[..., ScalarFloat], frozenset[StateOrActionName]]:
+    """Build the closed-over resources map of one carry target and its arguments.
 
     For a DC-EGM or NEGM target the map is its (inner) resources function
     (resolved to the solve-phase variant); for a terminal target the carry lives
-    in M-space and the map is the identity. The returned callable takes the
-    child's state, passive, and discrete-action values as keyword arguments
-    (child names) so the kernel can compose it with the state transition and
-    differentiate the composition per carry row.
+    in M-space and the map is the identity, whose one argument is the target's
+    Euler state. The returned callable takes the child's state, passive, and
+    discrete-action values as keyword arguments (child names) so the kernel can
+    compose it with the state transition and differentiate the composition per
+    carry row.
     """
     if _as_dcegm(user_regime) is not None:
-        return _concatenate_child_resources(
-            regime_name=regime_name, user_regime=user_regime
+        resources = _concatenate_child_resources(
+            regime_name=regime_name, user_regime=user_regime, law=law
         )
+        return resources, frozenset(get_union_of_args([resources]))
 
-    return _IdentityResources(state_name=_get_child_state_name(user_regime=user_regime))
+    state_name = _get_child_state_name(user_regime=user_regime)
+    return _IdentityResources(state_name=state_name), frozenset({state_name})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,25 +174,8 @@ class _IdentityResources:
         return kwargs[self.state_name]
 
 
-def _get_child_resources_arg_names(
-    *, regime_name: RegimeName, user_regime: UserRegime
-) -> set[str]:
-    """Argument names of a carry target's resources map."""
-    if _as_dcegm(user_regime) is not None:
-        return set(
-            get_union_of_args(
-                [
-                    _concatenate_child_resources(
-                        regime_name=regime_name, user_regime=user_regime
-                    )
-                ]
-            )
-        )
-    return {_get_child_state_name(user_regime=user_regime)}
-
-
 def _concatenate_child_resources(
-    *, regime_name: RegimeName, user_regime: UserRegime
+    *, regime_name: RegimeName, user_regime: UserRegime, law: RegimeLaw
 ) -> UserFunction:
     """Concatenate a DC-EGM / NEGM target's resources function from its user DAG.
 
@@ -215,7 +202,9 @@ def _concatenate_child_resources(
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
     dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
-    regime_params_template = create_regime_params_template(user_regime=user_regime)
+    regime_params_template = create_regime_params_template(
+        user_regime=user_regime, law=law
+    )
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.decomposed_functions.items():
         if isinstance(func, Phased):

@@ -12,14 +12,12 @@ from lcm import (
     ExecutionConfig,
     IrregSpacedGrid,
     JointTransition,
+    Model,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserParams
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -32,10 +30,6 @@ class RegimeId:
 class Choice:
     risky: ScalarInt
     safe: ScalarInt
-
-
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
 
 
 def _uniform() -> FloatND:
@@ -52,14 +46,9 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
     *, enable_jit: bool
 ) -> None:
     """Correct `max E` chooses the safe value 6; the folded `E max` mutant is 8."""
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    21,
-                    law={"target": StochasticTransition(func=_certain)},
-                    exits=("target",),
-                ),
                 actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
@@ -74,7 +63,6 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
                 },
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"payoff": IrregSpacedGrid(points=(0.0, 6.0, 10.0))},
                 functions={"utility": lambda payoff: payoff},
             ),
@@ -84,11 +72,11 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": 20}},
     )
     params: UserParams = {
         "source": {
             "target": {
-                "next_regime": {},
                 "shock": {"support": {}, "probabilities": {}},
                 "next_payoff": {},
             },

@@ -43,12 +43,18 @@ from typing import Literal, NoReturn, cast, no_type_check
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
-    get_ancestors,
     rename_arguments,
 )
 from dags.exceptions import InvalidFunctionArgumentsError
 from dags.tree import qname_from_tree_path
 
+from _lcm.params.edges import (
+    FALLBACK,
+    PREDICATE,
+    REFERENCES,
+    ROUTES,
+    regime_kernel_params,
+)
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
@@ -123,15 +129,6 @@ TARGET_PARAMS = "target"
 # distinct in the first place.
 _TARGET_PARAM_PREFIX = "__target_param__"
 _SOURCE_PARAM_PREFIX = "__source_param__"
-
-# Template-entry name of an edge's gate predicate. An edge callable's free
-# scalars are ordinary model parameters of the SOURCE regime, and they carry the
-# flat name `<target>__<entry>__<param>` there — the qualification is what keeps
-# them apart from the source's own parameters, which share that one flat
-# namespace: a runtime irregular grid's helper is named after the STATE alone
-# (`x__points`), and two edges of one source would otherwise collide on any
-# parameter name they happen to share.
-EDGE_GATE_ENTRY: FunctionName = "gate"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -256,68 +253,6 @@ def bind_edge_period_context(
     return {name: values[name] for name in accepted}
 
 
-def edge_gate_ref_entry(*, ref_name: str, state_name: StateName) -> FunctionName:
-    """Return the template-entry name of one gate-reference projection.
-
-    Args:
-        ref_name: Key of the reference in the edge's `gate_refs`.
-        state_name: State of the reference regime this projection supplies.
-
-    Returns:
-        The entry name the projection's parameters are collected under.
-
-    """
-    return f"gate_ref_{ref_name}_{state_name}"
-
-
-def edge_leg_fallback_entry(
-    *,
-    fallback_regime: RegimeName,
-    state_name: StateName,
-    phase: Literal["solve", "simulate"] = "solve",
-) -> FunctionName:
-    """Return the template-entry name of one leg-fallback projection.
-
-    The leg is named by the regime it falls back to rather than by its key in
-    the edge's `legs`: the simulate-side projector
-    (`build_fallback_state_projector`) is handed the leg's resolved fallback
-    reference and nothing else, so the fallback regime is the one leg identity
-    both sides of the solve/simulate seam can spell. Two legs of one edge
-    falling back to the same regime therefore share one parameter namespace,
-    which is what a single flat source namespace gives them anyway.
-
-    Args:
-        fallback_regime: Regime the leg falls back to.
-        state_name: State of the fallback regime this projection supplies.
-        phase: Which of a `Phased` fallback's two references this names. The
-            two are separate callables with separate parameters, so they need
-            separate entries even where they fall back to the same regime. A
-            leg declaring one reference for both phases uses the `"solve"`
-            spelling on both sides, so its template is unchanged.
-
-    Returns:
-        The entry name the projection's parameters are collected under.
-
-    """
-    prefix = "leg_fallback" if phase == "solve" else "simulate_leg_fallback"
-    return f"{prefix}_{fallback_regime}_{state_name}"
-
-
-def edge_param_qname(*, target: RegimeName, entry: FunctionName, param: str) -> str:
-    """Return the flat name one edge callable's parameter carries in the source.
-
-    Args:
-        target: Regime the edge lands on.
-        entry: Entry name of the callable within the edge.
-        param: Name the callable declares the parameter under.
-
-    Returns:
-        The parameter's qname in the source regime's flat params.
-
-    """
-    return qname_from_tree_path((target, entry, param))
-
-
 def is_target_value_operand(arg_name: str) -> bool:
     """Return whether an edge callable's argument names a target value component.
 
@@ -341,7 +276,7 @@ def gate_reads_dissolution_flag(*, edge: ResolvedGatedEdge) -> bool:
 
     The gate's own declared arguments are the complete answer: a gate argument
     may not name a node of the target's DAG
-    (`_reject_gate_projection_target_node_read`), so concatenating the predicate
+    (`_fence_edge_consumer`), so concatenating the predicate
     with the target functions adds no argument to it and `D_target` reaches the
     gate only by being declared on it.
 
@@ -475,14 +410,16 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
     A gated edge is resolved in two stages: the resolution the build-time
     fences read is available before any regime's grid is known, and the folds,
     the simulate gate evaluators, and each leg's fallback projector can only be
-    compiled once they are. Only an edge reached through `Regime.gated_edges`
-    carries the compiled callables, so calling one on any other edge is a
+    compiled once they are. Only an edge reached through the compiled source engine
+    regime's `gated_edges` carries the compiled callables, so calling one on any
+    other edge is a
     staging mistake rather than a bad model, and says so.
     """
     msg = (
         "This gated-edge callable was never compiled. Only edges reached "
-        "through `Regime.gated_edges` carry their folds, their simulate gate "
-        "evaluators, and their legs' fallback state projectors."
+        "through the compiled source engine regime's `gated_edges` carry their "
+        "folds, their simulate gate evaluators, and their legs' fallback state "
+        "projectors."
     )
     raise RuntimeError(msg)
 
@@ -490,6 +427,10 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
 @dataclass(frozen=True, kw_only=True)
 class ResolvedStakeholderRoute:
     """Engine-side form of one source-stakeholder leg of a gated edge."""
+
+    route: str
+    """The route's key in the cell's `routes`, which names its fallback's
+    parameters under `params["edges"][source][target]["routes"]`."""
 
     source_stakeholder: str | None
     """Source stakeholder name, or `None` for a singleton source's single leg."""
@@ -703,15 +644,17 @@ def _select_period_callable[T](
     what looks like a model error:
 
     - the mapping is empty ⇒ nothing was ever compiled for this edge, i.e. it
-      was not reached through `Regime.gated_edges`;
+      was not reached through the compiled source engine regime's
+      `gated_edges`;
     - the mapping is non-empty but lacks `period` ⇒ the target regime is not
       active there, so no value of it exists to fold.
     """
     if not by_period:
         msg = (
             f"This gated edge's {what} was never compiled. Only edges reached "
-            "through `Regime.gated_edges` carry their folds, their simulate "
-            "gate evaluators, and their legs' fallback state projectors."
+            "through the compiled source engine regime's `gated_edges` carry "
+            "their folds, their simulate gate evaluators, and their legs' "
+            "fallback state projectors."
         )
         raise RuntimeError(msg)
     if period not in by_period:
@@ -724,52 +667,12 @@ def _select_period_callable[T](
     return by_period[period]
 
 
-def _reached_target_param_leaves(
-    *,
-    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
-    seed_args: Iterable[str],
-    state_names: frozenset[StateName],
-) -> frozenset[str]:
-    """Dynamic target-DAG parameter leaves REACHED by one specific edge consumer.
-
-    `seed_args` are a single consumer's OWN declared arguments BEFORE the
-    concatenation with the target DAG -- the gate predicate's parameters, or one
-    projection's parameters. A seed that names a `dag_pool` node (a target
-    regime function or deterministic transition) enters the target's own function
-    graph; walking that graph to its leaves and dropping the produced-node names
-    and the state coordinates leaves exactly the dynamic parameters the TARGET
-    regime binds from `flat_params[target]` and that THIS consumer reaches.
-
-    Restricting to the consumer's actual ancestor closure -- rather than unioning
-    the free args of every function in `dag_pool` -- is load-bearing. A
-    parameter a source edge declares directly, or an unrelated target
-    helper the consumer never calls, is not a leaf reached HERE and must not trip
-    the fence; unioning the whole pool would reject those valid topologies purely
-    on a name collision.
-
-    The closure is `dags.get_ancestors` over `dag_pool`, the same walk the
-    `concatenate_functions` call that actually compiles the consumer performs, so
-    the fence sees exactly the arguments that compilation would bind. Two of its
-    conventions the seeds have to respect:
-
-    - A target with no function in the pool raises, and `targets=None` would walk
-      EVERY node -- the whole-pool union this fence must not take. So the seeds
-      are filtered to pool nodes and passed as a list, empty when the consumer
-      enters the target graph nowhere.
-    - Its ancestor set spans free-parameter nodes as well as function nodes, so
-      subtracting the pool's own node names leaves the free leaves.
-    """
-    seeds = [name for name in seed_args if name in dag_pool]
-    ancestors = get_ancestors(dag_pool, targets=seeds, include_targets=False)
-    return frozenset(ancestors - set(dag_pool) - set(state_names))
-
-
 def _projection_seed_args(ref: ResolvedProjectedRegimeValue) -> frozenset[str]:
     """The OWN declared arguments of every projection function of a same-period ref.
 
-    Seeds the ancestry-aware target-parameter fence for a gate-ref or leg-fallback
-    reader: exactly the vocabulary the reader's projections are written in, before
-    they are concatenated with the target DAG.
+    Seeds the direct-target-node fence for a gate-ref or leg-fallback reader:
+    exactly the vocabulary the reader's projections are written in, before they
+    are concatenated with the target DAG.
     """
     leaves: set[str] = set()
     for projection in ref.projection.values():
@@ -780,8 +683,7 @@ def _projection_seed_args(ref: ResolvedProjectedRegimeValue) -> frozenset[str]:
 def _with_qualified_params(
     *,
     func: Callable[..., FloatND],
-    target: RegimeName,
-    entry: FunctionName,
+    path: tuple[str, ...],
     wired_names: Container[str],
 ) -> Callable[..., FloatND]:
     """Return `func` with every parameter it declares renamed to its flat name.
@@ -789,18 +691,19 @@ def _with_qualified_params(
     An edge callable is written in the target regime's vocabulary, so what it
     declares is a mix of engine-wired names — the target's states, and for a gate
     the injected value operands — and its own free parameters. Only the latter
-    are renamed, to `edge_param_qname`'s `<target>__<entry>__<param>`, which is
-    the name the params template gives them in the source regime's flat params.
-    Renaming BEFORE the callable is concatenated with the target DAG is what
-    keeps the two sides one name: the fold, the simulate gate evaluator, and the
-    leg projector each build their signature out of the renamed callable, so
-    `backward_induction._evaluate_edge_fold`'s name match and the router's
-    provenance lookup both hit the template's own spelling.
+    are renamed, to their declaration path below `params["edges"][source]`
+    joined by the qname delimiter, which is their key in
+    `flat_params["edges"][source]`. Renaming BEFORE the callable is concatenated
+    with the target DAG is what keeps the two sides one name: the fold, the
+    simulate gate evaluator, and the route projector each build their signature
+    out of the renamed callable, so `backward_induction._evaluate_edge_fold`'s
+    name match and the router's provenance lookup both hit the template's own
+    spelling.
 
     Args:
         func: A gate predicate or one projection of a reference.
-        target: Regime the edge lands on.
-        entry: Entry name of this callable within the edge.
+        path: The callable's declaration path below the source's edge branch,
+            starting with the target.
         wired_names: Names the engine binds itself, which are left alone.
 
     Returns:
@@ -809,7 +712,7 @@ def _with_qualified_params(
 
     """
     mapper = {
-        arg: edge_param_qname(target=target, entry=entry, param=arg)
+        arg: qname_from_tree_path((*path, arg))
         for arg in get_union_of_args([func])
         if arg not in wired_names
         and arg not in EDGE_PERIOD_CONTEXT_ARGS
@@ -828,32 +731,27 @@ def _gate_ref_with_qualified_params(
     """Return a gate reference whose projections declare their flat param names."""
     return _ref_with_qualified_params(
         ref=ref,
-        target=target,
-        entry_by_state={
-            state_name: edge_gate_ref_entry(ref_name=ref_name, state_name=state_name)
-            for state_name in ref.projection
-        },
+        path=(target, REFERENCES, ref_name),
         state_names=state_names,
     )
 
 
-def _leg_fallback_with_qualified_params(
+def _route_fallback_with_qualified_params(
     *,
     ref: ResolvedProjectedRegimeValue,
     target: RegimeName,
+    route: str,
+    phase: Literal["solve", "simulate"] | None,
     state_names: Container[StateName],
-    phase: Literal["solve", "simulate"] = "solve",
 ) -> ResolvedProjectedRegimeValue:
-    """Return a leg fallback whose projections declare their flat param names."""
+    """Return a route fallback whose projections declare their flat param names.
+
+    `phase` names the half of a `Phased` fallback the reference is, and is
+    `None` for a fallback declaring one reference for both phases.
+    """
     return _ref_with_qualified_params(
         ref=ref,
-        target=target,
-        entry_by_state={
-            state_name: edge_leg_fallback_entry(
-                fallback_regime=ref.regime, state_name=state_name, phase=phase
-            )
-            for state_name in ref.projection
-        },
+        path=(target, ROUTES, route, FALLBACK, *(() if phase is None else (phase,))),
         state_names=state_names,
     )
 
@@ -861,8 +759,7 @@ def _leg_fallback_with_qualified_params(
 def _ref_with_qualified_params(
     *,
     ref: ResolvedProjectedRegimeValue,
-    target: RegimeName,
-    entry_by_state: Mapping[StateName, FunctionName],
+    path: tuple[str, ...],
     state_names: Container[StateName],
 ) -> ResolvedProjectedRegimeValue:
     """Return `ref` with each projection's parameters renamed to their flat names.
@@ -873,9 +770,9 @@ def _ref_with_qualified_params(
 
     Args:
         ref: The resolved reference whose projections are rewritten.
-        target: Regime the edge lands on.
-        entry_by_state: Entry name to collect each projection's parameters under,
-            keyed by the reference-regime state the projection supplies.
+        path: The reference's declaration path below the source's edge branch;
+            each projection's parameters sit below it, under the state the
+            projection supplies.
         state_names: The target regime's state names.
 
     Returns:
@@ -888,69 +785,13 @@ def _ref_with_qualified_params(
             {
                 state_name: _with_qualified_params(
                     func=projection,
-                    target=target,
-                    entry=entry_by_state[state_name],
+                    path=(*path, state_name),
                     wired_names=state_names,
                 )
                 for state_name, projection in ref.projection.items()
             }
         ),
     )
-
-
-def _reject_target_function_params(
-    *,
-    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
-    seed_args: Iterable[str],
-    state_names: frozenset[StateName],
-    edge_target: RegimeName,
-    context: str,
-) -> None:
-    """Fence a target helper param mis-owned as source.
-
-    Collective-edge provenance binds every non-injected gate/projection argument
-    from `flat_params[source]` -- the solve-side fold does the same, so solve
-    and simulate stay mutually consistent. But that is NOT consistent with the
-    *target* regime's own kernel, which binds a target function's parameter from
-    `flat_params[target]`: a consumer that reaches a target-regime function with
-    a free dynamic parameter would therefore evaluate that parameter from the
-    wrong namespace, and would COLLAPSE with a same-named source parameter,
-    reversing the gate.
-
-    `seed_args` are the consumer's OWN declared arguments; the fence walks the
-    target DAG's ancestor closure from them (`_reached_target_param_leaves`) so it
-    fires exactly when THIS consumer genuinely reaches a target-owned parameter.
-    It must be called on EVERY target-DAG-concatenating consumer of an edge -- the
-    gate predicate AND each gate-ref / fallback projection reader, which are
-    compiled on a separate path and so are easy to leave unchecked -- and
-    it is ancestry-aware, so an unrelated same-named target helper does not reject
-    a valid direct source parameter.
-
-    Origin-preserving edge compilation (carrying the target/source origin through
-    the concatenated DAG, and passing target params as a distinct input to the
-    solve-side fold) is not yet implemented. Until it is, reject the topology
-    rather than silently misbind it. Source-declared projection parameters are
-    NOT affected: they are not leaves of the target DAG reached from the consumer.
-    """
-    contested = sorted(
-        _reached_target_param_leaves(
-            dag_pool=dag_pool, seed_args=seed_args, state_names=state_names
-        )
-    )
-    if contested:
-        msg = (
-            f"{context}: the edge to regime '{edge_target}' reaches parameter(s) "
-            f"{contested} that are introduced by the TARGET regime's own functions "
-            "/ deterministic transitions. Collective-edge provenance binds every "
-            "non-injected argument from flat_params[source], which would evaluate a "
-            "target-regime function parameter from the wrong namespace (and collapse "
-            "it with any same-named source parameter). Origin-preserving edge "
-            "compilation is not yet implemented, so this topology is rejected rather "
-            "than silently misbound. Compute the quantity outside the target regime's "
-            "functions (e.g. as a source-declared gate-ref projection), or give the "
-            "parameter a source-unique name."
-        )
-        raise ModelInitializationError(msg)
 
 
 def _reject_injected_name_collision(
@@ -981,63 +822,6 @@ def _reject_injected_name_collision(
             "operand (V_target / D_target / a gate-ref), silently substituting an "
             "unrelated quantity. Rename the colliding gate-ref key(s), or the "
             "colliding target function / transition."
-        )
-        raise ModelInitializationError(msg)
-
-
-def _reject_gate_projection_target_node_read(
-    *,
-    dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
-    seed_args: Iterable[str],
-    edge_target: RegimeName,
-    context: str,
-) -> None:
-    """Fence a gate/projection arg that DIRECTLY names a target DAG node.
-
-    `_reject_target_function_params` fences a consumer that REACHES a target-owned
-    *dynamic parameter*. But a target function / deterministic-transition node that
-    depends only on target STATES contributes no dynamic leaf, so that fence stays
-    silent -- while `concatenate_functions({**dag_pool, "__consumer__": ...})` still
-    resolves a same-named consumer argument to the target NODE. If that name was meant
-    as a source parameter (bound from `flat_params[source]`), the source value is
-    silently dropped from the compiled signature and replaced by the node's output: a
-    gate reversal, a changed solve-side `Wbar`, or a wrong projected fallback
-    state.
-
-    Whether the author meant the source value or the target node is NOT decidable at
-    construction (the source's edge-param set is not carried in the params template),
-    so this fence enforces the only build-time-checkable contract: a gate/projection
-    argument must not name a target function / deterministic-transition node at all.
-    Compute a target-derived quantity as a source-declared gate-ref PROJECTION (read
-    through `_build_same_period_ref_reader`, whose params ARE bound from the source)
-    instead of naming the target node directly. This is STRICTER than only rejecting a
-    proven source/target collision -- the structural repair, namespace-qualified
-    source/target leaves before concatenation, is deferred. Injected operands are
-    excluded upstream: `_reject_injected_name_collision` runs first and guarantees no
-    injected name is in `dag_pool`, so those never trip this fence.
-    """
-    entered = sorted(set(seed_args) & set(dag_pool))
-    if entered:
-        msg = (
-            f"{context}: the edge to regime '{edge_target}' declares gate/projection "
-            f"argument(s) {entered} that name the TARGET regime's own function / "
-            "deterministic-transition node(s). Name-based DAG concatenation would bind "
-            "the argument to the target NODE, silently dropping a same-named source "
-            "parameter and reversing the gate / changing Wbar / writing the wrong "
-            "projected fallback state. This fence is deliberately STRICTER than a "
-            "proven source/target collision: whether the name was meant as a source "
-            "parameter or the target node is not decidable at build time (the source's "
-            "edge-param set is not carried in the params template), so a direct "
-            "target-node read is rejected outright. Workaround depends on what you "
-            "need: for a target-derived VALUE, add a source-declared gate-ref "
-            "projection (its params bind from the source) -- but note a gate ref "
-            "returns a REFERENCE REGIME's V at the projected coordinates, not an "
-            "arbitrary target helper's output; for a state-only quantity (or a "
-            "fallback STATE coordinate, which a gate ref cannot supply) inline the "
-            "helper/transition formula directly in the gate/projection using the "
-            "target STATES as arguments. General direct target-node reads need either "
-            "origin-preserving edge compilation or an explicit per-argument "
-            "target-node declaration; neither is implemented yet."
         )
         raise ModelInitializationError(msg)
 
@@ -1215,44 +999,59 @@ def _fence_edge_consumer(
     *,
     dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
-    state_names: frozenset[StateName],
     edge_target: RegimeName,
     context: str,
 ) -> None:
-    """Reject both ways a target DAG node can capture one edge consumer's argument.
+    """Reject an edge consumer argument that names a target DAG node.
 
     Runs on EVERY target-DAG-concatenating consumer — the gate predicate and each
-    gate-ref / leg-fallback projection — ancestry-aware from that consumer's own
-    declared args:
+    gate-ref / leg-fallback projection — over that consumer's own declared args.
+    `concatenate_functions({**dag_pool, "__consumer__": ...})` resolves a consumer
+    argument named like a target function / deterministic-transition node to that
+    NODE, so the refusal covers both ways the node can capture the argument:
 
-    - `_reject_target_function_params` rejects reaching a target-owned DYNAMIC
-      param, which the edge would bind from the source's namespace.
-    - `_reject_gate_projection_target_node_read` closes what the first leaves
-      open: a consumer arg naming a STATE-ONLY target node reaches no dynamic
-      leaf, so the first fence stays silent while concatenation still rebinds the
-      arg to the node and drops a same-named source parameter.
+    - the node reads a parameter the target regime owns, which the edge would
+      bind from the source's namespace;
+    - the node reads only target states, and a same-named source parameter is
+      silently dropped from the compiled signature and replaced by the node's
+      output: a gate reversal, a changed solve-side `Wbar`, or a wrong projected
+      fallback state.
+
+    Whether the author meant a source parameter or the target node is not
+    decidable at construction, so any direct target-node read is refused.
+    Injected operands never trip it: `_reject_injected_name_collision` runs first
+    and guarantees no injected name is in `dag_pool`.
 
     Args:
         dag_pool: The target regime's DAG nodes (`_build_target_dag_pool`).
         seed_args: The consumer's OWN declared arguments, before concatenation.
-        state_names: The target regime's state names.
         edge_target: Regime the edge lands on, named in the diagnostic.
         context: Label of the builder and consumer the fence fired on.
 
+    Raises:
+        ModelInitializationError: If a consumer argument names a target DAG node.
+
     """
-    _reject_target_function_params(
-        dag_pool=dag_pool,
-        seed_args=seed_args,
-        state_names=state_names,
-        edge_target=edge_target,
-        context=context,
-    )
-    _reject_gate_projection_target_node_read(
-        dag_pool=dag_pool,
-        seed_args=seed_args,
-        edge_target=edge_target,
-        context=context,
-    )
+    entered = sorted(set(seed_args) & set(dag_pool))
+    if entered:
+        msg = (
+            f"{context}: the edge to regime '{edge_target}' declares gate/projection "
+            f"argument(s) {entered} that name the TARGET regime's own function / "
+            "deterministic-transition node(s). Name-based DAG concatenation would bind "
+            "the argument to the target NODE: a same-named source parameter would be "
+            "silently dropped, and any parameter the node reads would be bound from "
+            "the source's params instead of the target's. Whether the name means a "
+            "source parameter or the target node is not decidable at build time, so "
+            "any direct target-node read is rejected. Workaround depends on what you "
+            "need: for a target-derived VALUE, add a source-declared gate-ref "
+            "projection (its params bind from the source) -- but note a gate ref "
+            "returns a REFERENCE REGIME's V at the projected coordinates, not an "
+            "arbitrary target helper's output; for a state-only quantity (or a "
+            "fallback STATE coordinate, which a gate ref cannot supply) inline the "
+            "helper/transition formula directly in the gate/projection using the "
+            "target STATES as arguments."
+        )
+        raise ModelInitializationError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1431,7 +1230,6 @@ def _compile_edge_gate(
     _fence_edge_consumer(
         dag_pool=dag_pool,
         seed_args=get_union_of_args([edge.gate]),
-        state_names=frozenset(state_names),
         edge_target=edge.target,
         context=fence_contexts.gate,
     )
@@ -1439,7 +1237,6 @@ def _compile_edge_gate(
         _fence_edge_consumer(
             dag_pool=dag_pool,
             seed_args=_projection_seed_args(ref),
-            state_names=frozenset(state_names),
             edge_target=edge.target,
             context=fence_contexts.gate_ref.format(ref_name=ref_name),
         )
@@ -1448,7 +1245,6 @@ def _compile_edge_gate(
             _fence_edge_consumer(
                 dag_pool=dag_pool,
                 seed_args=_projection_seed_args(leg.fallback),
-                state_names=frozenset(state_names),
                 edge_target=edge.target,
                 context=fence_contexts.leg_fallback,
             )
@@ -1458,8 +1254,7 @@ def _compile_edge_gate(
     # node can carry, which is exactly the collision the fences exist to detect.
     qualified_gate = _with_qualified_params(
         func=edge.gate,
-        target=edge.target,
-        entry=EDGE_GATE_ENTRY,
+        path=(edge.target, PREDICATE),
         wired_names=injected_names | set(state_names),
     )
     qualified_gate_refs = {
@@ -1509,10 +1304,10 @@ def get_edge_fold(
     arguments are the target regime's state grids, the same-period value mapping
     (under `SAME_PERIOD_V_ARG` — the target V, its float dissolution flag, and
     every reference regime's V) and the gate's and projections' flat params.
-    Those params carry the qualified spelling `<target>__<entry>__<param>`
-    (`edge_param_qname`), which is the name the source regime's params template
-    gives them, so `backward_induction._evaluate_edge_fold` binds them by a plain
-    name match against `flat_params[source]`. It returns
+    Those params carry their declaration path below `params["edges"][source]`
+    as qname, which is their key in `flat_params["edges"][source]`, so
+    `backward_induction._evaluate_edge_fold` binds them by a plain name match
+    against that namespace. It returns
     `(*target_state_axes, channels.count)`, one channel per operand.
 
     `combine` is what turns those operands into the source's continuation, at
@@ -1549,7 +1344,7 @@ def get_edge_fold(
             the target DAG the gate/projections resolve against. Gates and
             projections read target STATES directly; a target helper or
             deterministic-transition NODE may NOT be named directly as a gate/
-            projection argument (`_reject_gate_projection_target_node_read` --
+            projection argument (`_fence_edge_consumer` --
             build-time undecidable source/target name collision), so inline its
             formula over the target states or read a VALUE via a gate-ref projection.
         target_deterministic_transitions: The target regime's merged
@@ -1587,8 +1382,12 @@ def get_edge_fold(
     gate_arg_names = compiled.gate_arg_names
 
     qualified_fallbacks = [
-        _leg_fallback_with_qualified_params(
-            ref=leg.fallback, target=edge.target, state_names=state_names
+        _route_fallback_with_qualified_params(
+            ref=leg.fallback,
+            target=edge.target,
+            route=leg.route,
+            phase=None if leg.simulate_fallback is None else "solve",
+            state_names=state_names,
         )
         for leg in edge.legs
     ]
@@ -1882,10 +1681,9 @@ def get_edge_simulate_gate_evaluator(
           helpers internally;
         - the params named by the returned `EdgeArgProvenance`, exposed under
           NAMESPACE-QUALIFIED leaves (`__target_param__x__points` vs
-          `__source_param__x__points`). A source param's own qname is the
-          edge-qualified `<target>__<entry>__<param>` the params template gives
-          it (`edge_param_qname`), so the router finds it in
-          `flat_params[source]` under exactly that name.
+          `__source_param__x__points`). A source param's own qname is its
+          declaration path below `params["edges"][source]`, so the router
+          finds it in `flat_params["edges"][source]` under exactly that name.
 
         The namespace qualification is load-bearing: a runtime grid
         helper is named after the STATE alone (`x__points`), so a source and
@@ -1998,12 +1796,9 @@ def get_edge_simulate_gate_evaluator(
     #    the source's own solved policy was optimized against.
     #    A param introduced by the TARGET regime's OWN
     #    functions/transitions is NOT source-owned — the target regime binds it
-    #    from `flat_params[target]` in its own kernel, so attributing it to source
-    #    here (and to source in the fold) evaluates it from the wrong namespace and
-    #    collapses it with any same-named source param. Origin-preserving edge
-    #    compilation is deferred; until then `_reject_target_function_params`
-    #    (called above, after `gate_arg_names`) rejects that topology rather than
-    #    silently misbinding it, so no target-function param ever reaches this
+    #    from `flat_params[target]` in its own kernel. `_fence_edge_consumer`
+    #    (run inside `_compile_edge_gate`) refuses any gate / projection argument
+    #    naming a target node, so no target-function param ever reaches this
     #    SOURCE bucket.
     # 3. The REFERENCE regimes' own interpolation grids — resolved inside
     #    `_build_same_period_ref_reader` against `SAME_PERIOD_PARAMS_ARG`,
@@ -2085,7 +1880,8 @@ def build_fallback_state_projector(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    entry_phase: Literal["solve", "simulate"] = "solve",
+    route: str,
+    phase: Literal["solve", "simulate"] | None,
 ) -> Callable[..., Mapping[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
@@ -2127,24 +1923,21 @@ def build_fallback_state_projector(
     preference between two merges but the only choice that makes the simulated
     coordinate equal the one the fold projected.
 
-    A projection DAG CAN route through a target helper FUNCTION whose own free
-    params the target regime binds from `flat_params[target]`; binding those
-    from the source at the fold would evaluate them from the wrong namespace and
-    collapse them with any same-named source param. That is not a valid provenance
-    for a target-owned parameter, so `_reject_target_function_params` (called after
-    `arg_names` below) FENCES a projection that reaches such a param rather than
-    misbinding it. Source-declared projection params (a `shift` the edge itself
-    names) are unaffected: they are not leaves of the target DAG. Origin-preserving
-    edge compilation (carrying target/source origin through the DAG and passing
-    target params to the solve-side fold) would lift the fence; it is deferred.
+    A projection naming a target helper FUNCTION would route through it, and
+    the target regime binds that helper's own free params from
+    `flat_params[target]`; binding them from the source at the fold would
+    evaluate them from the wrong namespace. `_fence_edge_consumer` (called below)
+    refuses any projection argument naming a target node. Source-declared
+    projection params (a `shift` the edge itself names) are unaffected: they name
+    no target node.
 
     Unlike `get_edge_simulate_gate_evaluator`, this callable exposes both kinds
     of argument without a namespace prefix: it holds no interpolator of its own,
     so the target-params namespace (the source of the identically-named-leaf
     problem there) is empty here and nothing can collide. A parameter still
-    carries the edge-qualified qname `<target>__<entry>__<param>`
-    (`edge_leg_fallback_entry`), which is both what the params template emits and
-    what the solve-side fold's reader for this leg declares.
+    carries its declaration path below `params["edges"][source]` as qname,
+    which is both its key in `flat_params["edges"][source]` and what the
+    solve-side fold's reader for this route declares.
 
     Args:
         ref: The leg's resolved fallback reference
@@ -2161,10 +1954,10 @@ def build_fallback_state_projector(
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        entry_phase: Which template entry this projection's parameters carry.
-            `"solve"` — the shared spelling — for a leg whose one reference
-            serves both phases; `"simulate"` for the simulate half of a
-            `Phased` fallback, whose parameters are its own.
+        route: The route's key in the cell's `routes`.
+        phase: Which half of a `Phased` fallback `ref` is, whose parameters
+            are its own; `None` for a fallback declaring one reference for both
+            phases.
 
     Returns:
         A callable, keyed by (a subset of) the target's state names plus any
@@ -2185,7 +1978,6 @@ def build_fallback_state_projector(
     _fence_edge_consumer(
         dag_pool=dag_pool,
         seed_args=_projection_seed_args(ref),
-        state_names=frozenset(target_state_names),
         edge_target=target_regime_name,
         context="build_fallback_state_projector",
     )
@@ -2193,11 +1985,12 @@ def build_fallback_state_projector(
     # The same qualification the solve-side fold applies to this very leg's
     # fallback reader, from the same helper, so the coordinate simulate projects
     # is read off the parameter the fold projected it with.
-    qualified_ref = _leg_fallback_with_qualified_params(
+    qualified_ref = _route_fallback_with_qualified_params(
         ref=ref,
         target=target_regime_name,
+        route=route,
+        phase=phase,
         state_names=target_state_names,
-        phase=entry_phase,
     )
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}
@@ -2785,7 +2578,8 @@ def edge_may_fold_at_period(
 def build_reference_params_mapping_for_fold(
     *,
     edge: ResolvedGatedEdge,
-    flat_params: Mapping[RegimeName, Mapping[str, _ParamsLeaf]],
+    # `object` leaves: the claw would otherwise check every leaf on every call.
+    flat_params: Mapping[str, object],
 ) -> MappingProxyType[RegimeName, Mapping[str, _ParamsLeaf]]:
     """Assemble `SAME_PERIOD_PARAMS_ARG` for one edge's reference readers.
 
@@ -2799,7 +2593,7 @@ def build_reference_params_mapping_for_fold(
     """
     return MappingProxyType(
         {
-            regime_name: flat_params[regime_name]
+            regime_name: regime_kernel_params(flat_params, regime_name=regime_name)
             for regime_name in dict.fromkeys((edge.target, *edge.reference_regimes))
         }
     )

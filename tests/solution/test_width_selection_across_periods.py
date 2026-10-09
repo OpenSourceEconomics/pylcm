@@ -12,17 +12,17 @@ from _lcm.execution.workspace_planning import (
     CompilerMemoryReservation,
     workspace_width_candidates,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
+    AgeRange,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
     Regime,
+    Transition,
     fixed_transition,
 )
 from lcm.typing import ScalarInt
@@ -33,8 +33,6 @@ from tests.solution.test_footprint_width_selection import (
     _terminal_utility,
     _utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_WEALTH = 64
 _N_PERIODS = 8
@@ -60,13 +58,6 @@ def _fake_peak(
 
 def _model(*, budget_bytes: int) -> Model:
     acting = Regime(
-        regime_transitions=until_exit(
-            _N_PERIODS,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("acting", "done")
-            ),
-            exits=("done",),
-        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -76,12 +67,20 @@ def _model(*, budget_bytes: int) -> Model:
         functions={"utility": _utility},
     )
     done = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=_N_WEALTH)},
         functions={"utility": _terminal_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"acting": acting, "done": done},
+        edges={
+            "acting": Transition(
+                targets={
+                    "acting": AgeRange(exclusive_stop=_N_PERIODS - 1),
+                    "done": AgeRange(exclusive_stop=_N_PERIODS),
+                },
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(

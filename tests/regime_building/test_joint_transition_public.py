@@ -23,10 +23,6 @@ def _utility(wealth: float) -> FloatND:
     return jnp.asarray(wealth)
 
 
-def _next_regime() -> FloatND:
-    return jnp.asarray(0, dtype=jnp.int32)
-
-
 def test_joint_transition_is_an_edge_owned_public_declaration() -> None:
     """A regime can declare one correlated kernel for a named target edge."""
     transition = JointTransition(
@@ -37,7 +33,6 @@ def test_joint_transition_is_an_edge_owned_public_declaration() -> None:
     )
 
     regime = Regime(
-        regime_transitions=_next_regime,
         states={"wealth": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={"utility": _utility},

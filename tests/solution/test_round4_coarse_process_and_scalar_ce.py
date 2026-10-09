@@ -24,15 +24,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
+    Model,
     NormalIIDProcess,
     Regime,
     TauchenAR1Process,
+    Transition,
     UniformIIDProcess,
     categorical,
 )
@@ -40,8 +40,6 @@ from lcm.certainty_equivalent import PowerMean
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _DISCOUNT = 0.95
 _LAST_AGE = 22
@@ -110,25 +108,23 @@ def _solve_coarse_into_process_only_target(
     """
     process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "gone")
-            ),
-            exits=("gone",),
-        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
     gone = Regime(
-        regime_transitions=None,
         states={"shock": process},
         functions={"utility": lambda shock: shock + level},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "gone": gone},
+        edges={
+            "alive": Transition(
+                targets={"alive": 20, "gone": (20, 21)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -138,7 +134,6 @@ def _solve_coarse_into_process_only_target(
             "utility": {},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}, "shock": _process_params(process)},
     }
@@ -193,20 +188,12 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
 def _solve_with_entry_law(level: float):
     """The same model, with the parent declaring how the target is entered."""
     alive = Regime(
-        regime_transitions=until_exit(
-            _LAST_AGE,
-            law=_SupportedDeterministicTransition(
-                func=_next_regime, targets=("alive", "gone")
-            ),
-            exits=("gone",),
-        ),
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
         state_transitions={"wealth": _next_wealth, "shock": {"gone": _enter_shock}},
         functions={"utility": _utility},
     )
     gone = Regime(
-        regime_transitions=None,
         # Fixed at construction, not passed at runtime: the entry law places a
         # value on this process's own support, and that support has to exist
         # before the source's laws are built.
@@ -217,8 +204,14 @@ def _solve_with_entry_law(level: float):
         },
         functions={"utility": lambda shock: shock + level},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "gone": gone},
+        edges={
+            "alive": Transition(
+                targets={"alive": 20, "gone": (20, 21)},
+                law=DeterministicTransition(func=_next_regime),
+            )
+        },
         ages=AgeGrid(start=20, inclusive_stop=_LAST_AGE, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={20: "alive"},
@@ -229,7 +222,6 @@ def _solve_with_entry_law(level: float):
             "koopmans_aggregator": {"discount_factor": _DISCOUNT},
             "next_wealth": {},
             "next_shock": {},
-            "next_regime": {},
         },
         "gone": {"utility": {}},
     }
@@ -300,20 +292,9 @@ def _tiny_budget(*, consumption: ContinuousAction, wealth: ContinuousState) -> B
     return consumption <= wealth
 
 
-def _tiny_next_regime() -> ScalarInt:
-    return _TinyRegimeId.dead
-
-
 def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     """Solve a model whose entire continuation sits at the `1e-8` scale."""
     alive = Regime(
-        regime_transitions=until_exit(
-            41,
-            law=_SupportedDeterministicTransition(
-                func=_tiny_next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": _TINY_WEALTH},
         actions={"consumption": _TINY_CONSUMPTION},
         state_transitions={"wealth": _next_wealth},
@@ -322,12 +303,12 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         certainty_equivalent=PowerMean(),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": LinSpacedGrid(start=0.0, stop=5.0, n_points=5)},
         functions={"utility": _tiny_terminal_utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
+        edges={"alive": {"dead": 40}},
         ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
         regime_id_class=_TinyRegimeId,
         initial_nodes={40: "alive"},
@@ -337,7 +318,6 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
             "utility": {},
             "koopmans_aggregator": {"discount_factor": 1.0},
             "next_wealth": {},
-            "next_regime": {},
             "certainty_equivalent": {"risk_aversion": risk_aversion},
         },
         "dead": {"utility": {}},

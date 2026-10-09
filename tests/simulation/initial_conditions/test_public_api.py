@@ -5,14 +5,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.exceptions import (
@@ -30,6 +29,9 @@ from tests.regime_building.test_collective_regime_simulate import DissolutionReg
 from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_regimes as make_dissolution_regimes,
 )
+from tests.regime_building.test_collective_regime_simulate import (
+    _married_dissolution_transition as married_dissolution_transition,
+)
 from tests.simulation.initial_conditions._models import (
     make_asymmetric_state_model,
     make_constraint_model,
@@ -38,8 +40,6 @@ from tests.simulation.initial_conditions._models import (
     make_state_only_constraint_model,
 )
 from tests.simulation.initial_conditions._oracle import exhaustive_scalar_feasibility
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _CONSTRAINT_PARAMS = {"discount_factor": 0.95, "final_age_alive": 1}
 
@@ -410,29 +410,20 @@ def _sealed_model() -> Model:
     ) -> ContinuousState:
         return wealth - consumption + 1.0
 
-    def next_regime(age: float) -> ScalarInt:
-        return jnp.where(age >= 18, RegimeId.dead, RegimeId.working)
-
     working = UserRegime(
-        regime_transitions=until_exit(
-            19,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.5, stop=2.5, n_points=3)},
         functions={"utility": utility},
         constraints={"feasible": feasible},
     )
-    dead = UserRegime(regime_transitions=None, functions={"utility": lambda: 0.0})
-    return with_fixture_graph(
+    dead = UserRegime(functions={"utility": lambda: 0.0})
+    return Model(
         regimes={"working": working, "dead": dead},
         ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={18: "working"},
+        edges={"working": {"dead": 18}},
     )
 
 
@@ -494,13 +485,6 @@ def _age_specialized_model() -> Model:
         return jnp.where(age >= 65, RegimeId.dead, RegimeId.working_life)
 
     working_life = UserRegime(
-        regime_transitions=until_exit(
-            75,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=8)},
         actions={"consumption": LinSpacedGrid(start=1.0, stop=10.0, n_points=5)},
         state_transitions={"wealth": next_wealth},
@@ -513,14 +497,22 @@ def _age_specialized_model() -> Model:
         functions={"utility": utility},
     )
     dead = UserRegime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life, "dead": dead},
         ages=AgeGrid(start=25, inclusive_stop=75, step="10Y"),
         regime_id_class=RegimeId,
         initial_nodes={25: "working_life", 35: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={
+                    "working_life": (25, 35, 45, 55),
+                    "dead": (25, 35, 45, 55, 65),
+                },
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -580,11 +572,17 @@ def _collective_population_without_roles(model: Model) -> dict[str, jnp.ndarray]
 )
 def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -> None:
     """A population `simulate` refuses for a missing role is refused by both methods."""
-    model = with_fixture_graph(
+    model = Model(
         regimes=make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": married_dissolution_transition(),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
     initial = _collective_population_without_roles(model)
 

@@ -37,6 +37,7 @@ from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
+    _with_full_topology_laws,
 )
 from tests.test_models.deterministic import base as retirement_model
 from tests.test_models.deterministic.discrete import (
@@ -44,13 +45,19 @@ from tests.test_models.deterministic.discrete import (
     get_model,
     get_params,
 )
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_sharded_state_across_gated_edge import (
     build_model as build_gated_edge_model,
 )
 
 _N_PERIODS = 3
+_FULL_TOPOLOGY_EDGES = {
+    "single_f": {"married": 0, "single_f_p1": 0},
+    "single_m": {"married": 0, "single_m_p1": 0},
+    "single_f_p1": {"single_f_terminal": 1},
+    "single_m_p1": {"single_m_terminal": (0, 1, 2)},
+    "married": {"married_terminal": 1, "single_f_terminal": 1, "single_m_terminal": 1},
+}
 
 
 def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
@@ -63,7 +70,7 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     base = get_model(n_periods=_N_PERIODS)
     model = Model(
         regimes=base.user_regimes,
-        edges=base.graph.edges,
+        edges=base.edges,
         ages=base.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=None),
@@ -211,8 +218,9 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     """
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "single_f@0")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    model = with_fixture_graph(
+    model = Model(
         regimes=_make_full_topology_regimes(),
+        edges=_with_full_topology_laws(_FULL_TOPOLOGY_EDGES),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},
@@ -843,7 +851,7 @@ def _make_public_capture_model(
     }
     return Model(
         regimes=regimes,
-        edges=base.graph.edges,
+        edges=base.edges,
         ages=base.ages,
         regime_id_class=retirement_model.RegimeId,
         execution_config=ExecutionConfig(

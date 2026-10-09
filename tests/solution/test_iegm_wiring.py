@@ -10,7 +10,7 @@ the same `(u')^{-1}`.
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, AgeRange, DeterministicTransition, Model, Transition
 from lcm_examples.iskhakov_et_al_2017 import dead
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import retirement_only
@@ -19,7 +19,6 @@ from tests.test_models.deterministic.dcegm_variants import (
     get_retirement_only_model,
     get_retirement_only_params,
 )
-from tests.test_models.graph import with_fixture_graph
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
@@ -33,15 +32,23 @@ def _numeric_retirement_model(n_periods: int) -> Model:
         for name, func in dcegm_retirement.functions.items()
         if name != "inverse_marginal_utility"
     }
-    numeric_regime = dcegm_retirement.replace(
-        regime_transitions=retirement_only.retirement_transitions(last_age=last_age),
-        functions=functions_without_inverse,
-    )
-    return with_fixture_graph(
+    numeric_regime = dcegm_retirement.replace(functions=functions_without_inverse)
+    return Model(
         regimes={"retirement": numeric_regime, "dead": dead},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
         initial_nodes={ages.exact_values[0]: "retirement"},
+        edges={
+            "retirement": Transition(
+                targets={
+                    "retirement": AgeRange(exclusive_stop=ages.exact_values[-2]),
+                    "dead": AgeRange(exclusive_stop=last_age),
+                },
+                law=DeterministicTransition(
+                    func=retirement_only.next_regime_from_retirement
+                ),
+            )
+        },
     )
 
 

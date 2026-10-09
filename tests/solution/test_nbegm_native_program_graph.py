@@ -36,10 +36,6 @@ from tests.test_models import (
 
 _SMALL: dict[str, Any] = {"n_liquid": 12, "n_savings": 16}
 
-# The three-period toys are alive at ages 0 and 1 only, so their survival law
-# ends life after age 1; the toys' own default fits four periods.
-_THREE_PERIOD_FINAL_AGE_ALIVE = 2.0
-
 
 def _smooth_kernel(**overrides: Any) -> tuple[Any, dict[str, Any]]:
     model = nbegm_ride_along_toy.build_model(
@@ -47,9 +43,7 @@ def _smooth_kernel(**overrides: Any) -> tuple[Any, dict[str, Any]]:
     )
     return ride_along_kernel(
         model=model,
-        params=nbegm_ride_along_toy.build_params(
-            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
-        ),
+        params=nbegm_ride_along_toy.build_params(),
     )
 
 
@@ -59,9 +53,7 @@ def _discrete_kernel() -> tuple[Any, dict[str, Any]]:
     )
     return ride_along_kernel(
         model=model,
-        params=nbegm_ride_discrete_toy.build_params(
-            final_age_alive=_THREE_PERIOD_FINAL_AGE_ALIVE
-        ),
+        params=nbegm_ride_discrete_toy.build_params(),
     )
 
 

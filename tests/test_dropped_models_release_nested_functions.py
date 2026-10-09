@@ -30,11 +30,9 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _ENGINE_SOURCE_ROOTS = (
     Path(_lcm.__file__).resolve().parent,
@@ -78,10 +76,9 @@ def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
 
 def _grid_search_model() -> Model:
     """Build the smallest one-period grid-search model."""
-    return with_fixture_graph(
+    return Model(
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(last_age=START_AGE + 1),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -94,6 +91,7 @@ def _grid_search_model() -> Model:
         ages=AgeGrid(start=START_AGE, inclusive_stop=START_AGE + 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={START_AGE: "working_life"},
+        edges={"working_life": {"dead": START_AGE}},
     )
 
 
@@ -144,7 +142,7 @@ def _adaptive_outer_search() -> AdaptiveOuterMesh:
 
 
 _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
-    "grid_search": (_grid_search_model, lambda: get_params(n_periods=2)),
+    "grid_search": (_grid_search_model, lambda: get_graph_only_params(n_periods=2)),
     "negm": (lambda: _toy_model(variant="negm"), lambda: _TOY_PARAMS),
     "n_nbegm_finite": (lambda: _toy_model(variant="n_nbegm"), lambda: _TOY_PARAMS),
     "n_nbegm_adaptive": (

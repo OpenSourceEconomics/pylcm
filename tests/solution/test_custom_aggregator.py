@@ -1,6 +1,6 @@
 """Test that a custom Koopmans aggregator can be used in a model."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
@@ -9,19 +9,19 @@ import pandas as pd
 from numpy.testing import assert_array_equal
 
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     CESAggregator,
+    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    Model,
     Phased,
     PowerMean,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -35,8 +35,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
+from tests.conftest import bind_laws
 
 
 @categorical(ordered=False)
@@ -164,13 +163,6 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
         states=working_life_states,
         state_transitions=working_life_state_transitions,
         constraints={"borrowing_constraint": borrowing_constraint},
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 1,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("working_life", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions=functions,
         koopmans_aggregator=custom_W,
     )
@@ -189,17 +181,22 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
             return 0.0
 
     dead_regime = UserRegime(
-        regime_transitions=None,
         functions={"utility": dead_utility},
         states=dead_states,
     )
 
-    return with_fixture_graph(
+    return Model(
         regimes={"working_life": working_life_regime, "dead": dead_regime},
         ages=AgeGrid(start=START_AGE, inclusive_stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": 1}),
         initial_nodes={0: "working_life"},
+        edges={
+            "working_life": Transition(
+                targets={"working_life": (0, 1), "dead": (0, 1, 2)},
+                law=DeterministicTransition(func=next_regime),
+            )
+        },
     )
 
 
@@ -242,12 +239,10 @@ def test_custom_ces_aggregator_differs_from_default():
 
 def test_default_H_injected_for_non_terminal():
     """The model-level aggregator is injected on the non-terminal finalized regime."""
-    regime = UserRegime(
-        functions={"utility": lambda: 0.0},
-        regime_transitions=lambda: {"a": 1.0},
-    )
+    regime = UserRegime(functions={"utility": lambda: 0.0})
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
+        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -257,12 +252,10 @@ def test_default_H_injected_for_non_terminal():
 
 def test_default_W_not_injected_for_terminal():
     """Terminal regimes have no continuation, so they get no aggregator."""
-    r = UserRegime(
-        regime_transitions=None,
-        functions={"utility": lambda: 0.0},
-    )
+    r = UserRegime(functions={"utility": lambda: 0.0})
     finalized = finalize_regimes(
         user_regimes={"regime": r},
+        laws=bind_laws({"regime": None}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -277,12 +270,12 @@ def test_custom_W_not_overwritten():
         return utility + CE
 
     r = UserRegime(
-        regime_transitions=lambda: {"a": 1.0},
         functions={"utility": lambda: 0.0},
         koopmans_aggregator=my_W,
     )
     finalized = finalize_regimes(
         user_regimes={"regime": r},
+        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -412,10 +405,7 @@ def test_h_consumes_continuous_state():
     independent of the argmax.
     """
     model = _make_model(custom_W=wealth_W)
-    common = {
-        "utility": {"disutility_of_work": 0.5},
-        "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-    }
+    common = {"utility": {"disutility_of_work": 0.5}}
     V_zero = model.solve(
         log_level="debug",
         params={
@@ -424,6 +414,7 @@ def test_h_consumes_continuous_state():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     V_pos = model.solve(
@@ -434,6 +425,7 @@ def test_h_consumes_continuous_state():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     lift_at_terminal = (
@@ -463,10 +455,7 @@ def test_h_consumes_continuous_action():
     `action_weight=0` baseline.
     """
     model = _make_model(custom_W=consumption_W)
-    common = {
-        "utility": {"disutility_of_work": 0.5},
-        "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
-    }
+    common = {"utility": {"disutility_of_work": 0.5}}
     V_zero = model.solve(
         log_level="debug",
         params={
@@ -475,6 +464,7 @@ def test_h_consumes_continuous_action():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     V_pos = model.solve(
@@ -485,6 +475,7 @@ def test_h_consumes_continuous_action():
                 **common,
             },
             "dead": {},
+            "edges": {"working_life": {"final_age_alive": FINAL_AGE_ALIVE}},
         },
     ).values
     non_terminal = [p for p in V_zero if p <= FINAL_AGE_ALIVE]
@@ -652,16 +643,6 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
     """Solve a two-regime model whose discount factor is a `Series` over ages."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-                ),
-                targets=("alive", "dead"),
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -669,15 +650,24 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         koopmans_aggregator=koopmans_aggregator,  # ty: ignore[invalid-argument-type]
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                    )
+                ),
+            )
+        },
     )
     discount_factor = pd.Series(
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
@@ -701,20 +691,10 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
 
 def _solve_with_aggregator_slot(
     *, koopmans_aggregator: object, aggregator_params: dict[str, float]
-) -> tuple[dict[str, str | dict[str, str | dict[str, str]]], FloatND]:
+) -> tuple[Mapping[str, object], FloatND]:
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
-        regime_transitions=until_exit(
-            2,
-            law=_SupportedDeterministicTransition(
-                func=lambda age: jnp.where(
-                    age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-                ),
-                targets=("alive", "dead"),
-            ),
-            exits=("dead",),
-        ),
         states={"wealth": wealth},
         state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -723,15 +703,24 @@ def _solve_with_aggregator_slot(
         certainty_equivalent=PowerMean(),
     )
     dead = UserRegime(
-        regime_transitions=None,
         states={"wealth": wealth},
         functions={"utility": lambda wealth: wealth + 1.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=_AgeIndexedRegimeId,
         initial_nodes={0: "alive"},
+        edges={
+            "alive": Transition(
+                targets={"alive": 0, "dead": (0, 1)},
+                law=DeterministicTransition(
+                    func=lambda age: jnp.where(
+                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
+                    )
+                ),
+            )
+        },
     )
     template = dict(model.get_params_template()["alive"]["koopmans_aggregator"])
     params = {

@@ -26,8 +26,6 @@ from _lcm.execution.scheduler import PeriodTransferCache
 from _lcm.solution import backward_induction
 from lcm import (
     AgeGrid,
-    ByAge,
-    DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
@@ -131,13 +129,7 @@ def _sector_model(
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
-    last_age = ages.exact_values[-1]
     working = Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=last_age,
-            law=DeterministicTransition(func=lambda: _RegimeId.working),
-            then=DeterministicTransition(func=lambda: _RegimeId.terminal),
-        ),
         # `sector` is declared first, so it leads the discrete axes and
         # `pref_type` is the second value axis.
         states={
@@ -157,7 +149,6 @@ def _sector_model(
         constraints={"affordable": _affordable},
     )
     terminal = Regime(
-        regime_transitions=None,
         states=(
             {"pref_type": pref_type, "wealth": wealth}
             if typed_terminal
@@ -206,7 +197,7 @@ def _independent_types_model(*, execution_config: ExecutionConfig) -> Model:
     model = independent_types.get_model()
     return Model(
         regimes=model.user_regimes,
-        edges=model.graph.edges,
+        edges=model.edges,
         ages=model.ages,
         regime_id_class=independent_types.RegimeId,
         initial_nodes={model.ages.exact_values[0]: "working"},
@@ -713,25 +704,10 @@ def _two_carrier_utility(
     return weight[pref_type] * (1.0 + consumption) ** exponent[pref_type]
 
 
-def _stay_left() -> ScalarInt:
-    return _TwoCarrierRegimeId.left
-
-
-def _stay_right() -> ScalarInt:
-    return _TwoCarrierRegimeId.right
-
-
-def _two_carrier_regime(*, stay: str) -> Regime:
+def _two_carrier_regime() -> Regime:
     pref_type = DiscreteGrid(category_class=independent_types.PrefType)
     wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
     return Regime(
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=2,
-            law=DeterministicTransition(
-                func=_stay_left if stay == "left" else _stay_right
-            ),
-            then=DeterministicTransition(func=lambda: _TwoCarrierRegimeId.terminal),
-        ),
         states={"pref_type": pref_type, "wealth": wealth},
         state_transitions={
             "pref_type": fixed_transition("pref_type"),
@@ -749,10 +725,9 @@ def _two_carrier_model(*, execution_config: ExecutionConfig) -> Model:
     return Model(
         edges={name: {name: (0,), "terminal": (1,)} for name in ("left", "right")},
         regimes={
-            "left": _two_carrier_regime(stay="left"),
-            "right": _two_carrier_regime(stay="right"),
+            "left": _two_carrier_regime(),
+            "right": _two_carrier_regime(),
             "terminal": Regime(
-                regime_transitions=None,
                 states={
                     "pref_type": DiscreteGrid(
                         category_class=independent_types.PrefType

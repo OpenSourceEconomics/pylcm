@@ -29,6 +29,7 @@ from _lcm.dtypes import (
 from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.grids import DiscreteGrid
+from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
@@ -1224,7 +1225,7 @@ def _merged_regime_params(
     """Merge a regime's fixed and runtime parameters; the runtime value binds."""
     return {
         **regime.resolved_fixed_params,
-        **dict(flat_params.get(regime_name, MappingProxyType({}))),
+        **dict(regime_kernel_params(flat_params, regime_name=regime_name)),
     }
 
 

@@ -13,14 +13,14 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     StochasticTransition,
     categorical,
 )
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
 from tests.test_solution_on_toy_model_deterministic import (
-    THREE_PERIOD_TRANSITIONS,
+    THREE_PERIOD_EDGES,
     RegimeId,
     alive_deterministic,
     dead,
@@ -222,24 +222,27 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
-            "alive": alive_stochastic.replace(
-                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
-            ),
+            "alive": alive_stochastic.replace(states=new_states),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges=THREE_PERIOD_EDGES,
     )
 
     params = {
         "next_health": {"probs_array": probs_array},
-        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(
-        log_level="debug", params={"discount_factor": discount_factor, "alive": params}
+        log_level="debug",
+        params={
+            "discount_factor": discount_factor,
+            "alive": params,
+            "edges": {"alive": {"final_age_alive": model.n_periods - 2}},
+        },
     ).values
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
@@ -284,21 +287,19 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
         n_points=n_wealth_points
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={
-            "alive": alive_stochastic.replace(
-                states=new_states, regime_transitions=THREE_PERIOD_TRANSITIONS
-            ),
+            "alive": alive_stochastic.replace(states=new_states),
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges=THREE_PERIOD_EDGES,
     )
 
     params_alive = {
         "next_health": {"probs_array": probs_array},
-        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     initial_conditions = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
@@ -308,7 +309,11 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     }
     result = model.simulate(
         log_level="debug",
-        params={"discount_factor": discount_factor, "alive": params_alive},
+        params={
+            "discount_factor": discount_factor,
+            "alive": params_alive,
+            "edges": {"alive": {"final_age_alive": model.n_periods - 2}},
+        },
         initial_conditions=initial_conditions,
     )
     # Filter to alive regime only (dead regime has trivial values)

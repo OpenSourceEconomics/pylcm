@@ -8,7 +8,6 @@ gate stages.
 
 import dataclasses
 from types import MappingProxyType
-from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +17,7 @@ from lcm import (
     AgeGrid,
     ByAge,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -25,14 +25,13 @@ from lcm import (
     SimulationResult,
     StakeholderRoute,
     StochasticTransition,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import SolutionResult
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 
 @categorical(ordered=False)
@@ -58,11 +57,10 @@ def _projection(*, wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _regime(*, law: Any) -> Regime:
+def _regime(*, terminal: bool) -> Regime:
     return Regime(
-        regime_transitions=law,
         states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=3)},
-        state_transitions={} if law is None else {"wealth": fixed_transition("wealth")},
+        state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
         functions={"utility": _utility},
     )
 
@@ -70,32 +68,35 @@ def _regime(*, law: Any) -> Regime:
 def _model(
     *, budgeted: bool, gated: bool, promote: bool, reverse: bool, width: int
 ) -> Model:
-    latent_law = (
-        {
-            "end": ValueDependentTransition(
-                probability=StochasticTransition(func=_probability),
-                gate=_gate,
-                routes={
-                    "only": StakeholderRoute(
-                        target_stakeholder=None,
-                        fallback=ProjectedRegimeValue(
-                            regime="end", projection={"wealth": _projection}
-                        ),
-                    )
-                },
-            )
-        }
+    latent_edges = (
+        Transition(
+            targets={"end": 0},
+            law=ByAge(cases={0: {"end": StochasticTransition(func=_probability)}}),
+            gates={
+                "end": Gate(
+                    predicate=_gate,
+                    routes={
+                        "only": StakeholderRoute(
+                            target_stakeholder=None,
+                            fallback=ProjectedRegimeValue(
+                                regime="end", projection={"wealth": _projection}
+                            ),
+                        )
+                    },
+                )
+            },
+        )
         if gated
-        else "end"
+        else {"end": 0}
     )
     regimes = {
-        "main": _regime(law=ByAge(cases={0: "end"})),
-        "latent": _regime(law=ByAge(cases={0: latent_law})),
-        "end": _regime(law=None),
+        "main": _regime(terminal=False),
+        "latent": _regime(terminal=False),
+        "end": _regime(terminal=True),
     }
     if reverse:
         regimes = dict(reversed(tuple(regimes.items())))
-    return with_fixture_graph(
+    return Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regimes=regimes,
         regime_id_class=DormantId,
@@ -110,6 +111,7 @@ def _model(
             if budgeted
             else ExecutionConfig()
         ),
+        edges={"main": {"end": 0}, "latent": latent_edges},
     )
 
 

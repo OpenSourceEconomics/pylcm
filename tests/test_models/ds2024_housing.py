@@ -44,15 +44,14 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     StochasticTransition,
+    Transition,
     categorical,
 )
 from lcm.consumption_savings_regime import (
@@ -77,8 +76,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 # Income discretisation (`z_vals`, `Pi` from InverseDCDP housing.py).
 INCOME_LOW = 0.1
@@ -355,6 +352,7 @@ def build_model(
     ages = AgeGrid(
         start=STATIONARY_AGE, inclusive_stop=STATIONARY_AGE + n_periods - 1, step="Y"
     )
+    stays = ages.exact_values[:-2]
     final_age = int(ages.exact_values[-1])
     keep_housing = _make_keep_housing(delta)
 
@@ -378,7 +376,6 @@ def build_model(
         return (new_housing >= housing_min) & (new_housing <= housing_max)
 
     dead = UserRegime(
-        regime_transitions=None,
         states={"liquid": liquid_grid, "housing": housing_grid},
         functions={"utility": bequest},
     )
@@ -391,15 +388,16 @@ def build_model(
             DS2024HousingRegimeId.alive,
         )
 
+    dies = ages.exact_values[:-1]
+    edges = {
+        "alive": Transition(
+            targets={**({"alive": stays} if stays else {}), "dead": dies},
+            law=DeterministicTransition(func=next_regime),
+        )
+    }
+
     if variant == "brute":
         alive = UserRegime(
-            regime_transitions=until_exit(
-                final_age,
-                law=_SupportedDeterministicTransition(
-                    func=next_regime, targets=("alive", "dead")
-                ),
-                exits=("dead",),
-            ),
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
@@ -428,11 +426,12 @@ def build_model(
             },
             solver=GridSearch(),
         )
-        return with_fixture_graph(
+        return Model(
             regimes={"alive": alive, "dead": dead},
             ages=ages,
             regime_id_class=DS2024HousingRegimeId,
             initial_nodes={ages.exact_values[0]: "alive"},
+            edges=edges,
         )
 
     negm_solver = NEGM(
@@ -443,13 +442,6 @@ def build_model(
     )
 
     alive = NestedConsumptionSavingsRegime(
-        regime_transitions=until_exit(
-            final_age,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
@@ -494,11 +486,12 @@ def build_model(
             no_adjustment="keep_housing",
         ),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         ages=ages,
         regime_id_class=DS2024HousingRegimeId,
         initial_nodes={ages.exact_values[0]: "alive"},
+        edges=edges,
     )
 
 

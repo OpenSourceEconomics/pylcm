@@ -164,7 +164,6 @@ def build_params(
     base_income_hi: float = 4.0,
     medicaid_limit: float = 12.0,
     transfer_amount: float = 2.0,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the next-asset-cliff toy."""
     base_income = jnp.array([base_income_lo, base_income_hi])
@@ -178,7 +177,6 @@ def build_params(
             "medicaid_transfer": transfer,
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

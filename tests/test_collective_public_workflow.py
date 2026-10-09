@@ -23,8 +23,8 @@ from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     DissolutionRegimeId,
     _make_dissolution_regimes,
+    _married_dissolution_transition,
 )
-from tests.test_models.graph import with_fixture_graph
 
 #: Every parameter this model consumes, as `regime__function__parameter`. A
 #: gated edge contributes a branch per target — the gate, one fallback
@@ -54,11 +54,17 @@ _N_LIVE_PERIODS = 3
 
 def _make_model() -> Model:
     """Build the dissolution model for call-time simulation populations."""
-    return with_fixture_graph(
+    return Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
+        edges={
+            "married": _married_dissolution_transition(),
+            "married_ir": {"married_terminal": 1},
+            "single_f": {"single_f_terminal": 1},
+            "single_m": {"single_m_terminal": (0, 1, 2)},
+        },
     )
 
 
@@ -126,23 +132,31 @@ def test_every_template_leaf_is_a_parameter_this_test_can_name():
     assert leaf_names <= set(_VALUES)
 
 
-def test_a_gated_edge_contributes_a_branch_per_target_under_its_source():
-    """The edge's own callables are addressed under the target they route to."""
+def test_a_gated_edge_adds_no_branch_under_its_source():
+    """The source regime's template holds only the source's own functions."""
     template = _make_model().get_params_template()
 
-    assert set(template["married"]["married_ir"]) == {
-        "gate",
-        "leg_fallback_single_f_wage",
-        "leg_fallback_single_m_wage",
-        "next_regime",
+    assert set(template["married"]) == {
+        "certainty_equivalent",
+        "koopmans_aggregator",
+        "next_wage",
+        "utility_f",
+        "utility_m",
     }
+
+
+def test_a_gated_edge_reading_no_parameter_adds_no_edges_branch():
+    """Edge callables that read no parameter leave `params["edges"]` out."""
+    template = _make_model().get_params_template()
+
+    assert "edges" not in template
 
 
 def test_a_branch_that_binds_no_parameter_is_an_empty_container():
     """Filling the template has to recurse: not every branch bottoms out in a leaf."""
     template = _make_model().get_params_template()
 
-    assert template["married"]["married_ir"]["next_regime"] == {}
+    assert template["married"]["next_wage"] == {}
 
 
 def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():

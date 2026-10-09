@@ -85,7 +85,7 @@ def _keeper_frontier(frontier: Any) -> tuple[Any, tuple[str, int, str]]:
     triples = [
         triple
         for triple, core in lazy.frontiers.items()
-        if core.consumed and len(core.widths) > 1
+        if core.top_record is not None and len(core.widths) > 1
     ]
     assert triples
     return lazy, triples[0]

@@ -113,7 +113,7 @@ def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(tmp_pa
     observed = period_capture.describe_array_leaves(tree=restored)
     print("LEAVES", len(layouts.leaves), observed == layouts.leaves)
     """
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == ["14", "True"]
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == ["12", "True"]
 
 
 def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
@@ -132,9 +132,9 @@ def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
     )
     print("COMPARED", sum("compiled" in label for label in compared))
     """
-    # One output plus fourteen inputs: the states, action, age and period, the
-    # continuation value, and the nine parameters the period's functions read.
-    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "15"
+    # One output plus twelve inputs: the states, action, age and period, the
+    # continuation value, and the parameters the period's functions read.
+    assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "13"
 
 
 def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp_path):
@@ -493,7 +493,7 @@ def test_capture_preserves_consumer_layout_under_device_substitution(
             liquid_grid=liquid,
         )
         model = Model(
-            edges=template.graph.edges,
+            edges=template.edges,
             regimes={{
                 name: replace(regime, states={{
                     key: grid for key, grid in regime.states.items() if key != "liquid"
@@ -550,7 +550,7 @@ template = toy.build_model(
 two_mesh_params = toy.build_params()
 two_mesh_params["alive"]["consumption"] = {"points": jnp.linspace(0.1, 30.0, 16)}
 simulated = Model(
-    edges=template.graph.edges,
+    edges=template.edges,
     regimes={
         name: dataclasses.replace(
             regime,

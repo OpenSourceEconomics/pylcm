@@ -28,11 +28,13 @@ import numpy as np
 import pandas as pd
 from dags.tree import qname_from_tree_path
 
+from _lcm.params.edges import EDGES
 from _lcm.params.processing import (
     cast_params_to_canonical_dtypes,
     find_param_candidates,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_law import RegimeLaw, RegimeLaws, bind_regime_law
 from _lcm.typing import FlatParams, RegimeName, StateName
 from _lcm.utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError
@@ -49,7 +51,10 @@ class FixedRegimeSupport:
     """Keep the reduced declarations and exact consumed fixed-key provenance."""
 
     user_regimes: MappingProxyType[RegimeName, UserRegime]
-    """Regimes with constant-zero ordinary transition cells removed."""
+    """Regimes without the declarations toward removed edges."""
+
+    laws: RegimeLaws
+    """Laws with constant-zero ordinary transition cells removed."""
 
     consumed_param_keys: frozenset[str]
     """Supplied flat keys used to prove a removed cell constant and zero."""
@@ -62,7 +67,10 @@ class FixedRegimeSupport:
 
 
 def prune_fixed_regime_support(
-    *, user_regimes: Mapping[RegimeName, UserRegime], fixed_params: UserParams
+    *,
+    user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
+    fixed_params: UserParams,
 ) -> FixedRegimeSupport:
     """Remove exactly zero cells whose entire dependency graph is fixed.
 
@@ -74,12 +82,13 @@ def prune_fixed_regime_support(
     fixed_flat = flatten_regime_namespace(fixed_params)
     consumed: set[str] = set()
     result: dict[RegimeName, UserRegime] = {}
+    pruned_laws: dict[RegimeName, RegimeLaw] = {}
     removed_edge_reads: dict[
         RegimeName, MappingProxyType[str, tuple[RegimeName, ...]]
     ] = {}
     for name, regime in user_regimes.items():
         transition, removed, law_keys = _prune_regime_transition(
-            regime_name=name, regime=regime, fixed_flat=fixed_flat
+            regime_name=name, regime=regime, law=laws[name], fixed_flat=fixed_flat
         )
         consumed.update(law_keys)
         removed_in_both = removed["solve"] & removed["simulate"]
@@ -123,12 +132,15 @@ def prune_fixed_regime_support(
             }
         )
         result[name] = regime.replace(
-            regime_transitions=transition,
             state_transitions=state_transitions,
             joint_transitions=joint_transitions,
         )
+        pruned_laws[name] = bind_regime_law(
+            transition, gated_edges=laws[name].gated_edges
+        )
     return FixedRegimeSupport(
         user_regimes=MappingProxyType(result),
+        laws=MappingProxyType(pruned_laws),
         consumed_param_keys=frozenset(consumed),
         removed_edge_reads=MappingProxyType(removed_edge_reads),
     )
@@ -138,6 +150,7 @@ def _prune_regime_transition(
     *,
     regime_name: RegimeName,
     regime: UserRegime,
+    law: RegimeLaw,
     fixed_flat: Mapping[str, object],
 ) -> tuple[object, dict[Side, frozenset[str]], frozenset[str]]:
     """Remove zero cells, keeping a joint-lottery edge in both phases or neither.
@@ -154,7 +167,7 @@ def _prune_regime_transition(
     while True:
         consumed: set[str] = set()
         transition = _prune_law(
-            law=regime.regime_transitions,
+            law=law.transition,
             side=None,
             regime_name=regime_name,
             regime=regime,
@@ -163,7 +176,7 @@ def _prune_regime_transition(
             protected=protected,
         )
         removed: dict[Side, frozenset[str]] = {
-            side: _targets(law=regime.regime_transitions, side=side)
+            side: _targets(law=law.transition, side=side)
             - _targets(law=transition, side=side)
             for side in ("solve", "simulate")
         }
@@ -343,7 +356,7 @@ def _prune_law(
         evaluated = (
             _evaluate_fixed_function(
                 func=cell.func,
-                path=(regime_name, target, "next_regime"),
+                path=(EDGES, regime_name, target),
                 side=side,
                 regime=regime,
                 fixed_flat=fixed_flat,
@@ -427,7 +440,13 @@ def _resolve_fixed_argument(
     fixed_flat: Mapping[str, object],
     ancestors: tuple[str, ...],
 ) -> tuple[Any, frozenset[str]] | None:
-    """Resolve one argument through its helper DAG or a fixed parameter leaf."""
+    """Resolve one argument through its helper DAG or a fixed parameter leaf.
+
+    `path` is the params path of the callable reading the argument: a regime
+    function's `(regime, function)`, or a law cell's slot below
+    `("edges", regime, target)`.
+    """
+    regime_name = path[1] if path[0] == EDGES else path[0]
     helper = regime.functions.get(arg_name)
     if isinstance(helper, Phased):
         helper = helper.solve if side == "solve" else helper.simulate
@@ -436,7 +455,7 @@ def _resolve_fixed_argument(
             return None
         return _evaluate_fixed_function(
             func=helper,
-            path=(path[0], arg_name),
+            path=(regime_name, arg_name),
             side=side,
             regime=regime,
             fixed_flat=fixed_flat,
@@ -457,7 +476,7 @@ def _resolve_fixed_argument(
     if isinstance(fixed_flat[key], pd.Series):
         return None
     return _canonicalize_fixed_leaf(
-        regime_name=path[0], qname=qname, value=fixed_flat[key]
+        regime_name=regime_name, qname=qname, value=fixed_flat[key]
     ), frozenset((key,))
 
 

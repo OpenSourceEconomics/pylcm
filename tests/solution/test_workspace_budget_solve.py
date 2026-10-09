@@ -21,7 +21,13 @@ from _lcm.execution.execution_plan import visible_device_ids
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.solution import backward_induction
 from _lcm.solution.period_capture import _PAYLOAD_NAME
-from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    ExecutionConfig,
+    LinSpacedGrid,
+    Model,
+)
 from lcm.exceptions import ExecutionPlanningError
 from lcm.persistence import replay_period
 from lcm.solvers import GridSearch
@@ -32,11 +38,9 @@ from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,
-    get_params,
+    get_graph_only_params,
     working_life,
-    working_life_transitions,
 )
-from tests.test_models.graph import with_fixture_graph
 
 _N_PERIODS = 2
 _N_CONSUMPTION = 3
@@ -49,8 +53,8 @@ _BYTES_PER_ACTION = 1000
 
 
 def _fixed_owner_bytes() -> int:
-    """Three wealth/consumption nodes, three params, four V cells, five int32s."""
-    return 13 * jnp.zeros(()).dtype.itemsize + 5 * 4
+    """Three wealth/consumption nodes, three params, four V cells, four int32s."""
+    return 13 * jnp.zeros(()).dtype.itemsize + 4 * 4
 
 
 def _model(
@@ -60,12 +64,10 @@ def _model(
 ) -> Model:
     """Hold the state-cell width at one to isolate action-width budget selection."""
     final_age_alive = START_AGE + _N_PERIODS - 2
-    return with_fixture_graph(
+    return Model(
+        edges={"working_life": {"dead": START_AGE}},
         regimes={
             "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 1
-                ),
                 states={"wealth": LinSpacedGrid(start=1, stop=3, n_points=3)},
                 actions={
                     "labor_supply": DiscreteGrid(category_class=LaborSupply),
@@ -120,7 +122,7 @@ def _solve_capturing(
         )
     )
     return model.solve(
-        params=get_params(n_periods=_N_PERIODS),
+        params=get_graph_only_params(n_periods=_N_PERIODS),
         log_level="off",
     )
 
@@ -215,7 +217,7 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
     """A narrower block partitions the same maximum; values agree to a few ULP."""
     del synthetic_peaks
     unbudgeted = _model().solve(
-        params=get_params(n_periods=_N_PERIODS), log_level="off"
+        params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
     budgeted = _solve_capturing(
         monkeypatch=monkeypatch,
@@ -330,7 +332,7 @@ def test_an_eager_solve_refuses_the_default_budget_and_runs_without_one(
 ) -> None:
     """`enable_jit=False` refuses the device default; opting out solves alike."""
     _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=1 << 30)
-    params = get_params(n_periods=_N_PERIODS)
+    params = get_graph_only_params(n_periods=_N_PERIODS)
     compiled = _model().solve(params=params, log_level="off")
 
     with pytest.raises(
@@ -360,7 +362,7 @@ def test_an_eager_solve_with_an_explicit_budget_is_refused() -> None:
     )
 
     with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
-        model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+        model.solve(params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off")
 
 
 def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
@@ -371,7 +373,7 @@ def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
 
     with pytest.raises(ExecutionPlanningError) as refusal:
         _model(execution_config=ExecutionConfig()).solve(
-            params=get_params(n_periods=_N_PERIODS), log_level="off"
+            params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
         )
 
     message = str(refusal.value)

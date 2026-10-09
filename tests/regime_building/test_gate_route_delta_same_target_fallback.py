@@ -14,20 +14,20 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    ByAge,
+    Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
 )
 from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 # Utility strictly prefers 1.0, so every solved row lands at the same
@@ -77,34 +77,36 @@ def _same_target_fallback_model() -> Model:
     The candidate landing (via the ordinary transition) is x=1; a closed gate
     must publish the projected x=0.5 instead.
     """
-    return with_fixture_graph(
+    return Model(
+        edges={
+            "source": Transition(
+                targets={"target": 0},
+                law=ByAge(
+                    cases={0: {"target": StochasticTransition(func=_always_true)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_always_closed,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="target", projection={"x": _half_x}
+                                )
+                            )
+                        },
+                        off_grid="pointwise",
+                    )
+                },
+            )
+        },
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    1,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_always_true),
-                            gate=_always_closed,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="target", projection={"x": _half_x}
-                                    )
-                                )
-                            },
-                            off_grid="pointwise",
-                        )
-                    },
-                    exits=("target",),
-                ),
                 states={"x": _X},
                 state_transitions={"x": _next_x},
                 actions={"saving": _SAVING},
                 functions={"utility": _costly_saving},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _constant_utility},
             ),

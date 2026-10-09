@@ -48,10 +48,12 @@ from tests.regime_building.test_gated_edges_collective_solve import (
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
 from tests.solution.test_egm_solver import _SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as _egm_model
+from tests.solution.test_gated_edge_fold_reads import (
+    FULL_TOPOLOGY_EDGES,
+    _program_metadata,
+)
 from tests.solution.test_gated_edge_fold_reads import _model as _gated_model
-from tests.solution.test_gated_edge_fold_reads import _program_metadata
 from tests.test_models import nbegm_jump_ride_along_toy as _jump_ride_along_toy
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.n_nbegm_toy import build_model as _build_nnbegm_model
 
 
@@ -189,7 +191,7 @@ def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
     zero. `min` on an empty set raises, so a model that declared no dense read
     would fail this rather than pass it vacuously.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             name: regime.replace(
                 states={"wage": LinSpacedGrid(start=1.0, stop=3.0, n_points=1)}
@@ -199,6 +201,7 @@ def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=EKLRegimeId,
         initial_nodes={0: "single_f"},
+        edges=FULL_TOPOLOGY_EDGES,
     )
 
     assert (

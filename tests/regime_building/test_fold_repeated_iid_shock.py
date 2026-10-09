@@ -18,19 +18,19 @@ import pandas as pd
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
     Regime,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.transition import StochasticTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 N_POINTS = 5
 OUTSIDE_OPTION = 0.2
@@ -70,14 +70,6 @@ def _utility(
 
 def _build_model(*, fold: bool) -> Model:
     alive = Regime(
-        regime_transitions=until_exit(
-            3,
-            law={
-                "alive": StochasticTransition(func=_probability_alive),
-                "dead": StochasticTransition(func=_probability_dead),
-            },
-            exits=("dead",),
-        ),
         states={
             "wealth": WEALTH,
             "wage_shock": NormalIIDProcess(
@@ -94,11 +86,23 @@ def _build_model(*, fold: bool) -> Model:
         functions={"utility": _utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: jnp.asarray(0.0)},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
+        edges={
+            "alive": Transition(
+                targets={"alive": (0, 1), "dead": (0, 1, 2)},
+                law=ByAge.until(
+                    stop_age_exclusive=LAST_ALIVE_AGE + 1,
+                    law={
+                        "alive": StochasticTransition(func=_probability_alive),
+                        "dead": StochasticTransition(func=_probability_dead),
+                    },
+                    then="dead",
+                ),
+            )
+        },
         ages=AGES,
         regime_id_class=RegimeId,
         initial_nodes={0: "alive"},

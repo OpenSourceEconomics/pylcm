@@ -8,26 +8,28 @@ resolving it against a model-wide union of state names removes it from the
 template — leaving a model whose gate reads a value nothing can supply.
 """
 
+from typing import cast
+
 import jax.numpy as jnp
 import pytest
 
 from lcm import (
     AgeGrid,
     AgeRange,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -88,12 +90,37 @@ def _gate(*, V_target: FloatND, marriage_bonus: float) -> BoolND:
 def _build_model(*, with_bystander: bool) -> Model:
     regimes = {
         "source": Regime(
-            regime_transitions=until_exit(
-                45,
-                law={
-                    "target": ValueDependentTransition(
-                        probability=StochasticTransition(func=_certain_target),
-                        gate=_gate,
+            states={"x": X},
+            state_transitions={"x": fixed_transition("x")},
+            actions={"work": DiscreteGrid(category_class=Work)},
+            functions={"utility": _utility_source},
+        ),
+        "target": Regime(
+            states={"x": X},
+            functions={"utility": _utility_target},
+        ),
+        "fallback": Regime(
+            states={"x": X},
+            functions={"utility": _utility_fallback},
+        ),
+    }
+    if with_bystander:
+        regimes["bystander"] = Regime(
+            states={"marriage_bonus": BONUS_GRID},
+            functions={"utility": _utility_bystander},
+        )
+    return Model(
+        regimes=regimes,
+        ages=AGES,
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
+                law=ByAge(
+                    cases={40: {"target": StochasticTransition(func=_certain_target)}}
+                ),
+                gates={
+                    "target": Gate(
+                        predicate=_gate,
                         routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
@@ -103,33 +130,8 @@ def _build_model(*, with_bystander: bool) -> Model:
                         },
                     )
                 },
-                exits=("target",),
-            ),
-            states={"x": X},
-            state_transitions={"x": fixed_transition("x")},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={"utility": _utility_source},
-        ),
-        "target": Regime(
-            regime_transitions=None,
-            states={"x": X},
-            functions={"utility": _utility_target},
-        ),
-        "fallback": Regime(
-            regime_transitions=None,
-            states={"x": X},
-            functions={"utility": _utility_fallback},
-        ),
-    }
-    if with_bystander:
-        regimes["bystander"] = Regime(
-            regime_transitions=None,
-            states={"marriage_bonus": BONUS_GRID},
-            functions={"utility": _utility_bystander},
-        )
-    return with_fixture_graph(
-        regimes=regimes,
-        ages=AGES,
+            )
+        },
         regime_id_class=RegimeIdWithBystander if with_bystander else RegimeId,
         # Nothing transitions into the bystander; it is solved only as a start.
         initial_nodes=(
@@ -153,7 +155,8 @@ def test_a_gate_parameter_survives_an_unrelated_regimes_state_of_the_same_name(
     """
     template = _build_model(with_bystander=with_bystander).get_params_template()
 
-    assert template["source"]["target"]["gate"] == {"marriage_bonus": "float"}
+    edges = cast("dict", template["edges"])
+    assert edges["source"]["target"]["predicate"] == {"marriage_bonus": "float"}
 
 
 def test_the_bystanders_state_is_not_a_parameter_of_its_own_regime() -> None:
@@ -175,13 +178,11 @@ def test_the_edge_gate_parameter_is_solvable() -> None:
     """
     model = _build_model(with_bystander=True)
     params = {
-        "source": {
-            "koopmans_aggregator": {"discount_factor": 0.5},
-            "target": {"gate": {"marriage_bonus": 1.0}},
-        },
+        "source": {"koopmans_aggregator": {"discount_factor": 0.5}},
         "target": {},
         "fallback": {},
         "bystander": {},
+        "edges": {"source": {"target": {"predicate": {"marriage_bonus": 1.0}}}},
     }
 
     solution = model.solve(params=params, log_level="debug").values

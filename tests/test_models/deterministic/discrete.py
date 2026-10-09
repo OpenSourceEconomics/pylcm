@@ -12,14 +12,12 @@ import functools
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     Model,
+    Transition,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -29,7 +27,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
-    UserAge,
     UserParams,
 )
 from tests.test_models.deterministic.regression import (
@@ -39,8 +36,6 @@ from tests.test_models.deterministic.regression import (
     next_wealth,
     utility,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=True)
@@ -112,19 +107,18 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-_DEFAULT_N_PERIODS = 4
-_DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
-
-
-def working_life_transitions(*, last_age: UserAge | float) -> ByAge:
-    """Work until the age before `last_age`, then die."""
-    return until_exit(
-        last_age,
-        law=_SupportedDeterministicTransition(
-            func=next_regime, targets=("working_life", "dead")
-        ),
-        exits=("dead",),
-    )
+def working_life_edges(ages: AgeGrid) -> dict[str, Transition]:
+    """Keep working before the second-to-last age; die from every non-final age."""
+    stays = tuple(ages.exact_values[:-2])
+    return {
+        "working_life": Transition(
+            targets={
+                "dead": tuple(ages.exact_values[:-1]),
+                **({"working_life": stays} if stays else {}),
+            },
+            law=DeterministicTransition(func=next_regime),
+        )
+    }
 
 
 working_life = UserRegime(
@@ -141,7 +135,6 @@ working_life = UserRegime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    regime_transitions=working_life_transitions(last_age=_DEFAULT_LAST_ACTIVE_AGE + 10),
     functions={
         "utility": utility_discrete,
         "labor_income": labor_income,
@@ -151,7 +144,6 @@ working_life = UserRegime(
 
 
 dead = UserRegime(
-    regime_transitions=None,
     functions={"utility": lambda: 0.0},
 )
 
@@ -159,19 +151,15 @@ dead = UserRegime(
 @functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=50, inclusive_stop=50 + (n_periods - 1) * 10, step="10Y")
-    final_age_alive = 50 + (n_periods - 2) * 10
-    return with_fixture_graph(
+    return Model(
         regimes={
-            "working_life": working_life.replace(
-                regime_transitions=working_life_transitions(
-                    last_age=final_age_alive + 10
-                )
-            ),
+            "working_life": working_life,
             "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
         initial_nodes={ages.exact_values[0]: "working_life"},
+        edges=working_life_edges(ages),
     )
 
 
@@ -183,7 +171,6 @@ def get_params(
     interest_rate: float = 0.05,
     wage: float = 10.0,
 ) -> UserParams:
-    final_age_alive = 50 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
         "working_life": {
@@ -191,5 +178,5 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "labor_income": {"wage": wage},
         },
-        "final_age_alive": final_age_alive,
+        "final_age_alive": 50 + (n_periods - 2) * 10,
     }

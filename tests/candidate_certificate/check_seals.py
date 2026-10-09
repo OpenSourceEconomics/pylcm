@@ -11,10 +11,12 @@ Exit codes:
 
 - `0` ⇒ both files agree with the tree
 - `1` ⇒ a seal drifted; each offending source is printed with its expected and
-  actual digest, and `--fix` regenerates the inventory and rewrites the seal map
+  actual digest, and `--fix` regenerates the inventory (keeping each profile's
+  hand-set exclusions) and rewrites the seal map
 - `2` ⇒ the direct-flow verifier reports an error that is not a seal. A reseal
-  cannot repair it; `repin_corridors.py` re-anchors the AST corridor pins for
-  the sources whose edit was intended, and the remaining anchors — field
+  cannot repair it; `repin_corridors.py` re-anchors the AST corridor pins, which
+  stand once in the `_CORRIDOR_PINS` store, for the sources whose edit was
+  intended, and the remaining anchors — field
   tuples, enum bodies, binding counts — are reviewed and edited by hand
 """
 
@@ -120,7 +122,11 @@ def fix(*, repo_root: Path) -> list[str]:
     seal_map_path = root / DIRECT_FLOW_PATH
     original = seal_map_path.read_text(encoding="utf-8")
     lines = original.split("\n")
-    for index, line in enumerate(lines):
+    # Only the seal map holds byte seals; a line of the same shape elsewhere, such
+    # as in the corridor pin store, is an AST pin that `repin_corridors.py` owns.
+    start = lines.index("_SOURCE_SEALS = {")
+    end = lines.index("}", start)
+    for index, line in enumerate(lines[start:end], start=start):
         match = _SEAL_LINE.match(line)
         if match is None:
             continue

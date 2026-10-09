@@ -53,6 +53,7 @@ import numpy as np
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
@@ -72,7 +73,7 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
-from tests.conftest import build_prepared_structure, lower_declarations
+from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 
@@ -121,23 +122,35 @@ def _project_shock(wage: FloatND) -> FloatND:
     return wage / 2.0 - 0.7
 
 
+def _to_at_age_zero(target: str) -> ByAge:
+    """Move to `target` with probability one at age 0."""
+    return ByAge(
+        cases={
+            AgeRange(exclusive_stop=1): {target: StochasticTransition(func=_prob_one)}
+        }
+    )
+
+
+def _laws(regimes: dict[str, Regime]) -> RegimeLaws:
+    """Bind each regime's law the way a model built from these regimes would.
+
+    `shock_ref` and `married` move to their own terminal regime with
+    probability one at age 0; every other regime is terminal.
+    """
+    declared = {
+        "shock_ref": _to_at_age_zero("shock_ref_terminal"),
+        "married": _to_at_age_zero("married_terminal"),
+    }
+    return bind_laws({name: declared.get(name) for name in regimes})
+
+
 def _make_shock_ref_regimes() -> dict[str, Regime]:
     shock_ref = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "shock_ref_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"shock": _SHOCK},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_shock_ref},
     )
-    shock_ref_terminal = Regime(
-        regime_transitions=None,
-        functions={"utility": lambda: 0.0},
-    )
+    shock_ref_terminal = Regime(functions={"utility": lambda: 0.0})
     return {"shock_ref": shock_ref, "shock_ref_terminal": shock_ref_terminal}
 
 
@@ -150,25 +163,20 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
     regime_names_to_ids = MappingProxyType(
         {"shock_ref": jnp.int32(0), "shock_ref_terminal": jnp.int32(1)}
     )
+    user_regimes = _make_shock_ref_regimes()
+    laws = _laws(user_regimes)
+    finalized = finalize_regimes(
+        user_regimes=user_regimes,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_make_shock_ref_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
+            user_regimes=finalized, laws=laws, ages=_AGES
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=_make_shock_ref_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-        ),
+        user_regimes=finalized,
         ages=_AGES,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=False,
@@ -250,13 +258,6 @@ def _vc_f(*, Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     regimes = _make_shock_ref_regimes()
     married = Regime(
-        regime_transitions=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(category_class=Work)},
@@ -277,7 +278,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -310,25 +310,20 @@ def _flat_params() -> MappingProxyType:
 
 
 def _build_and_solve():
+    user_regimes = _make_regimes()
+    laws = _laws(user_regimes)
+    finalized = finalize_regimes(
+        user_regimes=user_regimes,
+        laws=laws,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
     regimes = process_regimes(
         prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_make_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
+            user_regimes=finalized, laws=laws, ages=_AGES
         ),
-        user_regimes=lower_declarations(
-            finalize_regimes(
-                user_regimes=_make_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-        ),
+        user_regimes=finalized,
         ages=_AGES,
         regime_names_to_ids=_REGIME_NAMES_TO_IDS,
         enable_jit=False,

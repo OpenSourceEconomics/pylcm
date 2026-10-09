@@ -47,8 +47,7 @@ from _lcm.egm.interp import (
 from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
-    _get_child_resources_arg_names,
-    _get_child_resources_function,
+    _get_child_resources,
     _get_child_state_name,
     _get_discrete_state_names,
     _get_passive_state_names,
@@ -68,6 +67,7 @@ from _lcm.regime_building.Q_and_F import (
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
+from _lcm.regime_law import RegimeLaws
 from _lcm.transition_plans import LotteryLifetime, TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -586,6 +586,7 @@ class _BoundContinuation:
 def build_continuation_plan(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
@@ -612,6 +613,7 @@ def build_continuation_plan(
     """
     child_reads = _build_child_reads(
         user_regimes=user_regimes,
+        laws=laws,
         functions=functions,
         transitions=transitions,
         transition_plans=transition_plans,
@@ -2252,6 +2254,7 @@ def _collapse_stacked_candidates(
 def _build_child_reads(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
+    laws: RegimeLaws,
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
     transition_plans: TargetTransitionPlans,
@@ -2374,13 +2377,8 @@ def _build_child_reads(
             )
         else:
             action_names, action_values = (), ()
-        resources_func = _get_child_resources_function(
-            regime_name=target, user_regime=target_regime
-        )
-        resources_arg_names = frozenset(
-            _get_child_resources_arg_names(
-                regime_name=target, user_regime=target_regime
-            )
+        resources_func, resources_arg_names = _get_child_resources(
+            regime_name=target, user_regime=target_regime, law=laws[target]
         )
         # Everything the resources function reads beyond the child's own
         # states and discrete actions is a (qualified) param or `age` /

@@ -21,7 +21,7 @@ from _lcm.simulation import diagnostic_operations as diagnostics
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
-from _lcm.utils.logging import LogLevel, get_logger, log_regime_transitions
+from _lcm.utils.logging import LogLevel, get_logger, log_regime_transition_counts
 from lcm.exceptions import ExecutionPlanningError, InvalidValueFunctionError
 from tests.simulation.test_budget_lifecycle import (
     _LifecycleRegimeId,
@@ -75,7 +75,11 @@ def _capture_memory(monkeypatch: pytest.MonkeyPatch) -> list[SimulationMemory]:
 
 @pytest.mark.parametrize(
     "operation",
-    ["_validate_period_values", "_validate_simulated_value", "log_regime_transitions"],
+    [
+        "_validate_period_values",
+        "_validate_simulated_value",
+        "log_regime_transition_counts",
+    ],
 )
 def test_public_diagnostic_refuses_before_concrete_allocation(
     *,
@@ -242,13 +246,13 @@ def test_profiled_transition_counts_keep_exact_sorted_messages(
     assert counts == [[1, 1], [1, 1]]
     logger = get_logger(log_level="debug")
     with caplog.at_level(logging.DEBUG, logger="lcm"):
-        log_regime_transitions(
+        log_regime_transition_counts(
             logger=logger,
             prev_regime_ids=previous,
             new_regime_ids=current,
             regime_ids_to_names=names,
         )
-        log_regime_transitions(
+        log_regime_transition_counts(
             logger=logger,
             prev_regime_ids=previous,
             new_regime_ids=current,

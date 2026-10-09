@@ -71,8 +71,6 @@ from lcm.typing import (
 from lcm_examples.mahler_yum_2024 import (
     _WEALTH_GRID_POINTS,
     MODEL_EDGES,
-    RETIREMENT_TRANSITIONS,
-    WORKING_TRANSITIONS,
     DiscountType,
     Education,
     Health,
@@ -230,7 +228,6 @@ def dead_utility(
 def build_dead_regime() -> Regime:
     """The paper-mode dead regime (terminal, with the Euler axis declared)."""
     return Regime(
-        regime_transitions=None,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "discount_type": DiscreteGrid(category_class=DiscountType),
@@ -288,7 +285,6 @@ def build_working_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode working regime with continuous effort and habit."""
     return NestedConsumptionSavingsRegime(
-        regime_transitions=WORKING_TRANSITIONS,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "health": DiscreteGrid(category_class=Health),
@@ -353,7 +349,6 @@ def build_retirement_regime(
 ) -> NestedConsumptionSavingsRegime:
     """The paper-mode retirement regime without work-only dimensions."""
     return NestedConsumptionSavingsRegime(
-        regime_transitions=RETIREMENT_TRANSITIONS,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
             "health": DiscreteGrid(category_class=Health),

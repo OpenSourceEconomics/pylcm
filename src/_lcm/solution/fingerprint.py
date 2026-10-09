@@ -45,8 +45,10 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import Regime
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.optimization.golden_section import GoldenSectionResult
+from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
-from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds
+from _lcm.regime_law import RegimeLaw
+from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName, RegimeNamesToIds
 from lcm.ages import AgeGrid
 from lcm.case_piece import (
     AffineBreakpoint,
@@ -287,12 +289,14 @@ if TYPE_CHECKING:
         def solver(self) -> _SolverDeclaration: ...
 
     type _FingerprintUserRegimes = Mapping[RegimeName, _UserRegimeDeclaration]
+    type _FingerprintLaws = Mapping[RegimeName, RegimeLaw]
 else:
     # Runtime structural tests and extension boundaries reach the function's own
     # conservative attribute inspection instead of decorator nominal checking.
     type _ProjectionRegime = object
     type _ProjectionRegimes = object
     type _FingerprintUserRegimes = object
+    type _FingerprintLaws = object
 
 
 type SolutionParamProjection = MappingProxyType[RegimeName, frozenset[str]]
@@ -350,15 +354,20 @@ def project_solution_params(
         solution_param_projection(regimes) if projection is None else projection
     )
     projected: dict[RegimeName, MappingProxyType[str, object]] = {}
-    for regime_name, regime_params in flat_params.items():
-        realized_only = realized_only_by_regime[regime_name]
-        projected[regime_name] = MappingProxyType(
-            {
-                name: value
-                for name, value in regime_params.items()
-                if name not in realized_only
-            }
+    projected_edges: dict[RegimeName, FlatRegimeParams] = {}
+    # A source's law slots are read by its own transitions, so the source's
+    # realized-only names apply to its edge slots as well.
+    for path, leaves in flat_namespaces(flat_params):
+        realized_only = realized_only_by_regime[path[-1]]
+        kept = MappingProxyType(
+            {name: value for name, value in leaves.items() if name not in realized_only}
         )
+        if path[0] == EDGES:
+            projected_edges[path[1]] = kept
+        else:
+            projected[path[0]] = kept
+    if EDGES in flat_params:
+        projected[EDGES] = MappingProxyType(projected_edges)
     return cast("FlatParams", MappingProxyType(projected))
 
 
@@ -384,12 +393,14 @@ def fingerprint_solution_support(
             name: (
                 _grid_support(
                     regime=regime,
-                    regime_params=flat_params[name],
+                    regime_params=regime_kernel_params(flat_params, regime_name=name),
                     process_grid_resolver=process_grid_resolver,
                 ),
                 {
                     param_name: _param_shape_signature(value)
-                    for param_name, value in flat_params[name].items()
+                    for param_name, value in regime_kernel_params(
+                        flat_params, regime_name=name
+                    ).items()
                 },
             )
             for name, regime in regimes.items()
@@ -516,6 +527,7 @@ def fingerprint_model(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     structure: str | None = None,
@@ -543,6 +555,7 @@ def fingerprint_model(
             ages=ages,
             regimes=regimes,
             user_regimes=user_regimes,
+            laws=laws,
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             structure=structure,
@@ -560,6 +573,7 @@ def fingerprint_model_programs(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     structure: str | None = None,
@@ -582,6 +596,7 @@ def fingerprint_model_programs(
             ages=ages,
             regimes=regimes,
             user_regimes=user_regimes,
+            laws=laws,
             regime_names_to_ids=regime_names_to_ids,
         )
     record = (
@@ -590,7 +605,7 @@ def fingerprint_model_programs(
         {
             name: _grid_support(
                 regime=regime,
-                regime_params=flat_params[name],
+                regime_params=regime_kernel_params(flat_params, regime_name=name),
                 process_grid_resolver=process_grid_resolver,
             )
             for name, regime in regimes.items()
@@ -641,6 +656,7 @@ def fingerprint_model_structure(
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
+    laws: _FingerprintLaws,
     regime_names_to_ids: RegimeNamesToIds,
     binding_recorder: BindingRecorder | None = None,
 ) -> str:
@@ -697,7 +713,9 @@ def fingerprint_model_structure(
                 # hasher. The declaration retains user-level function bodies,
                 # defaults, closures and globals instead of relying on compiled
                 # wrapper identity.
-                "declaration": _project_user_regime_declaration(user_regimes[name]),
+                "declaration": _project_user_regime_declaration(
+                    user_regimes[name], law=laws[name]
+                ),
                 "fixed_params": projected_fixed_params[name],
             }
             for name, regime in regimes.items()
@@ -729,11 +747,20 @@ def _grid_support(
 
 
 # Regime slots whose simulate-phase truth a stored solution is independent of.
-_TRANSITION_SLOTS = frozenset({"state_transitions", "regime_transitions"})
+_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
 
 
-def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
+# keyword-only-exempt: primary-argument=regime
+def _project_user_regime_declaration(
+    # A dataclass or `SimpleNamespace` declaration; the branches below inspect it.
+    regime: object,
+    *,
+    law: RegimeLaw,
+) -> MappingProxyType[str, object]:
     """Return the semantic dataclass fields without importing declaration topology.
+
+    The regime's law joins its fields as `transition` and `gated_edges`, read as
+    declared without interpreting them.
 
     A stored policy is priced against the solve-phase laws of motion and regime
     transition; the realized path after the action is chosen does not change
@@ -752,6 +779,13 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
         raise TypeError(msg)
+    all_fields = (
+        *fields,
+        *(
+            (declaration.name, getattr(law, declaration.name))
+            for declaration in dataclasses.fields(law)
+        ),
+    )
     declaration_type = type(regime)
     return MappingProxyType(
         {
@@ -763,7 +797,7 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
                         if name in _TRANSITION_SLOTS
                         else value
                     )
-                    for name, value in fields
+                    for name, value in all_fields
                     if name != "description"
                 }
             ),

@@ -78,7 +78,7 @@ _lcm/
 ├── continuation.py        ← ContinuationSpec / EGMContinuationSpec and the artifact key
 ├── dtypes.py              ← canonical-dtype resolution
 ├── engine.py              ← canonical / engine-side dataclasses
-├── gated_edge.py          ← what a ValueDependentTransition decomposes into
+├── gated_edge.py          ← what a Gate decomposes into
 ├── identity_transition.py ← the identity law behind lcm.fixed_transition
 ├── logsum.py              ← EV1 smoothed maximum and choice probabilities
 ├── model_processing.py    ← Model.__init__ build pipeline
@@ -144,7 +144,7 @@ The mapping of public names to files:
 | `execution.py`                                                        | `ExecutionConfig` — devices, sharded states, planner-owned axis widths, the device-memory budget and its headroom fraction.                                                                                                                                |
 | `phased.py`                                                           | `Phased`, the container for phase-specific variants of a regime-slot value.                                                                                                                                                                                |
 | `transition.py`                                                       | `fixed_transition`, `StochasticTransition`, `JointTransition`.                                                                                                                                                                                             |
-| `collective.py`                                                       | `ValueDependentTransition`, `StakeholderRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                |
+| `collective.py`                                                       | `Gate`, `StakeholderRoute`, `ProjectedRegimeValue`, `ValueDependentConstraint`, `CollectiveUtility`, `ParetoObjective`.                                                                                                                                    |
 | `koopmans_aggregation.py`                                             | `KoopmansAggregator`, `LinearAggregator`, `CESAggregator`.                                                                                                                                                                                                 |
 | `certainty_equivalent.py`, `branch_aggregation.py`, `outer_search.py` | Re-export façades for classes whose definitions live in `_lcm/`.                                                                                                                                                                                           |
 | `condition.py`                                                        | `lcm.ref` and the declared-condition vocabulary every solver reads the same way.                                                                                                                                                                           |

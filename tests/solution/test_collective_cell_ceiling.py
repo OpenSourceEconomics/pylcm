@@ -35,7 +35,7 @@ def _model(*, n_wage: int = _N_WAGE, **execution: Any) -> tuple[Model, Any]:
     }
     model = Model(
         regimes=regimes,
-        edges=base.graph.edges,
+        edges=base.edges,
         ages=AGES,
         regime_id_class=CoupleRegimeId,
         execution_config=ExecutionConfig(**execution),

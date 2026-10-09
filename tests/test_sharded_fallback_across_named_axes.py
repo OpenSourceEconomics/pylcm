@@ -45,13 +45,15 @@ import pytest
 import tests.conftest
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -65,8 +67,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -195,15 +195,17 @@ def build_model(
 
     """
     pair_utility = _utility_of_y if pair_reads == "y" else _utility_of_x_and_health
-    solo = Regime(
-        regime_transitions=until_exit(
-            3,
-            law={
+    solo_leaves = StochasticTransition(func=_solo_leaves_from_age_two)
+    solo_law = ByAge(
+        cases={
+            (0, 1): {
                 "solo": StochasticTransition(func=_solo_stays_before_age_two),
-                "dead": StochasticTransition(func=_solo_leaves_from_age_two),
+                "dead": solo_leaves,
             },
-            exits=("dead",),
-        ),
+            2: {"dead": solo_leaves},
+        }
+    )
+    solo = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": _utility_of_x},
@@ -212,29 +214,33 @@ def build_model(
             "x": {"solo": fixed_transition("x")},
         },
     )
-    pair = Regime(
-        regime_transitions=until_exit(
-            2,
-            law={
+    pair_leaves = StochasticTransition(func=_leave_from_age_one)
+    pair_law = ByAge(
+        cases={
+            0: {
                 "pair": StochasticTransition(func=_stay_before_age_one),
-                "dead": ValueDependentTransition(
-                    probability=StochasticTransition(func=_leave_from_age_one),
-                    gate=_gate_open_above_the_middle,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="solo",
-                                projection={
-                                    "wealth": _projected_wealth,
-                                    "x": _projected_x,
-                                },
-                            )
-                        )
-                    },
-                ),
+                "dead": pair_leaves,
             },
-            exits=("dead",),
-        ),
+            1: {"dead": pair_leaves},
+        }
+    )
+    pair_gates = {
+        "dead": Gate(
+            predicate=_gate_open_above_the_middle,
+            routes={
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
+                        regime="solo",
+                        projection={
+                            "wealth": _projected_wealth,
+                            "x": _projected_x,
+                        },
+                    )
+                )
+            },
+        )
+    }
+    pair = Regime(
         states={"wealth": _WEALTH},
         actions={"consumption": _CONSUMPTION},
         functions={"utility": pair_utility},
@@ -245,12 +251,21 @@ def build_model(
         },
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": _WEALTH},
         functions={"utility": _bequest_utility},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"solo": solo, "pair": pair, "dead": dead},
+        edges={
+            "solo": Transition(
+                targets={"solo": (0, 1), "dead": (0, 1, 2)}, law=solo_law
+            ),
+            "pair": Transition(
+                targets={"pair": 0, "dead": (0, 1), "solo": (0, 1)},
+                law=pair_law,
+                gates=pair_gates,
+            ),
+        },
         states={
             "x": DiscreteGrid(category_class=_Category),
             "y": DiscreteGrid(category_class=_Category),

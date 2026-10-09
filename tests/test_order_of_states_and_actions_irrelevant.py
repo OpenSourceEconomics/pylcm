@@ -8,10 +8,9 @@ explicitly sharded states, which lead. Execution widths never reorder axes.
 import numpy as np
 import pytest
 
-from lcm import ExecutionConfig, LinSpacedGrid
+from lcm import ExecutionConfig, LinSpacedGrid, Model
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models.deterministic.ds_pension import RegimeId, get_model, get_params
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.initial_nodes import initial_nodes_of
 
 _N_PERIODS = 5
@@ -28,12 +27,13 @@ def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
         regimes["working"] = regimes["working"].replace(
             states=dict(reversed(tuple(regimes["working"].states.items())))
         )
-    reordered = with_fixture_graph(
+    reordered = Model(
         regimes=regimes,
         ages=model.ages,
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(axis_widths={"cell": cell_width}),
         initial_nodes=initial_nodes_of(model=model),
+        edges=model.edges,
     )
     return reordered.solve(params=get_params(), log_level="off").values
 

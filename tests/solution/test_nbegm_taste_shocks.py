@@ -10,14 +10,12 @@ or nested inside `NNBEGM` — is rejected at model build.
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     DiscreteGrid,
     ExtremeValueTasteShocks,
     LinSpacedGrid,
+    Model,
     Regime,
     categorical,
 )
@@ -38,8 +36,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.test_models import n_nbegm_toy
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.05, stop=19.0, n_points=8)
@@ -89,10 +85,6 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def next_regime(age: int) -> ScalarInt:
-    return jnp.where(age < 25, RegimeId.alive, RegimeId.dead)
-
-
 def test_nbegm_regime_declaring_taste_shocks_is_rejected():
     """A bare NB-EGM regime with EV1 taste shocks fails at model build."""
     alive = ConsumptionSavingsRegime(
@@ -102,13 +94,6 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
             "consumption": CONSUMPTION_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        regime_transitions=until_exit(
-            25,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility,
@@ -125,13 +110,13 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID},
         functions={"utility": terminal_utility},
     )
     with pytest.raises(RegimeInitializationError, match="does not implement taste"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
+            edges={"alive": {"dead": 20}},
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
             initial_nodes={20: "alive"},
@@ -154,13 +139,6 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
             "labor_supply": DiscreteGrid(category_class=Work),
         },
-        regime_transitions=until_exit(
-            25,
-            law=_SupportedDeterministicTransition(
-                func=n_nbegm_toy.next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         taste_shocks=ExtremeValueTasteShocks(),
         functions={
             "utility": utility_with_labor_disutility,
@@ -185,7 +163,6 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={
             "wealth": n_nbegm_toy.WEALTH_GRID,
             "illiquid": n_nbegm_toy.ILLIQUID_GRID,
@@ -193,10 +170,10 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         functions={"utility": n_nbegm_toy.terminal_utility},
     )
     with pytest.raises(RegimeInitializationError, match="does not implement taste"):
-        with_fixture_graph(
+        Model(
             regimes={"alive": alive, "dead": dead},
+            edges={"alive": {"dead": 20}},
             regime_id_class=RegimeId,
             ages=AgeGrid(start=20, inclusive_stop=25, step="5Y"),
-            fixed_params={"final_age_alive": 20},
             initial_nodes={20: "alive"},
         )

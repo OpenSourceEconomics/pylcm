@@ -17,11 +17,9 @@ the parity oracle.
 
 import jax.numpy as jnp
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
+    DeterministicTransition,
     LinSpacedGrid,
     LiquidMargin,
     Model,
@@ -29,6 +27,7 @@ from lcm import (
     NetOfAdjustmentCost,
     OuterContinuousMargin,
     Regime,
+    Transition,
     categorical,
     outer_unchanged,
 )
@@ -43,7 +42,6 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.test_models.schedules import until_exit
 
 N_X = 8
 N_Z = 8
@@ -160,6 +158,16 @@ SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=80)
 
 FINAL_AGE_ALIVE = 20 + (N_PERIODS - 2) * 5
 
+EDGES = {
+    "alive": Transition(
+        targets={
+            "alive": tuple(range(20, FINAL_AGE_ALIVE, 5)),
+            "dead": tuple(range(20, FINAL_AGE_ALIVE + 1, 5)),
+        },
+        law=DeterministicTransition(func=next_regime),
+    ),
+}
+
 NEGM_SOLVER = NEGM(
     inner=DCEGM(
         savings_grid=SAVINGS_GRID,
@@ -171,7 +179,6 @@ NEGM_SOLVER = NEGM(
 def _build_dead_regime() -> Regime:
     """The terminal regime: a bequest over both continuous states."""
     return Regime(
-        regime_transitions=None,
         states={"wealth": WEALTH_GRID, "illiquid": ILLIQUID_GRID},
         functions={"utility": bequest},
     )
@@ -186,13 +193,6 @@ def build_negm_model() -> Model:
             "consumption": CONSUMPTION_GRID,
             "illiquid_investment": ILLIQUID_INVESTMENT_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={
             "utility": utility,
             "new_durable": new_durable,
@@ -220,12 +220,7 @@ def build_negm_model() -> Model:
         ),
     )
     return Model(
-        edges={
-            "alive": {
-                "alive": tuple(range(20, FINAL_AGE_ALIVE, 5)),
-                "dead": tuple(range(20, FINAL_AGE_ALIVE + 1, 5)),
-            },
-        },
+        edges=EDGES,
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),
@@ -291,23 +286,11 @@ def build_brute_model() -> Model:
             "consumption": CONSUMPTION_GRID_BRUTE,
             "new_durable": OUTER_GRID,
         },
-        regime_transitions=until_exit(
-            FINAL_AGE_ALIVE + 5,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         functions={"utility": utility_brute},
         constraints={"feasible": feasible_brute},
     )
     return Model(
-        edges={
-            "alive": {
-                "alive": tuple(range(20, FINAL_AGE_ALIVE, 5)),
-                "dead": tuple(range(20, FINAL_AGE_ALIVE + 1, 5)),
-            },
-        },
+        edges=EDGES,
         regimes={"alive": alive, "dead": _build_dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (N_PERIODS - 1) * 5, step="5Y"),

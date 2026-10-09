@@ -36,7 +36,6 @@ from _lcm.execution.core_program import core_program_graph
 from lcm import (
     AgeGrid,
     AgeSpecializedFunction,
-    ByAge,
     ConsumptionSavingsRegime,
     LinSpacedGrid,
     LiquidMargin,
@@ -46,7 +45,6 @@ from lcm import (
 )
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 from tests.test_models.nbegm_common import make_alive_dead_model, savings, utility
 
 
@@ -229,7 +227,6 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
         states={"liquid": liquid_grid},
         state_transitions={"liquid": {"child": liquid_law}},
         constraints={},
-        regime_transitions=ByAge.until(stop_age_exclusive=2, law="child", then="child"),
         functions={
             "utility": utility,
             "savings": savings,
@@ -250,9 +247,6 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
             "liquid": {"child": identity_liquid, "dead": identity_liquid}
         },
         constraints={},
-        regime_transitions=ByAge.until(
-            stop_age_exclusive=3, law="child", then="dead", start_age_inclusive=1
-        ),
         functions={
             "utility": utility,
             "savings": savings,
@@ -270,14 +264,14 @@ def _source_child_model(*, slope: float, transfer: float, liquid_law: Any) -> Mo
         ),
     )
     dead = Regime(
-        regime_transitions=None,
         states={"liquid": liquid_grid},
         functions={"utility": zero_bequest},
         solver=GridSearch(),
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"source": source, "child": child, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        edges={"source": {"child": (0, 1)}, "child": {"child": 1, "dead": 2}},
         regime_id_class=_SourceChildId,
         initial_nodes={0: "source", 1: "source"},
     )

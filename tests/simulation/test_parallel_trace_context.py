@@ -19,9 +19,6 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -32,7 +29,6 @@ from lcm import (
 from lcm.execution import ExecutionConfig
 from lcm.solver_api import SolutionResult
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
-from tests.test_models.graph import with_fixture_graph
 
 _PARAMS = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
 
@@ -58,23 +54,14 @@ def _next_wealth(*, wealth: ContinuousState, saving: ContinuousAction) -> FloatN
     return wealth + saving
 
 
-def _next_regime() -> ScalarInt:
-    return _RegimeId.done
-
-
 def _model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "alive": Regime(
-                regime_transitions=_SupportedDeterministicTransition(
-                    func=_next_regime, targets=("done",)
-                ),
                 functions={"utility": _utility},
                 actions={"saving": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
-            "done": Regime(
-                regime_transitions=None, functions={"utility": _terminal_utility}
-            ),
+            "done": Regime(functions={"utility": _terminal_utility}),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=5, n_points=5)},
         state_transitions={"wealth": _next_wealth},
@@ -82,6 +69,7 @@ def _model() -> Model:
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(device_memory_bytes=2**32),
         initial_nodes={0: "alive"},
+        edges={"alive": {"done": 0}},
     )
 
 

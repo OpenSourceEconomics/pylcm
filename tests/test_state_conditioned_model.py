@@ -17,13 +17,10 @@ from _lcm.processes.base import StateConditioned
 from _lcm.regime_building.processing import (
     _validate_conditioning_codes_agree_across_regimes,
 )
-from _lcm.regime_building.transition_support import (
-    _SupportedDeterministicTransition,
-)
 from lcm import (
     AgeGrid,
     AgeRange,
-    ByAge,
+    DeterministicTransition,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -32,6 +29,7 @@ from lcm import (
     RouwenhorstAR1Process,
     StochasticTransition,
     TauchenAR1Process,
+    Transition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -43,8 +41,6 @@ from lcm.typing import (
     RegimeName,
     ScalarInt,
 )
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 
 @categorical(ordered=False)
@@ -92,6 +88,22 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
+def _alive_edges(*, final_age_alive: int) -> dict:
+    """Stay alive before `final_age_alive`; die from any age up to and including it.
+
+    `next_regime` chooses between the two edges where both exist.
+    """
+    return {
+        "alive": Transition(
+            targets={
+                "alive": AgeRange(exclusive_stop=final_age_alive),
+                "dead": AgeRange(exclusive_stop=final_age_alive + 10),
+            },
+            law=DeterministicTransition(func=next_regime),
+        )
+    }
+
+
 def _income_process(*, sigma_low: float, sigma_high: float, n_points: int = 5):
     return NormalIIDProcess(
         n_points=n_points,
@@ -118,26 +130,19 @@ def _get_model(*, sigma_low: float, sigma_high: float, n_periods: int = 5) -> Mo
             "uncertainty": StochasticTransition(func=next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            final_age_alive + 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
+        edges=_alive_edges(final_age_alive=final_age_alive),
     )
 
 
@@ -282,26 +287,19 @@ def _ar1_model(*, sigma_low: float, sigma_high: float) -> Model:
             "uncertainty": StochasticTransition(func=next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            70,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
         fixed_params={"final_age_alive": 60},
         initial_nodes={20: "alive"},
+        edges=_alive_edges(final_age_alive=60),
     )
 
 
@@ -370,26 +368,19 @@ def _get_switching_model(*, sigma_low: float, sigma_high: float) -> Model:
             "uncertainty": StochasticTransition(func=next_uncertainty_switching),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            final_age_alive + 10,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=60, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
         initial_nodes={20: "alive"},
+        edges=_alive_edges(final_age_alive=final_age_alive),
     )
 
 
@@ -460,26 +451,18 @@ def _model_with_income(income_proc) -> Model:
             "uncertainty": StochasticTransition(func=next_uncertainty),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            30,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     dead = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    return with_fixture_graph(
+    return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=40, step="10Y"),
-        fixed_params={"final_age_alive": 21},
         initial_nodes={20: "alive"},
+        edges={"alive": {"dead": 20}},
     )
 
 
@@ -617,13 +600,6 @@ def _alive_regime_without_local_uncertainty() -> Regime:
         },
         state_transitions={"wealth": next_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            60,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -631,7 +607,6 @@ def _alive_regime_without_local_uncertainty() -> Regime:
 
 def _dead_regime() -> Regime:
     return Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
 
@@ -645,7 +620,7 @@ def test_model_level_conditioning_state_survives_pruning():
     process conditions on it — and must still be pruned from regimes where nothing
     reads it, so this pins both directions.
     """
-    model = with_fixture_graph(
+    model = Model(
         regimes={
             "alive": _alive_regime_without_local_uncertainty(),
             "dead": _dead_regime(),
@@ -656,6 +631,7 @@ def test_model_level_conditioning_state_survives_pruning():
         states={"uncertainty": DiscreteGrid(category_class=Uncertainty)},
         state_transitions={"uncertainty": StochasticTransition(func=next_uncertainty)},
         initial_nodes={20: "alive"},
+        edges=_alive_edges(final_age_alive=50),
     )
     assert (
         "uncertainty" not in model.pruned_variables["alive"]
@@ -682,22 +658,16 @@ def test_conditioning_only_state_is_not_reported_unused():
             "uncertainty": StochasticTransition(func=next_uncertainty_age_only),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=until_exit(
-            60,
-            law=_SupportedDeterministicTransition(
-                func=next_regime, targets=("alive", "dead")
-            ),
-            exits=("dead",),
-        ),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"alive": alive, "dead": _dead_regime()},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=20, inclusive_stop=60, step="10Y"),
         fixed_params={"final_age_alive": 50},
         initial_nodes={20: "alive"},
+        edges=_alive_edges(final_age_alive=50),
     )
     assert model is not None
 
@@ -768,32 +738,7 @@ class Phase:
     gone: ScalarInt
 
 
-def next_phase(age: int) -> ScalarInt:
-    return jnp.where(
-        age >= 40, jnp.where(age >= 60, Phase.gone, Phase.old), Phase.young
-    )
-
-
-YOUNG_TRANSITIONS = ByAge(
-    cases={
-        AgeRange(start=20, exclusive_stop=40): _SupportedDeterministicTransition(
-            func=next_phase, targets=("young",)
-        ),
-        AgeRange(start=40, exclusive_stop=50): _SupportedDeterministicTransition(
-            func=next_phase, targets=("old",)
-        ),
-    }
-)
-OLD_TRANSITIONS = ByAge(
-    cases={
-        AgeRange(start=50, exclusive_stop=60): _SupportedDeterministicTransition(
-            func=next_phase, targets=("old",)
-        ),
-        AgeRange(start=60, exclusive_stop=70): _SupportedDeterministicTransition(
-            func=next_phase, targets=("gone",)
-        ),
-    }
-)
+_PHASE_EDGES = {"young": {"young": (20, 30), "old": 40}, "old": {"old": 50, "gone": 60}}
 
 
 def next_uncertainty_phase_age(age: int) -> FloatND:
@@ -833,9 +778,7 @@ def _cond_income(
     )
 
 
-def _cross_regime_alive(
-    *, regime_transitions, income_proc, uncertainty_law, local_uncertainty
-):
+def _cross_regime_alive(*, income_proc, uncertainty_law, local_uncertainty):
     """An alive regime with income `income_proc`; `uncertainty` local or model-level."""
     states = {
         "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
@@ -849,7 +792,6 @@ def _cross_regime_alive(
         states=states,
         state_transitions=transitions,
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=7)},
-        regime_transitions=regime_transitions,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -878,27 +820,25 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
     `weight_old__next_income`, which is built into the source's Q.
     """
     young = _cross_regime_alive(
-        regime_transitions=YOUNG_TRANSITIONS,
         income_proc=_uncond_income(),
         uncertainty_law=next_uncertainty_phase_age,
         local_uncertainty=True,
     )
     old = _cross_regime_alive(
-        regime_transitions=OLD_TRANSITIONS,
         income_proc=_cond_income(sigma_low=0.05, sigma_high=0.30),
         uncertainty_law=next_uncertainty_phase_age,
         local_uncertainty=True,
     )
     gone = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"young": young, "old": old, "gone": gone},
         regime_id_class=Phase,
         ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
         fixed_params={},
         initial_nodes={20: "young"},
+        edges=_PHASE_EDGES,
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in _value_arrays(V):
@@ -913,22 +853,19 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
     the solve for a missing DAG argument.
     """
     young = _cross_regime_alive(
-        regime_transitions=YOUNG_TRANSITIONS,
         income_proc=_uncond_income(),
         uncertainty_law=next_uncertainty_phase_age,
         local_uncertainty=False,
     )
     old = _cross_regime_alive(
-        regime_transitions=OLD_TRANSITIONS,
         income_proc=_cond_income(sigma_low=0.05, sigma_high=0.30),
         uncertainty_law=next_uncertainty_phase_age,
         local_uncertainty=False,
     )
     gone = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"young": young, "old": old, "gone": gone},
         regime_id_class=Phase,
         ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
@@ -938,6 +875,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
             "uncertainty": StochasticTransition(func=next_uncertainty_phase_age)
         },
         initial_nodes={20: "young"},
+        edges=_PHASE_EDGES,
     )
     assert "uncertainty" not in model.pruned_variables["young"]  # source: reaches old
     assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
@@ -958,13 +896,11 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
     sigma_low, sigma_high, n = 0.05, 0.30, 6000
     half = n // 2
     young = _cross_regime_alive(
-        regime_transitions=YOUNG_TRANSITIONS,
         income_proc=_uncond_income(9),
         uncertainty_law=next_uncertainty_phase_absorbing,
         local_uncertainty=True,
     )
     old = _cross_regime_alive(
-        regime_transitions=OLD_TRANSITIONS,
         income_proc=_cond_income(
             sigma_low=sigma_low, sigma_high=sigma_high, n_points=9
         ),
@@ -972,15 +908,15 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
         local_uncertainty=True,
     )
     gone = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"young": young, "old": old, "gone": gone},
         regime_id_class=Phase,
         ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
         fixed_params={},
         initial_nodes={20: "young"},
+        edges=_PHASE_EDGES,
     )
     result = model.simulate(
         params=_cross_params(),
@@ -1016,7 +952,6 @@ def test_conditioned_process_the_source_lacks_is_rejected():
     law, or not reach the regime at all.
     """
     young = Regime(
-        regime_transitions=YOUNG_TRANSITIONS,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
             "uncertainty": DiscreteGrid(category_class=Uncertainty),
@@ -1030,22 +965,21 @@ def test_conditioned_process_the_source_lacks_is_rejected():
         functions={"utility": utility},
     )
     old = _cross_regime_alive(
-        regime_transitions=OLD_TRANSITIONS,
         income_proc=_cond_income(sigma_low=0.05, sigma_high=0.60),
         uncertainty_law=next_uncertainty_phase_absorbing,
         local_uncertainty=True,
     )
     gone = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
     with pytest.raises(ModelInitializationError, match="does not carry 'income'"):
-        with_fixture_graph(
+        Model(
             regimes={"young": young, "old": old, "gone": gone},
             regime_id_class=Phase,
             ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
             fixed_params={},
             initial_nodes={20: "young"},
+            edges=_PHASE_EDGES,
         )
 
 
@@ -1057,7 +991,6 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
     period on, the target carries the process and conditions it normally.
     """
     young = Regime(
-        regime_transitions=YOUNG_TRANSITIONS,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=30.0, n_points=6),
             "uncertainty": DiscreteGrid(category_class=Uncertainty),
@@ -1072,21 +1005,20 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
         functions={"utility": utility},
     )
     old = _cross_regime_alive(
-        regime_transitions=OLD_TRANSITIONS,
         income_proc=_cond_income(sigma_low=0.05, sigma_high=0.60),
         uncertainty_law=next_uncertainty_phase_absorbing,
         local_uncertainty=True,
     )
     gone = Regime(
-        regime_transitions=None,
         functions={"utility": lambda: 0.0},
     )
-    model = with_fixture_graph(
+    model = Model(
         regimes={"young": young, "old": old, "gone": gone},
         regime_id_class=Phase,
         ages=AgeGrid(start=20, inclusive_stop=70, step="10Y"),
         fixed_params={},
         initial_nodes={20: "young"},
+        edges=_PHASE_EDGES,
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in _value_arrays(V):

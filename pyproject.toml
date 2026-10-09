@@ -145,10 +145,9 @@ asv-run-and-pr-comment = { depends-on = [
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Reviewed ACA migration to explicit Model execution policy. Retired GridConfig
-# execution keywords are rejected; omitted GPU policies derive an allocator budget.
+# ACA model on the edges-params API: law arguments live under params["edges"].
 # Keep an exact revision so benchmark model construction is reproducible.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "196a56ad036bb63bb43898db334b701f12a9255d" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "e2b17fb23df8d6e7622485e9130b89e2fbb9e66a" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]

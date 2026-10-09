@@ -38,7 +38,7 @@ def _base_model() -> Model:
 def _model_with(config: ExecutionConfig) -> Model:
     base = _base_model()
     return Model(
-        edges=base.graph.edges,
+        edges=base.edges,
         regimes=base.user_regimes,
         ages=base.ages,
         regime_id_class=MultiRegimeId,

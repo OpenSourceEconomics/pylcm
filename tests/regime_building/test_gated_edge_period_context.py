@@ -7,13 +7,15 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    ByAge,
     DiscreteGrid,
+    Gate,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -27,8 +29,6 @@ from lcm.typing import (
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _BETA = 0.5
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
@@ -145,49 +145,50 @@ def _make_model(
         if gate_open
         else _context_gate_closed
     )
-    return with_fixture_graph(
-        regimes={
-            "source": Regime(
-                regime_transitions=until_exit(
-                    45,
-                    law={
-                        "target": ValueDependentTransition(
-                            probability=StochasticTransition(func=_prob_one),
-                            gate=gate,
-                            routes={
-                                "only": StakeholderRoute(
-                                    fallback=ProjectedRegimeValue(
-                                        regime="fallback",
-                                        projection={
-                                            "x": (
-                                                _identity_x
-                                                if action_sensitive
-                                                else _age_projection
-                                                if split_context
-                                                else _context_projection
-                                            )
-                                        },
-                                    )
-                                )
-                            },
-                            gate_references={}
-                            if action_sensitive
-                            else {
-                                "V_reference": ProjectedRegimeValue(
-                                    regime="reference",
+    return Model(
+        edges={
+            "source": Transition(
+                targets={"target": 40, "fallback": 40},
+                law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
+                gates={
+                    "target": Gate(
+                        predicate=gate,
+                        routes={
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
+                                    regime="fallback",
                                     projection={
                                         "x": (
-                                            _age_projection
+                                            _identity_x
+                                            if action_sensitive
+                                            else _age_projection
                                             if split_context
                                             else _context_projection
                                         )
                                     },
                                 )
-                            },
-                        )
-                    },
-                    exits=("target",),
-                ),
+                            )
+                        },
+                        references={}
+                        if action_sensitive
+                        else {
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference",
+                                projection={
+                                    "x": (
+                                        _age_projection
+                                        if split_context
+                                        else _context_projection
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        regimes={
+            "source": Regime(
                 states={"x": _X},
                 state_transitions={
                     "x": (
@@ -198,7 +199,6 @@ def _make_model(
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={
                     "utility": (
@@ -207,12 +207,10 @@ def _make_model(
                 },
             ),
             "reference": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={"utility": _utility_reference},
             ),
             "fallback": Regime(
-                regime_transitions=None,
                 states={"x": _X},
                 functions={
                     "utility": (

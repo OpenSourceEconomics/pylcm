@@ -23,13 +23,15 @@ from _lcm.simulation.runtime import CompiledSimulationProgram
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
+    ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
-    ValueDependentTransition,
+    Transition,
     categorical,
     fixed_transition,
 )
@@ -41,8 +43,6 @@ from tests.collective_fixtures import (
     make_two_stakeholder_model,
 )
 from tests.conftest import DECIMAL_PRECISION
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _N_SUBJECTS = 2
 
@@ -242,44 +242,40 @@ def _make_consent_model() -> Model:
         The model.
 
     """
-    single = Regime(
-        regime_transitions=until_exit(
-            1,
-            law={
-                "married_terminal": ValueDependentTransition(
-                    probability=StochasticTransition(func=_certain_transition),
-                    gate=_consent_gate,
-                    routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_terminal",
-                                projection={"education": _identity_education},
-                            ),
-                        )
-                    },
-                    gate_references={
-                        "V_single_ref": ProjectedRegimeValue(
-                            regime="single_terminal",
-                            projection={"education": _identity_education},
-                        )
-                    },
+    single_law = ByAge(
+        cases={0: {"married_terminal": StochasticTransition(func=_certain_transition)}}
+    )
+    single_gates = {
+        "married_terminal": Gate(
+            predicate=_consent_gate,
+            routes={
+                "f": StakeholderRoute(
+                    target_stakeholder="f",
+                    fallback=ProjectedRegimeValue(
+                        regime="single_terminal",
+                        projection={"education": _identity_education},
+                    ),
                 )
             },
-            exits=("married_terminal",),
-        ),
+            references={
+                "V_single_ref": ProjectedRegimeValue(
+                    regime="single_terminal",
+                    projection={"education": _identity_education},
+                )
+            },
+        )
+    }
+    single = Regime(
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_utility},
     )
     single_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _single_terminal_utility},
     )
     married_terminal = Regime(
-        regime_transitions=None,
         states={"education": DiscreteGrid(category_class=Education)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
@@ -288,7 +284,7 @@ def _make_consent_model() -> Model:
             )
         },
     )
-    return with_fixture_graph(
+    return Model(
         regimes={
             "single": single,
             "single_terminal": single_terminal,
@@ -297,6 +293,13 @@ def _make_consent_model() -> Model:
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ConsentRegimeId,
         initial_nodes={0: "single"},
+        edges={
+            "single": Transition(
+                targets={"married_terminal": 0, "single_terminal": 0},
+                law=single_law,
+                gates=single_gates,
+            )
+        },
     )
 
 

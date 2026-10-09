@@ -31,13 +31,10 @@ from lcm import (
     NormalIIDProcess,
     PowerMean,
     Regime,
-    StochasticTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
-from tests.test_models.graph import with_fixture_graph
-from tests.test_models.schedules import until_exit
 
 _RISK_AVERSION = 2.0
 # Nodes `(0, 1, 2)` under payoff `shock**2` give `V = (0, 1, 4)`; entering at
@@ -60,29 +57,19 @@ def _squared_shock_utility(shock: ScalarFloat) -> FloatND:
     return shock**2
 
 
-def _one_probability() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _enter_between_nodes() -> ScalarFloat:
     return jnp.asarray(1.5)
 
 
 def _build_model() -> Model:
-    return with_fixture_graph(
+    return Model(
         regimes={
             "source": Regime(
-                regime_transitions=until_exit(
-                    22,
-                    law={"target": StochasticTransition(func=_one_probability)},
-                    exits=("target",),
-                ),
                 state_transitions={"shock": {"target": _enter_between_nodes}},
                 functions={"utility": _zero_utility},
                 certainty_equivalent=PowerMean(),
             ),
             "target": Regime(
-                regime_transitions=None,
                 states={
                     "shock": NormalIIDProcess(
                         n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
@@ -96,6 +83,7 @@ def _build_model() -> Model:
         enable_jit=False,
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={20: "source"},
+        edges={"source": {"target": (20, 21)}},
     )
 
 
@@ -104,7 +92,7 @@ _PARAMS = {
         "utility": {},
         "koopmans_aggregator": {"discount_factor": 1.0},
         "certainty_equivalent": {"risk_aversion": _RISK_AVERSION},
-        "target": {"next_regime": {}, "next_shock": {}},
+        "target": {"next_shock": {}},
     },
     "target": {"utility": {}},
 }

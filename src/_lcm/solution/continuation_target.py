@@ -7,10 +7,10 @@ of the source's and target's flat params in the kernel build.
 """
 
 from collections.abc import Mapping
-from types import MappingProxyType
 
 from dags.tree import qname_from_tree_path
 
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution.contract import (
     SolverBuildContext,
 )
@@ -63,12 +63,15 @@ def union_free_params(
     pension payout factor the source never reads), so the core needs the union;
     captured functions read only the keys they need.
     """
-    params: dict[str, object] = dict(flat_params[regime_name])
+    # Leaves of several regimes, passed through untouched.
+    params: dict[str, object] = dict(
+        regime_kernel_params(flat_params, regime_name=regime_name)
+    )
     for target_name in transition_target_names:
         params.update(
             _namespace_target_params(
                 target_name=target_name,
-                params=flat_params.get(target_name, MappingProxyType({})),
+                params=regime_kernel_params(flat_params, regime_name=target_name),
             )
         )
     return params
@@ -81,12 +84,15 @@ def union_fixed_params(
     transition_target_names: tuple[RegimeName, ...],
 ) -> dict[str, object]:
     """Union the regime's and its targets' fixed params for core binding."""
-    bound = dict(fixed_flat_params.get(regime_name, MappingProxyType({})))
+    # Leaves of several regimes, passed through untouched.
+    bound: dict[str, object] = dict(
+        regime_kernel_params(fixed_flat_params, regime_name=regime_name)
+    )
     for target_name in transition_target_names:
         bound.update(
             _namespace_target_params(
                 target_name=target_name,
-                params=fixed_flat_params.get(target_name, MappingProxyType({})),
+                params=regime_kernel_params(fixed_flat_params, regime_name=target_name),
             )
         )
     return bound

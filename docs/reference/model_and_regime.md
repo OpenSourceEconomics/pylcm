@@ -18,7 +18,7 @@ model = lcm.Model(
     regimes={"working": working, "retired": retired},
     regime_id_class=RegimeId,
     edges={"working": {"retired": 25}},
-    initial_nodes=((25, "working"),),
+    initial_nodes=lcm.InitialNodes(by_age={25: "working"}),
     enable_jit=True,
 )
 ```
@@ -27,6 +27,14 @@ Required arguments are `ages`, `regimes`, `edges`, `initial_nodes`, and
 `regime_id_class`, a class created with `@categorical(ordered=False)` whose fields match
 the regime names. A model must contain at least one terminal regime; a model whose
 starts are all terminal needs no other.
+
+`edges` declares every regime transition, structure and law. Each source maps to a plain
+`{target: source_ages}` mapping when every source age has one destination (the graph is
+the law), or to `Transition(targets={target: source_ages, ...}, law=..., gates=...)`
+when some source age has several or a destination is gated. `targets` may be omitted
+when the law names its targets, and is then derived from it. A regime with no outgoing
+edges is terminal. See
+[Regime transitions and graph support](transitions.md#api-regime-transitions).
 
 The mapping-valued slots `functions`, `constraints`, `states`, `state_transitions`,
 `actions`, and `derived_categoricals` broadcast declarations to regimes. A name is
@@ -44,9 +52,14 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
-- `initial_nodes`, immutable admissible age–regime pairs;
-- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes and
-  pruning reasons;
+- `edges`, the edges exactly as declared, `Transition` laws included;
+- `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` mapping contains
+  exact ages and sorted, unique tuples of regime names;
+- `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
+  pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
+  bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
+  (`laws[name].terminal` is true for a regime without outgoing edges,
+  `laws[name].gated_edges` holds the edges its `Transition.gates` declare);
 - `pruned_variables`;
 - `get_params_template()`, which returns a mutable nested template.
 
@@ -76,6 +89,21 @@ age-specialized function while subjects start away from the regime's representat
 raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
 
 `model._regimes` is private canonical engine state.
+
+(api-initial-nodes)=
+
+## `InitialNodes`
+
+`InitialNodes(by_age={25: "working"})` declares admissible starting nodes. Keys use the
+same age selectors as edges: exact ages, tuples, integer ranges, or
+`AgeRange(start=..., exclusive_stop=...)`. Values are one regime name or a nonempty
+sequence or set of names. The mapping must be nonempty; its containers are copied and
+frozen at construction. The model checks selectors against its grid and names against
+its regimes. Overlapping selectors union their pairs.
+
+`Model(initial_nodes=...)` also accepts legacy exact-pair collections and bare selector
+mappings, and always publishes an `InitialNodes`. `model.graph.initial_nodes` exposes
+the expanded immutable pairs. Neither representation specifies population weights.
 
 (api-period-candidate-lowering)=
 
@@ -121,26 +149,26 @@ provided.
 
 A general regime declares:
 
-| Field                  | Contract                                                                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `regime_transitions`   | Regime name, `DeterministicTransition`, `StochasticTransition`, per-target mapping, `ByAge` or `Phased` of those; `None` for terminal |
-| `states` / `actions`   | Name-to-grid mappings                                                                                                                 |
-| `functions`            | Named DAG functions; a finalized regime needs utility                                                                                 |
-| `constraints`          | Ordinary predicates or structured `Condition` objects                                                                                 |
-| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions`                                                         |
-| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states                                                            |
-| `derived_categoricals` | Discrete grids for categorical DAG outputs                                                                                            |
-| `solver`               | `lcm.solvers.GridSearch()` by default                                                                                                 |
-| `taste_shocks`         | Optional EV1 taste-shock configuration                                                                                                |
-| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                                                                         |
-| `certainty_equivalent` | Optional regime-level lottery reduction                                                                                               |
-| `description`          | Human-readable description                                                                                                            |
+| Field                  | Contract                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `states` / `actions`   | Name-to-grid mappings                                                         |
+| `functions`            | Named DAG functions; a finalized regime needs utility                         |
+| `constraints`          | Ordinary predicates or structured `Condition` objects                         |
+| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions` |
+| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states    |
+| `derived_categoricals` | Discrete grids for categorical DAG outputs                                    |
+| `solver`               | `lcm.solvers.GridSearch()` by default                                         |
+| `taste_shocks`         | Optional EV1 taste-shock configuration                                        |
+| `koopmans_aggregator`  | Optional regime-level continuation aggregator                                 |
+| `certainty_equivalent` | Optional regime-level lottery reduction                                       |
+| `description`          | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
-Terminality is defined by `transition is None`. Terminal regimes declare no
-`state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty equivalent
-because they have no continuation.
+A regime declares no regime transition; its outgoing edges and their law live in
+`Model(edges=...)`, and a regime without outgoing edges is terminal. Terminal regimes
+declare no `state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty
+equivalent because they have no continuation.
 
 `ConsumptionSavingsRegime` and `NestedConsumptionSavingsRegime` add the economic roles
 required by EGM-family solvers. See
@@ -177,7 +205,7 @@ choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on a source regime with a `ValueDependentTransition`; together with a folded IID state
+on the source regime of a gated transition; together with a folded IID state
 (`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
 boundaries, not ignored options: the declaration is rejected during `Regime` declaration
 or `Model` construction, before solve.
@@ -193,9 +221,12 @@ index under JIT.
 
 A free function argument becomes a model parameter unless another state, action, DAG
 function, context value, or fixed parameter supplies it. Values may be given at model,
-regime, or function level, but each parameter value has one unambiguous source. Start
-from `model.get_params_template()` rather than constructing a nested parameter mapping
-from memory.
+regime, or function level, but each parameter value has one unambiguous source.
+Parameters of callables declared in `Model(edges=...)` live under `params["edges"]` at
+their declaration path, and a regime-level value never reaches them; see
+[Edge parameter paths](transitions.md#api-edge-parameters). Start from
+`model.get_params_template()` rather than constructing a nested parameter mapping from
+memory.
 
 Workflow: [Defining models](../user_guide/defining_models.md) and
 [Parameters](../user_guide/parameters.md).

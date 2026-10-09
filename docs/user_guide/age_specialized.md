@@ -93,10 +93,10 @@ construction. Runtime-supplied points use `IrregSpacedGrid(n_points=...)` instea
 
 ## Gate references and leg fallbacks on an age-specialized regime
 
-A `ValueDependentTransition` reads other regimes' values within one period — its
-`gate_references` read a reference regime's value function, and a shut gate reads the
-route's `fallback` regime's value at a projected coordinate. Either regime may hold its
-states on an `AgeSpecializedGrid`.
+A `Gate` reads other regimes' values within one period — its `references` read a
+reference regime's value function, and a shut gate reads the route's `fallback` regime's
+value at a projected coordinate. Either regime may hold its states on an
+`AgeSpecializedGrid`.
 
 Every such read is measured against the grid of **the period whose value is being
 folded**, not against some other age at which that regime is also active. This is worth
@@ -120,7 +120,7 @@ StakeholderRoute(
 )
 ```
 
-A `gate_references` projection instead owes one coordinate per state of the reference
+A gate `references` projection instead owes one coordinate per state of the reference
 regime's *value function*, i.e. its solve states. The two sets differ only by the states
 a regime carries in simulation alone.
 

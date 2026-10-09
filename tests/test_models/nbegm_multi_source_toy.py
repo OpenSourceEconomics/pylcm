@@ -151,7 +151,6 @@ def build_params(
     kink_a: float = 15.0,
     rate_b: float = 0.2,
     kink_b: float = 14.0,
-    final_age_alive: float = 3.0,
 ) -> dict:
     """Get parameters for the two-derived-variable budget toy.
 
@@ -174,7 +173,6 @@ def build_params(
             "tax_b": {"rate_b": rate_b, "kink_b": kink_b},
             "alive": {"next_liquid": alive_budget},
             "dead": {"next_liquid": alive_budget},
-            "final_age_alive": final_age_alive,
         },
         "dead": {"utility": {"crra": crra}},
     }

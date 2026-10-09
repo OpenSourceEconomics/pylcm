@@ -86,7 +86,6 @@ def _next_assets(savings):
 
 def _regime_kwargs() -> dict[str, object]:
     return {
-        "regime_transitions": lambda: 0,
         "states": {"assets": _GRID},
         "actions": {"consumption": _GRID},
         "functions": {

@@ -17,6 +17,7 @@ from lcm import (
     LogSpacedGrid,
     Model,
     Regime,
+    Transition,
     categorical,
 )
 from lcm.typing import (
@@ -105,8 +106,10 @@ WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
 
+# Law of the `working_life` edges.
+WORKING_LIFE_LAW = DeterministicTransition(func=next_regime)
+
 working_life = Regime(
-    regime_transitions=DeterministicTransition(func=next_regime),
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
@@ -123,7 +126,6 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    regime_transitions=None,
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_retirement},
 )
@@ -148,16 +150,17 @@ def get_model(
         start=25, inclusive_stop=25 + (n_periods - 1) * int(step[:-1]), step=step
     )
 
+    working_targets = {
+        "retirement": tuple(age_grid.exact_values[:-1]),
+        **(
+            {"working_life": tuple(age_grid.exact_values[:-2])}
+            if age_grid.exact_values[:-2]
+            else {}
+        ),
+    }
     return Model(
         edges={
-            "working_life": {
-                "retirement": tuple(age_grid.exact_values[:-1]),
-                **(
-                    {"working_life": tuple(age_grid.exact_values[:-2])}
-                    if age_grid.exact_values[:-2]
-                    else {}
-                ),
-            },
+            "working_life": Transition(targets=working_targets, law=WORKING_LIFE_LAW)
         },
         regimes={"working_life": working_life, "retirement": retirement},
         ages=age_grid,
@@ -193,6 +196,6 @@ def get_params(
             "utility": {"disutility_of_work": 1.0},
             "earnings": {"wage": 20.0},
             "taxes_transfers": {"consumption_floor": 2.0, "tax_rate": 0.2},
-            "next_regime": {"last_working_age": age_grid.exact_values[-2]},
         },
+        "edges": {"working_life": {"last_working_age": age_grid.exact_values[-2]}},
     }
