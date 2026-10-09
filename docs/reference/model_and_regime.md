@@ -18,7 +18,7 @@ model = lcm.Model(
     regimes={"working": working, "retired": retired},
     regime_id_class=RegimeId,
     edges={"working": {"retired": 25}},
-    initial_nodes=((25, "working"),),
+    initial_nodes=lcm.InitialNodes(by_age={25: "working"}),
     enable_jit=True,
 )
 ```
@@ -53,7 +53,8 @@ Public inspection attributes include:
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
 - `edges`, the edges exactly as declared, `Transition` laws included;
-- `initial_nodes`, immutable admissible age–regime pairs;
+- `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` mapping contains
+  exact ages and sorted, unique tuples of regime names;
 - `graph`, immutable declared edges, effective phase graphs, valued/visited nodes,
   pruning reasons and `laws`, each regime's law as the solver and simulator evaluate it:
   bound to the graph, pruned of fixed-zero cells and lowered to the demanded ages
@@ -88,6 +89,21 @@ age-specialized function while subjects start away from the regime's representat
 raises `UnsupportedOperationError`, from these methods and from `simulate` alike.
 
 `model._regimes` is private canonical engine state.
+
+(api-initial-nodes)=
+
+## `InitialNodes`
+
+`InitialNodes(by_age={25: "working"})` declares admissible starting nodes. Keys use the
+same age selectors as edges: exact ages, tuples, integer ranges, or
+`AgeRange(start=..., exclusive_stop=...)`. Values are one regime name or a nonempty
+sequence or set of names. The mapping must be nonempty; its containers are copied and
+frozen at construction. The model checks selectors against its grid and names against
+its regimes. Overlapping selectors union their pairs.
+
+`Model(initial_nodes=...)` also accepts legacy exact-pair collections and bare selector
+mappings, and always publishes an `InitialNodes`. `model.graph.initial_nodes` exposes
+the expanded immutable pairs. Neither representation specifies population weights.
 
 (api-period-candidate-lowering)=
 

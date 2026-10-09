@@ -185,11 +185,19 @@ def test_ephemeral_result_rejects_parameter_changes_and_persisted_source() -> No
         )
 
 
-def test_ephemeral_model_restoration_starts_a_new_runtime_identity() -> None:
+@pytest.mark.parametrize("legacy_initial_nodes", [False, True])
+def test_ephemeral_model_restoration_starts_a_new_runtime_identity(
+    *,
+    legacy_initial_nodes: bool,
+) -> None:
     """A restored model makes fresh local results and rejects old ones."""
     model, params, initial_conditions = _inputs(durable_identity=False)
     solution = model.solve(params=params, log_level="off")
+    if legacy_initial_nodes:
+        model.__dict__["initial_nodes"] = model.graph.initial_nodes
     restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    assert restored.initial_nodes == lcm.InitialNodes(by_age={18: "working_life"})
 
     with pytest.raises(InvalidSimulationInputError, match="ephemeral"):
         restored.simulate(
@@ -354,14 +362,21 @@ def test_ephemeral_model_cannot_run_after_its_process_changes(
     assert type(error.value).__name__ == "ModelIdentityError"
 
 
-def test_restored_legacy_model_defaults_to_durable_identity() -> None:
+@pytest.mark.parametrize("legacy_initial_nodes", [False, True])
+def test_restored_legacy_model_defaults_to_durable_identity(
+    *,
+    legacy_initial_nodes: bool,
+) -> None:
     """A model serialized before the option existed keeps durable replay."""
     model = get_durable_model(n_periods=2)
     del model.durable_identity
+    if legacy_initial_nodes:
+        model.__dict__["initial_nodes"] = model.graph.initial_nodes
 
     restored = cloudpickle.loads(cloudpickle.dumps(model))
 
     assert restored.durable_identity is True
+    assert restored.initial_nodes == lcm.InitialNodes(by_age={18: "working_life"})
 
 
 @pytest.mark.parametrize("retention", list(ResultRetention))

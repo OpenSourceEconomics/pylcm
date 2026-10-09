@@ -339,7 +339,7 @@ def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
         enable_jit=False,
         edges={},
     )
-    assert model.initial_nodes == frozenset({(0, "dead")})
+    assert model.graph.initial_nodes == frozenset({(0, "dead")})
 
 
 def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() -> None:

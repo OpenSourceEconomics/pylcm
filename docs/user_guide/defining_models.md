@@ -16,14 +16,14 @@ lifecycle model.
 ## The Model Constructor
 
 ```python
-from lcm import Model
+from lcm import InitialNodes, Model
 
 model = Model(
     regimes=regimes,  # dict mapping names to Regime instances
     ages=ages,  # AgeGrid defining the lifecycle timeline
     regime_id_class=RegimeId,  # @categorical dataclass mapping names to ScalarInt indices
     edges=edges,  # source → destination → source ages
-    initial_nodes=((25, "working"),),  # admissible starting pairs
+    initial_nodes=InitialNodes(by_age={25: "working"}),  # admissible starts
     enable_jit=True,  # controls JAX compilation (default: True)
     fixed_params={},  # optional params baked in at init time
     description="",  # optional description string
@@ -36,9 +36,9 @@ destinations and their source-age selectors, and declares every regime transitio
 source with one destination at each source age needs nothing more: the graph is its law.
 A source with several destinations at some age is declared as
 `Transition(targets={target: source_ages, ...}, law=...)`, whose law picks one. A regime
-with no outgoing edges is terminal. Prefer explicit initial pairs such as
-`((25, "working"),)`; selector-to-name mappings remain a convenience. There is no
-default. The solved problems are derived from these roots, see
+with no outgoing edges is terminal. Use `InitialNodes(by_age={25: "working"})` for
+explicit starting coordinates; legacy pairs and selector mappings remain accepted. There
+is no default. The solved problems are derived from these roots, see
 [Age-indexed regimes](dated_regime_graph.md). The finalized regimes are stored as
 `model.user_regimes` (plain `Regime` instances in user vocabulary); the processed
 canonical form is the engine-internal `model._regimes`.
@@ -214,6 +214,7 @@ from lcm import (
     AgeGrid,
     AgeRange,
     DiscreteGrid,
+    InitialNodes,
     LinSpacedGrid,
     Model,
     Regime,
@@ -289,7 +290,7 @@ model = Model(
             law=next_regime,
         )
     },
-    initial_nodes=((25, "working"),),
+    initial_nodes=InitialNodes(by_age={25: "working"}),
 )
 ```
 

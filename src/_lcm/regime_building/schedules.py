@@ -51,6 +51,7 @@ from _lcm.regime_building.transition_support import (
 from _lcm.typing import RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.initial_nodes import InitialNodes
 from lcm.phased import Phased
 from lcm.transition import (
     AgeRange,
@@ -669,8 +670,8 @@ def resolve_initial_nodes(
 ) -> frozenset[tuple[object, RegimeName]]:
     """Normalize `Model(initial_nodes=...)` to the exact admissible start pairs.
 
-    `initial_nodes` accepts a sequence or set of exact `(age, regime)` pairs, so
-    a published `Model.initial_nodes` is accepted back, or maps age selectors
+    `initial_nodes` accepts `InitialNodes(by_age=...)`, including a published
+    `Model.initial_nodes`, a sequence or set of exact pairs, or maps age selectors
     (as in `ByAge`) to a regime name or a nonempty sequence of names. Selector
     rules contribute the Cartesian product of grid ages and names; all pairs
     are unioned. The result depends on the declaration and clock, never on
@@ -709,6 +710,8 @@ _INITIAL_NODE_ARITY = 2
 
 def _initial_node_entries(initial_nodes: object) -> list[tuple[object, object]]:
     """Normalize exact-pair or selector-mapping entries before grid selection."""
+    if isinstance(initial_nodes, InitialNodes):
+        return list(initial_nodes.by_age.items())
     if isinstance(initial_nodes, Sequence | AbstractSet) and not isinstance(
         initial_nodes, str
     ):

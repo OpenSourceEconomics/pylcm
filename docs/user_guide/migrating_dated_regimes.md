@@ -8,6 +8,23 @@ The model owns every regime transition through a required `edges` argument, both
 structure and its law. Initial age–regime pairs are required explicitly through
 `initial_nodes`.
 
+## Make starting coordinates explicit
+
+Use `initial_nodes=InitialNodes(by_age={60: "working"})`. Legacy tuples such as
+`((60, "working"),)` and bare selector mappings remain accepted as constructor inputs.
+`model.initial_nodes` always returns a normalized immutable `InitialNodes`, so replace
+loops over it with loops over `model.graph.initial_nodes` for exact `(age, regime)`
+pairs, or inspect `model.initial_nodes.by_age` for an age-to-regime-tuples mapping.
+Passing `model.initial_nodes` into another model remains supported.
+
+For annotations accepting all constructor forms, use `lcm.typing.UserInitialNodes`.
+`InitialNodes`, including its re-export from `lcm.typing`, now names the declaration
+class.
+
+Declarations snapshot their containers: changing source edge dictionaries, nested law
+mappings, or starting-regime collections cannot change a constructed model's published
+configuration. To change declarations, construct a new model.
+
 ## Move transitions onto Model
 
 `Regime` takes no regime transition law. The removed form declared the law on the source

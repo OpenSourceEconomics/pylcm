@@ -9,7 +9,6 @@ device placement.
 
 from typing import Literal, NamedTuple
 
-import jax
 import jax.numpy as jnp
 
 from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
@@ -26,6 +25,9 @@ from _lcm.solution.logsumexp_action_reduction import (
     LogSumExpResult,
 )
 from lcm.typing import BoolND, FloatND, IntND
+
+# Identity a feasible NaN carries into the paired reduction, below every real one.
+_NAN_ID = jnp.iinfo(jnp.int32).min
 
 __all__ = [
     "COLLECTIVE_HARD_MAX_REDUCTION",
@@ -200,27 +202,23 @@ def _reduce_block(
     """Reduce one block without assuming its local order is canonical.
 
     The best value and its identity come out of one reduction, so the identity
-    always names a feasible action attaining the published value. The values are
-    materialized once before the NaN test and the reduction read them: fused into
-    each reader instead, they can round differently at different compiled widths,
-    so the published maximum would depend on the width a regime is chunked at.
+    always names a feasible action attaining the published value. A feasible NaN
+    enters that reduction as `+inf` under an identity below every real one, so it
+    wins every comparison and is recognised by its identity. The values thus have
+    one reader: a separate NaN reduction would let the compiler evaluate or
+    materialize the values' producer once per reader, as the compiled width
+    dictates, and the published maximum would depend on the width a regime is
+    chunked at.
     """
-    values = jax.lax.optimization_barrier(values)
     feasible_nan = feasible & jnp.isnan(values)
     any_feasible = jnp.any(feasible, axis=-1)
-    any_nan = jnp.any(feasible_nan, axis=-1)
-
-    comparable = feasible & ~feasible_nan
-    best_non_nan, best_global_action_id = max_and_smallest_id(
-        values=jnp.where(comparable, values, -jnp.inf),
-        ids=jnp.where(comparable, action_ids, NO_ID),
+    best_value, best_global_action_id = max_and_smallest_id(
+        values=jnp.where(feasible_nan, jnp.inf, jnp.where(feasible, values, -jnp.inf)),
+        ids=jnp.where(feasible_nan, _NAN_ID, jnp.where(feasible, action_ids, NO_ID)),
         initial=-jnp.inf,
     )
-    best_value = jnp.where(
-        any_nan,
-        jnp.full_like(best_non_nan, jnp.nan),
-        best_non_nan,
-    )
+    any_nan = best_global_action_id == _NAN_ID
+    best_value = jnp.where(any_nan, jnp.full_like(best_value, jnp.nan), best_value)
 
     # Full-array GridSearch publishes identity zero when a feasible value is NaN.
     # Keep that historical quirk even for a block that does not contain global
