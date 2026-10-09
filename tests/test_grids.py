@@ -1,5 +1,6 @@
 from dataclasses import make_dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -311,6 +312,28 @@ def test_logspace_grid_creation():
     assert np.allclose(grid.to_jax(), np.logspace(np.log10(1), np.log10(10), 3))
 
 
+_SINGLETON_LOG_QUERIES = (1.0, 1.5, 2.0, 4.0)
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_singleton_logspace_grid_maps_every_value_to_its_only_node(
+    *, jit: bool
+) -> None:
+    grid = LogSpacedGrid(start=1, stop=2, n_points=1)
+    coordinate = jax.jit(grid.get_coordinate) if jit else grid.get_coordinate
+    np.testing.assert_array_equal(
+        coordinate(jnp.asarray(_SINGLETON_LOG_QUERIES)), np.zeros(4)
+    )
+
+
+def test_singleton_logspace_grid_coordinate_has_zero_derivative() -> None:
+    grid = LogSpacedGrid(start=1, stop=2, n_points=1)
+    derivative = jax.vmap(jax.grad(grid.get_coordinate))(
+        jnp.asarray(_SINGLETON_LOG_QUERIES)
+    )
+    np.testing.assert_array_equal(derivative, np.zeros(4))
+
+
 def test_logspace_grid_invalid_start():
     with pytest.raises(GridInitializationError, match="start must be less than stop"):
         LogSpacedGrid(start=1, stop=0, n_points=10)
@@ -342,6 +365,24 @@ def test_validate_continuous_grid_rejects_inf_stop():
             stop=jnp.asarray(float("inf")),
             n_points=jnp.int32(5),
         )
+
+
+def _canonical_float() -> type[np.floating]:
+    return np.float64 if X64_ENABLED else np.float32
+
+
+def test_irreg_spaced_grid_rejects_points_that_round_to_one_node() -> None:
+    """Distinct integers past the float mantissa round to one stored node."""
+    lower = 2 ** (np.finfo(_canonical_float()).nmant + 1)
+    with pytest.raises(GridInitializationError, match="strictly ascending"):
+        IrregSpacedGrid(points=(lower, lower + 1))
+
+
+def test_irreg_spaced_grid_keeps_adjacent_representable_points() -> None:
+    dtype = _canonical_float()
+    upper = np.nextafter(dtype(1.0), dtype(np.inf))
+    grid = IrregSpacedGrid(points=(1.0, float(upper)))
+    np.testing.assert_array_equal(grid.get_coordinate(grid.to_jax()), [0.0, 1.0])
 
 
 def test_irreg_spaced_grid_rejects_nan_points():

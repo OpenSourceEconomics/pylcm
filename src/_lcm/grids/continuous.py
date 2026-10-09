@@ -246,6 +246,8 @@ class IrregSpacedGrid(ContinuousGrid):
             stored_points: Float1D | None = jnp.asarray(
                 points, dtype=canonical_float_dtype()
             )
+            # Distinct inputs can round to equal nodes at the canonical precision.
+            _validate_irreg_spaced_grid(stored_points.tolist())
         elif n_points is None:
             raise GridInitializationError(
                 "Either points or n_points must be specified for IrregSpacedGrid."
