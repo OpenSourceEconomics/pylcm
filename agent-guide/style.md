@@ -75,3 +75,47 @@ prose hides cases.
 # `"warning"` / `"progress"` ⇒ NaN/Inf only, `"debug"` ⇒ adds the
 # min/max/mean trio. `"off"` skips even the NaN fail-fast.
 ```
+
+## Precise Annotations
+
+**Annotate with the narrowest type that has a name.** In order of preference: the
+constructor union the value is built from (`Transition | Phased`), a Protocol from
+`_lcm.typing` for a callable (`EconFunction`, `RegimeTransitionFunction`), a type
+parameter when the output has the input's type, and a recursive alias for a tree
+(`Params`, `UserParams`). A string that names a regime, state, action or function
+carries its alias from `lcm.typing` (`RegimeName`, `StateName`, `ActionName`,
+`FunctionName`), never a bare `str`.
+
+```python
+# Good — the constructor union and the label alias
+def resolve_law(*, transition: Transition | Phased, regime_name: RegimeName) -> Law: ...
+
+
+# Bad — `object` hides the union, `str` hides which label the string is
+def resolve_law(*, transition: object, regime_name: str) -> Law: ...
+```
+
+`object` and `Any` are for slots that genuinely hold unrelated types. The
+`precise-annotations` hook (`tests/ci/precise_annotations.py`) checks every annotation
+under `src/`, string annotations and `cast` targets included:
+
+- `PAN001` / `PAN002` ⇒ `object` / `Any` in an annotation
+- `PAN003` ⇒ a bare `str` on a regime, state, action or function name
+
+Two placements of `object` need no marker: a parameter of a comparison or containment
+dunder (`__eq__`, `__contains__`, ...), and a parameter that its own function narrows
+with `isinstance`, `issubclass` or `match`. Any other justified `object` or `Any` takes
+a marker on its own line directly above it, naming one of three reasons:
+
+- `heterogeneous=<slug>` ⇒ the slot holds unrelated types; the slug names the payload
+- `library-signature=<dotted.name>` ⇒ an external signature fixes the type
+- `import-cycle=<TypeName>` ⇒ the precise type, which cannot be imported here at runtime
+
+```python
+# annotation-exempt: heterogeneous=json-value
+payload: object
+```
+
+Findings without a marker count against `tests/ci/precise-annotations-baseline.json`,
+per file and rule. The hook lowers a count when it falls and fails when it rises, so
+an edit can only remove imprecise annotations, never add them.

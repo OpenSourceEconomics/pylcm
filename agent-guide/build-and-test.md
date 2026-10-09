@@ -29,11 +29,11 @@ so a bare `pixi run tests` exits with "the task 'tests' is ambiguous".
 - `prek install` - Install pre-commit hooks (after `pixi global install prek`)
 
 `prek run --all-files` does not run everything CI runs, and it runs some things CI never
-does. `candidate-certificate-seals`, `keyword-only-convention`, `ty`, `pixi-lock-check`,
-`pre-push-hooks-installed` and `notebook-cell-source-format` are in the config's CI
-`skip:` list, so they fire in developer clones only. The seals hook is the one that
-matters most: a clone that never ran `prek install` first learns about a stale
-certificate seal from a red CI run on every platform.
+does. `candidate-certificate-seals`, `keyword-only-convention`, `precise-annotations`,
+`ty`, `pixi-lock-check`, `pre-push-hooks-installed` and `notebook-cell-source-format`
+are in the config's CI `skip:` list, so they fire in developer clones only. The seals
+hook is the one that matters most: a clone that never ran `prek install` first learns
+about a stale certificate seal from a red CI run on every platform.
 
 ### CI policy, markers and the workload manifest
 

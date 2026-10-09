@@ -179,6 +179,14 @@ repos:
           - python
           - jupyter
           - markdown
+      # The per-file baseline is read and rewritten by each invocation, so the
+      # hook runs serially rather than in parallel file batches.
+      - id: precise-annotations
+        name: annotations name precise types
+        entry: pixi run -e type-checking python -m tests.ci.precise_annotations
+        language: system
+        files: ^src/.*\.py$
+        require_serial: true
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
         language: pygrep
@@ -242,9 +250,9 @@ repos:
 ci:
   autoupdate_schedule: monthly
   # pre-commit.ci has no pixi environments and blocks network at hook runtime;
-  # the GitHub Actions run-ty job covers type checking and the keyword-only
-  # convention, while pixi-lock-check needs a pixi binary that pre-commit.ci
-  # does not provide.
+  # the GitHub Actions run-ty job covers type checking and the keyword-only and
+  # precise-annotation conventions, while pixi-lock-check needs a pixi binary
+  # that pre-commit.ci does not provide.
   #
   # The two script hooks live in the `.ai-instructions` submodule, which
   # pre-commit.ci does not check out, so there they fail as a missing
@@ -256,6 +264,7 @@ ci:
     - candidate-certificate-seals
     - candidate-certificate-anchors
     - keyword-only-convention
+    - precise-annotations
     - ty
     - pixi-lock-check
     - pre-push-hooks-installed
