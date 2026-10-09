@@ -1128,6 +1128,7 @@ def _egm_time_model(
     source_periods: tuple[int, ...] = (0,),
     resources: UserFunction | lcm.PeriodSpecializedFunction = _wealth_resources,
     ride_along: bool = False,
+    case_functions: dict[str, Any] | None = None,
 ) -> tuple[lcm.Model, dict[str, Any], lcm.LinSpacedGrid]:
     """Build a two-period weighted-log model with one temporal consumer."""
     savings_grid = lcm.LinSpacedGrid(start=0.0, stop=20.0, n_points=400)
@@ -1162,6 +1163,7 @@ def _egm_time_model(
                     "utility": utility,
                     "resources": resources,
                     "savings": _wealth_savings,
+                    **(case_functions or {}),
                 },
                 state_transitions={
                     "liquid": law,
@@ -1206,6 +1208,60 @@ def _egm_time_model(
         else 2.0,
     }
     return model, params, wealth_grid
+
+
+def _case_subsidy_functions(*, temporal: bool, piece_first: bool) -> dict[str, Any]:
+    boundary = lcm.case_boundary(condition=lcm.ref("liquid") < 11.0, kind="jump")
+    functions: dict[str, Any] = {"eligible": boundary}
+    for name, declare_piece in (
+        ("below", lcm.piece(output="subsidy", when=boundary)),
+        ("above", lcm.piece(output="subsidy", otherwise=boundary)),
+    ):
+
+        def grant_func(grant: FloatND) -> FloatND:
+            return grant
+
+        declared: UserFunction = grant_func
+        if temporal and not piece_first:
+            declared = lcm.time_varying_params("grant")(declared)
+        declared = declare_piece(declared)
+        if temporal and piece_first:
+            declared = lcm.time_varying_params("grant")(declared)
+        functions[name] = declared
+    return functions
+
+
+@pytest.mark.parametrize("source_period", [0, 2])
+@pytest.mark.parametrize("piece_first", [False, True])
+def test_nbegm_temporal_case_pieces_use_source_grants(
+    *, source_period: int, piece_first: bool
+) -> None:
+    """Both case sides read their labelled source grant in either decorator order."""
+    values = []
+    for temporal in (False, True):
+        model, params, _ = _egm_time_model(
+            solver_name="nbegm",
+            temporal_role="constant",
+            source_periods=(source_period,),
+            resources=lcm.cash_on_hand_with_subsidy,
+            case_functions=_case_subsidy_functions(
+                temporal=temporal, piece_first=piece_first
+            ),
+        )
+        params["work"] = {
+            name: {
+                "grant": lcm.TimeVarying(
+                    values=jnp.array([99.0, grant]),
+                    periods=(source_period + 1, source_period),
+                )
+                if temporal
+                else grant
+            }
+            for name, grant in (("below", 3.0), ("above", 1.0))
+        }
+        solution = model.solve(params=params, log_level="debug")
+        values.append(solution.value(period=source_period, regime="work"))
+    np.testing.assert_allclose(values[1], values[0], rtol=0, atol=1e-5)
 
 
 @pytest.mark.parametrize("solver_name", ["egm", "nbegm"])
