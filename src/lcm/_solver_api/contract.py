@@ -355,7 +355,7 @@ class SolutionMetadata:
         if not self.model_instance_id:
             raise ValueError("SolutionMetadata.model_instance_id must not be empty.")
         if type(self.durable_identity) is not bool:
-            raise ValueError("SolutionMetadata.durable_identity must be an exact bool.")
+            raise TypeError("SolutionMetadata.durable_identity must be an exact bool.")
         if len(self.params_fingerprint) != _SHA256_HEX_LENGTH or any(
             character not in "0123456789abcdef" for character in self.params_fingerprint
         ):

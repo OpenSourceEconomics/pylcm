@@ -35,6 +35,11 @@ separate atomic `completed.h5` binds the completed value, nonfinite masks and
 synchronized dispatch time to that entry. The archives contain numerical arrays and JSON
 metadata, without a pickled model, callable or executable.
 
+Public period capture and `Model.replay_period()` require
+`Model(..., durable_identity=True)`, the default. An ephemeral model raises
+`UnsupportedOperationError` before creating log or capture files, reading an archive,
+compiling, or dispatching a period.
+
 Launch the following example in a fresh process with
 `JAX_ENABLE_COMPILATION_CACHE=false` set in its environment before importing JAX or lcm.
 
@@ -464,6 +469,16 @@ model, a restored model, or a different process cannot replay the result. Both
 `SolutionResult.save()` and `save_solution()` reject it. `SimulationResult.save()` also
 rejects an ephemeral simulation; `SimulationResult.to_dataframe()` remains available for
 scientific exports.
+
+Component planning, workers, and collection require a durable model and raise
+`ExecutionPlanningError` for an ephemeral model before accessing campaign files. Public
+period capture and replay raise `UnsupportedOperationError` in this mode. Ordinary local
+solve, simulation, and policy lookup remain available.
+
+An ephemeral model used outside its originating process raises `ModelIdentityError`;
+restoring it gives it a fresh local identity and requires a fresh solution. A durable
+model with a missing binding seal raises the same error. Binding movement raises its
+subclass `ModelSealError`.
 
 In this mode, users are responsible for keeping code, dependencies, and captured data
 consistent while the model runs. Rebinding or mutating a value captured by a Python

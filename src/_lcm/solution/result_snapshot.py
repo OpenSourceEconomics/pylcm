@@ -293,6 +293,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
     model_instance_id = metadata.model_instance_id
     params_fingerprint = metadata.params_fingerprint
     model_fingerprint = metadata.model_fingerprint
+    durable_identity = metadata.durable_identity
     source = metadata.source
     pylcm_version = metadata.pylcm_version
     solver_api_version = metadata.solver_api_version
@@ -347,6 +348,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
         params_fingerprint=params_fingerprint,
         value_schemas=value_schemas,
         model_fingerprint=model_fingerprint,
+        durable_identity=durable_identity,
         solver_identities=solver_identities,
         replay_routes=replay_routes,
         artifact_descriptors=artifact_descriptors,

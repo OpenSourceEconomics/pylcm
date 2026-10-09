@@ -25,6 +25,7 @@ compiler versions/options, installed native build and kind of hardware. These
 execution choices are recorded separately from the mathematical solution identity.
 Effective ambient JIT, PRNG implementation, seed offset and Threefry partitioning
 also match across numeric workers, collection and the single-process reference.
+Planning, running and collecting component jobs require `durable_identity=True`.
 """
 
 import contextlib
@@ -183,7 +184,7 @@ def plan_component_jobs(
     """Divide the blocked state's codes into jobs and write the task manifest.
 
     Args:
-        model: A block-major model.
+        model: A block-major model with durable identity.
         params: The parameters every job solves with.
         directory: Where the plan and the fragments go; absent or empty.
         n_jobs: Number of jobs, each taking a contiguous run of codes in grid
@@ -199,12 +200,15 @@ def plan_component_jobs(
         The plan, as every job reads it back.
 
     Raises:
-        ExecutionPlanningError: The model is not block-major, the split is
-            invalid, only one of `initial_conditions` and `seed` is given, or
+        ExecutionPlanningError: The model is ephemeral or not block-major, the
+            split is invalid, only one of `initial_conditions` and `seed` is given, or
             `directory` is not empty.
+        ModelIdentityError: The model's durable identity is invalid.
 
     """
+    _fail_if_ephemeral_model(model=model, operation="plan_component_jobs")
     _fail_if_not_block_major(model=model)
+    model._check_identity_runtime()  # noqa: SLF001
     state_name, codes = _get_model_components(model=model)
     jobs = _split_codes(codes=codes, n_jobs=n_jobs, assignment=assignment)
     if (initial_conditions is None) != (seed is None):
@@ -398,7 +402,7 @@ def run_component_job(
     raises, it records the failure, publishes no fragment and re-raises.
 
     Args:
-        model: The block-major model the plan was made for.
+        model: The durable block-major model the plan was made for.
         params: The parameters the plan was made with.
         directory: The plan directory.
         job: Index of the job in the plan.
@@ -412,11 +416,12 @@ def run_component_job(
         The path of the published fragment.
 
     Raises:
-        ExecutionPlanningError: The job is not in the plan, the model or
-            parameters do not reproduce the plan's identity, or the population
-            is missing, unexpected or differs from the plan's.
+        ExecutionPlanningError: The model is ephemeral, the job is not in the plan,
+            the model or parameters do not reproduce the plan's identity, or the
+            population is missing, unexpected or differs from the plan's.
 
     """
+    _fail_if_ephemeral_model(model=model, operation="run_component_job")
     _fail_if_not_block_major(model=model)
     model._check_identity_runtime()  # noqa: SLF001
     plan = load_component_job_plan(directory=directory)
@@ -508,7 +513,7 @@ def collect_component_jobs(
     restored to the population's order.
 
     Args:
-        model: The block-major model the plan was made for.
+        model: The durable block-major model the plan was made for.
         params: The parameters the plan was made with.
         directory: The plan directory.
         log_level: Verbosity and runtime-validation policy. Must match the
@@ -520,13 +525,15 @@ def collect_component_jobs(
         complete simulation.
 
     Raises:
-        ExecutionPlanningError: The model or parameters do not reproduce the
-            plan's identity, or a job is missing, failed, duplicated, stale or
-            ran on another kind of execution. Every such job is named.
+        ExecutionPlanningError: The model is ephemeral, the model or parameters
+            do not reproduce the plan's identity, or a job is missing, failed,
+            duplicated, stale or ran on another kind of execution. Every such job
+            is named.
         SolutionIntegrityError: A fragment is unreadable, partial or fails a
             checksum.
 
     """
+    _fail_if_ephemeral_model(model=model, operation="collect_component_jobs")
     _fail_if_not_block_major(model=model)
     model._check_identity_runtime()  # noqa: SLF001
     plan = load_component_job_plan(directory=directory)
@@ -595,6 +602,16 @@ def collect_component_jobs(
         else None
     )
     return CollectedComponentJobs(plan=plan, solution=solution, simulation=simulation)
+
+
+def _fail_if_ephemeral_model(*, model: Model, operation: str) -> None:
+    """Require a reproducible identity before publishing or consuming a campaign."""
+    if not model.durable_identity:
+        msg = (
+            f"{operation} cannot use an ephemeral model. Build the model with "
+            "durable_identity=True, or use ordinary local solve()/simulate()."
+        )
+        raise ExecutionPlanningError(msg)
 
 
 def _fail_if_not_block_major(*, model: Model) -> None:
@@ -1291,6 +1308,7 @@ def _collected_simulation(
         ),
     )
     result._solution = solution  # noqa: SLF001
+    result._durable_identity = model.durable_identity  # noqa: SLF001
     return result
 
 

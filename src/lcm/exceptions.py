@@ -56,7 +56,15 @@ class InvalidSimulationInputError(PyLCMError):
     """
 
 
-class ModelSealError(PyLCMError):
+class ModelIdentityError(PyLCMError):
+    """Raised when a model's identity does not permit runtime use.
+
+    Durable models require an intact binding seal. Ephemeral models require
+    their originating process. Binding movement is reported by `ModelSealError`.
+    """
+
+
+class ModelSealError(ModelIdentityError):
     """Raised when a name one of the model's callables reads was rebound after build.
 
     A model captures its callables and the globals and closure cells they read

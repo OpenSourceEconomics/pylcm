@@ -2005,6 +2005,10 @@ def test_materialization_refuses_jax_dtype_narrowing(tmp_path: Path) -> None:
         restored.value(period=0, regime=_REGIME)
 
 
+@pytest.mark.skipif(
+    np.dtype(np.longdouble) == np.dtype(np.float64),
+    reason="NumPy longdouble is a supported float64 alias on this platform.",
+)
 def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     tmp_path: Path,
 ) -> None:
