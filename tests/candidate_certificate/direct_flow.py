@@ -426,7 +426,7 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "e4817cfc29f7125b9a0ddfb50a5228f293880f86de63d4b3db9a27a64a798282",
     SIMULATION_TRANSITIONS_SOURCE: "b5936ecbe353fb7d147ee68d83db45a894a1ab2e951dc10d63ec99e91c677a1b",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "c0c4116294f8f16f61da6d28e5cff47c1eaf8b55b0888edb6f557f2dd4b549e2",
+    MODEL_SOURCE: "03fa209a32de08659bdc160f4c9485e49e1762ee86c9b575a03d72598b51b527",
     SOLVER_API_SOURCE: "fbf4085b2275c96b2fa4ef85c36bfe92a015dea19a103e1e05f9ee8377d30428",
     BACKWARD_INDUCTION_SOURCE: "8a3d59d953a707276ed65bad005b85ab8738b38017197967afee2448a5bf4667",
     PERIOD_REPLAY_SOURCE: "4e9a27efa20e18ce0529ce4b7e6cff0e5d8ffb4baeb08e25d8fb898e8d78adaf",
@@ -1002,12 +1002,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MODEL_SOURCE: (
-        "d0ade43452fc6089cabe3a46bce95e6c1b329baf9f4013b74e55f0100c19470e",
+        "572034eaf6aa996e09d6095b914ad94b7034a3f880d32c276d15c3b5f705f926",
         {
             "_validate_sharded_state_capability": "de196ecc0e07d329983acc26a7607a11a41039121fb0e546c0c3f317f493bec8",
             "_supports_continuous_sharding_vocabulary": "1ce9646ee043fb623720d6367b531c860ab0020969a58ec62682784814843387",
             "_supports_unsharded_continuous_process": "f9458a12d933ec96b852ee69337c296a73cfe3e22dc9065847bc53f9352770c5",
-            "Model.__init__": "65c810f20be9cab28ca9086d6d85c6827a89f94feb318fc91919aec2b620de23",
+            "Model.__init__": "976930c3234b0ac5d4107535ce53404f71ea0d2232f361bdffcb009e63582a1d",
             "Model.simulate": "6580c40839e8a95af5941f206811213dd51a91c094f4d9c3db76b6f419d1d04b",
             "Model._open_entry_allocations": "a1290ef470627e4d6179bc1c11924964cd812a59d2056a8335c1c53f21ef4c32",
             "Model._check_solution_result_structure": "3e2f19b7fae40cede786a1debce00175907dd9edf1f59c9ff17ebcf834637736",

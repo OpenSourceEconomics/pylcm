@@ -58,8 +58,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
-    InitialNodes,
     ScalarInt,
+    UserInitialNodes,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -169,7 +169,7 @@ def _solve(*, later_ceiling: float) -> SolutionResult:
     )
 
 
-def _make_model(*, later_ceiling: float, initial_nodes: InitialNodes) -> Model:
+def _make_model(*, later_ceiling: float, initial_nodes: UserInitialNodes) -> Model:
     """Build the couple-and-single model with an age-specialized reference grid."""
 
     def _single_wealth_grid(age: float) -> LinSpacedGrid:

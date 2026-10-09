@@ -8,8 +8,7 @@ user-constructor methods (`Model.__init__`, `Model.solve`, `Model.simulate`,
 live in `_lcm.typing`.
 """
 
-from collections.abc import Mapping, Sequence
-from collections.abc import Set as AbstractSet
+from collections.abc import Mapping
 from fractions import Fraction
 from typing import (
     TYPE_CHECKING,
@@ -28,6 +27,8 @@ from jaxtyping import Bool, Float, Int, Int32, Scalar, Shaped
 from lcm.params import UserMappingLeaf, UserSequenceLeaf
 
 if TYPE_CHECKING:
+    from lcm.initial_nodes import InitialNodes, UserInitialNodes  # noqa: F401
+
     # Defined beside `AgeRange` in `lcm.transition`, which imports this module;
     # `lcm.__init__` binds it here through `_bind_forward_refs`.
     from lcm.transition import AgeSelector  # noqa: F401  (re-exported)
@@ -92,16 +93,6 @@ type TransitionFunctionName = str
 # Boundary form accepted by `AgeGrid.__init__` for `start`, `inclusive_stop`, and
 # `exact_values` entries — converted to canonical JAX scalars internally.
 type UserAge = int | Fraction
-
-# Admissible starts accepted by `Model(initial_nodes=...)`: a mapping from
-# `ByAge`-style age selectors to a regime name or a sequence of names, or a
-# sequence or set of exact `(age, regime)` pairs.
-type InitialNodes = (
-    Sequence[tuple[object, str]]
-    | AbstractSet[tuple[object, str]]
-    | Mapping[object, str | Sequence[str]]
-)
-
 
 # Boundary form accepted by `AgeGrid.__init__` for `step`: a string matching
 # the grammar `(\d+)?[YQM]` — an optional positive-integer multiplier followed
@@ -193,12 +184,17 @@ def __getattr__(name: str) -> object:
     raise AttributeError(msg)
 
 
-def _bind_forward_refs(*, age_selector: TypeAliasType) -> None:
-    """Bind `AgeSelector` into this module's globals.
+def _bind_forward_refs(
+    *,
+    age_selector: TypeAliasType,
+    initial_nodes_cls: type,
+    user_initial_nodes: TypeAliasType,
+) -> None:
+    """Bind public declaration types after their modules finish importing.
 
-    `lcm.transition` defines it beside `AgeRange` and imports this module, so
-    it cannot be imported here at module level. `lcm.__init__` calls this
-    helper once `lcm.transition` is loaded, which makes
-    `from lcm.typing import AgeSelector` resolve at runtime.
+    The declaration modules import this module themselves. `lcm.__init__`
+    calls this helper once they are loaded to make the re-exports available.
     """
     globals()["AgeSelector"] = age_selector
+    globals()["InitialNodes"] = initial_nodes_cls
+    globals()["UserInitialNodes"] = user_initial_nodes
