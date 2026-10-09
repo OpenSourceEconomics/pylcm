@@ -39,12 +39,12 @@ def test_solution_shards_require_a_positive_shard_count(n_shards: int) -> None:
 
 
 def test_codecov_waits_for_the_complete_cpu_python_report_set() -> None:
-    """Coverage statuses use the one combined report the coverage job uploads."""
+    """Coverage statuses wait for the CPU and GETTSIM reports."""
     config = yaml.safe_load(Path("codecov.yml").read_text(encoding="utf-8"))
 
     assert config["codecov"]["require_ci_to_pass"] is True
-    assert config["comment"]["after_n_builds"] == 1
-    assert config["codecov"]["notify"]["after_n_builds"] == 1
+    assert config["comment"]["after_n_builds"] == 2
+    assert config["codecov"]["notify"]["after_n_builds"] == 2
     assert config["flags"]["cpu-python"] == {
         "carryforward": False,
         "after_n_builds": 1,
